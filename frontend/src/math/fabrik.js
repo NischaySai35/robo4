@@ -6,7 +6,7 @@
  *   vertical mode   → plane is XY, rotation axis is +Z
  */
 
-const MAX_ITER = 25;
+const MAX_ITER = 20;
 const TOLERANCE = 0.001;
 
 // ── 2-D helpers ──────────────────────────────────────────────────────────────
@@ -27,28 +27,39 @@ function normalize2(v) {
 
 /** Signed angle from direction a to direction b, range (−π, π]. */
 function signedAngle2(ax, ay, bx, by) {
-  const cross = ax * by - ay * bx;
-  const dot = ax * bx + ay * by;
-  return Math.atan2(cross, dot);
+  return Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
 }
 
-/** Clamp angle to [−limit, +limit], return { clamped, hitLimit }. */
-function clampAngle(a, limit) {
-  if (a > limit) return { clamped: limit, hitLimit: true };
+/**
+ * Clamp angle to [−limit, +limit] with wrap-around detection.
+ *
+ * signedAngle2 returns values in (−π, π].  When the drag target is "past the
+ * back" of a joint, atan2 wraps a +190° rotation to −170°, causing the clamp
+ * to snap to −limit instead of +limit.
+ *
+ * Fix: if the raw angle's sign disagrees with prevAngle AND the magnitude is
+ * large (> 120°), assume the angle has wrapped and correct it before clamping.
+ */
+function clampAngle(angle, limit, prevAngle) {
+  let a = angle;
+  if (prevAngle !== null &&
+      Math.sign(a) !== Math.sign(prevAngle) &&
+      Math.abs(a) > Math.PI * 0.65) {
+    a += a < 0 ? 2 * Math.PI : -2 * Math.PI;
+  }
+  if (a > limit)  return { clamped: limit,  hitLimit: true };
   if (a < -limit) return { clamped: -limit, hitLimit: true };
   return { clamped: a, hitLimit: false };
 }
 
 // ── Projection helpers ───────────────────────────────────────────────────────
 
-/** Extract 2D coords from 3D node, given mode. */
 export function to2D(node, mode) {
   return mode === 'horizontal'
     ? { x: node.x, y: node.z }
     : { x: node.x, y: node.y };
 }
 
-/** Restore 3D from 2D result, preserving the out-of-plane coordinate. */
 export function from2D(pt2, node3d, mode) {
   return mode === 'horizontal'
     ? { x: pt2.x, y: node3d.y, z: pt2.y }
@@ -60,71 +71,92 @@ export function from2D(pt2, node3d, mode) {
 /**
  * Solve a sub-chain with FABRIK + per-joint angle constraints.
  *
- * @param {Array<{x,y}>} pts2       2-D points, length ≥ 2
- * @param {Array<number>} segLens   segment lengths, length = pts2.length − 1
- * @param {number}        anchorIdx fixed anchor index (always 0 or pts2.length-1)
- * @param {number}        targetIdx which node we're pulling toward `target`
- * @param {{x,y}}         target    desired position for targetIdx
- * @param {number}        limit     per-joint angular limit (radians)
- * @param {{x,y}|null}    anchorDir direction of the segment arriving at the anchor
- *                                  from outside the sub-chain (the root-rod direction).
- *                                  When provided, constrains the first joint adjacent to anchor.
- * @returns {{ pts: Array<{x,y}>, limitHits: Array<boolean> }}
+ * Design rules:
+ *  1. Constraints apply ONLY between anchor and targetIdx.
+ *  2. Nodes beyond targetIdx ("tail") move rigidly: each tail segment keeps the
+ *     ABSOLUTE WORLD-SPACE DIRECTION it had at the start of this call.
+ *     Tail dirs are captured once before iterations and never change.
+ *     This prevents distant joints from snapping when dragging an intermediate node.
+ *  3. clampAngle tracks the per-node history across FABRIK iterations to prevent
+ *     the wrap-around sign-flip snap (+100° → −100°).
  */
 function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir = null) {
   const n = pts2.length;
   const pts = pts2.map(p => ({ ...p }));
   const limitHits = new Array(n).fill(false);
+  const lastAngles = new Array(n).fill(null); // per-node last clamped angle
 
-  // Clamp target to total reachable length from anchor
-  const subLen = segLens.reduce((s, l) => s + l, 0);
+  // Clamp target to reachable length of the anchor→target sub-segment only
+  const chainLo = Math.min(anchorIdx, targetIdx);
+  const chainHi = Math.max(anchorIdx, targetIdx);
+  const subLen = segLens.slice(chainLo, chainHi).reduce((s, l) => s + l, 0);
   const dToTarget = dist2(pts[anchorIdx], target);
   let effectiveTarget = { ...target };
   if (dToTarget > subLen) {
     const dir = normalize2({ x: target.x - pts[anchorIdx].x, y: target.y - pts[anchorIdx].y });
-    effectiveTarget = { x: pts[anchorIdx].x + dir.x * subLen, y: pts[anchorIdx].y + dir.y * subLen };
+    effectiveTarget = {
+      x: pts[anchorIdx].x + dir.x * subLen,
+      y: pts[anchorIdx].y + dir.y * subLen,
+    };
   }
 
   const anchorPt = { ...pts[anchorIdx] };
 
+  // Capture absolute tail-segment directions ONCE before any iteration.
+  // For rightward chains (targetIdx > anchorIdx): tail is targetIdx+1 … n-1.
+  // For leftward chains: tail is targetIdx-1 … 0.
+  // Direction k = normalize(pts[tail_k] − pts[tail_k − 1]).
+  const tailDirs = [];
+  if (targetIdx > anchorIdx) {
+    for (let k = 0; k < n - targetIdx - 1; k++) {
+      const i = targetIdx + 1 + k;
+      const prev = pts[i - 1];
+      const dx = pts[i].x - prev.x, dy = pts[i].y - prev.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      tailDirs.push(d < 1e-10 ? { x: 1, y: 0 } : { x: dx / d, y: dy / d });
+    }
+  } else {
+    for (let k = 0; k < targetIdx; k++) {
+      const i = targetIdx - 1 - k;
+      const next = pts[i + 1];
+      const dx = pts[i].x - next.x, dy = pts[i].y - next.y;
+      const d = Math.sqrt(dx * dx + dy * dy);
+      tailDirs.push(d < 1e-10 ? { x: -1, y: 0 } : { x: dx / d, y: dy / d });
+    }
+  }
+
   for (let iter = 0; iter < MAX_ITER; iter++) {
-    // ── Forward pass: set target position, reach backward toward anchor ──
+    // ── Forward pass (anchor→target segment only) ─────────────────────────────
+    // Tail nodes are intentionally NOT touched here; they will be placed rigidly.
     pts[targetIdx] = { ...effectiveTarget };
     if (targetIdx > anchorIdx) {
       for (let i = targetIdx - 1; i >= anchorIdx; i--) {
         const d = dist2(pts[i + 1], pts[i]);
         if (d < 1e-10) continue;
-        const r = segLens[i] / d;
-        pts[i] = lerp2(pts[i + 1], pts[i], r);
+        pts[i] = lerp2(pts[i + 1], pts[i], segLens[i] / d);
       }
     } else {
       for (let i = targetIdx + 1; i <= anchorIdx; i++) {
         const d = dist2(pts[i - 1], pts[i]);
         if (d < 1e-10) continue;
-        const r = segLens[i - 1] / d;
-        pts[i] = lerp2(pts[i - 1], pts[i], r);
+        pts[i] = lerp2(pts[i - 1], pts[i], segLens[i - 1] / d);
       }
     }
 
-    // ── Backward pass: restore anchor, propagate toward target with constraints ──
+    // ── Backward pass: restore anchor, apply constraints anchor → target ───────
     pts[anchorIdx] = { ...anchorPt };
 
     if (targetIdx > anchorIdx) {
-      // Rightward chain: anchor at left, target at right
       for (let i = anchorIdx + 1; i <= targetIdx; i++) {
         const prev = pts[i - 1];
-        const curr = pts[i];
         const segLen = segLens[i - 1];
-        const d = dist2(prev, curr);
-        if (d < 1e-10) { pts[i] = { x: prev.x + segLen, y: prev.y }; continue; }
-
-        let dx = curr.x - prev.x, dy = curr.y - prev.y;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        dx /= len; dy /= len;
+        const d = dist2(prev, pts[i]);
+        let dx, dy;
+        if (d < 1e-10) { dx = 1; dy = 0; }
+        else { dx = (pts[i].x - prev.x) / d; dy = (pts[i].y - prev.y) / d; }
 
         let inX = null, inY = null;
         if (i === anchorIdx + 1 && anchorDir) {
-          // First joint: root-rod direction is the incoming reference
           inX = anchorDir.x; inY = anchorDir.y;
         } else if (i >= anchorIdx + 2) {
           const pp = pts[i - 2];
@@ -134,8 +166,9 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         }
 
         if (inX !== null) {
-          const angle = signedAngle2(inX, inY, dx, dy);
-          const { clamped, hitLimit } = clampAngle(angle, limit);
+          const raw = signedAngle2(inX, inY, dx, dy);
+          const { clamped, hitLimit } = clampAngle(raw, limit, lastAngles[i]);
+          lastAngles[i] = clamped;
           if (hitLimit) limitHits[i - 1] = true;
           const cos = Math.cos(clamped), sin = Math.sin(clamped);
           dx = inX * cos - inY * sin;
@@ -145,21 +178,16 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         pts[i] = { x: prev.x + dx * segLen, y: prev.y + dy * segLen };
       }
     } else {
-      // Leftward chain: anchor at right, target at left
       for (let i = anchorIdx - 1; i >= targetIdx; i--) {
         const prev = pts[i + 1];
-        const curr = pts[i];
         const segLen = segLens[i];
-        const d = dist2(prev, curr);
-        if (d < 1e-10) { pts[i] = { x: prev.x - segLen, y: prev.y }; continue; }
-
-        let dx = curr.x - prev.x, dy = curr.y - prev.y;
-        const dlen = Math.sqrt(dx * dx + dy * dy);
-        dx /= dlen; dy /= dlen;
+        const d = dist2(prev, pts[i]);
+        let dx, dy;
+        if (d < 1e-10) { dx = -1; dy = 0; }
+        else { dx = (pts[i].x - prev.x) / d; dy = (pts[i].y - prev.y) / d; }
 
         let inX = null, inY = null;
         if (i === anchorIdx - 1 && anchorDir) {
-          // First joint from anchor: reversed root-rod direction is the incoming reference
           inX = anchorDir.x; inY = anchorDir.y;
         } else if (i <= anchorIdx - 2) {
           const pp = pts[i + 2];
@@ -169,8 +197,9 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         }
 
         if (inX !== null) {
-          const angle = signedAngle2(inX, inY, dx, dy);
-          const { clamped, hitLimit } = clampAngle(angle, limit);
+          const raw = signedAngle2(inX, inY, dx, dy);
+          const { clamped, hitLimit } = clampAngle(raw, limit, lastAngles[i]);
+          lastAngles[i] = clamped;
           if (hitLimit) limitHits[i + 1] = true;
           const cos = Math.cos(clamped), sin = Math.sin(clamped);
           dx = inX * cos - inY * sin;
@@ -178,6 +207,25 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         }
 
         pts[i] = { x: prev.x + dx * segLen, y: prev.y + dy * segLen };
+      }
+    }
+
+    // ── Rigid tail placement (frozen absolute directions) ─────────────────────
+    // Place each tail node from the previously placed node using the frozen direction.
+    // No angle constraint: the tail follows the drag point without any clamping.
+    if (targetIdx > anchorIdx) {
+      for (let k = 0; k < tailDirs.length; k++) {
+        const i = targetIdx + 1 + k;
+        const prev = pts[i - 1];
+        const dir = tailDirs[k];
+        pts[i] = { x: prev.x + dir.x * segLens[i - 1], y: prev.y + dir.y * segLens[i - 1] };
+      }
+    } else {
+      for (let k = 0; k < tailDirs.length; k++) {
+        const i = targetIdx - 1 - k;
+        const next = pts[i + 1];
+        const dir = tailDirs[k];
+        pts[i] = { x: next.x + dir.x * segLens[i], y: next.y + dir.y * segLens[i] };
       }
     }
 
@@ -189,28 +237,13 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/**
- * Solve the full arm IK.
- *
- * @param {Array<{x,y,z}>} nodes3d     current world-space node positions
- * @param {number[]}        segLens    segment lengths (length 4)
- * @param {number}          rootRod    root rod index (0-3)
- * @param {number}          dragNode   which node to pull toward dragTarget
- * @param {{x,y,z}}         dragTarget world-space drag target
- * @param {string}          mode       'horizontal' | 'vertical'
- * @param {number}          limit      joint angle limit (radians)
- * @returns {{ nodes: Array<{x,y,z}>, limitHits: Array<boolean> }}
- *   limitHits[i] is true when FABRIK node i (joint i-1) hit its limit
- */
 export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, limit) {
-  // Root rod occupies segment rootRod: nodes[rootRod] → nodes[rootRod+1]
-  const anchorL = rootRod;     // left anchor of root rod
-  const anchorR = rootRod + 1; // right anchor of root rod
+  const anchorL = rootRod;
+  const anchorR = rootRod + 1;
 
   const pts2 = nodes3d.map(n => to2D(n, mode));
   const target2 = to2D(dragTarget, mode);
 
-  // Root-rod direction in 2D (anchorL → anchorR), used as anchorDir for sub-chains
   const rdx = pts2[anchorR].x - pts2[anchorL].x;
   const rdy = pts2[anchorR].y - pts2[anchorL].y;
   const rLen = Math.sqrt(rdx * rdx + rdy * rdy);
@@ -220,8 +253,6 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
   const limitHits = new Array(nodes3d.length).fill(false);
 
   if (dragNode <= anchorL) {
-    // Left sub-chain: [0 … anchorL], anchor = anchorL
-    // Incoming reference for left chain = direction from anchorR toward anchorL = -rootDir
     const leftAnchorDir = { x: -rootDir.x, y: -rootDir.y };
     const sub = pts2.slice(0, anchorL + 1);
     const subLens = segLens.slice(0, anchorL);
@@ -229,8 +260,6 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
     for (let i = 0; i <= anchorL; i++) pts2Result[i] = pts[i];
     for (let i = 0; i <= anchorL; i++) if (lh[i]) limitHits[i] = true;
   } else if (dragNode >= anchorR) {
-    // Right sub-chain: [anchorR … N-1], anchor = anchorR (index 0 in sub)
-    // Incoming reference for right chain = rootDir (anchorL → anchorR)
     const sub = pts2.slice(anchorR);
     const subLens = segLens.slice(anchorR);
     const localTarget = dragNode - anchorR;
@@ -239,9 +268,7 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
     for (let i = 0; i < sub.length; i++) if (lh[i]) limitHits[anchorR + i] = true;
   }
 
-  // Lift back to 3D (anchor nodes are fixed to their original 3D positions)
   const nodes = nodes3d.map((n3, i) => {
-    // Keep anchor nodes completely unchanged (including out-of-plane coord)
     if (i === anchorL || i === anchorR) return { ...n3 };
     return from2D(pts2Result[i], n3, mode);
   });
@@ -250,14 +277,13 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
 }
 
 /**
- * Extract per-joint angles from a solved node array.
- * Joint j connects rod j and rod j+1, its angle is the
- * bend between segments (nodes[j]→nodes[j+1]) and (nodes[j+1]→nodes[j+2]).
+ * Extract per-joint angles from node positions.
+ * Joint j is the bend at node j+1 between segments j and j+1.
  */
 export function extractJointAngles(nodes3d, mode) {
   const pts2 = nodes3d.map(n => to2D(n, mode));
   const angles = [];
-  for (let j = 0; j < NUM_JOINTS_FROM_NODES(nodes3d.length); j++) {
+  for (let j = 0; j < nodes3d.length - 2; j++) {
     const a = pts2[j], b = pts2[j + 1], c = pts2[j + 2];
     const d1 = normalize2({ x: b.x - a.x, y: b.y - a.y });
     const d2 = normalize2({ x: c.x - b.x, y: c.y - b.y });
@@ -265,5 +291,3 @@ export function extractJointAngles(nodes3d, mode) {
   }
   return angles;
 }
-
-function NUM_JOINTS_FROM_NODES(n) { return n - 2; }

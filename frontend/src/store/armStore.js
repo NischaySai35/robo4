@@ -11,15 +11,15 @@ export const ENDCAP_SIZE = 0.22;
 export const JOINT_LIMIT = Math.PI * (100 / 180); // ±100°
 export const DEFAULT_ROOT = 1; // rod index 1 = second rod (middle-ish)
 
-// Initial node positions — horizontal mode, arm along X, root rod centered
+// Initial node positions — horizontal mode, arm along X, always centered at origin
 export function getRestPositions(mode, rootIdx = DEFAULT_ROOT) {
   const L = ROD_LENGTH;
-  // Root rod occupies segment rootIdx: from node[rootIdx] to node[rootIdx+1]
-  // Center root rod at origin
-  const rootCenter = (rootIdx + 0.5) * L;
+  // Always center the full arm at x=0, regardless of which rod is root.
+  // Full arm span = (NUM_NODES-1)*L; offset = half that.
+  const halfSpan = ((NUM_NODES - 1) * L) / 2; // = 3.2
   if (mode === 'horizontal') {
     return Array.from({ length: NUM_NODES }, (_, i) => ({
-      x: i * L - rootCenter,
+      x: i * L - halfSpan,
       y: 0,
       z: 0,
     }));

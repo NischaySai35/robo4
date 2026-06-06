@@ -118,13 +118,8 @@ export class RenderLoop {
     this.interaction.callbacks.onRootClick = (rodIndex) => {
       const s = this.getStore();
       if (rodIndex === s.rootRodIndex) return;
-
-      // Animate nodes to rest position for new root before switching
-      const fromNodes = s.nodePositions;
-      const toNodes = getRestPositions(s.mode, rodIndex);
-      this._startAnimation(fromNodes, toNodes, () => {
-        this.act.setRootRod(rodIndex);
-      });
+      // Switch root in-place — arm stays where it is, only root indicator changes
+      this.act.setRootRod(rodIndex);
     };
   }
 

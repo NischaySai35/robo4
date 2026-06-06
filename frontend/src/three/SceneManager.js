@@ -83,6 +83,7 @@ export class SceneManager {
     this.controls.minDistance = 3;
     this.controls.maxDistance = 25;
     this.controls.maxPolarAngle = Math.PI * 0.52;
+    this.controls.enablePan = false; // keep arm always in view
     this.controls.target.set(0, 0, 0);
 
     // ── Post-processing ───────────────────────────────────────────────────────
@@ -133,9 +134,9 @@ export class SceneManager {
 
     this.bloomPass = new UnrealBloomPass(
       new THREE.Vector2(w, h),
-      0.22,  // strength — very subtle on light background
-      0.28,  // radius
-      0.82   // threshold — only root-rod orange and drag cyan will bloom
+      0.18,  // strength
+      0.25,  // radius
+      0.95   // threshold — high so near-white background does NOT bloom
     );
     this.composer.addPass(this.bloomPass);
 

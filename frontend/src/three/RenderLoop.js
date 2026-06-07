@@ -45,9 +45,16 @@ export class RenderLoop {
     // Local drag state (not in store to avoid React re-renders every mouse move)
     this._dragActive = false;
     this._dragNodeIndex = null;
-    this._dragTarget = { x: 0, y: 0, z: 0 };
+    this._dragTarget    = { x: 0, y: 0, z: 0 }; // smoothed — what FABRIK actually sees
+    this._rawDragTarget = { x: 0, y: 0, z: 0 }; // raw mouse world position
     this._draggedType = null;
     this._draggedIndex = null;
+
+    // Drag smoothing: lerp raw mouse → smoothed FABRIK target each frame.
+    // LERP: fraction of gap closed per frame (higher = snappier)
+    // MAX_D: max world-units per frame cap (0.12 ≈ 7 u/s at 60fps — responsive but physical)
+    this._DRAG_LERP  = 0.28;
+    this._DRAG_MAX_D = 0.12;
 
     // Animate nodes for smooth mode transitions
     this._animating = false;
@@ -83,7 +90,9 @@ export class RenderLoop {
 
       this._dragActive = true;
       this._dragNodeIndex = dragNode;
-      this._dragTarget = { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z };
+      // Init both raw and smoothed to the grab point so there's no initial lurch
+      this._rawDragTarget = { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z };
+      this._dragTarget    = { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z };
       this._draggedType = type;
       this._draggedIndex = index;
 
@@ -96,11 +105,10 @@ export class RenderLoop {
 
     this.interaction.callbacks.onDragMove = (worldPoint) => {
       if (!this._dragActive) return;
-      this._dragTarget = { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z };
-      // Keep arm above the ground plane in vertical mode
-      if (this.getStore().mode === 'vertical') {
-        this._dragTarget.y = Math.max(this._dragTarget.y, -2.6);
-      }
+      // Only update the RAW target from mouse — smoothed target is updated in _frame()
+      let ry = worldPoint.y;
+      if (this.getStore().mode === 'vertical') ry = Math.max(ry, -2.6);
+      this._rawDragTarget = { x: worldPoint.x, y: ry, z: worldPoint.z };
     };
 
     this.interaction.callbacks.onDragEnd = () => {
@@ -216,6 +224,22 @@ export class RenderLoop {
       if (animNodes) {
         nodes = animNodes;
         this.act.setNodePositions(nodes);
+      }
+    }
+
+    // ── Smooth drag target toward raw mouse position ───────────────────────────
+    if (this._dragActive) {
+      const rx = this._rawDragTarget.x, ry = this._rawDragTarget.y, rz = this._rawDragTarget.z;
+      const tx = this._dragTarget.x,    ty = this._dragTarget.y,    tz = this._dragTarget.z;
+      let dx = rx - tx, dy = ry - ty, dz = rz - tz;
+      const dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (dist > 1e-6) {
+        // Velocity-limit: cap how far the smoothed target can jump per frame
+        const step = Math.min(dist * this._DRAG_LERP, this._DRAG_MAX_D);
+        const scale = step / dist;
+        this._dragTarget.x = tx + dx * scale;
+        this._dragTarget.y = ty + dy * scale;
+        this._dragTarget.z = tz + dz * scale;
       }
     }
 

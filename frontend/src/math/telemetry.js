@@ -8,11 +8,11 @@
 const HISTORY_SIZE = 10;
 const VEL_ALPHA   = 0.10; // EMA weight for velocity  (lower = smoother / more lag)
 const ACC_ALPHA   = 0.06; // EMA weight for acceleration
-const ANG_ALPHA   = 0.25; // EMA weight for angle display
+const ANG_ALPHA   = 0.25; // EMA smoothing for angle display
 
 // Realistic robotic servo limits
-const MAX_VEL_RAD  = 3.0;   // ≈ 172°/s  (moderate industrial servo)
-const MAX_ACC_RAD  = 12.0;  // ≈ 687°/s²
+const MAX_VEL_RAD  = 8.0;   // ≈ 458°/s  (fast servo)
+const MAX_ACC_RAD  = 40.0;  // ≈ 2292°/s²
 
 export class TelemetryTracker {
   constructor(numJoints) {

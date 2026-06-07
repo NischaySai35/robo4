@@ -49,24 +49,27 @@ function signedAngle2(ax, ay, bx, by) {
  * prevAngle: clamped angle from the previous iteration (seeded from geometry
  *            before the first iteration so cross-frame memory is available).
  */
-// Normal rate limit per FABRIK iteration (20 iters → max ~57° per frame).
-const MAX_DELTA_PER_ITER   = 0.05;
-// Tight rate when joint is AT its limit (20 iters → max ~5.7° per frame).
-// Prevents same-sign drift from carrying the angle through the zero-crossing
-// band (±17°) in one frame, which would allow a -100°→+100° flip.
-const TIGHT_DELTA_PER_ITER = 0.005;
+// Rate limit at centre of range (joint near 0°) — fast, responsive.
+const RATE_CENTER = 0.07;
+// Rate limit at the joint limit boundary — very slow, prevents drift-through-zero.
+const RATE_AT_LIM = 0.004;
 // Sign-flips are only treated as natural zero-crossings within this band.
 const ZERO_CROSS_BAND = 0.30; // rad ≈ 17°
 
 /**
- * @param {number}      angle     raw computed angle this iteration
- * @param {number}      limit     joint limit (radians, symmetric)
- * @param {number|null} prevAngle clamped angle from previous iteration / frame
- * @param {boolean}     freeze    true when arm is at reach limit AND joint is at
- *                                its limit — FABRIK geometry is distorted, hold fixed
+ * Clamp angle to [−limit, +limit].
+ *
+ * Anti-snap strategy:
+ *  1. Sign-flip freeze: if prevAngle is far from zero and the raw angle flips sign,
+ *     it is a FABRIK geometry distortion, not real motion — freeze in place.
+ *  2. Smooth adaptive rate: the per-iteration rate limit interpolates linearly from
+ *     RATE_AT_LIM (at ±limit) to RATE_CENTER (at 0).  No hard boundary, no jitter.
+ *     A joint at ±100° can drift at most RATE_AT_LIM × 20 = 4.6° per frame, so it
+ *     can never cross zero within a single frame regardless of what FABRIK produces.
+ *  3. Reach-limit hard-freeze (passed in via `freeze`): when the target is beyond
+ *     chain reach AND the joint is already at its limit, hold it completely fixed.
  */
 function clampAngle(angle, limit, prevAngle, freeze = false) {
-  // Hard-freeze: target is beyond reach AND joint is already at its limit.
   if (freeze && prevAngle !== null) {
     return { clamped: prevAngle, hitLimit: true };
   }
@@ -74,44 +77,27 @@ function clampAngle(angle, limit, prevAngle, freeze = false) {
   let a = angle;
 
   if (prevAngle !== null) {
-    const atLimit   = Math.abs(prevAngle) >= limit - 0.02; // within ~1° of limit
     const signFlipped = prevAngle !== 0 && Math.sign(a) !== Math.sign(prevAngle);
 
-    if (atLimit && signFlipped) {
-      // At limit, opposite sign → geometric snap / wrap.  Hard freeze.
-      a = prevAngle;
-    } else if (atLimit) {
-      // At limit, same sign → allow very slow release so FABRIK distortion
-      // (which produces raw angles far from the limit) can't carry the joint
-      // through zero in a single frame.
-      const delta = a - prevAngle;
-      if (Math.abs(delta) > TIGHT_DELTA_PER_ITER) {
-        a = prevAngle + Math.sign(delta) * TIGHT_DELTA_PER_ITER;
-      }
-    } else if (signFlipped) {
+    if (signFlipped) {
       if (Math.abs(a) > Math.PI * 0.65) {
-        // Large reflex angle — atan2 wrap-around.  Unwrap then rate-limit.
+        // Large reflex angle — atan2 wrap-around artifact.  Unwrap.
         a += a < 0 ? 2 * Math.PI : -2 * Math.PI;
-        const delta = a - prevAngle;
-        if (Math.abs(delta) > MAX_DELTA_PER_ITER) {
-          a = prevAngle + Math.sign(delta) * MAX_DELTA_PER_ITER;
-        }
       } else if (Math.abs(prevAngle) > ZERO_CROSS_BAND) {
-        // Sign flip far from zero: FABRIK distortion, not real motion.  Freeze.
+        // Sign flip far from zero → FABRIK distortion.  Freeze in place.
         a = prevAngle;
-      } else {
-        // Natural zero crossing.  Rate-limit only.
-        const delta = a - prevAngle;
-        if (Math.abs(delta) > MAX_DELTA_PER_ITER) {
-          a = prevAngle + Math.sign(delta) * MAX_DELTA_PER_ITER;
-        }
       }
-    } else {
-      // Same sign, not at limit: normal rate-limit.
-      const delta = a - prevAngle;
-      if (Math.abs(delta) > MAX_DELTA_PER_ITER) {
-        a = prevAngle + Math.sign(delta) * MAX_DELTA_PER_ITER;
-      }
+      // else: near zero — natural crossing, fall through to rate-limit
+    }
+
+    // Smooth adaptive rate: linearly slower as joint approaches its limit.
+    // t=0 at centre → RATE_CENTER.  t=1 at limit → RATE_AT_LIM.  No step, no jitter.
+    const t = Math.min(Math.abs(prevAngle) / limit, 1);
+    const rate = RATE_AT_LIM + (RATE_CENTER - RATE_AT_LIM) * (1 - t);
+
+    const d = a - prevAngle;
+    if (Math.abs(d) > rate) {
+      a = prevAngle + Math.sign(d) * rate;
     }
   }
 
@@ -207,6 +193,9 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
     }
   }
 
+  // Snapshot angles before any iteration — used to preserve tail joints
+  const seedAngles = lastAngles.slice();
+
   // ── Reachability clamp (only for anchor→target segment count) ─────────────
   const chainLo = Math.min(anchorIdx, targetIdx);
   const chainHi = Math.max(anchorIdx, targetIdx);
@@ -217,6 +206,38 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
   if (dToTarget > subLen) {
     const dir = normalize2({ x: target.x - pts[anchorIdx].x, y: target.y - pts[anchorIdx].y });
     effectiveTarget = { x: pts[anchorIdx].x + dir.x * subLen, y: pts[anchorIdx].y + dir.y * subLen };
+  }
+
+  // ── All-joints-at-limit + reach-limit early exit ──────────────────────────
+  // When every constrained joint is already pinned at its limit AND the drag
+  // target is at/near chain reach, FABRIK cannot converge — it just distorts
+  // the geometry and slowly drifts joints away from their limits (same-sign
+  // drift).  Return current positions immediately.
+  // When the target is within reach the user may be dragging back to release
+  // joints, so we let FABRIK run normally in that case.
+  if (atReachLimit) {
+    let allAtLimit = true;
+    if (targetIdx > anchorIdx) {
+      for (let i = anchorIdx + 1; i < n; i++) {
+        if (lastAngles[i] === null || Math.abs(lastAngles[i]) < limit - 0.02) {
+          allAtLimit = false; break;
+        }
+      }
+    } else {
+      for (let i = anchorIdx - 1; i >= 0; i--) {
+        if (lastAngles[i] === null || Math.abs(lastAngles[i]) < limit - 0.02) {
+          allAtLimit = false; break;
+        }
+      }
+    }
+    if (allAtLimit) {
+      if (targetIdx > anchorIdx) {
+        for (let i = anchorIdx + 1; i < n; i++) limitHits[i - 1] = true;
+      } else {
+        for (let i = anchorIdx - 1; i >= 0; i--) limitHits[i + 1] = true;
+      }
+      return { pts, limitHits };
+    }
   }
 
   const anchorPt = { ...pts[anchorIdx] };
@@ -280,9 +301,17 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         }
 
         if (inX !== null) {
-          const raw = signedAngle2(inX, inY, dx, dy);
-          const freeze = atReachLimit && lastAngles[i] !== null && Math.abs(lastAngles[i]) >= limit - 0.01;
-          const { clamped, hitLimit } = clampAngle(raw, limit, lastAngles[i], freeze);
+          let clamped, hitLimit;
+          if (i > targetIdx && seedAngles[i] !== null) {
+            // Tail beyond drag point: preserve pre-drag angle so only the
+            // primary sub-chain (anchor → targetIdx) moves.
+            clamped  = Math.max(-limit, Math.min(limit, seedAngles[i]));
+            hitLimit = Math.abs(clamped) >= limit - 0.01;
+          } else {
+            const raw = signedAngle2(inX, inY, dx, dy);
+            const freeze = atReachLimit && lastAngles[i] !== null && Math.abs(lastAngles[i]) >= limit - 0.01;
+            ({ clamped, hitLimit } = clampAngle(raw, limit, lastAngles[i], freeze));
+          }
           lastAngles[i] = clamped;
           if (hitLimit) limitHits[i - 1] = true;
           const cos = Math.cos(clamped), sin = Math.sin(clamped);
@@ -313,9 +342,16 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         }
 
         if (inX !== null) {
-          const raw = signedAngle2(inX, inY, dx, dy);
-          const freeze = atReachLimit && lastAngles[i] !== null && Math.abs(lastAngles[i]) >= limit - 0.01;
-          const { clamped, hitLimit } = clampAngle(raw, limit, lastAngles[i], freeze);
+          let clamped, hitLimit;
+          if (i < targetIdx && seedAngles[i] !== null) {
+            // Tail beyond drag point (leftward chain): preserve pre-drag angle
+            clamped  = Math.max(-limit, Math.min(limit, seedAngles[i]));
+            hitLimit = Math.abs(clamped) >= limit - 0.01;
+          } else {
+            const raw = signedAngle2(inX, inY, dx, dy);
+            const freeze = atReachLimit && lastAngles[i] !== null && Math.abs(lastAngles[i]) >= limit - 0.01;
+            ({ clamped, hitLimit } = clampAngle(raw, limit, lastAngles[i], freeze));
+          }
           lastAngles[i] = clamped;
           if (hitLimit) limitHits[i + 1] = true;
           const cos = Math.cos(clamped), sin = Math.sin(clamped);

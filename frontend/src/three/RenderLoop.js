@@ -47,6 +47,7 @@ export class RenderLoop {
     this._dragNodeIndex = null;
     this._dragTarget    = { x: 0, y: 0, z: 0 }; // smoothed — what FABRIK actually sees
     this._rawDragTarget = { x: 0, y: 0, z: 0 }; // raw mouse world position
+    this._grabOffset    = { x: 0, y: 0, z: 0 }; // click point minus drag node position
     this._draggedType = null;
     this._draggedIndex = null;
 
@@ -93,6 +94,11 @@ export class RenderLoop {
       // Init both raw and smoothed to the grab point so there's no initial lurch
       this._rawDragTarget = { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z };
       this._dragTarget    = { x: worldPoint.x, y: worldPoint.y, z: worldPoint.z };
+      // Grab offset: difference between click point and the drag node's world position.
+      // Subtracting this from the drag target keeps the clicked spot under the cursor
+      // instead of snapping the node to the cursor on the first frame.
+      const np = this.getStore().nodePositions[dragNode];
+      this._grabOffset = { x: worldPoint.x - np.x, y: worldPoint.y - np.y, z: worldPoint.z - np.z };
       this._draggedType = type;
       this._draggedIndex = index;
 
@@ -245,12 +251,18 @@ export class RenderLoop {
 
     // ── IK solve ──────────────────────────────────────────────────────────────
     if (this._dragActive && this._dragNodeIndex !== null && !this._animating) {
+      // Apply grab offset so the exact point clicked stays under the cursor
+      const ikTarget = {
+        x: this._dragTarget.x - this._grabOffset.x,
+        y: this._dragTarget.y - this._grabOffset.y,
+        z: this._dragTarget.z - this._grabOffset.z,
+      };
       const result = solveIK(
         nodes,
         SEG_LENS,
         s.rootRodIndex,
         this._dragNodeIndex,
-        this._dragTarget,
+        ikTarget,
         s.mode,
         s.jointLimit
       );

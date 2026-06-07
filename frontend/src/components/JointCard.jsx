@@ -43,14 +43,14 @@ function ArcIndicator({ angle, limit, limitHit, palette }) {
   const arcColor   = limitHit ? (palette?.neg ?? '#cc3344') : (palette?.main ?? '#0088ff');
   const dotColor   = limitHit ? '#ff5533' : (palette?.main ?? '#0088ff');
 
-  function arcPath(fromDeg, toDeg) {
+  function arcPath(fromDeg, toDeg, sweep = 1) {
     const toRad = (d) => (d - 90) * (Math.PI / 180);
     const x1 = cx + R * Math.cos(toRad(fromDeg));
     const y1 = cy + R * Math.sin(toRad(fromDeg));
     const x2 = cx + R * Math.cos(toRad(toDeg));
     const y2 = cy + R * Math.sin(toRad(toDeg));
     const large = Math.abs(toDeg - fromDeg) > 180 ? 1 : 0;
-    return `M ${x1} ${y1} A ${R} ${R} 0 ${large} 1 ${x2} ${y2}`;
+    return `M ${x1} ${y1} A ${R} ${R} 0 ${large} ${sweep} ${x2} ${y2}`;
   }
 
   const limitDeg = (limit * 180) / Math.PI;
@@ -88,10 +88,10 @@ function ArcIndicator({ angle, limit, limitHit, palette }) {
         x1={cx} y1={cy - R + 3} x2={cx} y2={cy - R + 9}
         stroke={palette?.main ?? '#0088ff'} strokeWidth="1.5" opacity="0.6"
       />
-      {/* Active arc */}
-      {Math.abs(endDeg - startDeg) > 0.5 && (
+      {/* Active arc — sweep clockwise for positive angles, counter-clockwise for negative */}
+      {Math.abs(endDeg) > 0.5 && (
         <path
-          d={arcPath(startDeg < -limitDeg ? -limitDeg : 0, endDeg)}
+          d={arcPath(0, endDeg, endDeg >= 0 ? 1 : 0)}
           fill="none"
           stroke={arcColor}
           strokeWidth="3.5"

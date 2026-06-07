@@ -43,21 +43,21 @@ export class TelemetryTracker {
         if (dt > 0) rawVel = (hist[n - 1].angle - hist[n - 2].angle) / dt;
       }
 
-      // Acceleration: from previous two velocity estimates
+      // Clamp velocity before it feeds into acceleration computation
+      rawVel = Math.max(-MAX_VEL_RAD, Math.min(MAX_VEL_RAD, rawVel));
+
+      // Acceleration: from previous two clamped velocity estimates
       let rawAcc = 0;
       if (hist.length >= 5) {
         const n = hist.length;
         const dt1 = (hist[n - 3].time - hist[n - 5].time) / 1000;
         const dt2 = (hist[n - 1].time - hist[n - 3].time) / 1000;
         if (dt1 > 0.001 && dt2 > 0.001) {
-          const v1 = (hist[n - 3].angle - hist[n - 5].angle) / dt1;
-          const v2 = rawVel;
-          rawAcc = (v2 - v1) / ((dt1 + dt2) * 0.5);
+          const v1raw = (hist[n - 3].angle - hist[n - 5].angle) / dt1;
+          const v1 = Math.max(-MAX_VEL_RAD, Math.min(MAX_VEL_RAD, v1raw));
+          rawAcc = (rawVel - v1) / ((dt1 + dt2) * 0.5);
         }
       }
-
-      // Clamp to physical limits BEFORE smoothing
-      rawVel = Math.max(-MAX_VEL_RAD, Math.min(MAX_VEL_RAD, rawVel));
       rawAcc = Math.max(-MAX_ACC_RAD, Math.min(MAX_ACC_RAD, rawAcc));
 
       const prev = this.smoothed[j];

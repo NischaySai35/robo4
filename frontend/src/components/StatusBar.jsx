@@ -9,7 +9,7 @@ const STATUS_CONFIG = {
     pulse: false,
   },
   solving: {
-    label: 'SOLVING IK',
+    label: 'FK ACTIVE',
     color: '#1a3322',
     glow: '#00ff8844',
     dot: '#00ff88',
@@ -26,8 +26,7 @@ const STATUS_CONFIG = {
 
 export default function StatusBar() {
   const status = useArmStore(s => s.status);
-  const isDragging = useArmStore(s => s.isDragging);
-  const cfg = STATUS_CONFIG[status] ?? STATUS_CONFIG.idle;
+  const cfg    = STATUS_CONFIG[status] ?? STATUS_CONFIG.idle;
 
   return (
     <div
@@ -45,9 +44,6 @@ export default function StatusBar() {
       <span className="status-label" style={{ color: cfg.dot }}>
         {cfg.label}
       </span>
-      {isDragging && (
-        <span className="status-drag-hint">· FABRIK ACTIVE</span>
-      )}
     </div>
   );
 }

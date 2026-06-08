@@ -1,110 +1,51 @@
 import { create } from 'zustand';
 
-// ── Arm constants ────────────────────────────────────────────────────────────
-export const NUM_RODS = 4;
-export const NUM_JOINTS = 3;
-export const NUM_NODES = 5; // 4 rods → 5 connection points
-export const ROD_LENGTH = 1.6;
-export const ROD_RADIUS = 0.07;
+export const ROD_LENGTH   = 1.6;
+export const ROD_RADIUS   = 0.07;
 export const JOINT_RADIUS = 0.13;
-export const ENDCAP_SIZE = 0.22;
-export const JOINT_LIMIT = Math.PI * (100 / 180); // ±100°
-export const DEFAULT_ROOT = 1; // rod index 1 = second rod (middle-ish)
+export const ENDCAP_SIZE  = 0.32;
+export const JOINT_LIMIT  = Math.PI * (100 / 180);
 
-// Initial node positions — horizontal mode, arm along X, always centered at origin
-export function getRestPositions(mode, rootIdx = DEFAULT_ROOT) {
-  const L = ROD_LENGTH;
-  // Always center the full arm at x=0, regardless of which rod is root.
-  // Full arm span = (NUM_NODES-1)*L; offset = half that.
-  const halfSpan = ((NUM_NODES - 1) * L) / 2; // = 3.2
-  if (mode === 'horizontal') {
-    return Array.from({ length: NUM_NODES }, (_, i) => ({
-      x: i * L - halfSpan,
-      y: 0,
-      z: 0,
-    }));
-  } else {
-    // vertical: arm along -Y. Position so bottom node (node 4) sits above ground (y=-3.2)
-    const yBottom = -2.6;
-    const yTop = yBottom + (NUM_NODES - 1) * L; // = -2.6 + 6.4 = 3.8
-    return Array.from({ length: NUM_NODES }, (_, i) => ({
-      x: 0,
-      y: yTop - i * L,
-      z: 0,
-    }));
-  }
-}
+export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
 
-const initialMode = 'horizontal';
-const initialNodes = getRestPositions(initialMode, DEFAULT_ROOT);
+// Chain: R1—J1(twist)—R2—J2(bend)—R3—J3(bend)—R4—J4(bend)—R5—J5(twist)—R6
+export const JOINT_DEFS = [
+  { id: 'J1', label: 'CUBE L',  type: 'twist', bodyA: 'R1', bodyB: 'R2', limit: Math.PI },
+  { id: 'J2', label: 'JOINT 1', type: 'bend',  bodyA: 'R2', bodyB: 'R3', limit: JOINT_LIMIT },
+  { id: 'J3', label: 'JOINT 2', type: 'bend',  bodyA: 'R3', bodyB: 'R4', limit: JOINT_LIMIT },
+  { id: 'J4', label: 'JOINT 3', type: 'bend',  bodyA: 'R4', bodyB: 'R5', limit: JOINT_LIMIT },
+  { id: 'J5', label: 'CUBE R',  type: 'twist', bodyA: 'R5', bodyB: 'R6', limit: Math.PI },
+];
 
 const makeJoint = () => ({ angle: 0, velocity: 0, acceleration: 0, limitHit: false });
 
 export const useArmStore = create((set, get) => ({
-  // ── Configuration ──
-  rootRodIndex: DEFAULT_ROOT,
-  mode: initialMode,
-  jointLimit: JOINT_LIMIT,
+  activeRootId: 'R1',
+  jointAngles: [0, 0, 0, 0, 0],
+  joints: Array.from({ length: 5 }, makeJoint),
 
-  // ── Node positions (world-space) — the single source of truth for geometry ──
-  nodePositions: initialNodes.map(p => ({ ...p })),
-
-  // ── Joint telemetry ──
-  joints: Array.from({ length: NUM_JOINTS }, makeJoint),
-
-  // ── Interaction ──
   isDragging: false,
-  dragNodeIndex: null,    // which FABRIK node index is being dragged
-  draggedObjectId: null,  // 'rod-0', 'joint-1', 'endcap-left', etc.
-
-  // ── Status ──
-  status: 'idle', // 'idle' | 'solving' | 'limit_hit'
-
-  // ── End effector (farther free tip from root) ──
+  status: 'idle',
   endEffectorPosition: { x: 0, y: 0, z: 0 },
   reachPercent: 0,
-
-  // ── Mode transition lock ──
-  transitioning: false,
-
-  // ── Home ──
   pendingHome: false,
 
-  // ── Actions ──
-  setRootRod: (idx) => {
-    if (idx === get().rootRodIndex) return;
-    set({ rootRodIndex: idx });
+  setRootRod: (rodId) => {
+    if (rodId === get().activeRootId) return;
+    set({ activeRootId: rodId });
   },
 
-  setMode: (mode) => {
-    if (mode === get().mode || get().transitioning) return;
-    set({ transitioning: true, mode });
-    // Reset to rest positions for new mode (animation handled in Three.js layer)
-    const restNodes = getRestPositions(mode, get().rootRodIndex);
-    set({ nodePositions: restNodes });
-    setTimeout(() => set({ transitioning: false }), 800);
+  setJointAngle: (index, angle) => {
+    const limit = JOINT_DEFS[index].limit;
+    const clamped = Math.max(-limit, Math.min(limit, angle));
+    const angles = [...get().jointAngles];
+    angles[index] = clamped;
+    set({ jointAngles: angles });
   },
-
-  setNodePositions: (positions) => set({ nodePositions: positions }),
 
   setJointTelemetry: (joints) => set({ joints }),
-
-  setDragging: (isDragging, dragNodeIndex = null, draggedObjectId = null) =>
-    set({ isDragging, dragNodeIndex, draggedObjectId }),
-
-  setStatus: (status) => set({ status }),
-
-  updateEndEffector: (position, reachPercent) =>
-    set({ endEffectorPosition: position, reachPercent }),
-
-  homeArm: () => set({ pendingHome: true }),
-  clearPendingHome: () => set({ pendingHome: false }),
-
-  updateJointLimitHit: (jointIdx, hit) =>
-    set(state => {
-      const joints = state.joints.map((j, i) =>
-        i === jointIdx ? { ...j, limitHit: hit } : j
-      );
-      return { joints };
-    }),
+  setStatus:         (status) => set({ status }),
+  updateEndEffector: (position, reachPercent) => set({ endEffectorPosition: position, reachPercent }),
+  homeArm:           () => set({ pendingHome: true }),
+  clearPendingHome:  () => set({ pendingHome: false }),
 }));

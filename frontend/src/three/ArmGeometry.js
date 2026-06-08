@@ -58,6 +58,13 @@ const MAT = {
     emissive: 0x8a5a00,
     emissiveIntensity: 0.08,
   }),
+  endcapRoot: () => new THREE.MeshStandardMaterial({
+    color: 0xffcc44,
+    roughness: 0.14,
+    metalness: 0.82,
+    emissive: 0xff9900,
+    emissiveIntensity: 0.55,
+  }),
   axisLine: (color) => new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.7 }),
   trail: () => new THREE.LineDashedMaterial({
     color: 0x00e8ff,
@@ -151,9 +158,13 @@ export class ArmGeometry {
       this.joints.push(group);
     }
 
-    // ── End caps ──────────────────────────────────────────────────────────────
+    // ── End caps (pivot-joint cubes) ──────────────────────────────────────────
+    this._endcapMats = [];
     for (let i = 0; i < 2; i++) {
       const mat = MAT.endcap();
+      const rootMat = MAT.endcapRoot();
+      this._endcapMats.push({ normal: mat, root: rootMat });
+
       const mesh = new THREE.Mesh(GEO.endcap, mat);
       mesh.castShadow = true;
       mesh.receiveShadow = true;
@@ -173,12 +184,26 @@ export class ArmGeometry {
     this.trailPoints = trailPts;
   }
 
-  /** Update which rod is visually root (glow + material swap). */
+  /** Update which rod/endcap is visually root. rootIdx -1 = left cube, 4 = right cube. */
   setRootRod(rootIdx, prevRootIdx) {
+    // Clear previous root highlight
     if (prevRootIdx !== undefined && prevRootIdx !== rootIdx) {
-      this.rods[prevRootIdx].material = this._rodMats[prevRootIdx].normal;
+      if (prevRootIdx === -1) {
+        this.endcaps[0].material = this._endcapMats[0].normal;
+      } else if (prevRootIdx === 4) {
+        this.endcaps[1].material = this._endcapMats[1].normal;
+      } else if (prevRootIdx >= 0 && prevRootIdx < this.rods.length) {
+        this.rods[prevRootIdx].material = this._rodMats[prevRootIdx].normal;
+      }
     }
-    this.rods[rootIdx].material = this._rodMats[rootIdx].root;
+    // Apply new root highlight
+    if (rootIdx === -1) {
+      this.endcaps[0].material = this._endcapMats[0].root;
+    } else if (rootIdx === 4) {
+      this.endcaps[1].material = this._endcapMats[1].root;
+    } else if (rootIdx >= 0 && rootIdx < this.rods.length) {
+      this.rods[rootIdx].material = this._rodMats[rootIdx].root;
+    }
   }
 
   /** Highlight the currently dragged object (overrides hover). */
@@ -226,6 +251,9 @@ export class ArmGeometry {
       }
     }
     if (type === 'endcap' && index !== undefined) {
+      // Skip root endcap — it has its own permanent glow
+      const isRoot = (rootRodIndex === -1 && index === 0) || (rootRodIndex === 4 && index === 1);
+      if (isRoot) return;
       const mat = this.endcaps[index]?.material;
       if (mat) {
         mat.emissive?.setHex(active ? 0xddaa00 : 0x8a5a00);

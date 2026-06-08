@@ -20,7 +20,7 @@ const _xAxis = new THREE.Vector3(1, 0, 0);
 export class ArmRenderer {
   constructor(armGeometry) {
     this.geo = armGeometry;
-    this._prevRootIdx = -1;
+    this._prevRootIdx = null;
   }
 
   /**
@@ -35,13 +35,13 @@ export class ArmRenderer {
   update(nodes, rootRod, mode, limitHits, dt) {
     this._updateRods(nodes, rootRod);
     this._updateJoints(nodes, mode, limitHits);
-    this._updateEndCaps(nodes);
+    this._updateEndCaps(nodes, rootRod);
     this.geo.tickFlash(dt);
   }
 
   _updateRods(nodes, rootRod) {
     if (this._prevRootIdx !== rootRod) {
-      this.geo.setRootRod(rootRod, this._prevRootIdx >= 0 ? this._prevRootIdx : undefined);
+      this.geo.setRootRod(rootRod, this._prevRootIdx !== null ? this._prevRootIdx : undefined);
       this._prevRootIdx = rootRod;
     }
 
@@ -92,26 +92,29 @@ export class ArmRenderer {
     }
   }
 
-  _updateEndCaps(nodes) {
+  _updateEndCaps(nodes, rootRod) {
     const e0 = nodes[0], e1 = nodes[4];
     const ec = this.geo.endcaps;
 
     ec[0].position.set(e0.x, e0.y, e0.z);
     ec[1].position.set(e1.x, e1.y, e1.z);
 
-    // Orient end caps to face along the first/last rod direction
-    _v1.set(nodes[1].x - e0.x, nodes[1].y - e0.y, nodes[1].z - e0.z).normalize();
-    if (_v1.lengthSq() > 0.0001) {
-      ec[0].quaternion.setFromUnitVectors(_xAxis, _v1);
+    // When an endcap is the fixed root it must not rotate — it is a rigid mount.
+    // Only orient non-root endcaps to face along their connected rod.
+    if (rootRod !== -1) {
+      _v1.set(nodes[1].x - e0.x, nodes[1].y - e0.y, nodes[1].z - e0.z).normalize();
+      if (_v1.lengthSq() > 0.0001) ec[0].quaternion.setFromUnitVectors(_xAxis, _v1);
     }
-    _v1.set(e1.x - nodes[3].x, e1.y - nodes[3].y, e1.z - nodes[3].z).normalize();
-    if (_v1.lengthSq() > 0.0001) {
-      ec[1].quaternion.setFromUnitVectors(_xAxis, _v1);
+    if (rootRod !== 4) {
+      _v1.set(e1.x - nodes[3].x, e1.y - nodes[3].y, e1.z - nodes[3].z).normalize();
+      if (_v1.lengthSq() > 0.0001) ec[1].quaternion.setFromUnitVectors(_xAxis, _v1);
     }
   }
 
-  /** Compute root rod center for trail origin. */
+  /** Compute root centre for trail origin. Handles endcap sentinels -1 and 4. */
   getRootCenter(nodes, rootRod) {
+    if (rootRod < 0)  return { ...nodes[0] };             // left endcap root
+    if (rootRod >= 4) return { ...nodes[4] };             // right endcap root
     const a = nodes[rootRod], b = nodes[rootRod + 1];
     return { x: (a.x + b.x) * 0.5, y: (a.y + b.y) * 0.5, z: (a.z + b.z) * 0.5 };
   }

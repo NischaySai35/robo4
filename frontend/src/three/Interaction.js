@@ -85,7 +85,7 @@ export class Interaction {
     if (this._hitId) {
       if (!this._dragging && ndc.distanceTo(this._mouseDownPos) > 0.015) {
         this._dragging = true;
-        this.callbacks.onDragStart?.(this._hitId);
+        this.callbacks.onDragStart?.(this._hitId, ndc);
         this.canvas.style.cursor = 'grabbing';
       }
       if (this._dragging) {
@@ -149,7 +149,7 @@ export class Interaction {
     const ndc = this._getNDC(t.clientX, t.clientY);
     if (!this._dragging && ndc.distanceTo(this._mouseDownPos) > 0.015) {
       this._dragging = true;
-      this.callbacks.onDragStart?.(this._hitId);
+      this.callbacks.onDragStart?.(this._hitId, ndc);
     }
     if (this._dragging) {
       const dx = ndc.x - this._dragLastNDC.x;

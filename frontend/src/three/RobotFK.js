@@ -123,7 +123,7 @@ export class RobotFK {
    *
    * @returns {{ newAngles: number[], rootPos: THREE.Vector3, rootQuat: THREE.Quaternion }}
    */
-  computeAnglesForRoot(newRootId) {
+  computeAnglesForRoot(newRootId, mode = 'horizontal') {
     // Snapshot every rod's world quaternion and the new root's world position
     const worldQuats = {};
     for (const id of ROD_IDS) {
@@ -159,9 +159,14 @@ export class RobotFK {
 
         let theta;
         if (def.type === 'bend') {
-          // rotation.y=θ maps (1,0,0) → (cosθ, 0, -sinθ)
           const lx = new THREE.Vector3(1, 0, 0).applyQuaternion(J_relative);
-          theta = Math.atan2(-lx.z, lx.x);
+          if (mode === 'vertical') {
+            // rotation.z=θ maps (1,0,0) → (cosθ, sinθ, 0)
+            theta = Math.atan2(lx.y, lx.x);
+          } else {
+            // rotation.y=θ maps (1,0,0) → (cosθ, 0, -sinθ)
+            theta = Math.atan2(-lx.z, lx.x);
+          }
         } else {
           // rotation.x=θ maps (0,1,0) → (0, cosθ, sinθ)
           const ly = new THREE.Vector3(0, 1, 0).applyQuaternion(J_relative);
@@ -209,17 +214,24 @@ export class RobotFK {
 
   /**
    * Update joint rotations without rebuilding the hierarchy.
-   * @param {number[]} jointAngles  — array of 5 angles, index matches JOINT_DEFS
+   * horizontal mode: bend joints rotate around Y (XZ plane)
+   * vertical mode:   bend joints rotate around Z (XY plane)
+   * @param {number[]} jointAngles
+   * @param {'horizontal'|'vertical'} mode
    */
-  updateAngles(jointAngles) {
+  updateAngles(jointAngles, mode = 'horizontal') {
     for (let i = 0; i < JOINT_DEFS.length; i++) {
       const def = JOINT_DEFS[i];
       const node = this._jointNodes[def.id];
       if (!node) continue;
       if (def.type === 'twist') {
         node.rotation.x = jointAngles[i];
+      } else if (mode === 'vertical') {
+        node.rotation.z = jointAngles[i];
+        node.rotation.y = 0;
       } else {
         node.rotation.y = jointAngles[i];
+        node.rotation.z = 0;
       }
     }
   }

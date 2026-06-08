@@ -15,6 +15,7 @@ import * as THREE from 'three';
 import { TelemetryTracker } from '../math/telemetry.js';
 import { solveIK } from '../math/fabrik.js';
 import { ROD_IDS, JOINT_DEFS, ROD_LENGTH, ENDCAP_SIZE, JOINT_LIMIT } from '../store/armStore.js';
+import { bridge } from './cameraBridge.js';
 
 // Max reach: 4 normal rods + 2 endcap cubes fully extended
 const MAX_REACH = ENDCAP_SIZE * 2 + ROD_LENGTH * 4;
@@ -35,13 +36,62 @@ export class RenderLoop {
     this.getStore = getStore;
     this.act      = storeActions;
 
-    this._telemetry  = new TelemetryTracker(5);
-    this._raf        = null;
-    this._lastRootId = 'R1'; // matches initial store state; avoids spurious rebuild on frame 1
-    this._ikTarget   = new THREE.Vector3();
+    this._telemetry   = new TelemetryTracker(5);
+    this._raf         = null;
+    this._lastRootId  = 'R1'; // matches initial store state; avoids spurious rebuild on frame 1
+    this._ikTarget    = new THREE.Vector3();
+    this._dragOffset  = new THREE.Vector3(); // offset from cursor world to drag joint (sticky pickup)
+
+    // Expose arm node positions to the bridge so ViewControls/fitCamera can use them
+    bridge.getArmNodes = () => {
+      const positions = this.robotFK.getNodePositions();
+      return positions.map(v => ({ x: v.x, y: v.y, z: v.z }));
+    };
 
     this._setupInteractionCallbacks();
   }
+
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  /**
+   * Project cursor NDC to the arm's working plane.
+   * horizontal: y=0 (XZ plane)
+   * vertical:   z=0 (XY plane)
+   * Returns null when ray is nearly parallel to the plane (camera too low/flat).
+   */
+  _cursorToPlane(ndc, mode = 'horizontal') {
+    const cam = this.scene.camera;
+    const cursor3d = new THREE.Vector3(ndc.x, ndc.y, 0.5).unproject(cam);
+    const rayDir   = new THREE.Vector3().subVectors(cursor3d, cam.position).normalize();
+
+    if (mode === 'vertical') {
+      if (Math.abs(rayDir.z) < 0.05) return null;
+      const t = -cam.position.z / rayDir.z;
+      if (t < 0.1 || t > 80) return null;
+      return new THREE.Vector3(
+        cam.position.x + rayDir.x * t,
+        cam.position.y + rayDir.y * t,
+        0,
+      );
+    } else {
+      if (Math.abs(rayDir.y) < 0.05) return null;
+      const t = -cam.position.y / rayDir.y;
+      if (t < 0.1 || t > 80) return null;
+      return new THREE.Vector3(
+        cam.position.x + rayDir.x * t,
+        0,
+        cam.position.z + rayDir.z * t,
+      );
+    }
+  }
+
+  /** Map rodIdx → inner-chain node index for FABRIK target. */
+  _ikDragNode(rodIdx, rootIdx) {
+    if (rodIdx > rootIdx) return Math.min(rodIdx, 4);     // pull far-side joint of the rod
+    return Math.max(rodIdx - 1, 0);                        // pull near-side joint of the rod
+  }
+
+  // ── Interaction callbacks ──────────────────────────────────────────────────
 
   _setupInteractionCallbacks() {
     this.interaction.callbacks.onHoverChange = (rodId, active) => {
@@ -52,29 +102,60 @@ export class RenderLoop {
       this.act.setRootRod(rodId);
     };
 
-    this.interaction.callbacks.onDragStart = () => {
+    this.interaction.callbacks.onDragStart = (rodId, startNdc) => {
       this.scene.setOrbitEnabled(false);
-      // Seed IK target at current end-effector world position
-      const ee = this.robotFK.getEndEffectorWorld();
-      this._ikTarget.set(ee.x, ee.y, ee.z);
+
+      const state   = this.getStore();
+      const mode    = state.mode || 'horizontal';
+      const rootIdx = ROD_IDS.indexOf(state.activeRootId);
+      const rodIdx  = ROD_IDS.indexOf(rodId);
+      const dragNode = this._ikDragNode(rodIdx, rootIdx);
+
+      // Get drag joint world position
+      const joints = this.robotFK.getNodePositions();
+      const dragJointPos = joints[dragNode];
+
+      if (startNdc) {
+        // Project cursor to arm plane at drag start
+        const cursorWorld = this._cursorToPlane(startNdc, mode);
+        if (cursorWorld && dragJointPos) {
+          // "Sticky" offset: keep the clicked point on the arm under the cursor
+          this._dragOffset.set(
+            dragJointPos.x - cursorWorld.x,
+            dragJointPos.y - cursorWorld.y,
+            dragJointPos.z - cursorWorld.z,
+          );
+          this._ikTarget.copy(dragJointPos);
+        } else {
+          this._dragOffset.set(0, 0, 0);
+          this._ikTarget.copy(dragJointPos ?? this.robotFK.getEndEffectorWorld());
+        }
+      } else {
+        this._dragOffset.set(0, 0, 0);
+        const ee = this.robotFK.getEndEffectorWorld();
+        this._ikTarget.set(ee.x, ee.y, ee.z);
+      }
     };
 
-    this.interaction.callbacks.onDrag = (rodId, dx, dy, _ndc) => {
+    this.interaction.callbacks.onDrag = (rodId, _dx, _dy, ndc) => {
       const state   = this.getStore();
+      const mode    = state.mode || 'horizontal';
       const rootIdx = ROD_IDS.indexOf(state.activeRootId);
       const rodIdx  = ROD_IDS.indexOf(rodId);
       if (rodIdx === rootIdx) return;
 
-      // Move IK target by screen delta projected through camera right/up axes
-      const cam      = this.scene.camera;
-      const camRight = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 0);
-      const camUp    = new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld, 1);
-      const dist     = cam.position.distanceTo(this._ikTarget);
-      const scale    = 2 * dist * Math.tan(THREE.MathUtils.degToRad(cam.fov / 2));
-
-      this._ikTarget.addScaledVector(camRight, dx * scale * cam.aspect);
-      this._ikTarget.addScaledVector(camUp,    dy * scale);
-      this._ikTarget.y = 0; // keep on horizontal plane
+      // Project cursor to arm working plane and apply sticky offset
+      if (ndc) {
+        const cursorWorld = this._cursorToPlane(ndc, mode);
+        if (cursorWorld) {
+          this._ikTarget.set(
+            cursorWorld.x + this._dragOffset.x,
+            cursorWorld.y + this._dragOffset.y,
+            cursorWorld.z + this._dragOffset.z,
+          );
+        }
+        // else: ray nearly parallel to plane — keep current target
+      }
 
       // 5-node inner chain: [J1, J2, J3, J4, J5] world positions
       const inner5   = this.robotFK.getNodePositions().map(v => ({ x: v.x, y: v.y, z: v.z }));
@@ -82,30 +163,39 @@ export class RenderLoop {
 
       // R1=0→ikRoot=-1, R2=1→0, …, R6=5→4
       const ikRoot     = rootIdx - 1;
-      const ikDragNode = rodIdx > rootIdx ? 4 : 0;
+      const ikDragNode = this._ikDragNode(rodIdx, rootIdx);
 
       const { nodes: newInner } = solveIK(
         inner5, segLens5, ikRoot, ikDragNode,
         { x: this._ikTarget.x, y: this._ikTarget.y, z: this._ikTarget.z },
-        'horizontal', JOINT_LIMIT,
+        mode, JOINT_LIMIT,
         [state.jointAngles[0], state.jointAngles[4]],
       );
 
-      // Back-compute bend joint angles (JOINT_DEFS 1,2,3 = J2,J3,J4).
-      // FK: rotation.y=θ maps +X→(cosθ,0,-sinθ), so signedAngle_XZ = -θ → θ = -signedAngle_XZ
+      // Back-compute bend joint angles from FABRIK result geometry.
+      // horizontal — rotation.y=θ:  signedAngle(d1,d2) in XZ = −θ  →  θ = −atan2(cross,dot)
+      // vertical   — rotation.z=θ:  signedAngle(d1,d2) in XY =  θ  →  θ =  atan2(cross,dot)
+      const isVert = mode === 'vertical';
       const newAngles = [...state.jointAngles];
       for (let j = 0; j < 3; j++) {
         const ni  = j + 1;
         const d1x = newInner[ni].x - newInner[ni - 1].x;
-        const d1z = newInner[ni].z - newInner[ni - 1].z;
+        const d1h = isVert
+          ? (newInner[ni].y - newInner[ni - 1].y)
+          : (newInner[ni].z - newInner[ni - 1].z);
         const d2x = newInner[ni + 1].x - newInner[ni].x;
-        const d2z = newInner[ni + 1].z - newInner[ni].z;
-        const l1  = Math.sqrt(d1x * d1x + d1z * d1z);
-        const l2  = Math.sqrt(d2x * d2x + d2z * d2z);
+        const d2h = isVert
+          ? (newInner[ni + 1].y - newInner[ni].y)
+          : (newInner[ni + 1].z - newInner[ni].z);
+        const l1  = Math.sqrt(d1x * d1x + d1h * d1h);
+        const l2  = Math.sqrt(d2x * d2x + d2h * d2h);
         if (l1 > 1e-10 && l2 > 1e-10) {
-          const cross = (d1x / l1) * (d2z / l2) - (d1z / l1) * (d2x / l2);
-          const dot   = (d1x / l1) * (d2x / l2) + (d1z / l1) * (d2z / l2);
-          newAngles[j + 1] = Math.max(-JOINT_LIMIT, Math.min(JOINT_LIMIT, -Math.atan2(cross, dot)));
+          const cross = (d1x / l1) * (d2h / l2) - (d1h / l1) * (d2x / l2);
+          const dot   = (d1x / l1) * (d2x / l2) + (d1h / l1) * (d2h / l2);
+          const raw   = Math.atan2(cross, dot);
+          newAngles[j + 1] = Math.max(-JOINT_LIMIT, Math.min(JOINT_LIMIT,
+            isVert ? raw : -raw,
+          ));
         }
       }
 
@@ -131,6 +221,7 @@ export class RenderLoop {
 
   _frame(now) {
     const s = this.getStore();
+    const mode = s.mode || 'horizontal';
 
     // ── Home ─────────────────────────────────────────────────────────────────
     if (s.pendingHome) {
@@ -148,7 +239,7 @@ export class RenderLoop {
     let activeAngles = s.jointAngles;
     if (s.activeRootId !== this._lastRootId) {
       const { newAngles, rootPos, rootQuat } =
-        this.robotFK.computeAnglesForRoot(s.activeRootId);
+        this.robotFK.computeAnglesForRoot(s.activeRootId, mode);
 
       // Write converted angles back to store (one call per joint)
       for (let i = 0; i < 5; i++) this.act.setJointAngle(i, newAngles[i]);
@@ -159,7 +250,7 @@ export class RenderLoop {
     }
 
     // ── FK update ─────────────────────────────────────────────────────────────
-    this.robotFK.updateAngles(activeAngles);
+    this.robotFK.updateAngles(activeAngles, mode);
 
     // ── Telemetry ─────────────────────────────────────────────────────────────
     // Compute limitHit directly from angle vs limit (store flag lags one frame)

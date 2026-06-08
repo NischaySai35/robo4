@@ -82,7 +82,7 @@ export class SceneManager {
     this.controls.dampingFactor = 0.07;
     this.controls.minDistance = 3;
     this.controls.maxDistance = 25;
-    this.controls.maxPolarAngle = Math.PI * 0.52;
+    this.controls.maxPolarAngle = Math.PI * 0.48;
     this.controls.enablePan = false; // keep arm always in view
     this.controls.target.set(0, 0, 0);
 
@@ -96,7 +96,20 @@ export class SceneManager {
     // Register with bridge so React components can access camera + controls
     bridge.camera = this.camera;
     bridge.animateTo = (pos, lookAt, ms) => this.animateCameraTo(pos, lookAt, ms);
-    bridge.fitCamera = (nodes) => this.fitCamera(nodes);
+    bridge.fitCamera = () => this.fitCamera();
+
+    // Gizmo drag: orbit camera without OrbitControls event interference
+    bridge.orbitDelta = (dx, dy) => {
+      const target = this.controls.target.clone();
+      const offset = this.camera.position.clone().sub(target);
+      const sp = new THREE.Spherical().setFromVector3(offset);
+      sp.theta -= dx * 0.008;
+      sp.phi = Math.max(0.05, Math.min(Math.PI * 0.47, sp.phi - dy * 0.006));
+      offset.setFromSpherical(sp);
+      this.camera.position.copy(target).add(offset);
+      this.controls.target.copy(target);
+      this.controls.update();
+    };
 
     // Ensure correct pixel-perfect resolution after DOM layout settles
     requestAnimationFrame(() => this._onResize());
@@ -180,11 +193,15 @@ export class SceneManager {
   }
 
   /**
-   * Fit the camera to frame all arm nodes.
-   * Preserves the current camera direction, just adjusts distance and target.
+   * Fit the camera to frame all arm nodes perfectly.
+   * Uses bridge.getArmNodes() to get current joint world positions.
+   * Preserves current azimuth, sets a clean elevation angle, and sizes
+   * distance so the entire arm fills about 70% of the viewport.
    */
-  fitCamera(nodes) {
+  fitCamera() {
+    const nodes = bridge.getArmNodes ? bridge.getArmNodes() : null;
     if (!nodes || nodes.length === 0) return;
+
     const pts = nodes.map(n => new THREE.Vector3(n.x, n.y, n.z));
     const center = new THREE.Vector3();
     pts.forEach(p => center.add(p));
@@ -192,13 +209,23 @@ export class SceneManager {
 
     let maxDist = 0;
     pts.forEach(p => { maxDist = Math.max(maxDist, p.distanceTo(center)); });
+    maxDist = Math.max(maxDist, 0.5);
 
-    const dir = this.camera.position.clone().sub(this.controls.target).normalize();
-    const newDist = Math.max(maxDist * 3.2, 5);
-    const newPos = center.clone().addScaledVector(dir, newDist);
+    // Distance so the arm bounding sphere fills ~70% of the viewport
+    const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
+    const fitDist  = Math.max((maxDist * 1.45) / Math.tan(halfFov), 4);
+
+    // Preserve azimuth (horizontal angle), set elevation to a clean ~25°
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const sp = new THREE.Spherical().setFromVector3(offset);
+    sp.radius = fitDist;
+    sp.phi = Math.max(0.35, Math.min(Math.PI * 0.44, sp.phi)); // 20°–80° elevation
+
+    offset.setFromSpherical(sp);
+    const newPos = center.clone().add(offset);
 
     this.animateCameraTo(
-      { x: newPos.x, y: Math.max(newPos.y, center.y + 1.5), z: newPos.z },
+      { x: newPos.x, y: newPos.y, z: newPos.z },
       { x: center.x, y: center.y, z: center.z }
     );
   }

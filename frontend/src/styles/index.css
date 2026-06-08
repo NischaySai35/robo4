@@ -231,11 +231,73 @@ html, body, #root {
   margin-bottom: 8px;
 }
 
+.joint-header-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
 .joint-label {
   font-family: var(--font-mono);
   font-size: 12px;
   letter-spacing: 2px;
   color: var(--text-dim);
+}
+
+/* Per-joint home/reset button */
+.joint-home-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.joint-home-btn:hover {
+  background: var(--joint-color, var(--accent));
+  border-color: transparent;
+  color: white;
+  transform: rotate(-30deg);
+}
+
+.joint-home-btn:active {
+  transform: rotate(-360deg);
+  transition: transform 0.3s ease;
+}
+
+/* Inline angle input */
+.angle-input-display {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s;
+  padding: 0 2px;
+}
+
+.angle-input-display:hover {
+  border-bottom-color: var(--border-bright);
+}
+
+.angle-input.editing {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-align: right;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  width: 70px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
 }
 
 .limit-badge {

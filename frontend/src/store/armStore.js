@@ -1,9 +1,9 @@
 import { create } from 'zustand';
 
-export const ROD_LENGTH   = 1.6;
+export const ROD_LENGTH   = 1.2;
 export const ROD_RADIUS   = 0.07;
 export const JOINT_RADIUS = 0.13;
-export const ENDCAP_SIZE  = 0.32;
+export const ENDCAP_SIZE  = 0.35;
 export const JOINT_LIMIT  = Math.PI * (100 / 180);
 
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
@@ -29,6 +29,7 @@ export const useArmStore = create((set, get) => ({
   endEffectorPosition: { x: 0, y: 0, z: 0 },
   reachPercent: 0,
   pendingHome: false,
+  mode: 'horizontal',
 
   setRootRod: (rodId) => {
     if (rodId === get().activeRootId) return;
@@ -48,4 +49,5 @@ export const useArmStore = create((set, get) => ({
   updateEndEffector: (position, reachPercent) => set({ endEffectorPosition: position, reachPercent }),
   homeArm:           () => set({ pendingHome: true }),
   clearPendingHome:  () => set({ pendingHome: false }),
+  setMode:           (m) => set({ mode: m }),
 }));

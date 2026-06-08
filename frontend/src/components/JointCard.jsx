@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { JOINT_DEFS } from '../store/armStore.js';
 
 const RAD_TO_DEG = 180 / Math.PI;
@@ -35,6 +35,71 @@ function AnimatedValue({ value, format, className, style }) {
   }, [value, format]);
 
   return <span ref={spanRef} className={className} style={style}>{format(value)}</span>;
+}
+
+/**
+ * Inline angle input — shows animated degrees value normally;
+ * on click becomes an editable input. Enter/blur commits.
+ */
+function AngleInput({ rawAngle, palette, panelIdx, limit, onJointSet }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft]     = useState('');
+  const inputRef              = useRef(null);
+
+  const displayDeg = (rawAngle * RAD_TO_DEG).toFixed(1);
+
+  const startEdit = useCallback(() => {
+    setDraft((rawAngle * RAD_TO_DEG).toFixed(1));
+    setEditing(true);
+  }, [rawAngle]);
+
+  useEffect(() => {
+    if (editing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [editing]);
+
+  const commit = useCallback(() => {
+    const deg = parseFloat(draft);
+    if (!isNaN(deg) && onJointSet) {
+      const rad = deg * DEG_TO_RAD;
+      const clamped = Math.max(-limit, Math.min(limit, rad));
+      onJointSet(panelIdx, clamped);
+    }
+    setEditing(false);
+  }, [draft, onJointSet, panelIdx, limit]);
+
+  const onKeyDown = useCallback((e) => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { setEditing(false); }
+  }, [commit]);
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        className="angle-input editing"
+        style={{ color: palette?.main }}
+        type="text"
+        value={draft}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={onKeyDown}
+      />
+    );
+  }
+
+  return (
+    <span
+      className="stat-val angle-input-display"
+      style={{ color: palette?.main, cursor: 'text' }}
+      title="Click to set angle"
+      onClick={startEdit}
+    >
+      {(parseFloat(displayDeg) >= 0 ? '+' : '') + displayDeg}°
+    </span>
+  );
 }
 
 /**
@@ -167,7 +232,7 @@ function VelocityArrow({ velocity }) {
   );
 }
 
-export default function JointCard({ joint, index, rawAngle, onArcDrag }) {
+export default function JointCard({ joint, index, rawAngle, onArcDrag, onJointHome, onJointSet }) {
   const { angle = 0, velocity = 0, acceleration = 0, limitHit = false } = joint ?? {};
 
   const def      = JOINT_DEFS[index];
@@ -187,7 +252,19 @@ export default function JointCard({ joint, index, rawAngle, onArcDrag }) {
 
       <div className="joint-header">
         <span className="joint-label" style={{ color: palette.main }}>{label}</span>
-        {limitHit && !isEndcap && <span className="limit-badge">LIMIT</span>}
+        <div className="joint-header-right">
+          {limitHit && !isEndcap && <span className="limit-badge">LIMIT</span>}
+          {onJointHome && (
+            <button
+              className="joint-home-btn"
+              onClick={() => onJointHome(index)}
+              title={`Reset ${label} to 0°`}
+              style={{ '--joint-color': palette.main }}
+            >
+              ↺
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="joint-body">
@@ -204,11 +281,12 @@ export default function JointCard({ joint, index, rawAngle, onArcDrag }) {
         <div className="joint-stats">
           <div className="stat-row">
             <span className="stat-key">ANG</span>
-            <AnimatedValue
-              value={angleDeg}
-              format={(v) => `${v >= 0 ? '+' : ''}${v.toFixed(1)}°`}
-              className="stat-val"
-              style={{ color: palette.main }}
+            <AngleInput
+              rawAngle={rawAngle ?? angle}
+              palette={palette}
+              panelIdx={index}
+              limit={limit}
+              onJointSet={onJointSet}
             />
           </div>
 

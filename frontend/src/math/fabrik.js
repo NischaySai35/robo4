@@ -459,9 +459,21 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
   let pts2Result = pts2.map(p => ({ ...p }));
   const limitHits = new Array(n).fill(false);
 
+  // For endcap roots, compute anchorDir from current geometry instead of null.
+  // Without this, the first bend joint from the anchor has no seed for the rate-limiter
+  // and can snap 180° in a single frame (visible jitter).
+  function _anchorDirFromGeom(fromIdx, toIdx) {
+    const dx = pts2[toIdx].x - pts2[fromIdx].x;
+    const dy = pts2[toIdx].y - pts2[fromIdx].y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    return len > 1e-10 ? { x: dx / len, y: dy / len } : null;
+  }
+
   if (dragNode <= anchorL) {
     // Left sub-chain: nodes [0 … anchorL], anchor = anchorL
-    const anchorDir = isEndcapRoot ? null : { x: -rootDir.x, y: -rootDir.y };
+    const anchorDir = isEndcapRoot
+      ? _anchorDirFromGeom(anchorR, anchorL) // backward root-rod direction
+      : { x: -rootDir.x, y: -rootDir.y };
     const sub = pts2.slice(0, anchorL + 1);
     const subLens = segLens.slice(0, anchorL);
     if (sub.length >= 2) {
@@ -471,7 +483,9 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
     }
   } else if (dragNode >= anchorR) {
     // Right sub-chain: nodes [anchorR … N-1], anchor = index 0 in sub
-    const anchorDir = isEndcapRoot ? null : rootDir;
+    const anchorDir = isEndcapRoot
+      ? _anchorDirFromGeom(anchorL, anchorR) // forward root-rod direction
+      : rootDir;
     const sub = pts2.slice(anchorR);
     const subLens = segLens.slice(anchorR);
     const localTarget = dragNode - anchorR;

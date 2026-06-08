@@ -91,7 +91,7 @@ export class Interaction {
       if (this._dragging) {
         const dx = ndc.x - this._dragLastNDC.x;
         const dy = ndc.y - this._dragLastNDC.y;
-        this.callbacks.onDrag?.(this._hitId, dx, dy);
+        this.callbacks.onDrag?.(this._hitId, dx, dy, ndc);
         this._dragLastNDC.copy(ndc);
         return; // skip hover update during drag
       }
@@ -154,7 +154,7 @@ export class Interaction {
     if (this._dragging) {
       const dx = ndc.x - this._dragLastNDC.x;
       const dy = ndc.y - this._dragLastNDC.y;
-      this.callbacks.onDrag?.(this._hitId, dx, dy);
+      this.callbacks.onDrag?.(this._hitId, dx, dy, ndc);
       this._dragLastNDC.copy(ndc);
     }
   }

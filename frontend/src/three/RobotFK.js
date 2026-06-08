@@ -66,9 +66,17 @@ const MAT = {
     color: 0xdd6600, roughness: 0.25, metalness: 0.7,
     emissive: 0xcc4400, emissiveIntensity: 0.3,
   }),
+  twistJointLimit: () => new THREE.MeshStandardMaterial({
+    color: 0xff2200, roughness: 0.25, metalness: 0.6,
+    emissive: 0xff2200, emissiveIntensity: 0.9,
+  }),
   bendJoint: () => new THREE.MeshStandardMaterial({
     color: 0x2a3a52, roughness: 0.32, metalness: 0.78,
     emissive: 0x0055cc, emissiveIntensity: 0.18,
+  }),
+  bendJointLimit: () => new THREE.MeshStandardMaterial({
+    color: 0xff2200, roughness: 0.2, metalness: 0.6,
+    emissive: 0xff2200, emissiveIntensity: 0.9,
   }),
   jointRing: () => new THREE.MeshStandardMaterial({ color: 0x445566, roughness: 0.3, metalness: 0.85 }),
 };
@@ -90,6 +98,9 @@ export class RobotFK {
 
     // Joint Object3D nodes (for angle updates), keyed by joint ID
     this._jointNodes = {}; // jointId → THREE.Object3D (the pivot container)
+
+    // Joint sphere meshes for limit-hit highlight, keyed by joint ID
+    this._jointSphereMeshes = {}; // jointId → { mesh, normalMat, limitMat }
 
     // Tip markers for end-effector tracking
     this._tipR1 = null;
@@ -186,6 +197,7 @@ export class RobotFK {
     this._rodMeshes  = {};
     this._rodMats    = {};
     this._jointNodes = {};
+    this._jointSphereMeshes = {};
     this._tipR1 = null;
     this._tipR6 = null;
 
@@ -226,6 +238,17 @@ export class RobotFK {
   }
 
   /**
+   * Turn a joint sphere red (limit hit) or back to its normal colour.
+   * @param {string}  jointId  — 'J1' … 'J5'
+   * @param {boolean} active
+   */
+  setLimitHighlight(jointId, active) {
+    const entry = this._jointSphereMeshes[jointId];
+    if (!entry) return;
+    entry.mesh.material = active ? entry.limitMat : entry.normalMat;
+  }
+
+  /**
    * Flat array of rod meshes — used for raycasting.
    */
   get interactables() {
@@ -247,6 +270,21 @@ export class RobotFK {
     const wp = new THREE.Vector3();
     marker.getWorldPosition(wp);
     return { x: wp.x, y: wp.y, z: wp.z };
+  }
+
+  /**
+   * World-space positions of the 5 joint pivots in the inner chain:
+   * [J1, J2, J3, J4, J5] — used as FABRIK nodes for IK.
+   * Excludes the endcap rod tips (P0/P6).
+   * @returns {THREE.Vector3[5]}
+   */
+  getNodePositions() {
+    this.robotGroup.updateMatrixWorld(true);
+    const wp = new THREE.Vector3();
+    return ['J1', 'J2', 'J3', 'J4', 'J5'].map(id => {
+      const node = this._jointNodes[id];
+      return node ? node.getWorldPosition(wp.clone()) : new THREE.Vector3();
+    });
   }
 
   // ── Scene-graph builder ──────────────────────────────────────────────────────
@@ -386,17 +424,19 @@ export class RobotFK {
 
   _addJointVisual(pivot, def) {
     if (def.type === 'twist') {
-      // Larger orange sphere
-      const mat = MAT.twistJoint();
-      const sphere = new THREE.Mesh(_twistSphere, mat);
+      const normalMat = MAT.twistJoint();
+      const limitMat  = MAT.twistJointLimit();
+      const sphere = new THREE.Mesh(_twistSphere, normalMat);
       sphere.castShadow = true;
       pivot.add(sphere);
+      this._jointSphereMeshes[def.id] = { mesh: sphere, normalMat, limitMat };
     } else {
-      // Smaller blue sphere + two perpendicular torus rings
-      const spMat = MAT.bendJoint();
-      const sphere = new THREE.Mesh(_sphereGeo, spMat);
+      const normalMat = MAT.bendJoint();
+      const limitMat  = MAT.bendJointLimit();
+      const sphere = new THREE.Mesh(_sphereGeo, normalMat);
       sphere.castShadow = true;
       pivot.add(sphere);
+      this._jointSphereMeshes[def.id] = { mesh: sphere, normalMat, limitMat };
 
       const r1 = new THREE.Mesh(_torusGeo, MAT.jointRing());
       r1.castShadow = true;

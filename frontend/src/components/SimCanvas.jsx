@@ -28,6 +28,7 @@ export default function SimCanvas() {
       setStatus:         store.setStatus,
       updateEndEffector: store.updateEndEffector,
       setRootRod:        store.setRootRod,
+      setRootAndAngles:  store.setRootAndAngles,
       clearPendingHome:  store.clearPendingHome,
     };
 

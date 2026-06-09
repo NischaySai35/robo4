@@ -36,6 +36,16 @@ export const useArmStore = create((set, get) => ({
     set({ activeRootId: rodId });
   },
 
+  // Atomic: root + angles together so LeftPanel never sees a frame where
+  // the new rootId is paired with the old (wrong-sign) jointAngles.
+  setRootAndAngles: (rodId, angles) => {
+    const clamped = angles.map((a, i) => {
+      const lim = JOINT_DEFS[i].limit;
+      return Math.max(-lim, Math.min(lim, a));
+    });
+    set({ activeRootId: rodId, jointAngles: clamped });
+  },
+
   setJointAngle: (index, angle) => {
     const limit = JOINT_DEFS[index].limit;
     const clamped = Math.max(-limit, Math.min(limit, angle));

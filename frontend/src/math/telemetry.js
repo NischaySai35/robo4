@@ -76,6 +76,18 @@ export class TelemetryTracker {
     this.history.forEach(h => h.splice(0));
     this.smoothed.forEach(s => { s.angle = 0; s.velocity = 0; s.acceleration = 0; });
   }
+
+  seed(angles) {
+    this.history.forEach(h => h.splice(0));
+    for (let j = 0; j < this.numJoints; j++) {
+      this.smoothed[j] = {
+        angle: angles[j] ?? 0,
+        velocity: 0,
+        acceleration: 0,
+        limitHit: false,
+      };
+    }
+  }
 }
 
 function ema(current, previous, alpha) {

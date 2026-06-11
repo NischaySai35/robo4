@@ -16,8 +16,8 @@ export default function LeftPanel() {
       {/* Header */}
       <div className="panel-header">
         <div className="panel-logo">
-          <span className="logo-main">ROBO4</span>
-          <span className="logo-sub">ARM SIMULATOR</span>
+          <span className="logo-main">TETROBOT</span>
+          <span className="logo-sub">CONTROL SIMULATOR</span>
         </div>
         <div className="panel-status-dot" />
       </div>
@@ -84,8 +84,8 @@ export default function LeftPanel() {
       </div>
 
       <div className="panel-footer">
-        <span>BEND ±{(JOINT_DEFS[1].limit * 180 / Math.PI).toFixed(0)}°</span>
-        <span>TWIST ±180°</span>
+        <span>BEND 80–280°</span>
+        <span>TWIST 0–360°</span>
         <span>6 RODS · 5 JOINTS</span>
       </div>
     </aside>

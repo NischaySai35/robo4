@@ -46,10 +46,11 @@ function AngleInput({ rawAngle, palette, panelIdx, limit, onJointSet }) {
   const [draft, setDraft]     = useState('');
   const inputRef              = useRef(null);
 
-  const displayDeg = (rawAngle * RAD_TO_DEG).toFixed(1);
+  // Display as absolute servo angle: internal 0 rad = 180°, range shifts to 80-280 or 0-360
+  const displayDeg = (rawAngle * RAD_TO_DEG + 180).toFixed(1);
 
   const startEdit = useCallback(() => {
-    setDraft((rawAngle * RAD_TO_DEG).toFixed(1));
+    setDraft((rawAngle * RAD_TO_DEG + 180).toFixed(1));
     setEditing(true);
   }, [rawAngle]);
 
@@ -61,9 +62,10 @@ function AngleInput({ rawAngle, palette, panelIdx, limit, onJointSet }) {
   }, [editing]);
 
   const commit = useCallback(() => {
-    const deg = parseFloat(draft);
-    if (!isNaN(deg) && onJointSet) {
-      const rad = deg * DEG_TO_RAD;
+    const absDeg = parseFloat(draft);
+    if (!isNaN(absDeg) && onJointSet) {
+      // Convert absolute display angle back to internal radians (offset from 180°)
+      const rad = (absDeg - 180) * DEG_TO_RAD;
       const clamped = Math.max(-limit, Math.min(limit, rad));
       onJointSet(panelIdx, clamped);
     }
@@ -94,10 +96,10 @@ function AngleInput({ rawAngle, palette, panelIdx, limit, onJointSet }) {
     <span
       className="stat-val angle-input-display"
       style={{ color: palette?.main, cursor: 'text' }}
-      title="Click to set angle"
+      title="Click to set angle (80–280° bend · 0–360° twist)"
       onClick={startEdit}
     >
-      {(parseFloat(displayDeg) >= 0 ? '+' : '') + displayDeg}°
+      {displayDeg}°
     </span>
   );
 }
@@ -203,10 +205,10 @@ function ArcIndicator({ angle, rawAngle, limit, limitHit, palette, panelIdx, onD
       <circle cx={dotX} cy={dotY} r={isInteractive ? 6 : 4.5} fill={dotColor}
               style={{ filter: `drop-shadow(0 0 5px ${dotColor})` }} />
 
-      {/* Degree label */}
+      {/* Degree label — displayed as absolute servo angle (80–280 or 0–360) */}
       <text x={cx} y={cy + 5} textAnchor="middle" fontSize="10" fontFamily="monospace"
             fill={palette?.main ?? '#0088ff'} opacity="0.85">
-        {endDeg >= 0 ? '+' : ''}{endDeg.toFixed(0)}°
+        {(180 + endDeg).toFixed(0)}°
       </text>
     </svg>
   );
@@ -258,7 +260,7 @@ export default function JointCard({ joint, index, rawAngle, onArcDrag, onJointHo
             <button
               className="joint-home-btn"
               onClick={() => onJointHome(index)}
-              title={`Reset ${label} to 0°`}
+              title={`Reset ${label} to home (180°)`}
               style={{ '--joint-color': palette.main }}
             >
               ↺

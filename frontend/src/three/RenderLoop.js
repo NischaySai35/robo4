@@ -14,10 +14,11 @@
 import * as THREE from 'three';
 import { TelemetryTracker } from '../math/telemetry.js';
 import { solveIK } from '../math/fabrik.js';
-import { ROD_IDS, JOINT_DEFS, ROD_LENGTH, ENDCAP_SIZE, JOINT_LIMIT } from '../store/armStore.js';
+import { ROD_IDS, JOINT_DEFS, ROD_LENGTH, ROD_LENGTHS, ENDCAP_SIZE, JOINT_LIMIT } from '../store/armStore.js';
 import { bridge } from './cameraBridge.js';
 
-const MAX_REACH      = ENDCAP_SIZE * 2 + ROD_LENGTH * 4;
+const _SEG = [ROD_LENGTHS.R2, ROD_LENGTHS.R3, ROD_LENGTHS.R4, ROD_LENGTHS.R5];
+const MAX_REACH      = ENDCAP_SIZE * 2 + _SEG.reduce((a, b) => a + b, 0);
 const MAX_BEND_DELTA = 0.018; // rad per frame — keeps motion smooth
 
 export class RenderLoop {
@@ -169,7 +170,7 @@ export class RenderLoop {
 
     // 2. FABRIK solve
     const inner5     = this.robotFK.getNodePositions().map(v => ({ x: v.x, y: v.y, z: v.z }));
-    const segLens5   = [ROD_LENGTH, ROD_LENGTH, ROD_LENGTH, ROD_LENGTH];
+    const segLens5   = _SEG.slice();
     const ikRoot     = rootIdx - 1;          // R1→-1, R2→0, …, R6→4
     const ikDragNode = this._ikDragNode(rodIdx, rootIdx);
 

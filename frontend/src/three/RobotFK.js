@@ -17,19 +17,20 @@
 
 import * as THREE from 'three';
 import {
-  ROD_LENGTH, ROD_RADIUS, JOINT_RADIUS, ENDCAP_SIZE,
+  ROD_LENGTH, ROD_LENGTHS, ROD_RADIUS, JOINT_RADIUS, ENDCAP_SIZE,
   ROD_IDS, JOINT_DEFS,
 } from '../store/armStore.js';
 
 // ── Shared geometries ─────────────────────────────────────────────────────────
 
 // Rod cylinder lying along +X, pivot at left end (x=0).
-const _rodGeo = (() => {
-  const g = new THREE.CylinderGeometry(ROD_RADIUS, ROD_RADIUS, ROD_LENGTH, 16, 1);
+// Each rod gets its own geometry so lengths can differ.
+function _makeRodGeo(length) {
+  const g = new THREE.CylinderGeometry(ROD_RADIUS, ROD_RADIUS, length, 16, 1);
   g.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
-  g.applyMatrix4(new THREE.Matrix4().makeTranslation(ROD_LENGTH / 2, 0, 0));
+  g.applyMatrix4(new THREE.Matrix4().makeTranslation(length / 2, 0, 0));
   return g;
-})();
+}
 
 // End-rod cube, pivot at left face (x=0)
 const _endcapGeo = (() => {
@@ -403,14 +404,15 @@ export class RobotFK {
 
   // ── Helpers ──────────────────────────────────────────────────────────────────
 
-  /** Chain length contributed by a rod (endcaps are cubes; normal rods are full length). */
+  /** Chain length contributed by a rod. Endcaps are cubes; main rods use per-rod lengths. */
   _rodLen(rodId) {
-    return (rodId === 'R1' || rodId === 'R6') ? ENDCAP_SIZE : ROD_LENGTH;
+    if (rodId === 'R1' || rodId === 'R6') return ENDCAP_SIZE;
+    return ROD_LENGTHS[rodId] ?? ROD_LENGTH;
   }
 
   _makeRodMesh(rodId, isRoot) {
     const isEndRod = rodId === 'R1' || rodId === 'R6';
-    const geo = isEndRod ? _endcapGeo : _rodGeo;
+    const geo = isEndRod ? _endcapGeo : _makeRodGeo(this._rodLen(rodId));
 
     let normalMat, rootMat, hoverMat;
     if (isEndRod) {

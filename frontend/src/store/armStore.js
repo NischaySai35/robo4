@@ -1,9 +1,18 @@
 import { create } from 'zustand';
 
-export const ROD_LENGTH   = 1.2;
+export const ROD_LENGTH   = 1.2;   // kept as geometry reference / fallback
 export const ROD_RADIUS   = 0.07;
 export const JOINT_RADIUS = 0.13;
 export const ENDCAP_SIZE  = 0.35;
+
+// Per-rod actual lengths in world units (scale: 0.018 wu/mm)
+// Real dims: R2=74.5mm, R3=51.5mm, R4=71.4mm, R5=74.5mm
+export const ROD_LENGTHS = {
+  R2: 1.341,
+  R3: 0.927,
+  R4: 1.285,
+  R5: 1.341,
+};
 export const JOINT_LIMIT  = Math.PI * (100 / 180);
 
 export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];

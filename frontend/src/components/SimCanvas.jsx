@@ -12,6 +12,7 @@ import { RobotFK } from '../three/RobotFK.js';
 import { Interaction } from '../three/Interaction.js';
 import { RenderLoop } from '../three/RenderLoop.js';
 import { useArmStore } from '../store/armStore.js';
+import { bridge } from '../three/cameraBridge.js';
 
 export default function SimCanvas() {
   const canvasRef  = useRef(null);
@@ -53,7 +54,13 @@ export default function SimCanvas() {
 
     renderLoop.start();
 
+    // Fit camera to arm after a few frames so FK positions are ready
+    const fitTimer = setTimeout(() => {
+      if (bridge.fitCamera) bridge.fitCamera();
+    }, 300);
+
     cleanupRef.current = () => {
+      clearTimeout(fitTimer);
       renderLoop.stop();
       interaction.dispose();
       sceneMgr.dispose();

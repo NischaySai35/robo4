@@ -31,6 +31,11 @@
   --overlay-text-dim: #6a88a8;
 }
 
+:root {
+  --header-h: 54px;
+  --footer-h: 36px;
+}
+
 html, body, #root {
   width: 100%; height: 100%;
   overflow: hidden;
@@ -38,6 +43,208 @@ html, body, #root {
   color: var(--text);
   font-family: var(--font-ui);
   -webkit-font-smoothing: antialiased;
+}
+
+/* ── App Shell ───────────────────────────────────────────────────────────────── */
+
+.app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+/* ── App Header ──────────────────────────────────────────────────────────────── */
+
+.app-header {
+  height: var(--header-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 20px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 8px rgba(30,48,80,0.06);
+  z-index: 50;
+  position: relative;
+}
+
+.app-header-brand {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin-right: 16px;
+  flex-shrink: 0;
+}
+
+.app-logo {
+  font-family: var(--font-mono);
+  font-size: 19px;
+  font-weight: 700;
+  letter-spacing: 5px;
+  background: linear-gradient(135deg, #0077dd 0%, #9922ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  line-height: 1;
+}
+
+.app-logo-sub {
+  font-size: 8px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-top: 1px;
+}
+
+.app-header-sep {
+  width: 1px;
+  height: 26px;
+  background: var(--border);
+  flex-shrink: 0;
+  margin: 0 16px;
+}
+
+/* Navigation tabs */
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.app-nav-tab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 16px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.18s;
+  line-height: 1;
+}
+
+.app-nav-tab svg {
+  opacity: 0.7;
+  flex-shrink: 0;
+  transition: opacity 0.18s;
+}
+
+.app-nav-tab:hover {
+  background: var(--bg);
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.app-nav-tab:hover svg { opacity: 1; }
+
+.app-nav-tab.active {
+  background: linear-gradient(135deg, #e8f4ff, #f0e8ff);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+
+.app-nav-tab.active svg { opacity: 1; }
+
+.app-header-space { flex: 1; }
+
+.app-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-status-chip {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+
+.app-status-chip-mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1px;
+}
+
+/* ── App Footer ──────────────────────────────────────────────────────────────── */
+
+.app-footer {
+  height: var(--footer-h);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 20px;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.app-footer-brand {
+  font-weight: 700;
+  background: linear-gradient(135deg, #0077dd, #9922ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.app-footer-sep {
+  color: var(--border-bright);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+.app-footer-space { flex: 1; }
+
+.app-footer-page-pill {
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 10px;
+  background: var(--bg);
+  transition: all 0.18s;
+}
+
+.app-footer-page-pill.active {
+  background: linear-gradient(135deg, #e8f4ff, #f0e8ff);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ── App Main ────────────────────────────────────────────────────────────────── */
+
+.app-main {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+
+.app-servo-wrap {
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
 }
 
 /* ── Layout ─────────────────────────────────────────────────────────────────── */
@@ -750,3 +957,166 @@ kbd {
 /* ── Scrollbar ──────────────────────────────────────────────────────────────── */
 
 * { scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   SimTransmitPanel — live transmission log overlay on Page 1 canvas
+   Dark terminal aesthetic to contrast against the light 3D canvas.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.stp-panel {
+  position: absolute;
+  right: 12px;
+  bottom: 44px;           /* above StatusBar */
+  width: 270px;
+  z-index: 30;
+  background: rgba(10, 14, 26, 0.88);
+  border: 1px solid rgba(100, 140, 200, 0.28);
+  border-radius: 12px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  font-size: 11px;
+  color: #94a3b8;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.28), 0 0 0 1px rgba(100,140,200,0.1);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.stp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 11px 6px;
+  border-bottom: 1px solid rgba(100,140,200,0.15);
+  background: rgba(255,255,255,0.04);
+}
+.stp-header-left  { display: flex; align-items: center; gap: 7px; }
+.stp-header-right { display: flex; align-items: center; gap: 5px; }
+
+.stp-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #e2e8f0;
+  text-transform: uppercase;
+}
+
+.stp-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  animation: stpPulse 1.8s ease-in-out infinite alternate;
+}
+.stp-dot-ok  { background: #22c55e; box-shadow: 0 0 8px #22c55e88; }
+.stp-dot-off { background: #f97316; box-shadow: 0 0 8px #f9731688; }
+@keyframes stpPulse { from { opacity:.5; } to { opacity:1; } }
+
+.stp-conn-label { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+.stp-lat { font-size: 10px; color: #6366f1; letter-spacing: 0.5px; }
+
+.stp-btn {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(100,140,200,0.25);
+  border-radius: 4px;
+  color: #64748b;
+  font-size: 9px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-family: 'Share Tech Mono', monospace;
+  letter-spacing: 0.5px;
+  transition: background .15s, color .15s;
+}
+.stp-btn:hover { background: rgba(255,255,255,0.14); color: #94a3b8; }
+
+/* ── Target row ── */
+.stp-target {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border-bottom: 1px solid rgba(100,140,200,0.10);
+}
+.stp-target-label {
+  font-size: 9px; color: #475569; letter-spacing: 1.2px; text-transform: uppercase;
+}
+.stp-target-url   { color: #6366f1; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stp-target-interval { font-size: 9px; color: #475569; flex-shrink: 0; }
+
+/* ── Stats ── */
+.stp-stats {
+  display: flex;
+  gap: 0;
+  padding: 5px 11px;
+  border-bottom: 1px solid rgba(100,140,200,0.10);
+}
+.stp-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  gap: 1px;
+}
+.stp-stat-k {
+  font-size: 8px;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.stp-stat-v {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #94a3b8;
+}
+
+/* ── Log header ── */
+.stp-log-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 11px 3px;
+  font-size: 8px;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  border-bottom: 1px solid rgba(100,140,200,0.10);
+}
+.stp-log-count { color: #1e293b; }
+
+/* ── Log body ── */
+.stp-log-body {
+  padding: 4px 0;
+  max-height: 160px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100,140,200,0.2) transparent;
+}
+.stp-empty {
+  padding: 12px 11px;
+  color: #334155;
+  font-size: 10px;
+  text-align: center;
+}
+
+.stp-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1.5px 11px;
+  transition: background .1s;
+}
+.stp-entry:hover { background: rgba(255,255,255,0.04); }
+
+.stp-e-time { color: #334155; flex-shrink: 0; font-size: 10px; }
+.stp-e-src  { font-size: 9px; font-weight: 700; flex-shrink: 0; letter-spacing: 0.3px; min-width: 27px; }
+.stp-e-msg  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }
+
+/* ── ServoController debug log additions ────────────────────────────────────── */
+.sc-log-src {
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  min-width: 40px;
+}

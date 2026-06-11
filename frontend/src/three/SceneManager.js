@@ -44,8 +44,9 @@ export class SceneManager {
 
     // ── Camera ─────────────────────────────────────────────────────────────────
     this.camera = new THREE.PerspectiveCamera(52, w / h, 0.1, 100);
-    this.camera.position.set(0, 3.5, 11);
-    this.camera.lookAt(0, 0, 0);
+    // Arm extends ~0→6 along X; look at its midpoint from a 45° front-elevated angle
+    this.camera.position.set(3, 4, 10);
+    this.camera.lookAt(3, 0, 0);
 
     // ── Lights ────────────────────────────────────────────────────────────────
     const ambient = new THREE.AmbientLight(0xc8d8f0, 1.5);
@@ -84,7 +85,7 @@ export class SceneManager {
     this.controls.maxDistance = 25;
     this.controls.maxPolarAngle = Math.PI * 0.48;
     this.controls.enablePan = false; // keep arm always in view
-    this.controls.target.set(0, 0, 0);
+    this.controls.target.set(3, 0, 0);
 
     // ── Post-processing ───────────────────────────────────────────────────────
     this._buildPostProcessing(w, h);

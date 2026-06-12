@@ -6,32 +6,34 @@ export const JOINT_RADIUS = 0.13;
 export const ENDCAP_SIZE  = 0.35;
 
 // Per-rod actual lengths in world units (scale: 0.018 wu/mm)
-// Real dims: R2=74.5mm, R3=51.5mm, R4=71.4mm, R5=74.5mm
+// Real dims: R2=74.5mm, R3=51.5mm, R4=71.4mm, R5=74.5mm, R6=74.5mm (estimate — update when measured)
 export const ROD_LENGTHS = {
   R2: 1.341,
   R3: 0.927,
   R4: 1.285,
   R5: 1.341,
+  R6: 1.341,
 };
 export const JOINT_LIMIT  = Math.PI * (100 / 180);
 
-export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6'];
+export const ROD_IDS = ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R7'];
 
-// Chain: R1—J1(twist)—R2—J2(bend)—R3—J3(bend)—R4—J4(bend)—R5—J5(twist)—R6
+// Chain: R1—J1(twist)—R2—J2(bend)—R3—J3(bend)—R4—J4(twist/wrist)—R5—J5(bend)—R6—J6(twist)—R7
 export const JOINT_DEFS = [
   { id: 'J1', label: 'CUBE L',  type: 'twist', bodyA: 'R1', bodyB: 'R2', limit: Math.PI },
   { id: 'J2', label: 'JOINT 1', type: 'bend',  bodyA: 'R2', bodyB: 'R3', limit: JOINT_LIMIT },
   { id: 'J3', label: 'JOINT 2', type: 'bend',  bodyA: 'R3', bodyB: 'R4', limit: JOINT_LIMIT },
-  { id: 'J4', label: 'JOINT 3', type: 'bend',  bodyA: 'R4', bodyB: 'R5', limit: JOINT_LIMIT },
-  { id: 'J5', label: 'CUBE R',  type: 'twist', bodyA: 'R5', bodyB: 'R6', limit: Math.PI },
+  { id: 'J4', label: 'WRIST',   type: 'twist', bodyA: 'R4', bodyB: 'R5', limit: Math.PI },
+  { id: 'J5', label: 'JOINT 3', type: 'bend',  bodyA: 'R5', bodyB: 'R6', limit: JOINT_LIMIT },
+  { id: 'J6', label: 'CUBE R',  type: 'twist', bodyA: 'R6', bodyB: 'R7', limit: Math.PI },
 ];
 
 const makeJoint = () => ({ angle: 0, velocity: 0, acceleration: 0, limitHit: false });
 
 export const useArmStore = create((set, get) => ({
   activeRootId: 'R1',
-  jointAngles: [0, 0, 0, 0, 0],
-  joints: Array.from({ length: 5 }, makeJoint),
+  jointAngles: [0, 0, 0, 0, 0, 0],
+  joints: Array.from({ length: 6 }, makeJoint),
 
   isDragging: false,
   status: 'idle',

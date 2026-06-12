@@ -414,9 +414,11 @@ void startMDNS() {
 }
 
 void connectWiFi() {
-  WiFi.mode(WIFI_STA); WiFi.setSleep(false); WiFi.setAutoReconnect(true);
+  WiFi.mode(WIFI_STA);
+  WiFi.setSleep(true);             // MODEM_SLEEP: radio sleeps between DTIM beacons — biggest heat reduction
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
-  WiFi.setTxPower(WIFI_POWER_11dBm); // Drops transmission heat significantly while maintaining solid local range
+  WiFi.setTxPower(WIFI_POWER_8_5dBm); // 8.5 dBm is plenty for same-room LAN; 11→8.5 dBm cuts TX current ~25%
   Serial.print(F("WiFi"));
   unsigned long t = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - t < 20000) {
@@ -444,6 +446,7 @@ void ensureWiFi() {
 
 // ── setup / loop ──────────────────────────────────────────────────────────────
 void setup() {
+  setCpuFrequencyMhz(80);   // 160→80 MHz: halves CPU switching losses, no measurable impact at our bus speeds
   Serial.begin(115200);
   delay(300);
 
@@ -493,6 +496,7 @@ void setup() {
 void loop() {
   server.handleClient();
   ensureWiFi();
+  delay(1);   // yield to FreeRTOS — lets power-management hooks run between iterations
 
   // Fast tick: read position for ONE servo, rotate through all 5
   // (each servo gets a position update every 5 × 250ms = 1.25s)

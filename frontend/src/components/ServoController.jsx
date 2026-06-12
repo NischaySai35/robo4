@@ -8,8 +8,9 @@ const SERVO_DEFS = [
   { id: 1, label: 'J1', name: 'CUBE LEFT',  type: 'twist', color: '#f59e0b' },
   { id: 2, label: 'J2', name: 'JOINT 1',    type: 'bend',  color: '#6ee7ff' },
   { id: 3, label: 'J3', name: 'JOINT 2',    type: 'bend',  color: '#a78bfa' },
-  { id: 4, label: 'J4', name: 'JOINT 3',    type: 'bend',  color: '#34d399' },
-  { id: 5, label: 'J5', name: 'CUBE RIGHT', type: 'twist', color: '#f59e0b' },
+  { id: 4, label: 'J4', name: 'WRIST',      type: 'twist', color: '#fb923c' },
+  { id: 5, label: 'J5', name: 'JOINT 3',    type: 'bend',  color: '#34d399' },
+  { id: 6, label: 'J6', name: 'CUBE RIGHT', type: 'twist', color: '#f59e0b' },
 ];
 
 const MAX_HISTORY  = 120;

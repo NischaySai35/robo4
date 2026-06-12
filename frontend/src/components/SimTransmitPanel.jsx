@@ -46,7 +46,7 @@ export default function SimTransmitPanel() {
   const resetStats  = useIntegrationStore(s => s.resetStats);
   const espUrl      = useIntegrationStore(s => s.espUrl);
 
-  const anglesRef  = useRef([0, 0, 0, 0, 0]);
+  const anglesRef  = useRef([0, 0, 0, 0, 0, 0]);
   const logBodyRef = useRef(null);
 
   // Subscribe to armStore changes without causing a re-render

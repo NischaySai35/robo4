@@ -17,7 +17,7 @@ import { solveIK } from '../math/fabrik.js';
 import { ROD_IDS, JOINT_DEFS, ROD_LENGTH, ROD_LENGTHS, ENDCAP_SIZE, JOINT_LIMIT } from '../store/armStore.js';
 import { bridge } from './cameraBridge.js';
 
-const _SEG = [ROD_LENGTHS.R2, ROD_LENGTHS.R3, ROD_LENGTHS.R4, ROD_LENGTHS.R5];
+const _SEG = [ROD_LENGTHS.R2, ROD_LENGTHS.R3, ROD_LENGTHS.R4, ROD_LENGTHS.R5, ROD_LENGTHS.R6];
 const MAX_REACH      = ENDCAP_SIZE * 2 + _SEG.reduce((a, b) => a + b, 0);
 const MAX_BEND_DELTA = 0.018; // rad per frame — keeps motion smooth
 
@@ -29,7 +29,7 @@ export class RenderLoop {
     this.getStore    = getStore;
     this.act         = storeActions;
 
-    this._telemetry  = new TelemetryTracker(5);
+    this._telemetry  = new TelemetryTracker(6);
     this._raf        = null;
     this._lastRootId = 'R1';
 
@@ -73,9 +73,9 @@ export class RenderLoop {
     }
   }
 
-  /** Rod index → inner-chain node index (J1..J5 = 0..4) for FABRIK target. */
+  /** Rod index → inner-chain node index (J1..J6 = 0..5) for FABRIK target. */
   _ikDragNode(rodIdx, rootIdx) {
-    if (rodIdx > rootIdx) return Math.min(rodIdx, 4);
+    if (rodIdx > rootIdx) return Math.min(rodIdx, 5);
     return Math.max(rodIdx - 1, 0);
   }
 
@@ -169,16 +169,16 @@ export class RenderLoop {
     // If ray is parallel to plane, keep previous _ikTarget.
 
     // 2. FABRIK solve
-    const inner5     = this.robotFK.getNodePositions().map(v => ({ x: v.x, y: v.y, z: v.z }));
-    const segLens5   = _SEG.slice();
-    const ikRoot     = rootIdx - 1;          // R1→-1, R2→0, …, R6→4
+    const innerNodes = this.robotFK.getNodePositions().map(v => ({ x: v.x, y: v.y, z: v.z }));
+    const segLens    = _SEG.slice();
+    const ikRoot     = rootIdx - 1;          // R1→-1, R2→0, …, R7→5
     const ikDragNode = this._ikDragNode(rodIdx, rootIdx);
 
     const { nodes: newInner } = solveIK(
-      inner5, segLens5, ikRoot, ikDragNode,
+      innerNodes, segLens, ikRoot, ikDragNode,
       { x: this._ikTarget.x, y: this._ikTarget.y, z: this._ikTarget.z },
       mode, JOINT_LIMIT,
-      [state.jointAngles[0], state.jointAngles[4]],
+      [state.jointAngles[0], state.jointAngles[5]],
     );
 
     // 3. Unroll FABRIK output before back-computing bend angles.
@@ -191,8 +191,8 @@ export class RenderLoop {
     if (mode === 'horizontal') {
       const _unroll = (rollAngle, pivotIdx, axisFromIdx) => {
         if (Math.abs(rollAngle) < 0.005) return;
-        const pivot = inner5[pivotIdx];
-        const adj   = inner5[axisFromIdx];
+        const pivot = innerNodes[pivotIdx];
+        const adj   = innerNodes[axisFromIdx];
         const dx = adj.x - pivot.x, dy = adj.y - pivot.y, dz = adj.z - pivot.z;
         const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
         if (len < 1e-10) return;
@@ -209,7 +209,7 @@ export class RenderLoop {
         });
       };
       if (rootIdx === 0) _unroll(state.jointAngles[0], 0, 1);
-      else if (rootIdx === 5) _unroll(state.jointAngles[4], 4, 3);
+      else if (rootIdx === 6) _unroll(state.jointAngles[5], 5, 4);
     }
 
     // 4. Back-compute bend angles from FABRIK geometry.
@@ -237,10 +237,14 @@ export class RenderLoop {
     const isVert    = mode === 'vertical';
     const newAngles = [...state.jointAngles];
 
-    for (let j = 0; j < 3; j++) {
-      const ni         = j + 1; // node index of this bend joint (J2=1, J3=2, J4=3)
-      const jointIdx   = j + 1; // same value; used for isBackward check
-      const isBackward = rootIdx > jointIdx;
+    // Back-compute bend angles from FABRIK geometry.
+    // Bend joints in new chain: J2 (ni=1), J3 (ni=2), J5 (ni=4).
+    // Twist joints (J1, J4, J6) are handled separately via roll optimisation.
+    for (let ni = 0; ni < JOINT_DEFS.length; ni++) {
+      if (JOINT_DEFS[ni].type !== 'bend') continue;
+      if (ni === 0 || ni >= computeNodes.length - 1) continue;
+
+      const isBackward = rootIdx > ni;
 
       const d1x = computeNodes[ni].x     - computeNodes[ni - 1].x;
       const d1h = isVert
@@ -263,26 +267,21 @@ export class RenderLoop {
         isBackward ? -signedRaw : signedRaw,
       ));
 
-      const prev  = state.jointAngles[j + 1];
+      const prev  = state.jointAngles[ni];
       const delta = ideal - prev;
 
-      // Joints closer to the drag target get higher rate (distal-first = minimum change).
       const distToTarget = Math.abs(ni - ikDragNode);
       const rateScale    = distToTarget <= 1 ? 1.0 : distToTarget === 2 ? 0.65 : 0.4;
-
-      // Dampen large jumps (>45°) — likely FABRIK found a different configuration.
-      const flipDamp = Math.abs(delta) > Math.PI / 4 ? 0.2 : 1.0;
-
-      const maxD = MAX_BEND_DELTA * rateScale * flipDamp;
-      newAngles[j + 1] = prev + Math.max(-maxD, Math.min(maxD, delta));
+      const flipDamp     = Math.abs(delta) > Math.PI / 4 ? 0.2 : 1.0;
+      const maxD         = MAX_BEND_DELTA * rateScale * flipDamp;
+      newAngles[ni] = prev + Math.max(-maxD, Math.min(maxD, delta));
     }
 
     // 5. Twist-joint roll optimisation for endcap roots (horizontal mode only).
-    //    Adjusts J1/J5 roll to put the IK target in the arm's plane of motion,
-    //    letting the arm track targets above/below its current plane.
+    //    Adjusts J1/J6 roll to put the IK target in the arm's plane of motion.
     if (mode === 'horizontal') {
       if (rootIdx === 0) {
-        const j1   = inner5[0];
+        const j1   = innerNodes[0];
         const relY = this._ikTarget.y - j1.y;
         const relZ = this._ikTarget.z - j1.z;
         if (Math.sqrt(relY * relY + relZ * relZ) > 0.04) {
@@ -295,17 +294,17 @@ export class RenderLoop {
             currRoll + Math.max(-MAX_BEND_DELTA, Math.min(MAX_BEND_DELTA, delta)),
           ));
         }
-      } else if (rootIdx === 5) {
-        const j5   = inner5[4];
-        const relY = this._ikTarget.y - j5.y;
-        const relZ = this._ikTarget.z - j5.z;
+      } else if (rootIdx === 6) {
+        const j6   = innerNodes[5];
+        const relY = this._ikTarget.y - j6.y;
+        const relZ = this._ikTarget.z - j6.z;
         if (Math.sqrt(relY * relY + relZ * relZ) > 0.04) {
           const optRoll  = Math.atan2(relY, relZ);
-          const currRoll = state.jointAngles[4];
+          const currRoll = state.jointAngles[5];
           let delta = optRoll - currRoll;
           if (delta >  Math.PI) delta -= 2 * Math.PI;
           if (delta < -Math.PI) delta += 2 * Math.PI;
-          newAngles[4] = Math.max(-Math.PI, Math.min(Math.PI,
+          newAngles[5] = Math.max(-Math.PI, Math.min(Math.PI,
             currRoll + Math.max(-MAX_BEND_DELTA, Math.min(MAX_BEND_DELTA, delta)),
           ));
         }
@@ -313,7 +312,7 @@ export class RenderLoop {
     }
 
     // 6. Write angles to store
-    for (let i = 0; i < 5; i++) this.act.setJointAngle(i, newAngles[i]);
+    for (let i = 0; i < 6; i++) this.act.setJointAngle(i, newAngles[i]);
   }
 
   // ── Loop ──────────────────────────────────────────────────────────────────────
@@ -337,11 +336,11 @@ export class RenderLoop {
     // ── Home ──────────────────────────────────────────────────────────────────────
     if (s.pendingHome) {
       this.act.clearPendingHome();
-      for (let i = 0; i < 5; i++) this.act.setJointAngle(i, 0);
+      for (let i = 0; i < 6; i++) this.act.setJointAngle(i, 0);
       this.act.setRootRod('R1');
       this._lastRootId = 'R1';
-      this.robotFK.rebuild('R1', [0, 0, 0, 0, 0], null, null);
-      this._telemetry.seed([0, 0, 0, 0, 0]);
+      this.robotFK.rebuild('R1', [0, 0, 0, 0, 0, 0], null, null);
+      this._telemetry.seed([0, 0, 0, 0, 0, 0]);
       this.scene.render();
       return;
     }

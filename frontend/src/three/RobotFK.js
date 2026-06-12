@@ -1,7 +1,7 @@
 /**
  * RobotFK — scene-graph forward kinematics for the robotic arm.
  *
- * Chain: R1—J1(twist)—R2—J2(bend)—R3—J3(bend)—R4—J4(bend)—R5—J5(twist)—R6
+ * Chain: R1—J1(twist)—R2—J2(bend)—R3—J3(bend)—R4—J4(twist/wrist)—R5—J5(bend)—R6—J6(twist)—R7
  *
  * All rods share the same length (ROD_LENGTH). Geometries have their pivot at
  * the LEFT end (x=0), extending along +X to x=ROD_LENGTH.
@@ -105,12 +105,12 @@ export class RobotFK {
 
     // Tip markers for end-effector tracking
     this._tipR1 = null;
-    this._tipR6 = null;
+    this._tipR7 = null;
 
     // Last known root used for rebuild
     this._activeRootId = 'R1';
 
-    this._build('R1', [0, 0, 0, 0, 0]);
+    this._build('R1', [0, 0, 0, 0, 0, 0]);
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ export class RobotFK {
       : new THREE.Vector3();
     const rootQuat = worldQuats[newRootId].clone();
 
-    const newAngles = [0, 0, 0, 0, 0];
+    const newAngles = [0, 0, 0, 0, 0, 0];
     const visited   = new Set();
 
     const traverseCalc = (rodId, parentWorldQuat) => {
@@ -205,7 +205,7 @@ export class RobotFK {
     this._jointNodes = {};
     this._jointSphereMeshes = {};
     this._tipR1 = null;
-    this._tipR6 = null;
+    this._tipR7 = null;
 
     this._build(activeRootId, jointAngles);
 
@@ -273,11 +273,11 @@ export class RobotFK {
    * Uses invisible tip markers on R1/R6.
    */
   getEndEffectorWorld() {
-    // The end-effector is whichever of R1/R6 is NOT the active root
+    // The end-effector is whichever of R1/R7 is NOT the active root
     const rootIdx = ROD_IDS.indexOf(this._activeRootId);
-    const useR6   = rootIdx <= 2; // root is closer to R1 side → tip is R6
+    const useR7   = rootIdx <= 3; // root is closer to R1 side → tip is R7
 
-    const marker = useR6 ? this._tipR6 : this._tipR1;
+    const marker = useR7 ? this._tipR7 : this._tipR1;
     if (!marker) return { x: 0, y: 0, z: 0 };
 
     const wp = new THREE.Vector3();
@@ -294,7 +294,7 @@ export class RobotFK {
   getNodePositions() {
     this.robotGroup.updateMatrixWorld(true);
     const wp = new THREE.Vector3();
-    return ['J1', 'J2', 'J3', 'J4', 'J5'].map(id => {
+    return ['J1', 'J2', 'J3', 'J4', 'J5', 'J6'].map(id => {
       const node = this._jointNodes[id];
       return node ? node.getWorldPosition(wp.clone()) : new THREE.Vector3();
     });
@@ -310,15 +310,15 @@ export class RobotFK {
     rootMesh.position.set(0, 0, 0);
     this.robotGroup.add(rootMesh);
 
-    // Add tip marker to R1 and R6 regardless of root
+    // Add tip marker to R1 and R7 regardless of root
     if (rootId === 'R1') {
       this._tipR1 = this._makeTip();
       this._tipR1.position.set(this._rodLen('R1'), 0, 0);
       rootMesh.add(this._tipR1);
-    } else if (rootId === 'R6') {
-      this._tipR6 = this._makeTip();
-      this._tipR6.position.set(0, 0, 0);
-      rootMesh.add(this._tipR6);
+    } else if (rootId === 'R7') {
+      this._tipR7 = this._makeTip();
+      this._tipR7.position.set(0, 0, 0);
+      rootMesh.add(this._tipR7);
     }
 
     // Traverse outward from the root
@@ -379,22 +379,22 @@ export class RobotFK {
 
       jointPivot.add(childMesh);
 
-      // Tip markers for R1/R6 when they are NOT the root
+      // Tip markers for R1/R7 when they are NOT the root
       if (childRodId === 'R1') {
         const tip = this._makeTip();
         // Backward placement: R1 at (-ENDCAP_SIZE, 0, 0). Left face (x=0 local) = far tip.
         tip.position.set(0, 0, 0);
         childMesh.add(tip);
         this._tipR1 = tip;
-      } else if (childRodId === 'R6') {
+      } else if (childRodId === 'R7') {
         const tip = this._makeTip();
         if (isForward) {
-          tip.position.set(this._rodLen('R6'), 0, 0);
+          tip.position.set(this._rodLen('R7'), 0, 0);
         } else {
           tip.position.set(0, 0, 0);
         }
         childMesh.add(tip);
-        this._tipR6 = tip;
+        this._tipR7 = tip;
       }
 
       // Recurse
@@ -406,12 +406,12 @@ export class RobotFK {
 
   /** Chain length contributed by a rod. Endcaps are cubes; main rods use per-rod lengths. */
   _rodLen(rodId) {
-    if (rodId === 'R1' || rodId === 'R6') return ENDCAP_SIZE;
+    if (rodId === 'R1' || rodId === 'R7') return ENDCAP_SIZE;
     return ROD_LENGTHS[rodId] ?? ROD_LENGTH;
   }
 
   _makeRodMesh(rodId, isRoot) {
-    const isEndRod = rodId === 'R1' || rodId === 'R6';
+    const isEndRod = rodId === 'R1' || rodId === 'R7';
     const geo = isEndRod ? _endcapGeo : _makeRodGeo(this._rodLen(rodId));
 
     let normalMat, rootMat, hoverMat;

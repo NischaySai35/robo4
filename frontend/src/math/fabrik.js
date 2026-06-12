@@ -531,14 +531,15 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
 // storedRoll: the current accumulated roll for the cube being moved, kept in the
 // store rather than derived from geometry to avoid sign-ambiguity with +Z bends.
 export function applyJointAngleDirect(nodes3d, mode, panelIdx, desiredAngle, rootRod, limit, storedRoll = 0) {
-  const isEndcap = panelIdx === 0 || panelIdx === 4;
+  const n = nodes3d.length;
+  const isEndcap = panelIdx === 0 || panelIdx === n - 1;
 
   // ── CUBE joints: roll around the local rod axis ────────────────────────────
   if (isEndcap) {
-    const pivot   = panelIdx === 0 ? nodes3d[0] : nodes3d[4];
-    const adjNode = panelIdx === 0 ? nodes3d[1] : nodes3d[3]; // node at other end of connected rod
+    const pivot   = panelIdx === 0 ? nodes3d[0] : nodes3d[n - 1];
+    const adjNode = panelIdx === 0 ? nodes3d[1] : nodes3d[n - 2]; // node at other end of connected rod
     const rotFrom = panelIdx === 0 ? 1 : 0;
-    const rotTo   = panelIdx === 0 ? 4 : 3;
+    const rotTo   = panelIdx === 0 ? n - 1 : n - 2;
 
     // Roll axis = actual direction of the rod attached to this cube (not always world X).
     const rodDir = normalize3({ x: adjNode.x - pivot.x, y: adjNode.y - pivot.y, z: adjNode.z - pivot.z });
@@ -568,11 +569,11 @@ export function applyJointAngleDirect(nodes3d, mode, panelIdx, desiredAngle, roo
   const delta = clamped - currentAngle;
 
   // Determine free side (away from anchor)
-  const anchorL = rootRod < 0 ? 0 : Math.min(rootRod, 4);
+  const anchorL = rootRod < 0 ? 0 : Math.min(rootRod, n - 1);
 
   let rotFrom, rotTo;
   if (nodeIdx > anchorL) {
-    rotFrom = nodeIdx + 1; rotTo = 4; // right side is free
+    rotFrom = nodeIdx + 1; rotTo = n - 1; // right side is free
   } else {
     rotFrom = 0; rotTo = nodeIdx - 1; // left side is free
   }
@@ -632,7 +633,8 @@ export function extractJointAngles(nodes3d, mode, cubeRollAngles) {
       ref = rotateAroundAxis(ref, rd, origin, Math.cos(rollL), Math.sin(rollL));
     }
     if (Math.abs(rollR) > 0.001) {
-      const rd = normalize3({ x: nodes3d[3].x - nodes3d[4].x, y: nodes3d[3].y - nodes3d[4].y, z: nodes3d[3].z - nodes3d[4].z });
+      const last = nodes3d.length - 1;
+      const rd = normalize3({ x: nodes3d[last - 1].x - nodes3d[last].x, y: nodes3d[last - 1].y - nodes3d[last].y, z: nodes3d[last - 1].z - nodes3d[last].z });
       ref = rotateAroundAxis(ref, rd, origin, Math.cos(rollR), Math.sin(rollR));
     }
   }
@@ -655,5 +657,5 @@ export function extractJointAngles(nodes3d, mode, cubeRollAngles) {
   }
 
   angles.push(rollR);
-  return angles; // length = 5
+  return angles; // length = nodes3d.length
 }

@@ -23,13 +23,19 @@ import {
 
 // ── Shared geometries ─────────────────────────────────────────────────────────
 
-// Rod cylinder lying along +X, pivot at left end (x=0).
-// Each rod gets its own geometry so lengths can differ.
+// Hexagonal prism rod lying along +X, pivot at left end (x=0).
+// 6 radial segments → hexagonal cross-section. thetaStart=PI/6 gives flat faces top/bottom.
 function _makeRodGeo(length) {
-  const g = new THREE.CylinderGeometry(ROD_RADIUS, ROD_RADIUS, length, 16, 1);
+  const g = new THREE.CylinderGeometry(ROD_RADIUS, ROD_RADIUS, length, 6, 1, false, Math.PI / 6);
   g.applyMatrix4(new THREE.Matrix4().makeRotationZ(Math.PI / 2));
   g.applyMatrix4(new THREE.Matrix4().makeTranslation(length / 2, 0, 0));
   return g;
+}
+
+// R3 midpoint cuboid: square cross-section = ENDCAP_SIZE, length = 2×ENDCAP_SIZE along Z.
+// Pivot matches R3 rod (x=0 at left end); positioned at x = R3_length/2.
+function _makeR3CuboidGeo() {
+  return new THREE.BoxGeometry(ENDCAP_SIZE, ENDCAP_SIZE, ENDCAP_SIZE * 2);
 }
 
 // End-rod cube, pivot at left face (x=0)
@@ -46,14 +52,14 @@ const _twistSphere = new THREE.SphereGeometry(JOINT_RADIUS * 1.3, 20, 20);
 // ── Material factories ────────────────────────────────────────────────────────
 
 const MAT = {
-  rod: () => new THREE.MeshStandardMaterial({ color: 0x7a8faa, roughness: 0.38, metalness: 0.55 }),
+  rod: () => new THREE.MeshStandardMaterial({ color: 0x7a8faa, roughness: 0.38, metalness: 0.55, flatShading: true }),
   rodRoot: () => new THREE.MeshStandardMaterial({
     color: 0xffaa22, roughness: 0.18, metalness: 0.75,
-    emissive: 0xff8800, emissiveIntensity: 0.4,
+    emissive: 0xff8800, emissiveIntensity: 0.4, flatShading: true,
   }),
   rodHover: () => new THREE.MeshStandardMaterial({
     color: 0x9eb8d0, roughness: 0.2, metalness: 0.88,
-    emissive: 0x1a4488, emissiveIntensity: 0.22,
+    emissive: 0x1a4488, emissiveIntensity: 0.22, flatShading: true,
   }),
   endRod: () => new THREE.MeshStandardMaterial({
     color: 0xc9a020, roughness: 0.22, metalness: 0.78,
@@ -106,6 +112,9 @@ export class RobotFK {
     // Tip markers for end-effector tracking
     this._tipR1 = null;
     this._tipR7 = null;
+
+    // R3 mid-cuboid mesh (separate from the hex rod so raycasting hits it as R3)
+    this._r3CuboidMesh = null;
 
     // Last known root used for rebuild
     this._activeRootId = 'R1';
@@ -206,6 +215,7 @@ export class RobotFK {
     this._jointSphereMeshes = {};
     this._tipR1 = null;
     this._tipR7 = null;
+    this._r3CuboidMesh = null;
 
     this._build(activeRootId, jointAngles);
 
@@ -248,6 +258,10 @@ export class RobotFK {
     const mesh = this._rodMeshes[rodId];
     if (!mesh) return;
     mesh.material = active ? mats.hover : mats.normal;
+    // Keep the R3 cuboid in sync with the rod
+    if (rodId === 'R3' && this._r3CuboidMesh) {
+      this._r3CuboidMesh.material = active ? mats.hover : mats.normal;
+    }
   }
 
   /**
@@ -265,7 +279,9 @@ export class RobotFK {
    * Flat array of rod meshes — used for raycasting.
    */
   get interactables() {
-    return Object.values(this._rodMeshes);
+    const meshes = Object.values(this._rodMeshes);
+    if (this._r3CuboidMesh) meshes.push(this._r3CuboidMesh);
+    return meshes;
   }
 
   /**
@@ -433,6 +449,21 @@ export class RobotFK {
 
     this._rodMeshes[rodId] = mesh;
     this._rodMats[rodId]   = { normal: normalMat, root: rootMat, hover: hoverMat };
+
+    // Attach mid-cuboid to R3 — square cross-section (ENDCAP_SIZE), length 2×ENDCAP_SIZE along Z.
+    if (rodId === 'R3') {
+      const cuboidMat = isRoot ? rootMat.clone() : normalMat.clone();
+      const cuboid = new THREE.Mesh(_makeR3CuboidGeo(), cuboidMat);
+      cuboid.castShadow = true;
+      cuboid.receiveShadow = true;
+      cuboid.userData = { type: 'rod', id: 'R3' };
+      cuboid.name = 'R3_cuboid';
+      // Place at the midpoint of R3 along its X axis
+      cuboid.position.set(this._rodLen('R3') / 2, 0, 0);
+      mesh.add(cuboid);
+      this._r3CuboidMesh = cuboid;
+    }
+
     return mesh;
   }
 
@@ -461,6 +492,40 @@ export class RobotFK {
       r2.castShadow = true;
       pivot.add(r2);
     }
+  }
+
+  /**
+   * World-space position and rotation axis for every joint.
+   * Used by the Jacobian IK solver to build J columns analytically.
+   *
+   * Rotation axes:
+   *   twist joints      → LOCAL X (rod axis)
+   *   bend (horizontal) → LOCAL Y
+   *   bend (vertical)   → LOCAL Z
+   * World axis = parent's world quaternion applied to that local axis.
+   *
+   * @param {'horizontal'|'vertical'} mode
+   * @returns {Array<{pos: THREE.Vector3, axis: THREE.Vector3}>}
+   */
+  getJointWorldData(mode = 'horizontal') {
+    this.robotGroup.updateMatrixWorld(true);
+    const _q  = new THREE.Quaternion();
+    return JOINT_DEFS.map(def => {
+      const node = this._jointNodes[def.id];
+      if (!node) {
+        return { pos: new THREE.Vector3(), axis: new THREE.Vector3(0, 1, 0) };
+      }
+      const pos = node.getWorldPosition(new THREE.Vector3());
+      const localAxis = def.type === 'twist'
+        ? new THREE.Vector3(1, 0, 0)
+        : mode === 'vertical'
+          ? new THREE.Vector3(0, 0, 1)
+          : new THREE.Vector3(0, 1, 0);
+      const pq = node.parent
+        ? node.parent.getWorldQuaternion(_q)
+        : _q.identity();
+      return { pos, axis: localAxis.applyQuaternion(pq).normalize() };
+    });
   }
 
   _makeTip() {

@@ -116,10 +116,15 @@ export class RobotFK {
     // R3 mid-cuboid mesh (separate from the hex rod so raycasting hits it as R3)
     this._r3CuboidMesh = null;
 
+    // Selectable face indicator planes (shown in connect mode)
+    this._facePlaneMeshes = [];
+    this._facesVisible    = false;
+
     // Last known root used for rebuild
     this._activeRootId = 'R1';
 
     this._build('R1', [0, 0, 0, 0, 0, 0]);
+    this._addFacePlanes();
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -215,9 +220,12 @@ export class RobotFK {
     this._jointSphereMeshes = {};
     this._tipR1 = null;
     this._tipR7 = null;
-    this._r3CuboidMesh = null;
+    this._r3CuboidMesh    = null;
+    this._facePlaneMeshes = [];
 
     this._build(activeRootId, jointAngles);
+    this._addFacePlanes();
+    if (this._facesVisible) this.showFaceIndicators(true);
 
     this.robotGroup.position.copy(rootPos   ?? new THREE.Vector3());
     this.robotGroup.quaternion.copy(rootQuat ?? new THREE.Quaternion());
@@ -527,6 +535,108 @@ export class RobotFK {
       return { pos, axis: localAxis.applyQuaternion(pq).normalize() };
     });
   }
+
+  // ── Face indicator planes ──────────────────────────────────────────────────────
+  // One PlaneGeometry per selectable face, parented to the matching rod mesh.
+  // Visible only in connect mode; used for raycasting face selection.
+  //
+  // Face layout (all squares, ENDCAP_SIZE × ENDCAP_SIZE):
+  //   R1_outer        — left  face of R1 endcap  (-X in R1 local)
+  //   R7_outer        — right face of R7 endcap  (+X in R7 local)
+  //   R3_cuboid_plusZ — +Z end face of R3 cuboid
+  //   R3_cuboid_minusZ— −Z end face of R3 cuboid
+  //
+  // PlaneGeometry default normal is +Z.  We rotate around Y to face the
+  // correct direction:
+  //   face −X → rotY = −π/2
+  //   face +X → rotY = +π/2
+  //   face +Z → rotY = 0
+  //   face −Z → rotY = π
+  _addFacePlanes() {
+    const S   = ENDCAP_SIZE * 0.88;
+    const geo = new THREE.PlaneGeometry(S, S);
+
+    const add = (parent, key, px, py, pz, rotY) => {
+      if (!parent) return;
+      const mat = new THREE.MeshBasicMaterial({
+        color: 0x00aaff, transparent: true, opacity: 0,
+        side: THREE.DoubleSide, depthTest: false,
+      });
+      const plane = new THREE.Mesh(geo, mat);
+      plane.rotation.y   = rotY;
+      plane.position.set(px, py, pz);
+      plane.userData     = { type: 'face', faceKey: key };
+      plane.renderOrder  = 999;
+      plane.visible      = false;
+      parent.add(plane);
+      this._facePlaneMeshes.push(plane);
+    };
+
+    add(this._rodMeshes['R1'],  'R1_outer',          0, 0, 0,            -Math.PI / 2);
+    add(this._rodMeshes['R7'],  'R7_outer',          ENDCAP_SIZE, 0, 0,  +Math.PI / 2);
+    add(this._r3CuboidMesh,     'R3_cuboid_plusZ',   0, 0,  ENDCAP_SIZE,  0);
+    add(this._r3CuboidMesh,     'R3_cuboid_minusZ',  0, 0, -ENDCAP_SIZE,  Math.PI);
+  }
+
+  showFaceIndicators(visible) {
+    this._facesVisible = visible;
+    for (const p of this._facePlaneMeshes) {
+      p.visible          = visible;
+      p.material.opacity = visible ? 0.35 : 0;
+      p.material.needsUpdate = true;
+    }
+  }
+
+  resetFaceHighlights() {
+    for (const p of this._facePlaneMeshes) {
+      p.material.color.setHex(0x00aaff);
+      p.material.opacity = this._facesVisible ? 0.35 : 0;
+      p.material.needsUpdate = true;
+    }
+  }
+
+  setFaceHighlight(faceKey, state) {
+    const cfg = {
+      normal:    { hex: 0x00aaff, op: 0.35 },
+      selected1: { hex: 0x00ff88, op: 0.75 },
+      selected2: { hex: 0xffaa00, op: 0.75 },
+      error:     { hex: 0xff2200, op: 0.80 },
+    }[state] ?? { hex: 0x00aaff, op: 0.35 };
+    for (const p of this._facePlaneMeshes) {
+      if (p.userData.faceKey !== faceKey) continue;
+      p.material.color.setHex(cfg.hex);
+      p.material.opacity = cfg.op;
+      p.material.needsUpdate = true;
+    }
+  }
+
+  getFaceIndicatorMeshes() { return this._facePlaneMeshes; }
+
+  /**
+   * World-space Box3 for each rod mesh, keyed by rod ID.
+   * Uses geometry-only bounds (NOT setFromObject which traverses all descendants
+   * and would make every rod appear to span the entire arm).
+   */
+  getLinkBounds() {
+    this.robotGroup.updateMatrixWorld(true);
+    const bounds = {};
+    for (const [id, mesh] of Object.entries(this._rodMeshes)) {
+      if (!mesh.geometry.boundingBox) mesh.geometry.computeBoundingBox();
+      const box = mesh.geometry.boundingBox.clone();
+      box.applyMatrix4(mesh.matrixWorld);
+      // For R3: union with the cuboid child so collisions against it are caught too
+      if (id === 'R3' && this._r3CuboidMesh) {
+        if (!this._r3CuboidMesh.geometry.boundingBox) this._r3CuboidMesh.geometry.computeBoundingBox();
+        const cBox = this._r3CuboidMesh.geometry.boundingBox.clone();
+        cBox.applyMatrix4(this._r3CuboidMesh.matrixWorld);
+        box.union(cBox);
+      }
+      bounds[id] = box;
+    }
+    return bounds;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────────
 
   _makeTip() {
     // Invisible Object3D used only for world-position queries

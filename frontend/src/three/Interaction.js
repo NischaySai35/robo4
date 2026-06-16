@@ -32,6 +32,7 @@ export class Interaction {
     this._hitId         = null;   // rodId under mousedown
     this._hoveredId     = null;   // currently hovered rodId
     this._dragging      = false;  // true once drag threshold exceeded
+    this.paused         = false;  // set true to suppress all callbacks (e.g. connect mode)
 
     this._onMouseDown = this._onMouseDown.bind(this);
     this._onMouseMove = this._onMouseMove.bind(this);
@@ -70,7 +71,7 @@ export class Interaction {
   }
 
   _onMouseDown(e) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || this.paused) return;
     const ndc = this._getNDC(e.clientX, e.clientY);
     this._mouseDownPos.copy(ndc);
     this._dragLastNDC.copy(ndc);
@@ -79,6 +80,7 @@ export class Interaction {
   }
 
   _onMouseMove(e) {
+    if (this.paused) return;
     const ndc = this._getNDC(e.clientX, e.clientY);
 
     // Active drag — threshold of 0.015 NDC before starting
@@ -114,7 +116,7 @@ export class Interaction {
   }
 
   _onMouseUp(e) {
-    if (e.button !== 0) return;
+    if (e.button !== 0 || this.paused) return;
 
     if (this._dragging) {
       this._dragging = false;

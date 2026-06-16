@@ -40,7 +40,7 @@ export const useIntegrationStore = create((set, get) => ({
 
   // ── Command bridge ──────────────────────────────────────────────────────────
   // Latest angles queued from sim; null after consumed by controller
-  pendingAngles:  null,   // { 1: deg, 2: deg, 3: deg, 4: deg, 5: deg }
+  pendingAngles:  null,   // { 1: deg, 2: deg, 3: deg, 4: deg, 5: deg, 6: deg }
   lastSentAngles: {},     // { servoId: deg } — last values actually sent to ESP
 
   // ── Logs ────────────────────────────────────────────────────────────────────
@@ -51,9 +51,16 @@ export const useIntegrationStore = create((set, get) => ({
   stats: { queued: 0, sent: 0, failed: 0 },
 
   // ── ESP config ──────────────────────────────────────────────────────────────
-  setEspUrl:           (url)       => set({ espUrl: url }),
-  setConnected:        (ok, latMs) => set({ connected: ok, latencyMs: latMs ?? null }),
-  setServoOnlineCount: (n)         => set({ servoOnlineCount: n }),
+  avgVoltage:       null,   // average voltageV across all online servos
+  totalCurrentMA:   null,   // sum of currentmA across all online servos
+  overcurrentServos: [],    // servos drawing > 700 mA: [{ id, label, currentmA }]
+
+  setEspUrl:             (url)       => set({ espUrl: url }),
+  setConnected:          (ok, latMs) => set({ connected: ok, latencyMs: latMs ?? null }),
+  setServoOnlineCount:   (n)         => set({ servoOnlineCount: n }),
+  setAvgVoltage:         (v)         => set({ avgVoltage: v }),
+  setTotalCurrentMA:     (v)         => set({ totalCurrentMA: v }),
+  setOvercurrentServos:  (arr)       => set({ overcurrentServos: arr }),
 
   // ── Angle queue (called by SimTransmitPanel every 500ms) ────────────────────
   queueAngles: (angles) => {

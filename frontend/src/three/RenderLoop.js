@@ -46,6 +46,18 @@ export class RenderLoop {
     // Home animation state — null when idle
     this._homeAnim = null;
 
+    // Connect-mode flag — blocks IK and home while face selection is active
+    this._connectMode = false;
+
+    // Optional per-frame hook called just before render (used for inactive module FK)
+    this.extraTick = null;
+
+    // Collision detection
+    this._prevAngles   = [0, 0, 0, 0, 0, 0]; // angles from start of frame (before IK)
+    this._wasColliding = false;
+    // Set to a function () => THREE.Box3[] that returns other modules' bounding boxes
+    this.getOtherModuleBounds = null;
+
     bridge.getArmNodes = () =>
       this.robotFK.getNodePositions().map(v => ({ x: v.x, y: v.y, z: v.z }));
 
@@ -161,7 +173,7 @@ export class RenderLoop {
     // World-space rotation axes for all joints (needed by Jacobian)
     const jointData = this.robotFK.getJointWorldData(mode);
 
-    const newAngles = solveJacobianIK(
+    return solveJacobianIK(
       dragPos, jointData, activeJoints,
       this.scene.camera,
       { x: mouseNDC.x, y: mouseNDC.y },
@@ -170,11 +182,20 @@ export class RenderLoop {
       /* lambda */ 0.008,
       /* gain   */ 0.5,
     );
-
-    for (let i = 0; i < 6; i++) this.act.setJointAngle(i, newAngles[i]);
+    // Caller writes to store only after collision check passes.
   }
 
   // ── Loop ──────────────────────────────────────────────────────────────────────
+
+  // Swap the active RobotFK instance (called on module switch)
+  swapRobotFK(newFK) {
+    this.robotFK = newFK;
+  }
+
+  // Block IK/home animation during connect-mode face selection
+  setConnectMode(active) {
+    this._connectMode = active;
+  }
 
   start() {
     const loop = (now) => {
@@ -192,8 +213,11 @@ export class RenderLoop {
     const s    = this.getStore();
     const mode = s.mode || 'horizontal';
 
+    // ── Inactive-module FK + other per-frame hooks ────────────────────────────────
+    if (this.extraTick) this.extraTick();
+
     // ── Home ──────────────────────────────────────────────────────────────────────
-    if (s.pendingHome) {
+    if (s.pendingHome && !this._connectMode) {
       this.act.clearPendingHome();
       this._activeDragRodId = null; // cancel any active drag
 
@@ -214,9 +238,9 @@ export class RenderLoop {
         startQuat   = rootQuat.clone();
       }
 
-      // Scale duration to travel distance: 400–1100 ms
+      // Scale duration to travel distance: min 1500ms, up to ~2800ms for full-range move
       const maxDelta = Math.max(0.01, ...startAngles.map(a => Math.abs(a)));
-      const duration = 400 + maxDelta * (700 / Math.PI);
+      const duration = Math.max(1500, 600 + maxDelta * (2200 / Math.PI));
       this._homeAnim = { startAngles, startPos, startQuat, startTime: now, duration };
     }
 
@@ -271,6 +295,7 @@ export class RenderLoop {
     // onRootClick handles this atomically, but if root changes through some other
     // path (e.g., home button), re-sync here.
     let activeAngles = s.jointAngles;
+
     if (s.activeRootId !== this._lastRootId) {
       const { newAngles, rootPos, rootQuat } =
         this.robotFK.computeAnglesForRoot(s.activeRootId, mode);
@@ -279,18 +304,72 @@ export class RenderLoop {
       this.robotFK.rebuild(s.activeRootId, newAngles, rootPos, rootQuat);
       this._telemetry.seed(newAngles);
       activeAngles = newAngles;
+      this._prevAngles = [...newAngles];
     }
 
     // ── Continuous IK ─────────────────────────────────────────────────────────────
-    // Runs every animation frame while a drag is active so the arm keeps
-    // converging toward the cursor even when the mouse is stationary.
-    if (this._activeDragRodId) {
-      this._runIKStep(this._activeDragRodId, this._activeDragNdc);
-      activeAngles = this.getStore().jointAngles; // re-read after IK wrote new values
+    // _runIKStep now RETURNS proposed angles without writing to the store.
+    // We only commit them after the collision check passes — this prevents the
+    // 60fps store-update flood that froze the UI on sustained collision.
+    let proposedAngles = [...activeAngles];
+    let ikActive = false;
+    if (this._activeDragRodId && !this._connectMode) {
+      const result = this._runIKStep(this._activeDragRodId, this._activeDragNdc);
+      if (result) { proposedAngles = result; ikActive = true; }
     }
 
-    // ── FK update ─────────────────────────────────────────────────────────────────
-    this.robotFK.updateAngles(activeAngles, mode);
+    // ── FK update with proposed angles ────────────────────────────────────────────
+    this.robotFK.updateAngles(proposedAngles, mode);
+
+    // ── Collision detection (inter-module + self) ─────────────────────────────────
+    {
+      let collision = false;
+
+      // Inter-module: whole-arm AABB vs other modules
+      if (this.getOtherModuleBounds && !collision) {
+        const myBox = new THREE.Box3().setFromObject(this.robotFK.robotGroup);
+        for (const ob of this.getOtherModuleBounds()) {
+          if (myBox.clone().expandByScalar(-0.05).intersectsBox(ob.clone().expandByScalar(-0.05))) {
+            collision = true; break;
+          }
+        }
+      }
+
+      // Self-collision: non-adjacent rod pairs (skip ≤2 hops in chain R1…R7)
+      if (!collision) {
+        const SELF_RODS  = ['R1','R2','R3','R4','R5','R6','R7'];
+        const linkBounds = this.robotFK.getLinkBounds();
+        outer: for (let i = 0; i < SELF_RODS.length; i++) {
+          for (let j = i + 3; j < SELF_RODS.length; j++) {
+            const a = linkBounds[SELF_RODS[i]];
+            const b = linkBounds[SELF_RODS[j]];
+            if (a && b &&
+                a.clone().expandByScalar(-0.02).intersectsBox(b.clone().expandByScalar(-0.02))) {
+              collision = true; break outer;
+            }
+          }
+        }
+      }
+
+      if (!collision) {
+        // Safe: commit IK result to store and advance safe snapshot
+        if (ikActive) {
+          for (let i = 0; i < 6; i++) this.act.setJointAngle(i, proposedAngles[i]);
+          activeAngles = proposedAngles;
+        }
+        this._prevAngles = [...activeAngles];
+      } else {
+        // Collision: revert visual to last safe angles.
+        // Only write to store once on entry — avoids 60fps store flood that froze UI.
+        this.robotFK.updateAngles(this._prevAngles, mode);
+        activeAngles = this._prevAngles;
+        if (!this._wasColliding) {
+          this.act.setAllAngles(this._prevAngles);
+        }
+      }
+      this._wasColliding = collision;
+      this.act.setCollision(collision);
+    }
 
     // ── Telemetry ─────────────────────────────────────────────────────────────────
     const limitHits = activeAngles.map((a, i) => Math.abs(a) >= JOINT_DEFS[i].limit - 0.01);

@@ -71,4 +71,16 @@ export const useArmStore = create((set, get) => ({
   homeArm:           () => set({ pendingHome: true }),
   clearPendingHome:  () => set({ pendingHome: false }),
   setMode:           (m) => set({ mode: m }),
+
+  collision: false,
+  setCollision: (v) => set({ collision: v }),
+
+  // Bulk-set all joint angles atomically (used by collision revert)
+  setAllAngles: (angles) => {
+    const clamped = angles.map((a, i) => {
+      const lim = JOINT_DEFS[i].limit;
+      return Math.max(-lim, Math.min(lim, a));
+    });
+    set({ jointAngles: clamped });
+  },
 }));

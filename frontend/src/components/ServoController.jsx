@@ -13,8 +13,20 @@ const SERVO_DEFS = [
   { id: 6, label: 'J6', name: 'CUBE RIGHT', type: 'twist', color: '#f59e0b' },
 ];
 
+// Pre-compute type + within-type number for each servo ID
+// twist: J1=1, J4=2, J6=3   bend: J2=1, J3=2, J5=3
+const SERVO_TYPE_NUM = (() => {
+  const map = {};
+  let t = 0, b = 0;
+  for (const d of SERVO_DEFS) {
+    if (d.type === 'twist') map[d.id] = { type: 'twist', num: ++t };
+    else                    map[d.id] = { type: 'bend',  num: ++b };
+  }
+  return map;
+})();
+
 const MAX_HISTORY  = 120;
-const POLL_MS      = 200;
+const POLL_MS      = 50;
 const DEFAULT_URL  = 'http://nischaylap.local';
 const TEMP_WARN    = 55;
 const SERVO_MA_MAX = 2000;
@@ -196,7 +208,7 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
   const handlePointerMove = useCallback((e) => {
     if (!dragging.current || !onDrag) return;
     const now = Date.now();
-    if (now - lastCmd.current < 120) return;
+    if (now - lastCmd.current < 60) return;
     lastCmd.current = now;
     const v = angleFromPointer(e);
     if (v != null) onDrag(v);
@@ -446,42 +458,28 @@ function ServoCard({ def, data, onCmd }) {
 
 // ── GroupControl ──────────────────────────────────────────────────────────────
 
-function GroupControl({ onCmd }) {
-  const [bendAngle,  setBendAngle]  = useState('90');
-  const [twistAngle, setTwistAngle] = useState('180');
-  const bendIds  = SERVO_DEFS.filter(d => d.type === 'bend').map(d => d.id);
-  const twistIds = SERVO_DEFS.filter(d => d.type === 'twist').map(d => d.id);
-  const g = (ids, cmd, extra = {}) => ids.forEach(id => onCmd(id, cmd, extra));
+function GroupControl({ onCmd, onEstop }) {
+  const all = SERVO_DEFS.map(d => d.id);
+  const g   = (cmd, extra = {}) => all.forEach(id => onCmd(id, cmd, extra));
 
   return (
     <div className="sc-group-strip">
-      <div className="sc-group-block">
-        <span className="sc-group-label">Bend (J2 J3 J4)</span>
-        <input className="sc-group-input" type="number" min="0" max="360"
-          value={bendAngle} onChange={e => setBendAngle(e.target.value)} />
-        <button className="sc-btn sc-btn-sm sc-btn-primary"
-          onClick={() => g(bendIds, 'pos', { angle: bendAngle, speed: 5, acc: 20 })}>Go</button>
-        <button className="sc-btn sc-btn-sm"
-          onClick={() => g(bendIds, 'wave')}>Wave</button>
-        <button className="sc-btn sc-btn-sm"
-          onClick={() => g(bendIds, 'pos', { angle: 180, speed: 5, acc: 20 })}>180°</button>
-        <button className="sc-btn sc-btn-sm sc-btn-danger"
-          onClick={() => g(bendIds, 'stop')}>Stop</button>
-      </div>
-      <div className="sc-group-sep" />
-      <div className="sc-group-block">
-        <span className="sc-group-label">Twist (J1 J5)</span>
-        <input className="sc-group-input" type="number" min="0" max="360"
-          value={twistAngle} onChange={e => setTwistAngle(e.target.value)} />
-        <button className="sc-btn sc-btn-sm sc-btn-primary"
-          onClick={() => g(twistIds, 'pos', { angle: twistAngle, speed: 5, acc: 20 })}>Go</button>
-        <button className="sc-btn sc-btn-sm"
-          onClick={() => g(twistIds, 'cw')}>CW</button>
-        <button className="sc-btn sc-btn-sm"
-          onClick={() => g(twistIds, 'ccw')}>CCW</button>
-        <button className="sc-btn sc-btn-sm sc-btn-danger"
-          onClick={() => g(twistIds, 'stop')}>Stop</button>
-      </div>
+      <button className="sc-btn sc-btn-sm sc-btn-primary"
+        onClick={() => g('pos', { angle: 180, speed: 5, acc: 40 })}>
+        Home All
+      </button>
+      <button className="sc-btn sc-btn-sm sc-btn-danger"
+        onClick={onEstop}>
+        ⚡ E-STOP
+      </button>
+      <button className="sc-btn sc-btn-sm"
+        onClick={() => g('torqueon')}>
+        Torque ON
+      </button>
+      <button className="sc-btn sc-btn-sm"
+        onClick={() => g('torqueoff')}>
+        Torque OFF
+      </button>
     </div>
   );
 }
@@ -648,7 +646,7 @@ function PresetPanel({ servos, onApply }) {
       <div className="sc-presets-hdr">
         <span>⭐ Presets</span>
         <span style={{ color: '#8aa0be', fontWeight: 400, fontSize: 11 }}>
-          snapshots all 5 servo angles
+          snapshots all 6 servo angles
         </span>
         <div style={{ flex: 1 }} />
         <button className="sc-btn sc-btn-sm" onClick={exportPresets} disabled={presets.length === 0}>
@@ -763,6 +761,9 @@ export default function ServoController() {
   const setIntConnected      = useIntegrationStore(s => s.setConnected);
   const setIntEspUrl         = useIntegrationStore(s => s.setEspUrl);
   const setServoOnlineCount  = useIntegrationStore(s => s.setServoOnlineCount);
+  const setAvgVoltage        = useIntegrationStore(s => s.setAvgVoltage);
+  const setTotalCurrentMA    = useIntegrationStore(s => s.setTotalCurrentMA);
+  const setOvercurrentServos = useIntegrationStore(s => s.setOvercurrentServos);
 
   const [espUrl,       setEspUrl]       = useState(intEspUrl);
   const [inputUrl,     setInputUrl]     = useState(intEspUrl);
@@ -807,11 +808,13 @@ export default function ServoController() {
         setLastUpdateStr(new Date().toLocaleTimeString());
         if (data.wifi) setWifiInfo(data.wifi);
 
-        let totalMA = 0;
+        // Compute totalMA directly from raw response — NOT inside setServos, whose
+        // updater runs lazily and would leave totalMA=0 when read immediately after.
+        const totalMA = (data.servos ?? []).reduce((sum, sv) => sum + (sv.currentmA ?? 0), 0);
+
         setServos(prev => {
           const next = { ...prev };
           for (const sv of (data.servos ?? [])) {
-            totalMA += sv.currentmA ?? 0;
             const old = prev[sv.id] || { history: { current: [], load: [] } };
             next[sv.id] = {
               ...sv,
@@ -833,10 +836,27 @@ export default function ServoController() {
         const onCnt = (data.servos ?? []).filter(s => s.connected).length;
         setServoOnlineCount(onCnt);
 
+        // Push average voltage + total current for header indicators
+        const voltageSamples = (data.servos ?? []).filter(s => s.connected && s.voltageV != null);
+        if (voltageSamples.length > 0) {
+          const avg = voltageSamples.reduce((sum, s) => sum + s.voltageV, 0) / voltageSamples.length;
+          setAvgVoltage(avg);
+        }
+        if (onCnt > 0) setTotalCurrentMA(totalMA);
+
+        // Track per-servo overcurrent (> 700 mA) for header warning
+        const oc = (data.servos ?? [])
+          .filter(s => s.connected && s.currentmA != null && s.currentmA > 700)
+          .map(s => {
+            const tn = SERVO_TYPE_NUM[s.id] ?? { type: 'twist', num: s.id };
+            return { id: s.id, label: s.label ?? `J${s.id}`, type: tn.type, typeNum: tn.num, currentmA: s.currentmA };
+          });
+        setOvercurrentServos(oc);
+
         // Log poll summary every ~4s (every 16th poll at 250ms)
         if (Math.random() < 0.063) {
           const hottest = (data.servos ?? []).reduce((m, s) => s.tempC > m ? s.tempC : m, 0);
-          pushCtrlLog('info', 'POLL', `${onCnt}/5 online · ${lat}ms · ${(totalMA/1000).toFixed(2)}A · ${hottest}°C`);
+          pushCtrlLog('info', 'POLL', `${onCnt}/6 online · ${lat}ms · ${(totalMA/1000).toFixed(2)}A · ${hottest}°C`);
         }
       }
     } catch (err) {
@@ -859,6 +879,22 @@ export default function ServoController() {
 
   // ── Commands ────────────────────────────────────────────────────────────────
   const sendCmd = useCallback(async (servoId, cmd, extra = {}, src = 'USER') => {
+    // Smooth ease-in/out for position commands >= 2°.
+    // acc scales down with distance so the servo ramps up and down gradually.
+    // Formula: acc = max(6, 40 / (1 + dist/15))
+    //   2°→35  5°→30  10°→24  20°→17  45°→10  90°→6
+    // Continuous sim-streaming (tiny steps every 50ms) bypasses this via /api/batch, not sendCmd.
+    if (cmd === 'pos' && extra.angle != null) {
+      const currentAngle = servos[servoId]?.currentAngle;
+      if (currentAngle != null) {
+        const dist = Math.abs(Number(extra.angle) - currentAngle);
+        if (dist >= 2) {
+          const smoothAcc = Math.max(6, Math.round(40 / (1 + dist / 15)));
+          extra = { ...extra, acc: smoothAcc };
+        }
+      }
+    }
+
     const label = SERVO_DEFS.find(d => d.id === servoId)?.label ?? servoId;
     const desc  = `${label} → ${cmd}${extra.angle !== undefined ? ` ${Number(extra.angle).toFixed(1)}°` : ''}`;
     pushCtrlLog('cmd', src, desc);
@@ -871,7 +907,7 @@ export default function ServoController() {
     } catch (err) {
       pushCtrlLog('error', 'ERR', `${desc} — ${err.message}`);
     }
-  }, [pushCtrlLog]);
+  }, [pushCtrlLog, servos]);
 
   const estopAll = useCallback(async () => {
     pushCtrlLog('error', 'SYS', '⚡ EMERGENCY STOP ALL — killing torque on all servos');
@@ -956,7 +992,7 @@ export default function ServoController() {
         <div className="sc-topbar">
           <div className="sc-brand">
             <p className="sc-brand-title">TETROBOT Servo Controller</p>
-            <p className="sc-brand-sub">5 × ST3215 Smart Servo · Real-time telemetry</p>
+            <p className="sc-brand-sub">6 × ST3215 Smart Servo · Real-time telemetry</p>
           </div>
           <div className="sc-topbar-space" />
           <div className="sc-url-row">
@@ -974,8 +1010,8 @@ export default function ServoController() {
             {connected ? 'Live' : 'Disconnected'}
           </div>
           <div className="sc-pill">
-            <span className={`sc-dot ${onlineCnt === 5 ? 'ok' : onlineCnt > 0 ? 'warn' : 'bad'}`} />
-            {onlineCnt} / 5
+            <span className={`sc-dot ${onlineCnt === 6 ? 'ok' : onlineCnt > 0 ? 'warn' : 'bad'}`} />
+            {onlineCnt} / 6
           </div>
           {latencyMs != null && <div className="sc-pill">{latencyMs} ms</div>}
           <button className="sc-estop" onClick={estopAll}>⚡ E-STOP ALL</button>
@@ -1034,7 +1070,7 @@ export default function ServoController() {
         </div>
 
         {/* ── Group control ── */}
-        <GroupControl onCmd={sendCmd} />
+        <GroupControl onCmd={sendCmd} onEstop={estopAll} />
 
         {/* ── Servo grid ── */}
         <div className="sc-grid">

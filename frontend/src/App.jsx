@@ -7,6 +7,135 @@ import ViewControls from './components/ViewControls.jsx';
 import ServoController from './components/ServoController.jsx';
 import SimTransmitPanel from './components/SimTransmitPanel.jsx';
 import { useIntegrationStore } from './store/integrationStore.js';
+import { useArmStore } from './store/armStore.js';
+
+function WorkspaceNotification() {
+  const collision = useArmStore(s => s.collision);
+  const joints    = useArmStore(s => s.joints);
+  const anyLimit  = joints.some(j => j.limitHit);
+
+  if (!collision && !anyLimit) return null;
+
+  return (
+    <div className="workspace-notification">
+      {collision && (
+        <div className="workspace-notif-row workspace-notif--collision">
+          <span className="workspace-notif-dot" />
+          COLLISION — movement blocked
+        </div>
+      )}
+      {anyLimit && !collision && (
+        <div className="workspace-notif-row workspace-notif--limit">
+          <span className="workspace-notif-dot" />
+          JOINT LIMIT reached
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Battery indicator ─────────────────────────────────────────────────────────
+
+function BatteryIcon({ pct, color, width = 28, height = 13 }) {
+  const nubW  = 2.5;
+  const bodyW = width - nubW;
+  const pad   = 1.8;
+  const fillW = Math.max(0, (bodyW - pad * 2) * pct / 100);
+  const nubY  = (height - height * 0.45) / 2;
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flexShrink: 0 }}>
+      <rect x={0.75} y={0.75} width={bodyW - 1.5} height={height - 1.5} rx={2}
+        fill="none" stroke={color} strokeWidth={1.5} />
+      <rect x={bodyW} y={nubY} width={nubW} height={height * 0.45} rx={1} fill={color} />
+      {fillW > 0 && (
+        <rect x={pad} y={pad} width={fillW} height={height - pad * 2} rx={1} fill={color} />
+      )}
+    </svg>
+  );
+}
+
+function BatteryChip() {
+  const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
+  const avgVoltage       = useIntegrationStore(s => s.avgVoltage);
+
+  if (servoOnlineCount === 0 || avgVoltage == null) return null;
+
+  const pct   = Math.max(0, Math.min(100, (avgVoltage - 10.8) / (12.6 - 10.8) * 100));
+  const color = pct < 10 ? '#ef4444' : pct < 30 ? '#f97316' : '#22c55e';
+
+  return (
+    <div className="app-status-chip" title={`Battery: ${avgVoltage.toFixed(2)} V avg · ${pct.toFixed(0)}%`}>
+      <BatteryIcon pct={pct} color={color} />
+      <span style={{ fontSize: 13, fontWeight: 700, color, transition: 'color 0.4s', letterSpacing: '0.03em' }}>
+        {pct.toFixed(0)}%
+      </span>
+      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginLeft: 1 }}>
+        {avgVoltage.toFixed(1)}V
+      </span>
+    </div>
+  );
+}
+
+function CurrentChip() {
+  const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
+  const totalCurrentMA   = useIntegrationStore(s => s.totalCurrentMA);
+
+  if (servoOnlineCount === 0 || totalCurrentMA == null) return null;
+
+  const orangeThresh = 250 * servoOnlineCount;
+  const redThresh    = 450 * servoOnlineCount;
+  const color = totalCurrentMA > redThresh ? '#ef4444'
+              : totalCurrentMA > orangeThresh ? '#f97316'
+              : '#22c55e';
+  const label = totalCurrentMA >= 1000
+    ? `${(totalCurrentMA / 1000).toFixed(2)} A`
+    : `${Math.round(totalCurrentMA)} mA`;
+
+  return (
+    <div className="app-status-chip" title={`Total current draw: ${totalCurrentMA.toFixed(0)} mA · orange>${orangeThresh}mA · red>${redThresh}mA`}>
+      <svg width="11" height="17" viewBox="0 0 11 17" fill="none" style={{ flexShrink: 0 }}>
+        <path d="M6.5 1L1 9.5H5.5L4.5 16L10 7.5H5.5L6.5 1Z" fill={color} />
+      </svg>
+      <span style={{ fontSize: 13, fontWeight: 700, color, transition: 'color 0.4s', letterSpacing: '0.03em' }}>
+        {label}
+      </span>
+    </div>
+  );
+}
+
+function OvercurrentWarning() {
+  const overcurrentServos = useIntegrationStore(s => s.overcurrentServos);
+  if (!overcurrentServos || overcurrentServos.length === 0) return null;
+
+  const names = overcurrentServos
+    .map(s => `${s.label} ${s.type ? s.type.toUpperCase() + ' ' + s.typeNum : ''} (${Math.round(s.currentmA)}mA)`)
+    .join('  ·  ');
+
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10,
+      padding: '9px 18px',
+      background: '#cc000022',
+      border: '2px solid #cc0000',
+      borderRadius: 999,
+      whiteSpace: 'nowrap',
+      animation: 'oc-pulse 0.75s ease-in-out infinite alternate',
+      boxShadow: '0 0 14px #cc000044',
+    }}>
+      <svg width="17" height="17" viewBox="0 0 13 13" fill="none" style={{ flexShrink: 0 }}>
+        <path d="M6.5 1L12 11.5H1L6.5 1Z" stroke="#cc0000" strokeWidth="2" fill="#cc000022"/>
+        <line x1="6.5" y1="4.5" x2="6.5" y2="8.5" stroke="#cc0000" strokeWidth="1.8" strokeLinecap="round"/>
+        <circle cx="6.5" cy="10.2" r="0.9" fill="#cc0000"/>
+      </svg>
+      <span style={{ fontSize: 14, fontWeight: 900, color: '#cc0000', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+        Overcurrent
+      </span>
+      <span style={{ fontSize: 14, fontWeight: 800, color: '#cc0000', letterSpacing: '0.03em' }}>
+        {names}
+      </span>
+    </div>
+  );
+}
 
 function AppHeader({ page, setPage }) {
   const connected        = useIntegrationStore(s => s.connected);
@@ -19,9 +148,9 @@ function AppHeader({ page, setPage }) {
   } else if (servoOnlineCount === 0) {
     dotColor   = '#f59e0b';
     statusText = 'No servos';
-  } else if (servoOnlineCount < 5) {
+  } else if (servoOnlineCount < 6) {
     dotColor   = '#f59e0b';
-    statusText = `${servoOnlineCount}/5 live`;
+    statusText = `${servoOnlineCount}/6 live`;
   } else {
     dotColor   = '#22c55e';
     statusText = 'All OK';
@@ -32,6 +161,7 @@ function AppHeader({ page, setPage }) {
       <div className="app-header-brand">
         <span className="app-logo">TETROBOT</span>
         <span className="app-logo-sub">modular arms</span>
+        <span className="app-logo-byline">by nischay sai</span>
       </div>
 
       <div className="app-header-sep" />
@@ -63,20 +193,23 @@ function AppHeader({ page, setPage }) {
       <div className="app-header-space" />
 
       <div className="app-header-right">
+        <OvercurrentWarning />
+        <BatteryChip />
+        <CurrentChip />
         <div className="app-status-chip" title={`ESP32-C3: ${statusText}`}>
           <span style={{
-            width: 7, height: 7, borderRadius: '50%', display: 'inline-block', flexShrink: 0,
+            width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0,
             background: dotColor,
-            boxShadow: `0 0 6px ${dotColor}`,
+            boxShadow: `0 0 7px ${dotColor}`,
             transition: 'background 0.4s, box-shadow 0.4s',
           }} />
           <span>ESP32-C3</span>
-          <span style={{ fontSize: 10, color: dotColor, marginLeft: 2, fontWeight: 600, transition: 'color 0.4s' }}>
+          <span style={{ fontSize: 12, color: dotColor, marginLeft: 2, fontWeight: 700, transition: 'color 0.4s' }}>
             · {statusText}
           </span>
         </div>
         <div className="app-status-chip app-status-chip-mono">
-          5 × ST3215
+          6 × ST3215
         </div>
       </div>
     </header>
@@ -90,7 +223,7 @@ function AppFooter({ page }) {
       <span className="app-footer-sep" />
       <span>Modular Arm Platform</span>
       <span className="app-footer-sep" />
-      <span>5 × ST3215 · ESP32-C3</span>
+      <span>6 × ST3215 · ESP32-C3</span>
       <div className="app-footer-space" />
       <span
         className={`app-footer-page-pill ${page === 'sim' ? 'active' : ''}`}
@@ -129,6 +262,7 @@ export default function App() {
           <LeftPanel />
           <div className="canvas-wrapper">
             <SimCanvas />
+            <WorkspaceNotification />
             <div className="top-right-cluster">
               <NavigationGizmo />
               <ViewControls />

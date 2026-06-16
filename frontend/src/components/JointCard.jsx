@@ -115,6 +115,10 @@ function ArcIndicator({ angle, rawAngle, limit, limitHit, palette, panelIdx, onD
 
   const svgRef   = useRef(null);
   const dragging = useRef(false);
+  const animRef  = useRef(null);  // click-to-position animation RAF id
+
+  // Cancel any in-flight click animation
+  useEffect(() => () => { if (animRef.current) cancelAnimationFrame(animRef.current); }, []);
 
   const trackColor = limitHit ? '#ffdddd' : (palette?.track ?? '#d0e8ff');
   const arcColor   = limitHit ? (palette?.neg ?? '#cc3344') : (palette?.main ?? '#0088ff');
@@ -153,16 +157,40 @@ function ArcIndicator({ angle, rawAngle, limit, limitHit, palette, panelIdx, onD
   const handlePointerDown = useCallback((e) => {
     e.currentTarget.setPointerCapture(e.pointerId);
     dragging.current = true;
-    if (onDrag) onDrag(panelIdx, angleFromPointer(e));
-  }, [onDrag, panelIdx, angleFromPointer]);
+    if (!onDrag) return;
+
+    const target   = angleFromPointer(e);
+    const startVal = rawAngle != null ? rawAngle : angle;
+
+    // Cancel any previous animation
+    if (animRef.current) { cancelAnimationFrame(animRef.current); animRef.current = null; }
+
+    // Smoothly animate from current angle to the clicked position
+    const startTime = performance.now();
+    const dur = 220; // ms
+    const tick = () => {
+      const t    = Math.min((performance.now() - startTime) / dur, 1);
+      const ease = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
+      onDrag(panelIdx, startVal + (target - startVal) * ease);
+      if (t < 1) {
+        animRef.current = requestAnimationFrame(tick);
+      } else {
+        animRef.current = null;
+      }
+    };
+    animRef.current = requestAnimationFrame(tick);
+  }, [onDrag, panelIdx, angleFromPointer, rawAngle, angle]);
 
   const handlePointerMove = useCallback((e) => {
-    if (!dragging.current) return;
-    if (onDrag) onDrag(panelIdx, angleFromPointer(e));
+    if (!dragging.current || !onDrag) return;
+    // User is actively dragging — cancel click animation and track pointer directly
+    if (animRef.current) { cancelAnimationFrame(animRef.current); animRef.current = null; }
+    onDrag(panelIdx, angleFromPointer(e));
   }, [onDrag, panelIdx, angleFromPointer]);
 
   const handlePointerUp = useCallback(() => {
     dragging.current = false;
+    // Don't cancel: let the click animation finish if pointer was never dragged
   }, []);
 
   const isInteractive = !!onDrag;
@@ -234,7 +262,7 @@ function VelocityArrow({ velocity }) {
   );
 }
 
-export default function JointCard({ joint, index, rawAngle, onArcDrag, onJointHome, onJointSet }) {
+export default function JointCard({ joint, index, rawAngle, onArcDrag, onJointHome, onJointSet, collision = false }) {
   const { angle = 0, velocity = 0, acceleration = 0, limitHit = false } = joint ?? {};
 
   const def      = JOINT_DEFS[index];
@@ -247,7 +275,7 @@ export default function JointCard({ joint, index, rawAngle, onArcDrag, onJointHo
 
   return (
     <div
-      className={`joint-card ${limitHit ? 'limit-hit' : ''}`}
+      className={`joint-card ${limitHit ? 'limit-hit' : ''} ${collision ? 'collision-hit' : ''}`}
       style={{ '--joint-color': palette.main, '--joint-glow': palette.glow }}
     >
       <div className="joint-accent" />
@@ -255,6 +283,7 @@ export default function JointCard({ joint, index, rawAngle, onArcDrag, onJointHo
       <div className="joint-header">
         <span className="joint-label" style={{ color: palette.main }}>{label}</span>
         <div className="joint-header-right">
+          {collision && <span className="collision-badge">COLL</span>}
           {limitHit && !isEndcap && <span className="limit-badge">LIMIT</span>}
           {onJointHome && (
             <button

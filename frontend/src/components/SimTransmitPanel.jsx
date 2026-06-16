@@ -11,10 +11,10 @@
  */
 
 import { useEffect, useRef } from 'react';
-import { useArmStore } from '../store/armStore.js';
+import { useArmStore, ROD_IDS } from '../store/armStore.js';
 import { useIntegrationStore } from '../store/integrationStore.js';
 
-const INTERVAL_MS = 100;
+const INTERVAL_MS = 50;
 
 // Map joint radian (-π…+π for twist, -100°…+100° for bend) to servo degrees.
 // Neutral (0 rad) → 180° center. Linear mapping clamped to 0–360°.
@@ -47,12 +47,14 @@ export default function SimTransmitPanel() {
   const espUrl      = useIntegrationStore(s => s.espUrl);
 
   const anglesRef  = useRef([0, 0, 0, 0, 0, 0]);
+  const rootIdRef  = useRef('R1');
   const logBodyRef = useRef(null);
 
   // Subscribe to armStore changes without causing a re-render
   useEffect(() => {
     const unsub = useArmStore.subscribe(state => {
       anglesRef.current = state.jointAngles;
+      rootIdRef.current = state.activeRootId;
     });
     return unsub;
   }, []);
@@ -61,13 +63,19 @@ export default function SimTransmitPanel() {
   // Reversal: reversed = lo + hi - deg.  For id=2 (bend, lo=80, hi=280): 80+280-deg = 360-deg.
   const REVERSED_SERVOS = new Set([2]);
 
-  // 100ms transmit interval — samples current angles and queues if changed
+  // Transmit interval — samples current angles and queues if changed
   useEffect(() => {
     const id = setInterval(() => {
+      // Apply the same sign correction LeftPanel uses: joints "behind" the active
+      // root are stored with a flipped sign in armStore, so we must un-flip them
+      // before mapping to physical servo degrees.
+      const rootIdx = ROD_IDS.indexOf(rootIdRef.current);
+      const sg = (i) => rootIdx > i ? -1 : 1;
+
       const mapped = {};
       anglesRef.current.forEach((rad, i) => {
         const servoId = i + 1;
-        let deg = jointToServoDeg(rad);
+        let deg = jointToServoDeg(rad * sg(i));
         if (REVERSED_SERVOS.has(servoId)) deg = 360 - deg;
         mapped[servoId] = deg;
       });

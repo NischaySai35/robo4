@@ -119,27 +119,121 @@ export class SceneManager {
   }
 
   _buildGround() {
-    // Dark reflective ground plane
-    const groundGeo = new THREE.PlaneGeometry(30, 30);
+    const GROUND_Y = -3.2;
+
+    // Faint ground plane (shadow receiver). Large + follows the camera so it
+    // never runs out; still 90% transparent so rods dipping below stay visible.
+    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0xe0dbd4,
+      color: 0xd2ccc2,
       roughness: 0.95,
       metalness: 0.0,
+      transparent: true,
+      opacity: 0.13,
+      depthWrite: false,
     });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -3.2;
+    ground.position.y = GROUND_Y;
     ground.receiveShadow = true;
     this.scene.add(ground);
-
-    // Grid overlay
-    const gridHelper = new THREE.GridHelper(28, 28, 0x9aafcc, 0xbccce0);
-    gridHelper.position.y = -3.19;
-    gridHelper.material.opacity = 0.55;
-    gridHelper.material.transparent = true;
-    this.scene.add(gridHelper);
-
     this.ground = ground;
+
+    // Infinite grid: a large plane that follows the camera, with grid lines
+    // computed in WORLD space (so they stay put while the plane tracks the view)
+    // and a radial distance-fade so there is never a visible edge.
+    const gridGeo = new THREE.PlaneGeometry(4000, 4000);
+    const gridMat = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide,
+      uniforms: {
+        uCell:       { value: 1.0 },                       // minor cell size (world units)
+        uMajor:      { value: 10.0 },                      // major line every N cells
+        uColor:      { value: new THREE.Color(0xa7b9d2) }, // minor line colour (darker)
+        uColorMajor: { value: new THREE.Color(0x8499b8) }, // major line colour (darker)
+        uCenter:     { value: new THREE.Vector3() },       // fade centre (look-at point)
+        uFade:       { value: 60.0 },                      // fade radius (scales with zoom)
+      },
+      vertexShader: /* glsl */`
+        varying vec3 vWorld;
+        void main() {
+          vec4 wp = modelMatrix * vec4(position, 1.0);
+          vWorld = wp.xyz;
+          gl_Position = projectionMatrix * viewMatrix * wp;
+        }
+      `,
+      fragmentShader: /* glsl */`
+        precision highp float;
+        varying vec3 vWorld;
+        uniform float uCell;
+        uniform float uMajor;
+        uniform vec3  uColor;
+        uniform vec3  uColorMajor;
+        uniform vec3  uCenter;
+        uniform float uFade;
+
+        // Anti-aliased grid line intensity for a given cell size (uses derivatives).
+        float lineFactor(vec2 coord, float cell) {
+          vec2 c = coord / cell;
+          vec2 d = abs(fract(c - 0.5) - 0.5) / fwidth(c);
+          return 1.0 - min(min(d.x, d.y), 1.0);
+        }
+
+        void main() {
+          vec2 p = vWorld.xz;
+          float minorL = lineFactor(p, uCell);
+          float majorL = lineFactor(p, uCell * uMajor);
+
+          float dist = length(p - uCenter.xz);
+          float fade = 1.0 - smoothstep(uFade * 0.5, uFade, dist);
+
+          float a = max(minorL * 0.46, majorL * 0.82) * fade;
+          if (a < 0.002) discard;
+
+          vec3 col = majorL > minorL ? uColorMajor : uColor;
+          gl_FragColor = vec4(col, a);
+        }
+      `,
+    });
+    gridMat.extensions = { derivatives: true }; // for fwidth on WebGL1
+
+    const grid = new THREE.Mesh(gridGeo, gridMat);
+    grid.rotation.x = -Math.PI / 2;
+    grid.position.y = GROUND_Y + 0.01;
+    grid.renderOrder = 1;
+    grid.frustumCulled = false;
+    this.scene.add(grid);
+    this.grid = grid;
+  }
+
+  // Switch scene background / grid / ground colours for light or dark theme.
+  applyTheme(theme) {
+    const dark = theme === 'dark';
+    this._theme = theme;
+    this.scene.background = new THREE.Color(dark ? 0x0d111b : 0xf4f2ee);
+    if (this.ground) {
+      this.ground.material.color.set(dark ? 0x11161f : 0xd2ccc2);
+      this.ground.material.opacity = dark ? 0.18 : 0.13;
+    }
+    if (this.grid) {
+      this.grid.material.uniforms.uColor.value.set(dark ? 0x33405c : 0xa7b9d2);
+      this.grid.material.uniforms.uColorMajor.value.set(dark ? 0x55659a : 0x8499b8);
+    }
+  }
+
+  // Keep the infinite ground + grid centred on the view and sized to the zoom.
+  _updateGround() {
+    const t = this.controls.target;
+    if (this.ground) { this.ground.position.x = t.x; this.ground.position.z = t.z; }
+    if (this.grid) {
+      this.grid.position.x = t.x;
+      this.grid.position.z = t.z;
+      this.grid.material.uniforms.uCenter.value.set(t.x, 0, t.z);
+      const camDist = this.camera.position.distanceTo(t);
+      this.grid.material.uniforms.uFade.value =
+        THREE.MathUtils.clamp(camDist * 2.2, 30, 600);
+    }
   }
 
   _buildPostProcessing(w, h) {
@@ -235,6 +329,7 @@ export class SceneManager {
 
   render() {
     this.controls.update();
+    this._updateGround();
     this.composer.render();
   }
 

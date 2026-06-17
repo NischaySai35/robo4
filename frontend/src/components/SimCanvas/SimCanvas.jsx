@@ -14,62 +14,102 @@ import { SceneManager } from '../../three/SceneManager.js';
 import { RobotFK }      from '../../three/RobotFK.js';
 import { Interaction }  from '../../three/Interaction.js';
 import { RenderLoop }   from '../../three/RenderLoop.js';
-import { useArmStore }  from '../../store/armStore.js';
+import { useArmStore, JOINT_LIMIT } from '../../store/armStore.js';
 import { useMultiStore } from '../../store/multiStore.js';
+import { useThemeStore } from '../../store/themeStore.js';
 import { bridge }        from '../../three/cameraBridge.js';
-import { assemblyModuleIds, captureMate, propagateAssembly } from '../../three/assembly.js';
+import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
+import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
+import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
+import { solveJacobianIK } from '../../math/jacobianIK.js';
+import {
+  assemblyModuleIds, captureMate, propagateAssembly, buildCrossModuleChain,
+} from '../../three/assembly.js';
+import { serializeProject, parseProject } from '../../persistence/project.js';
+import { saveAutosave, loadAutosave } from '../../persistence/storage.js';
+import { downloadBlob, writeProjectToHandle } from '../../persistence/fileIO.js';
+import { useDocStore } from '../../store/docStore.js';
 
 const _raycaster = new THREE.Raycaster();
 
 // ── Join math ──────────────────────────────────────────────────────────────────
+// The SMALLER assembly (fewer modules) moves onto the larger; tie → face2's side
+// moves. The whole mover sub-assembly is transformed rigidly by one delta so its
+// internal welds stay intact.
 function performJoin(face1, face2, moduleMap) {
-  const fkA = moduleMap.get(face1.moduleId)?.robotFK;
-  const fkB = moduleMap.get(face2.moduleId)?.robotFK;
-  if (!fkA || !fkB) return;
+  const fk1 = moduleMap.get(face1.moduleId)?.robotFK;
+  const fk2 = moduleMap.get(face2.moduleId)?.robotFK;
+  if (!fk1 || !fk2) return;
 
-  fkA.robotGroup.updateMatrixWorld(true);
-  fkB.robotGroup.updateMatrixWorld(true);
+  const ms = useMultiStore.getState();
+  const asm1 = assemblyModuleIds(ms.welds, face1.moduleId);
+  const asm2 = assemblyModuleIds(ms.welds, face2.moduleId);
 
-  const p1Mesh = fkA.getFaceIndicatorMeshes().find(p => p.userData.faceKey === face1.faceKey);
-  const p2Mesh = fkB.getFaceIndicatorMeshes().find(p => p.userData.faceKey === face2.faceKey);
-  if (!p1Mesh || !p2Mesh) return;
+  // Decide which side moves: the smaller assembly. Tie → face2's side.
+  const moverIsFace2 = asm2.size <= asm1.size;
+  const moverFace  = moverIsFace2 ? face2 : face1;
+  const anchorFace = moverIsFace2 ? face1 : face2;
+  const moverFK    = moverIsFace2 ? fk2 : fk1;
+  const anchorFK   = moverIsFace2 ? fk1 : fk2;
 
-  p1Mesh.updateMatrixWorld(true);
-  p2Mesh.updateMatrixWorld(true);
+  fk1.robotGroup.updateMatrixWorld(true);
+  fk2.robotGroup.updateMatrixWorld(true);
 
-  // Face A world position and outward normal
-  const P1 = p1Mesh.getWorldPosition(new THREE.Vector3());
-  const N1 = new THREE.Vector3(0, 0, 1).transformDirection(p1Mesh.matrixWorld).normalize();
+  const aMesh = anchorFK.getFaceIndicatorMeshes().find(p => p.userData.faceKey === anchorFace.faceKey);
+  const mMesh = moverFK.getFaceIndicatorMeshes().find(p => p.userData.faceKey === moverFace.faceKey);
+  if (!aMesh || !mMesh) return;
+  aMesh.updateMatrixWorld(true);
+  mMesh.updateMatrixWorld(true);
 
-  // Face B world position and outward normal
-  const P2 = p2Mesh.getWorldPosition(new THREE.Vector3());
-  const N2 = new THREE.Vector3(0, 0, 1).transformDirection(p2Mesh.matrixWorld).normalize();
+  // Anchor face world pose
+  const Pa = aMesh.getWorldPosition(new THREE.Vector3());
+  const Na = new THREE.Vector3(0, 0, 1).transformDirection(aMesh.matrixWorld).normalize();
+  // Mover face current world pose
+  const Pm = mMesh.getWorldPosition(new THREE.Vector3());
+  const Nm = new THREE.Vector3(0, 0, 1).transformDirection(mMesh.matrixWorld).normalize();
 
-  // Rotation that makes N2 antiparallel to N1 (faces touch)
-  const targetNormal = N1.clone().negate();
-  const R_align = new THREE.Quaternion().setFromUnitVectors(N2, targetNormal);
+  // Rotation that makes the mover face antiparallel to the anchor face
+  const R = new THREE.Quaternion().setFromUnitVectors(Nm, Na.clone().negate());
 
-  // New quaternion for module B
-  const Q_new = R_align.clone().multiply(fkB.robotGroup.quaternion);
+  // Mover module's target robotGroup transform (mate the faces)
+  const moverPos  = moverFK.robotGroup.position.clone();
+  const moverQuat = moverFK.robotGroup.quaternion.clone();
+  const Q_new = R.clone().multiply(moverQuat);
+  const offset = Pm.clone().sub(moverPos);
+  const T_new = Pa.clone().sub(offset.applyQuaternion(R));
 
-  // New position: keep face B's world position == face A's world position
-  const T_old  = fkB.robotGroup.position.clone();
-  const offset = P2.clone().sub(T_old);             // B-origin → face2 (world)
-  const T_new  = P1.clone().sub(offset.applyQuaternion(R_align));
+  // Rigid delta D that takes the mover from its current pose to the mated pose,
+  // applied to EVERY module in the mover's assembly so they all move together.
+  const ONE    = new THREE.Vector3(1, 1, 1);
+  const oldMat  = new THREE.Matrix4().compose(moverPos, moverQuat, ONE);
+  const newMat  = new THREE.Matrix4().compose(T_new, Q_new, ONE);
+  const D       = newMat.clone().multiply(oldMat.clone().invert());
 
-  fkB.robotGroup.position.copy(T_new);
-  fkB.robotGroup.quaternion.copy(Q_new);
+  const moverAssembly = assemblyModuleIds(ms.welds, moverFace.moduleId);
+  for (const mid of moverAssembly) {
+    const fk = moduleMap.get(mid)?.robotFK;
+    if (!fk) continue;
+    const cur  = new THREE.Matrix4().compose(
+      fk.robotGroup.position.clone(), fk.robotGroup.quaternion.clone(), ONE);
+    const next = D.clone().multiply(cur);
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+    next.decompose(p, q, s);
+    fk.robotGroup.position.copy(p);
+    fk.robotGroup.quaternion.copy(q);
+    fk.robotGroup.updateMatrixWorld(true);
+    ms.setModuleTransform(mid, p, q);
+  }
 
-  // Capture the rigid relative transform between the two faces now that both
-  // modules are in their joined configuration — used for rigid-follow every frame.
-  const mate = captureMate(fkA, face1.faceKey, fkB, face2.faceKey);
-  const weld = {
+  // Capture the rigid face-to-face transform (canonical a=face1, b=face2) now
+  // that both sides are in their final joined configuration.
+  const mate = captureMate(fk1, face1.faceKey, fk2, face2.faceKey);
+  ms.applyJoin({
     a: { moduleId: face1.moduleId, faceKey: face1.faceKey },
     b: { moduleId: face2.moduleId, faceKey: face2.faceKey },
     mate,
-  };
+  });
 
-  useMultiStore.getState().applyJoin(face2.moduleId, T_new, Q_new, weld);
+  setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 80);
 }
 
 // ── Which module owns a hit mesh? ─────────────────────────────────────────────
@@ -92,6 +132,7 @@ export default function SimCanvas() {
   const modulesRef     = useRef(new Map()); // moduleId → { robotFK }
   const activeFKRef    = useRef(null);      // current active RobotFK ref object (passed to Interaction)
   const appliedActiveRef = useRef('module-0'); // which module is CURRENTLY applied (imperative guard)
+  const xDragRef         = useRef({ pickup: null }); // cross-module drag session state
 
   // ── One-time mount ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -104,6 +145,8 @@ export default function SimCanvas() {
     // Scene
     const sceneMgr = new SceneManager(canvas);
     sceneRef.current = sceneMgr;
+    sceneMgr.applyTheme(useThemeStore.getState().theme);
+    const unsubTheme = useThemeStore.subscribe(s => sceneMgr.applyTheme(s.theme));
 
     // First module FK
     const initialModule = multiStore.modules[0];
@@ -116,11 +159,17 @@ export default function SimCanvas() {
     modulesRef.current.set(initialModule.id, { robotFK: fk0 });
     activeFKRef.current = fk0;
 
-    // Interaction — always queries the current active FK via closure
+    // Interaction — raycasts ALL modules' rods and resolves the owning module,
+    // so clicks/drags can target any module in the assembly.
     const interaction = new Interaction(
       canvas,
       sceneMgr.camera,
-      () => activeFKRef.current?.interactables ?? [],
+      () => {
+        const all = [];
+        for (const [, { robotFK }] of modulesRef.current) all.push(...robotFK.interactables);
+        return all;
+      },
+      (obj) => moduleIdOfMesh(obj, modulesRef.current),
       {},
     );
     interactionRef.current = interaction;
@@ -198,7 +247,26 @@ export default function SimCanvas() {
             fk.robotGroup.quaternion.clone());
         }
       }
+      // Auto-fit once the drag settles.
+      setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 60);
     };
+
+    // Home all modules (active animates; followers snap to home), then fit.
+    bridge.homeAll = () => {
+      useArmStore.getState().homeArm();
+      const ms = useMultiStore.getState();
+      const activeId = appliedActiveRef.current;
+      for (const [mid, { robotFK }] of modulesRef.current) {
+        if (mid === activeId) continue;
+        const mode = ms.modules.find(m => m.id === mid)?.mode ?? 'horizontal';
+        ms.setModuleAngles(mid, [0, 0, 0, 0, 0, 0]);
+        robotFK.updateAngles([0, 0, 0, 0, 0, 0], mode);
+      }
+      setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 900);
+    };
+
+    // E-STOP — halt all motion immediately.
+    bridge.estop = () => renderLoopRef.current?.cancelMotion();
 
     renderLoopRef.current = renderLoop;
     renderLoop.start();
@@ -240,10 +308,156 @@ export default function SimCanvas() {
       return { x: 0, y: 0, z: combined.max.z + 1.2 };
     };
 
+    // ── Persistence bridge ────────────────────────────────────────────────────
+    // Commit the live active module (armStore + live FK transform) into multiStore
+    // so the store is the single source of truth before serialization.
+    bridge.commitLiveState = () => {
+      const mStore   = useMultiStore.getState();
+      const armStore = useArmStore.getState();
+      const activeId = appliedActiveRef.current;
+      const fk       = activeFKRef.current;
+      if (fk && activeId && mStore.modules.some(m => m.id === activeId)) {
+        mStore.saveModuleState(activeId, {
+          angles:       [...armStore.jointAngles],
+          activeRootId: armStore.activeRootId,
+          position:     fk.robotGroup.position.clone(),
+          quaternion:   fk.robotGroup.quaternion.clone(),
+          mode:         armStore.mode,
+        });
+      }
+      for (const [mid, { robotFK }] of modulesRef.current) {
+        if (mid === activeId) continue;
+        mStore.setModuleTransform(mid,
+          robotFK.robotGroup.position.clone(),
+          robotFK.robotGroup.quaternion.clone());
+      }
+    };
+
+    // Replace the whole scene from a parsed project (tears down + rebuilds FKs).
+    bridge.loadScene = (project) => {
+      const sceneMgr = sceneRef.current;
+      if (!sceneMgr) return { ok: false, error: 'scene not ready' };
+      let scene;
+      try { scene = parseProject(project); }
+      catch (e) { return { ok: false, error: e.message }; }
+
+      // Tear down every existing module FK
+      for (const [, { robotFK }] of modulesRef.current) {
+        sceneMgr.scene.remove(robotFK.robotGroup);
+      }
+      modulesRef.current.clear();
+
+      // Replace store state
+      useMultiStore.setState({
+        modules: scene.modules,
+        welds: scene.welds,
+        activeModuleId: scene.activeModuleId,
+        nextId: scene.nextId,
+        connectMode: false, disconnectMode: false, deleteMode: false,
+        dSel1: null, dSel2: null, face1: null, face2: null,
+        connectError: null, disconnectError: null,
+      });
+
+      // Build fresh FKs at their stored transforms / poses
+      for (const mod of scene.modules) {
+        const fk = new RobotFK(sceneMgr.scene);
+        fk.robotGroup.position.set(mod.position.x, mod.position.y, mod.position.z);
+        fk.robotGroup.quaternion.set(
+          mod.quaternion.x, mod.quaternion.y, mod.quaternion.z, mod.quaternion.w);
+        fk.updateAngles(mod.angles, mod.mode ?? 'horizontal');
+        modulesRef.current.set(mod.id, { robotFK: fk });
+      }
+
+      // Force activation of the loaded active module
+      appliedActiveRef.current = '__none__';
+      activeFKRef.current = null;
+      activateModule(scene.activeModuleId);
+
+      setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 60);
+      return { ok: true };
+    };
+
+    // Export all visible module geometry. format ∈ {glb,obj,stl,step}.
+    // Returns { ok, error? } so the UI can surface unsupported formats.
+    bridge.exportModel = (format) => {
+      const fmt = (format || 'glb').toLowerCase();
+      if (fmt === 'step') {
+        return { ok: false, error:
+          'STEP is a CAD (solid) format — exporting tessellated meshes to STEP needs a CAD kernel, so it isn’t supported yet. Use OBJ / STL / GLB, or import the .nischay file into Blender.' };
+      }
+
+      // Combined group of visible rod/joint meshes (drop invisible face planes).
+      const group = new THREE.Group();
+      for (const [, { robotFK }] of modulesRef.current) {
+        robotFK.robotGroup.updateMatrixWorld(true);
+        group.add(robotFK.robotGroup.clone(true));
+      }
+      const strip = [];
+      group.traverse(o => {
+        if (o.isMesh && (o.visible === false || o.userData?.type === 'face')) strip.push(o);
+      });
+      strip.forEach(o => o.parent && o.parent.remove(o));
+
+      if (fmt === 'glb') {
+        new GLTFExporter().parse(group, (result) => {
+          const blob = result instanceof ArrayBuffer
+            ? new Blob([result], { type: 'model/gltf-binary' })
+            : new Blob([JSON.stringify(result)], { type: 'model/gltf+json' });
+          downloadBlob(blob, 'tetrobot.glb');
+        }, (err) => console.error('GLB export failed:', err), { binary: true, onlyVisible: true });
+        return { ok: true };
+      }
+      if (fmt === 'obj') {
+        downloadBlob(new Blob([new OBJExporter().parse(group)], { type: 'text/plain' }), 'tetrobot.obj');
+        return { ok: true };
+      }
+      if (fmt === 'stl') {
+        downloadBlob(new Blob([new STLExporter().parse(group)], { type: 'model/stl' }), 'tetrobot.stl');
+        return { ok: true };
+      }
+      return { ok: false, error: `Unknown format: ${format}` };
+    };
+
+    // ── Startup restore + auto-save ───────────────────────────────────────────
+    const saved = loadAutosave();
+    if (saved) bridge.loadScene(saved);
+
+    let saveTimer = null;
+    let persisting = false;
+    const doSave = async () => {
+      persisting = true;
+      try {
+        const project = serializeProject();
+        saveAutosave(project);                       // local crash-safety net
+        const doc = useDocStore.getState();
+        if (doc.handle) {                            // also write to the open file
+          doc.setStatus('saving');
+          try {
+            await writeProjectToHandle(doc.handle, project);
+            useDocStore.getState().setStatus('saved');
+          } catch {
+            useDocStore.getState().setStatus('idle'); // permission lost / removed
+          }
+        }
+      } catch { /* ignore */ }
+      finally { persisting = false; }
+    };
+    const scheduleSave = () => {
+      if (persisting) return;            // ignore store writes caused by our own save
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(doSave, 800);
+    };
+    const unsubMulti = useMultiStore.subscribe(scheduleSave);
+    const unsubArm   = useArmStore.subscribe(scheduleSave);
+
     const fitTimer = setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 300);
 
     return () => {
       clearTimeout(fitTimer);
+      clearTimeout(saveTimer);
+      unsubMulti();
+      unsubArm();
+      unsubTheme();
       renderLoop.stop();
       interaction.dispose();
       sceneMgr.dispose();
@@ -320,22 +534,21 @@ export default function SimCanvas() {
       });
     }
 
-    // 2. Load incoming module state
+    // 2. Load incoming module — keep its CURRENT live world transform.
+    // The FK already exists and is correctly placed: for welded followers it's
+    // kept up to date by rigid-follow every frame, whereas the store copy is only
+    // persisted on drag-end and can be stale — reading the store here made the
+    // whole module jump on switch.
     const incoming = mStore.modules.find(m => m.id === targetId);
     const inFK     = modulesRef.current.get(targetId)?.robotFK;
     if (!incoming || !inFK) return;
 
-    inFK.robotGroup.position.set(
-      incoming.position.x, incoming.position.y, incoming.position.z,
-    );
-    inFK.robotGroup.quaternion.set(
-      incoming.quaternion.x, incoming.quaternion.y, incoming.quaternion.z, incoming.quaternion.w,
-    );
+    const livePos  = inFK.robotGroup.position.clone();
+    const liveQuat = inFK.robotGroup.quaternion.clone();
 
     // Push state into armStore so LeftPanel/RenderLoop read the right module
     armStore.setRootAndAngles(incoming.activeRootId, incoming.angles);
-    inFK.rebuild(incoming.activeRootId, incoming.angles,
-      inFK.robotGroup.position.clone(), inFK.robotGroup.quaternion.clone());
+    inFK.rebuild(incoming.activeRootId, incoming.angles, livePos, liveQuat);
 
     // 3. Swap active FK in RenderLoop (Interaction reads it via activeFKRef closure)
     activeFKRef.current = inFK;
@@ -357,45 +570,146 @@ export default function SimCanvas() {
     activateModule(activeModuleId);
   }, [activeModuleId, activateModule]);
 
-  // ── Cross-module selection ───────────────────────────────────────────────────
-  // Capture-phase pointerdown (runs BEFORE Interaction's canvas listener): if the
-  // press lands on a rod belonging to a non-active module, switch the active
-  // module imperatively so that click-to-root and drag-to-articulate operate on
-  // the clicked module in the same gesture.
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+  // ── Cross-module IK provider ─────────────────────────────────────────────────
+  // Solve the combined chain from the base module's root to a rod dragged in a
+  // welded follower; bends joints across all modules on the path.
+  const crossModuleStep = useCallback((dragId, dragRodId, mouseNDC, mode, dragStart) => {
+    const camera = sceneRef.current?.camera;
+    if (!camera || !dragId || !dragRodId) return;
 
-    const onCaptureDown = (e) => {
-      if (e.button !== 0 || e.target !== canvas) return;
-      const ms = useMultiStore.getState();
-      if (ms.connectMode || ms.disconnectMode || ms.deleteMode) return;
+    const baseId = appliedActiveRef.current;
+    const ms = useMultiStore.getState();
+    const as = useArmStore.getState();
 
-      const sceneMgr = sceneRef.current;
-      if (!sceneMgr) return;
+    const getFK     = (id) => modulesRef.current.get(id)?.robotFK ?? null;
+    const getAngles = (id) => id === baseId
+      ? as.jointAngles
+      : (ms.modules.find(m => m.id === id)?.angles ?? [0, 0, 0, 0, 0, 0]);
 
-      const rect = canvas.getBoundingClientRect();
-      const ndc = {
-        x:  ((e.clientX - rect.left) / rect.width)  * 2 - 1,
-        y: -((e.clientY - rect.top)  / rect.height) * 2 + 1,
-      };
-      _raycaster.setFromCamera(ndc, sceneMgr.camera);
+    const chain = buildCrossModuleChain({
+      welds: ms.welds, getFK, getAngles,
+      baseId, baseRootRodId: as.activeRootId,
+      dragId, dragRodId, mode,
+    });
+    if (!chain) return;
 
-      const all = [];
-      for (const [, { robotFK }] of modulesRef.current) all.push(...robotFK.interactables);
-      const hits = _raycaster.intersectObjects(all, false);
-      if (!hits.length) return;
+    // First frame of the drag: capture pickup offset so the node doesn't snap.
+    if (dragStart) {
+      const s0 = chain.dragPos.clone().project(camera);
+      xDragRef.current.pickup = { x: mouseNDC.x - s0.x, y: mouseNDC.y - s0.y };
+      return;
+    }
+    const pickup = xDragRef.current.pickup ?? { x: 0, y: 0 };
 
-      const mid = moduleIdOfMesh(hits[0].object, modulesRef.current);
-      if (mid && mid !== appliedActiveRef.current) {
-        activateModule(mid);
-        useMultiStore.getState().setActiveModule(mid);
-      }
+    const activeJoints = chain.jointData.map((_, i) => i);
+    const solved = solveJacobianIK(
+      chain.dragPos, chain.jointData, activeJoints, camera,
+      { x: mouseNDC.x, y: mouseNDC.y }, pickup,
+      chain.angles, chain.defs, JOINT_LIMIT, 0.008, 0.5,
+    );
+
+    // Regroup solved angles per module (seed each with its current angles)
+    const perModule = new Map();
+    const seed = (id) => {
+      if (!perModule.has(id)) perModule.set(id, [...getAngles(id)]);
+      return perModule.get(id);
     };
+    chain.backmap.forEach((bm, i) => { seed(bm.moduleId)[bm.localIdx] = solved[i]; });
 
-    window.addEventListener('mousedown', onCaptureDown, true);
-    return () => window.removeEventListener('mousedown', onCaptureDown, true);
-  }, [activateModule]);
+    // Apply tentatively to every involved FK, then re-place followers
+    for (const [mid, angs] of perModule) {
+      const fk = getFK(mid);
+      if (fk) fk.updateAngles(angs, mode);
+    }
+    propagateAssembly(baseId, ms.welds, getFK);
+
+    // ── Collision gate (whole assembly) ──────────────────────────────────────
+    let collision = false;
+    const RODS = ['R1','R2','R3','R4','R5','R6','R7'];
+    const assembly = assemblyModuleIds(ms.welds, baseId);
+
+    // (a) Self-collision for every module whose joints changed this step
+    selfCheck: for (const mid of perModule.keys()) {
+      const fk = getFK(mid);
+      if (!fk) continue;
+      const lb = fk.getLinkBounds();
+      for (let i = 0; i < RODS.length; i++) {
+        for (let j = i + 3; j < RODS.length; j++) {
+          const a = lb[RODS[i]], b = lb[RODS[j]];
+          if (a && b && a.clone().expandByScalar(-0.02).intersectsBox(b.clone().expandByScalar(-0.02))) {
+            collision = true; break selfCheck;
+          }
+        }
+      }
+    }
+
+    // (b) Inter-module: any assembly module overlapping a NON-welded module
+    //     (skips directly-welded pairs — those are meant to touch).
+    if (!collision) {
+      const boxes = new Map();
+      const boxOf = (id) => {
+        if (boxes.has(id)) return boxes.get(id);
+        const fk = getFK(id);
+        if (!fk) { boxes.set(id, null); return null; }
+        fk.robotGroup.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(fk.robotGroup);
+        boxes.set(id, box);
+        return box;
+      };
+      const welded = (x, y) => ms.welds.some(w => {
+        const s = new Set([w.a.moduleId, w.b.moduleId]);
+        return s.has(x) && s.has(y);
+      });
+      const allIds = [...modulesRef.current.keys()];
+      interCheck: for (const aid of assembly) {
+        const ba = boxOf(aid);
+        if (!ba) continue;
+        for (const bid of allIds) {
+          if (bid === aid || welded(aid, bid)) continue;
+          const bb = boxOf(bid);
+          if (bb && ba.clone().expandByScalar(-0.05).intersectsBox(bb.clone().expandByScalar(-0.05))) {
+            collision = true; break interCheck;
+          }
+        }
+      }
+    }
+
+    if (collision) {
+      // Revert FKs to their pre-step angles (stores were never committed)
+      for (const [mid] of perModule) {
+        const fk = getFK(mid);
+        if (fk) fk.updateAngles(getAngles(mid), mode);
+      }
+      propagateAssembly(baseId, ms.welds, getFK);
+      useArmStore.getState().setCollision(true);
+      return;
+    }
+
+    // Commit: base → armStore, followers → multiStore
+    for (const [mid, angs] of perModule) {
+      if (mid === baseId) useArmStore.getState().setAllAngles(angs);
+      else                ms.setModuleAngles(mid, angs);
+    }
+    useArmStore.getState().setCollision(false);
+  }, []);
+
+  const crossModuleEnd = useCallback(() => {
+    xDragRef.current.pickup = null;
+  }, []);
+
+  // Inject cross-module hooks into the RenderLoop (callbacks are stable)
+  useEffect(() => {
+    const rl = renderLoopRef.current;
+    if (!rl) return;
+    rl.getActiveModuleId = () => appliedActiveRef.current;
+    rl.activateModule    = (id) => { activateModule(id); useMultiStore.getState().setActiveModule(id); };
+    rl.crossModuleStep   = crossModuleStep;
+    rl.crossModuleEnd    = crossModuleEnd;
+  }, [activateModule, crossModuleStep, crossModuleEnd]);
+
+  // Cross-module selection/drag is now handled directly by Interaction (it
+  // raycasts all modules and reports the owning module to RenderLoop's
+  // onRootClick / onDragStart callbacks) — no capture-phase handler needed.
 
   // ── Connect mode (face selection) ────────────────────────────────────────────
   const connectMode = useMultiStore(s => s.connectMode);
@@ -484,6 +798,7 @@ export default function SimCanvas() {
           fkB.robotGroup.quaternion.identity();
         }
         ms.applyDisconnect(clickedMid);
+        setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 80);
       }
     };
 

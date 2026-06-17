@@ -1,3 +1,108 @@
+/* ── Document indicator (open file name + autosave status) ───────────────────── */
+
+.doc-indicator {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 13px;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  flex-shrink: 0;
+  max-width: 320px;
+}
+.doc-icon { color: var(--text-dim); flex-shrink: 0; }
+.doc-name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.doc-status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.doc-saving { color: var(--accent); }
+.doc-saved  { color: var(--success); }
+.doc-dim    { color: var(--text-dim); opacity: 0.8; }
+.doc-spin { animation: doc-spin 0.8s linear infinite; }
+@keyframes doc-spin { to { transform: rotate(360deg); } }
+
+/* ── Theme toggle ────────────────────────────────────────────────────────────── */
+
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.18s;
+}
+.theme-toggle:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+/* ── Sim toolbar (top-left of 3D viewport) ───────────────────────────────────── */
+
+.sim-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  display: flex;
+  gap: 8px;
+  z-index: 10;
+}
+
+.sim-tool-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  background: var(--overlay-bg);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--overlay-border);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(60, 80, 140, 0.08);
+  transition: all 0.18s;
+}
+.sim-tool-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  box-shadow: 0 4px 16px rgba(0, 119, 221, 0.3);
+}
+.sim-tool-btn--danger { color: var(--danger); }
+.sim-tool-btn--danger:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: white;
+  box-shadow: 0 4px 16px rgba(204, 34, 0, 0.35);
+}
+
 /* ── App Shell ───────────────────────────────────────────────────────────────── */
 
 .app-shell {
@@ -36,29 +141,34 @@
   font-size: 26px;
   font-weight: 800;
   letter-spacing: 7px;
-  background: linear-gradient(135deg, #0066cc 0%, #8811ee 100%);
+  background: var(--brand-grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
   line-height: 1;
 }
 
-.app-logo-sub {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 4px;
-  color: var(--text);
-  text-transform: uppercase;
+.app-logo-tagline {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
   margin-top: 3px;
 }
 
-.app-logo-byline {
-  font-size: 8px;
+.app-logo-sub {
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: 3px;
+  letter-spacing: 2.5px;
   color: var(--text-dim);
   text-transform: uppercase;
-  margin-top: 1px;
+}
+
+.app-logo-byline {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: var(--text);
+  text-transform: uppercase;
 }
 
 .app-header-sep {
@@ -111,7 +221,7 @@
 .app-nav-tab:hover svg { opacity: 1; }
 
 .app-nav-tab.active {
-  background: linear-gradient(135deg, #e8f4ff, #f0e8ff);
+  background: var(--accent-glow);
   border-color: var(--accent);
   color: var(--accent);
   box-shadow: 0 2px 12px var(--accent-glow);
@@ -173,7 +283,7 @@
 
 .app-footer-brand {
   font-weight: 700;
-  background: linear-gradient(135deg, #0077dd, #9922ff);
+  background: var(--brand-grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -198,7 +308,7 @@
 }
 
 .app-footer-page-pill.active {
-  background: linear-gradient(135deg, #e8f4ff, #f0e8ff);
+  background: var(--accent-glow);
   border-color: var(--accent);
   color: var(--accent);
 }

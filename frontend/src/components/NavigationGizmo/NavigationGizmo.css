@@ -6,9 +6,9 @@
   align-items: center;
   gap: 6px;
   padding: 10px 10px 8px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--overlay-bg);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(180, 200, 230, 0.55);
+  border: 1px solid var(--overlay-border);
   border-radius: 16px;
   box-shadow: 0 4px 24px rgba(60, 80, 140, 0.1), 0 1px 3px rgba(0,0,0,0.04);
   transition: box-shadow 0.2s;
@@ -30,8 +30,8 @@
   letter-spacing: 0.5px;
   padding: 3px 6px;
   border-radius: 5px;
-  border: 1px solid rgba(180, 200, 230, 0.5);
-  background: rgba(240, 245, 255, 0.8);
+  border: 1px solid var(--border);
+  background: var(--bg-card);
   color: var(--ax-color, var(--accent));
   cursor: pointer;
   transition: all 0.15s;

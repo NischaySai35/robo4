@@ -2,6 +2,12 @@
 
 .view-controls {
   display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.view-btn {
   justify-content: center;
 }
 
@@ -10,9 +16,9 @@
   align-items: center;
   gap: 5px;
   padding: 6px 14px;
-  background: rgba(255, 255, 255, 0.88);
+  background: var(--overlay-bg);
   backdrop-filter: blur(12px);
-  border: 1px solid rgba(180, 200, 230, 0.55);
+  border: 1px solid var(--overlay-border);
   border-radius: 20px;
   color: var(--text-dim);
   font-family: var(--font-mono);

@@ -64,7 +64,10 @@ export const useIntegrationStore = create((set, get) => ({
 
   // ── Angle queue (called by SimTransmitPanel every 500ms) ────────────────────
   queueAngles: (angles) => {
-    const { lastSentAngles, stats } = get();
+    const { lastSentAngles, connected } = get();
+
+    // Nothing to transmit to while the ESP is offline — don't queue or log.
+    if (!connected) return false;
 
     // Only queue if at least one servo moved ≥ 0.8°
     const changed = {};

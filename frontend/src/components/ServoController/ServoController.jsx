@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
 import { useIntegrationStore } from '../../store/integrationStore.js';
+import { useThemeStore } from '../../store/themeStore.js';
 import './ServoController.css';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -92,7 +93,7 @@ function MiniChart({ values, color }) {
   if (!values || values.length < 2) {
     return (
       <div style={{ height: 66, display: 'flex', alignItems: 'center', justifyContent: 'center',
-        color: '#aabcd0', fontSize: 11 }}>
+        color: 'var(--text-dim)', fontSize: 11 }}>
         no data
       </div>
     );
@@ -300,7 +301,11 @@ function ServoCard({ def, data, onCmd }) {
   const [angle, setAngle] = useState('180');
   const [speed, setSpeed] = useState(10);
   const [acc, setAcc]     = useState(20);
-  const c = def.color;
+  // All cards share one dark-yellow accent (brighter in dark theme). Charts/SVG
+  // need a concrete colour, so it's derived from the theme rather than a CSS var.
+  const theme = useThemeStore(s => s.theme);
+  const c   = theme === 'dark' ? '#f0c040' : '#e0a200';
+  const off = theme === 'dark' ? '#5b6478' : '#9aa3b5';
 
   const isOnline  = data?.connected ?? false;
   const moving    = data?.moving    ?? false;
@@ -373,7 +378,7 @@ function ServoCard({ def, data, onCmd }) {
         <div className="sc-controls">
           <div className="sc-field">
             <label>Current (°)</label>
-            <span className="sc-angle-input" style={{ color: live(data?.currentAngle) != null ? c : '#bbc8d8', cursor: 'default' }}>
+            <span className="sc-angle-input" style={{ color: live(data?.currentAngle) != null ? c : off, cursor: 'default' }}>
               {live(data?.currentAngle) != null ? fmt(live(data?.currentAngle), 1) : '—'}
             </span>
           </div>
@@ -422,7 +427,7 @@ function ServoCard({ def, data, onCmd }) {
             <div key={k} className="sc-stat">
               <div className="sc-stat-k">{k}</div>
               <div className="sc-stat-v"
-                style={{ color: v != null ? c : '#bbc8d8' }}>
+                style={{ color: v != null ? c : off }}>
                 {v != null ? fmt(v, d) : '—'}
               </div>
               <div className="sc-stat-u">{u}</div>
@@ -645,7 +650,7 @@ function PresetPanel({ servos, onApply }) {
     <div className="sc-presets">
       <div className="sc-presets-hdr">
         <span>⭐ Presets</span>
-        <span style={{ color: '#8aa0be', fontWeight: 400, fontSize: 11 }}>
+        <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: 11 }}>
           snapshots all 6 servo angles
         </span>
         <div style={{ flex: 1 }} />
@@ -669,7 +674,7 @@ function PresetPanel({ servos, onApply }) {
           </span>
         ))}
         {presets.length === 0 && (
-          <span style={{ fontSize: 12, color: '#aabcd0' }}>no presets yet</span>
+          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>no presets yet</span>
         )}
       </div>
     </div>
@@ -685,7 +690,7 @@ const SRC_COLORS = {
   POLL: '#6366f1',
   OFF:  '#f97316',
   ERR:  '#dc2626',
-  SYS:  '#8aa0be',
+  SYS:  'var(--text-dim)',
 };
 
 const LEVEL_COLORS = {
@@ -710,30 +715,30 @@ function DebugLog({ log, onClear }) {
       <div className="sc-log-hdr">
         <span>Debug Log</span>
         <span style={{ display:'flex', gap:10, alignItems:'center' }}>
-          <span style={{ color: '#8aa0be', fontWeight: 400, fontSize: 10 }}>
+          <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: 10 }}>
             {log.length} entries · real-time
           </span>
           <button
             onClick={onClear}
-            style={{ background:'#f3f6fb', border:'1px solid #c8d4e4', borderRadius:5,
-              padding:'1px 7px', fontSize:10, cursor:'pointer', color:'#5a7090' }}>
+            style={{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:5,
+              padding:'1px 7px', fontSize:10, cursor:'pointer', color:'var(--text-dim)' }}>
             CLR
           </button>
         </span>
       </div>
       <div className="sc-log-body" style={{ maxHeight: 220 }}>
         {log.length === 0 && (
-          <div style={{ padding: '10px 0', color: '#aabcd0', fontSize: 11 }}>
+          <div style={{ padding: '10px 0', color: 'var(--text-dim)', fontSize: 11 }}>
             no activity — connect to ESP32 and drag arm or press buttons
           </div>
         )}
         {log.map((e, i) => (
           <div key={e.id ?? i} className="sc-log-entry">
             <span className="sc-log-time">{e.time}</span>
-            <span className="sc-log-src" style={{ color: SRC_COLORS[e.src] ?? '#8aa0be' }}>
+            <span className="sc-log-src" style={{ color: SRC_COLORS[e.src] ?? 'var(--text-dim)' }}>
               [{e.src ?? '?'}]
             </span>
-            <span style={{ color: LEVEL_COLORS[e.level ?? e.kind] ?? '#5a7090', flex: 1 }}>
+            <span style={{ color: LEVEL_COLORS[e.level ?? e.kind] ?? 'var(--text-dim)', flex: 1 }}>
               {e.msg}
             </span>
           </div>
@@ -1043,7 +1048,7 @@ export default function ServoController() {
           <div className="sc-ls-stat">
             <span className="sc-ls-k">DRAW</span>
             <span className="sc-ls-v"
-              style={{ color: totalCurrent > TOTAL_MA_MAX ? '#cc2200' : '#0077dd' }}>
+              style={{ color: totalCurrent > TOTAL_MA_MAX ? 'var(--danger)' : 'var(--accent)' }}>
               {totalCurrent.toFixed(1)} <span className="sc-ls-unit">mA</span>
             </span>
           </div>

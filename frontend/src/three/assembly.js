@@ -12,6 +12,15 @@
  */
 
 import * as THREE from 'three';
+import { ROD_IDS, JOINT_DEFS } from '../store/armStore.js';
+
+// Which rod index a selectable face belongs to.
+const FACE_ROD_INDEX = {
+  R1_outer:         0,
+  R7_outer:         6,
+  R3_cuboid_plusZ:  2,
+  R3_cuboid_minusZ: 2,
+};
 
 /** Set of module IDs in the same welded assembly as `moduleId` (BFS over welds). */
 export function assemblyModuleIds(welds, moduleId) {
@@ -136,4 +145,108 @@ export function propagateAssembly(driverId, welds, getFK) {
     }
   }
   return placed;
+}
+
+// ── Cross-module IK chain ───────────────────────────────────────────────────────
+
+/** The weld directly joining two modules (or null). */
+function weldBetween(welds, m1, m2) {
+  return welds.find(w => {
+    const s = new Set([w.a.moduleId, w.b.moduleId]);
+    return s.has(m1) && s.has(m2);
+  }) ?? null;
+}
+
+/** Rod index of the face a weld uses on the given module. */
+function faceRodIndexOf(weld, moduleId) {
+  const side = weld.a.moduleId === moduleId ? weld.a : weld.b;
+  return FACE_ROD_INDEX[side.faceKey] ?? 0;
+}
+
+/** BFS module-path from baseId to dragId over the weld graph (inclusive). */
+function modulePath(welds, baseId, dragId) {
+  if (baseId === dragId) return [baseId];
+  const adj = new Map();
+  for (const w of welds) {
+    if (!adj.has(w.a.moduleId)) adj.set(w.a.moduleId, []);
+    if (!adj.has(w.b.moduleId)) adj.set(w.b.moduleId, []);
+    adj.get(w.a.moduleId).push(w.b.moduleId);
+    adj.get(w.b.moduleId).push(w.a.moduleId);
+  }
+  const prev = new Map([[baseId, null]]);
+  const queue = [baseId];
+  while (queue.length) {
+    const cur = queue.shift();
+    if (cur === dragId) break;
+    for (const nb of adj.get(cur) ?? []) {
+      if (!prev.has(nb)) { prev.set(nb, cur); queue.push(nb); }
+    }
+  }
+  if (!prev.has(dragId)) return null;
+  const path = [];
+  for (let n = dragId; n != null; n = prev.get(n)) path.unshift(n);
+  return path;
+}
+
+/**
+ * Build a combined kinematic chain (world-space) from the assembly's fixed root
+ * to a dragged rod that lives in another welded module. Every joint between the
+ * root and the dragged rod — across module boundaries — is included.
+ *
+ * @returns {{
+ *   jointData: Array<{pos,axis}>,   // world pos + axis per path joint
+ *   angles:    number[],            // current angle per path joint
+ *   defs:      object[],            // JOINT_DEFS entry per path joint
+ *   backmap:   Array<{moduleId, localIdx}>,
+ *   dragPos:   THREE.Vector3,       // world position pulled toward the cursor
+ * } | null}
+ */
+export function buildCrossModuleChain({ welds, getFK, getAngles, baseId, baseRootRodId, dragId, dragRodId, mode }) {
+  const path = modulePath(welds, baseId, dragId);
+  if (!path || path.length < 2) return null;
+
+  const rootIdx = ROD_IDS.indexOf(baseRootRodId);
+  const jointData = [];
+  const angles    = [];
+  const defs      = [];
+  const backmap   = [];
+
+  for (let pi = 0; pi < path.length; pi++) {
+    const mid = path[pi];
+    const fk  = getFK(mid);
+    if (!fk) return null;
+    const jdata = fk.getJointWorldData(mode);
+    const angs  = getAngles(mid);
+
+    const entryIdx = pi === 0
+      ? rootIdx
+      : faceRodIndexOf(weldBetween(welds, path[pi - 1], mid), mid);
+    const exitIdx = pi === path.length - 1
+      ? ROD_IDS.indexOf(dragRodId)
+      : faceRodIndexOf(weldBetween(welds, mid, path[pi + 1]), mid);
+
+    const lo = Math.min(entryIdx, exitIdx);
+    const hi = Math.max(entryIdx, exitIdx);
+    for (let j = lo; j < hi; j++) {       // joint j connects rod j and rod j+1
+      jointData.push(jdata[j]);
+      angles.push(angs[j] ?? 0);
+      defs.push(JOINT_DEFS[j]);
+      backmap.push({ moduleId: mid, localIdx: j });
+    }
+  }
+
+  if (jointData.length === 0) return null;
+
+  // Drag node: the joint node representing the dragged rod's reachable end,
+  // measured outward from where the chain enters the dragged module.
+  const dragFK = getFK(dragId);
+  const nodes  = dragFK.getNodePositions();
+  const lastEntry = path.length < 2
+    ? rootIdx
+    : faceRodIndexOf(weldBetween(welds, path[path.length - 2], dragId), dragId);
+  const dRodIdx     = ROD_IDS.indexOf(dragRodId);
+  const dragNodeIdx = dRodIdx > lastEntry ? Math.min(dRodIdx, 5) : Math.max(dRodIdx - 1, 0);
+  const dragPos     = nodes[dragNodeIdx].clone();
+
+  return { jointData, angles, defs, backmap, dragPos };
 }

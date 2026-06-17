@@ -1,13 +1,18 @@
 /**
- * Interaction — hover and click detection for the arm rods.
+ * Interaction — hover and click/drag detection for the arm rods.
  *
- * No drag logic — FK mode uses panel arc-drag for joint control.
+ * Raycasts ALL modules' rods (not just the active one) and reports which module
+ * each hit belongs to, so the active assembly can be driven across modules.
  *
  * Callbacks:
- *   onHoverChange(rodId, active)  — rod mesh entered/left hover
- *   onRootClick(rodId)            — rod clicked (mousedown + mouseup, no movement)
+ *   onHoverChange(moduleId, rodId, active)        — rod mesh entered/left hover
+ *   onRootClick(moduleId, rodId)                  — rod clicked (no movement)
+ *   onDragStart(moduleId, rodId, ndc)
+ *   onDrag(moduleId, rodId, dx, dy, ndc)
+ *   onDragEnd()
  *
- * Rod meshes must have userData = { type: 'rod', id: 'R1' ... }
+ * Rod meshes must have userData = { type: 'rod', id: 'R1' ... }; the owning
+ * module is resolved via the injected resolveModuleId(object) function.
  */
 
 import * as THREE from 'three';
@@ -18,19 +23,23 @@ export class Interaction {
   /**
    * @param {HTMLCanvasElement} canvas
    * @param {THREE.Camera}      camera
-   * @param {Function}          getInteractables  — () => THREE.Object3D[]
+   * @param {Function}          getInteractables  — () => THREE.Object3D[] (all modules)
+   * @param {Function}          resolveModuleId   — (object) => moduleId | null
    * @param {Object}            callbacks
    */
-  constructor(canvas, camera, getInteractables, callbacks) {
+  constructor(canvas, camera, getInteractables, resolveModuleId, callbacks) {
     this.canvas           = canvas;
     this.camera           = camera;
     this.getInteractables = getInteractables;
+    this.resolveModuleId  = resolveModuleId;
     this.callbacks        = callbacks;
 
     this._mouseDownPos  = new THREE.Vector2();
     this._dragLastNDC   = new THREE.Vector2();
     this._hitId         = null;   // rodId under mousedown
+    this._hitModuleId   = null;   // moduleId under mousedown
     this._hoveredId     = null;   // currently hovered rodId
+    this._hoveredModuleId = null; // currently hovered moduleId
     this._dragging      = false;  // true once drag threshold exceeded
     this.paused         = false;  // set true to suppress all callbacks (e.g. connect mode)
 
@@ -57,17 +66,20 @@ export class Interaction {
     );
   }
 
-  _raycastId(ndc) {
+  // Returns { rodId, moduleId } for the nearest hit, or { rodId:null, moduleId:null }.
+  _raycastHit(ndc) {
     _raycaster.setFromCamera(ndc, this.camera);
     const hits = _raycaster.intersectObjects(this.getInteractables(), false);
-    if (!hits.length) return null;
-    // Walk up to find userData.id
-    let obj = hits[0].object;
-    while (obj) {
-      if (obj.userData?.id) return obj.userData.id;
-      obj = obj.parent;
+    if (!hits.length) return { rodId: null, moduleId: null };
+    const obj = hits[0].object;
+    let rodId = null;
+    let o = obj;
+    while (o) {
+      if (o.userData?.id) { rodId = o.userData.id; break; }
+      o = o.parent;
     }
-    return null;
+    const moduleId = this.resolveModuleId ? this.resolveModuleId(obj) : null;
+    return { rodId, moduleId };
   }
 
   _onMouseDown(e) {
@@ -75,7 +87,9 @@ export class Interaction {
     const ndc = this._getNDC(e.clientX, e.clientY);
     this._mouseDownPos.copy(ndc);
     this._dragLastNDC.copy(ndc);
-    this._hitId   = this._raycastId(ndc);
+    const hit = this._raycastHit(ndc);
+    this._hitId       = hit.rodId;
+    this._hitModuleId = hit.moduleId;
     this._dragging = false;
   }
 
@@ -87,13 +101,13 @@ export class Interaction {
     if (this._hitId) {
       if (!this._dragging && ndc.distanceTo(this._mouseDownPos) > 0.015) {
         this._dragging = true;
-        this.callbacks.onDragStart?.(this._hitId, ndc);
+        this.callbacks.onDragStart?.(this._hitModuleId, this._hitId, ndc);
         this.canvas.style.cursor = 'grabbing';
       }
       if (this._dragging) {
         const dx = ndc.x - this._dragLastNDC.x;
         const dy = ndc.y - this._dragLastNDC.y;
-        this.callbacks.onDrag?.(this._hitId, dx, dy, ndc);
+        this.callbacks.onDrag?.(this._hitModuleId, this._hitId, dx, dy, ndc);
         this._dragLastNDC.copy(ndc);
         return; // skip hover update during drag
       }
@@ -101,12 +115,13 @@ export class Interaction {
 
     // Hover detection (only when not dragging)
     if (!this._dragging) {
-      const id = this._raycastId(ndc);
-      if (id !== this._hoveredId) {
-        if (this._hoveredId) this.callbacks.onHoverChange?.(this._hoveredId, false);
-        this._hoveredId = id;
-        if (id) {
-          this.callbacks.onHoverChange?.(id, true);
+      const { rodId, moduleId } = this._raycastHit(ndc);
+      if (rodId !== this._hoveredId || moduleId !== this._hoveredModuleId) {
+        if (this._hoveredId) this.callbacks.onHoverChange?.(this._hoveredModuleId, this._hoveredId, false);
+        this._hoveredId       = rodId;
+        this._hoveredModuleId = moduleId;
+        if (rodId) {
+          this.callbacks.onHoverChange?.(moduleId, rodId, true);
           this.canvas.style.cursor = 'grab';
         } else {
           this.canvas.style.cursor = 'default';
@@ -126,11 +141,12 @@ export class Interaction {
       const ndc   = this._getNDC(e.clientX, e.clientY);
       const moved = ndc.distanceTo(this._mouseDownPos);
       if (moved < 0.015 && this._hitId) {
-        this.callbacks.onRootClick?.(this._hitId);
+        this.callbacks.onRootClick?.(this._hitModuleId, this._hitId);
       }
     }
 
-    this._hitId = null;
+    this._hitId       = null;
+    this._hitModuleId = null;
   }
 
   _onTouchStart(e) {
@@ -140,7 +156,9 @@ export class Interaction {
     const ndc = this._getNDC(t.clientX, t.clientY);
     this._mouseDownPos.copy(ndc);
     this._dragLastNDC.copy(ndc);
-    this._hitId   = this._raycastId(ndc);
+    const hit = this._raycastHit(ndc);
+    this._hitId       = hit.rodId;
+    this._hitModuleId = hit.moduleId;
     this._dragging = false;
   }
 
@@ -151,12 +169,12 @@ export class Interaction {
     const ndc = this._getNDC(t.clientX, t.clientY);
     if (!this._dragging && ndc.distanceTo(this._mouseDownPos) > 0.015) {
       this._dragging = true;
-      this.callbacks.onDragStart?.(this._hitId, ndc);
+      this.callbacks.onDragStart?.(this._hitModuleId, this._hitId, ndc);
     }
     if (this._dragging) {
       const dx = ndc.x - this._dragLastNDC.x;
       const dy = ndc.y - this._dragLastNDC.y;
-      this.callbacks.onDrag?.(this._hitId, dx, dy, ndc);
+      this.callbacks.onDrag?.(this._hitModuleId, this._hitId, dx, dy, ndc);
       this._dragLastNDC.copy(ndc);
     }
   }
@@ -166,9 +184,10 @@ export class Interaction {
       this._dragging = false;
       this.callbacks.onDragEnd?.();
     } else if (this._hitId) {
-      this.callbacks.onRootClick?.(this._hitId);
+      this.callbacks.onRootClick?.(this._hitModuleId, this._hitId);
     }
-    this._hitId = null;
+    this._hitId       = null;
+    this._hitModuleId = null;
   }
 
   dispose() {

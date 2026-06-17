@@ -34,8 +34,9 @@ export class RenderLoop {
     this._lastRootId = 'R1';
 
     // Drag / IK state
-    this._activeDragRodId = null;
-    this._activeDragNdc   = new THREE.Vector2();
+    this._activeDragRodId    = null;
+    this._activeDragModuleId = null; // non-null → cross-module drag (rod in a follower)
+    this._activeDragNdc      = new THREE.Vector2();
     // Screen-space pickup offset: (mouseNDC at drag-start) − (node NDC at drag-start).
     // Keeps the arm from jumping when the user clicks anywhere on a rod body.
     this._pickupOffset    = { x: 0, y: 0 };
@@ -56,6 +57,13 @@ export class RenderLoop {
     // Optional hook called once when a drag gesture ends — used to persist
     // follower-module transforms back to the store.
     this.onInteractionEnd = null;
+
+    // ── Cross-module hooks (injected by SimCanvas) ────────────────────────────────
+    this.activateModule    = null; // (moduleId) => void — switch active/base module
+    this.getActiveModuleId = null; // () => string
+    // (mouseNDC, mode, dragStart:boolean) => void — solve+apply cross-module IK
+    this.crossModuleStep   = null;
+    this.crossModuleEnd    = null; // () => void — end a cross-module drag session
 
     // Collision detection
     this._prevAngles   = [0, 0, 0, 0, 0, 0]; // angles from start of frame (before IK)
@@ -105,13 +113,19 @@ export class RenderLoop {
   // ── Interaction callbacks ──────────────────────────────────────────────────────
 
   _setupInteractionCallbacks() {
-    this.interaction.callbacks.onHoverChange = (rodId, active) => {
+    this.interaction.callbacks.onHoverChange = (moduleId, rodId, active) => {
+      // Highlight only rods of the active/base module (its FK owns these meshes).
+      const activeId = this.getActiveModuleId ? this.getActiveModuleId() : null;
+      if (activeId && moduleId && moduleId !== activeId) return;
       this.robotFK.setHoverHighlight(rodId, active);
     };
 
-    // Atomic root change: compute new angles + apply together in one store write
-    // so LeftPanel never sees a frame where rootId is new but angles are still old.
-    this.interaction.callbacks.onRootClick = (rodId) => {
+    // Click a rod → make its module the active base and that rod the fixed root.
+    this.interaction.callbacks.onRootClick = (moduleId, rodId) => {
+      const activeId = this.getActiveModuleId ? this.getActiveModuleId() : null;
+      if (moduleId && activeId && moduleId !== activeId && this.activateModule) {
+        this.activateModule(moduleId); // swaps this.robotFK to the clicked module
+      }
       const state = this.getStore();
       if (rodId === state.activeRootId) return;
       const mode = state.mode || 'horizontal';
@@ -123,17 +137,29 @@ export class RenderLoop {
       this._telemetry.seed(newAngles);
     };
 
-    this.interaction.callbacks.onDragStart = (rodId, startNdc) => {
+    this.interaction.callbacks.onDragStart = (moduleId, rodId, startNdc) => {
       this.scene.setOrbitEnabled(false);
       this._homeAnim = null; // cancel any home animation
+      if (startNdc) this._activeDragNdc.set(startNdc.x, startNdc.y);
 
+      const activeId = this.getActiveModuleId ? this.getActiveModuleId() : null;
+
+      if (moduleId && activeId && moduleId !== activeId && this.crossModuleStep) {
+        // Cross-module drag: the dragged rod lives in a welded follower. The base
+        // module stays fixed; the provider builds the combined chain and solves.
+        this._activeDragRodId    = rodId;
+        this._activeDragModuleId = moduleId;
+        this.crossModuleStep(moduleId, rodId, this._activeDragNdc, this.getStore().mode || 'horizontal', true);
+        return;
+      }
+
+      // Single-module drag (rod in the active/base module) — unchanged path.
+      this._activeDragModuleId = null;
       const state       = this.getStore();
       const rootIdx     = ROD_IDS.indexOf(state.activeRootId);
       const rodIdx      = ROD_IDS.indexOf(rodId);
       const dragNodeIdx = this._ikDragNode(rodIdx, rootIdx);
 
-      // Compute screen-space pickup offset so the node doesn't snap to the
-      // cursor if the user clicked somewhere other than the joint sphere.
       const joints   = this.robotFK.getNodePositions();
       const P        = joints[dragNodeIdx];
       const nodeNdc  = new THREE.Vector3(P.x, P.y, P.z).project(this.scene.camera);
@@ -142,17 +168,18 @@ export class RenderLoop {
         ? { x: startNdc.x - nodeNdc.x, y: startNdc.y - nodeNdc.y }
         : { x: 0, y: 0 };
 
-      if (startNdc) this._activeDragNdc.set(startNdc.x, startNdc.y);
       this._activeDragRodId = rodId;
     };
 
     // Only record the latest cursor NDC — _frame runs IK every tick.
-    this.interaction.callbacks.onDrag = (_rodId, _dx, _dy, ndc) => {
+    this.interaction.callbacks.onDrag = (_moduleId, _rodId, _dx, _dy, ndc) => {
       if (ndc) this._activeDragNdc.set(ndc.x, ndc.y);
     };
 
     this.interaction.callbacks.onDragEnd = () => {
-      this._activeDragRodId = null;
+      if (this._activeDragModuleId && this.crossModuleEnd) this.crossModuleEnd();
+      this._activeDragRodId    = null;
+      this._activeDragModuleId = null;
       this.scene.setOrbitEnabled(true);
       if (this.onInteractionEnd) this.onInteractionEnd();
     };
@@ -201,6 +228,15 @@ export class RenderLoop {
   // Block IK/home animation during connect-mode face selection
   setConnectMode(active) {
     this._connectMode = active;
+  }
+
+  // E-STOP: immediately halt all motion (drag + home animation) and free orbit.
+  cancelMotion() {
+    this._homeAnim = null;
+    this._activeDragRodId = null;
+    this._activeDragModuleId = null;
+    this.scene.setOrbitEnabled(true);
+    if (this.act.clearPendingHome) this.act.clearPendingHome();
   }
 
   start() {
@@ -286,6 +322,7 @@ export class RenderLoop {
         for (let i = 0; i < 6; i++) this.act.setJointAngle(i, 0);
         this.robotFK.updateAngles([0, 0, 0, 0, 0, 0], mode);
         this._telemetry.seed([0, 0, 0, 0, 0, 0]);
+        if (bridge.fitCamera) bridge.fitCamera();
       }
       return;
     }
@@ -304,6 +341,33 @@ export class RenderLoop {
       this._telemetry.seed(newAngles);
       activeAngles = newAngles;
       this._prevAngles = [...newAngles];
+    }
+
+    // ── Cross-module IK (dragged rod lives in a welded follower) ───────────────────
+    // The provider (SimCanvas) builds the combined chain spanning modules, solves,
+    // collision-gates, and commits to the base (armStore) + follower stores/FKs.
+    if (this._activeDragRodId && this._activeDragModuleId && !this._connectMode && this.crossModuleStep) {
+      this.crossModuleStep(this._activeDragModuleId, this._activeDragRodId, this._activeDragNdc, mode, false);
+
+      // Base-module angles may have changed via the store; redraw + telemetry.
+      activeAngles = this.getStore().jointAngles;
+      this.robotFK.updateAngles(activeAngles, mode);
+
+      const limitHits = activeAngles.map((a, i) => Math.abs(a) >= JOINT_DEFS[i].limit - 0.01);
+      const telemetry = this._telemetry.update(activeAngles, limitHits, now);
+      this.act.setJointTelemetry(telemetry);
+      for (let i = 0; i < JOINT_DEFS.length; i++) {
+        this.robotFK.setLimitHighlight(JOINT_DEFS[i].id, limitHits[i]);
+      }
+
+      const eePos   = this.robotFK.getEndEffectorWorld();
+      const grpPos  = this.robotFK.robotGroup.position;
+      const dx = eePos.x - grpPos.x, dy = eePos.y - grpPos.y, dz = eePos.z - grpPos.z;
+      this.act.updateEndEffector(eePos, Math.min(Math.sqrt(dx*dx+dy*dy+dz*dz) / MAX_REACH, 1.0) * 100);
+
+      if (this.postTick) this.postTick();
+      this.scene.render();
+      return;
     }
 
     // ── Continuous IK ─────────────────────────────────────────────────────────────

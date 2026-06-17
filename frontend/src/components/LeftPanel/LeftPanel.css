@@ -1,3 +1,142 @@
+/* ── Export format chooser ───────────────────────────────────────────────────── */
+
+.export-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(20, 30, 50, 0.35);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.export-modal {
+  width: 290px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 16px 48px rgba(20, 30, 50, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.export-modal-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.export-opt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 11px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+
+.export-opt small {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+}
+
+.export-opt:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.export-opt:hover small { color: var(--accent); }
+
+.export-opt--soft { opacity: 0.65; }
+
+.export-cancel {
+  margin-top: 4px;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.export-cancel:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── Collapsible section header ──────────────────────────────────────────────── */
+
+.section-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.section-collapse .section-title { margin-bottom: 0; }
+.collapse-arrow {
+  color: var(--text-dim);
+  font-size: 11px;
+  transition: transform 0.18s;
+}
+.collapse-arrow.open { transform: rotate(90deg); }
+
+/* ── Fixed-root chips (responsive grid) ──────────────────────────────────────── */
+
+.root-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.root-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
+  border-radius: 6px;
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.root-chip:hover { background: color-mix(in srgb, var(--warn) 18%, transparent); border-color: var(--warn); }
+.root-chip--active { border-color: var(--warn); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 28%, transparent); }
+.root-chip-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-dim); flex-shrink: 0;
+}
+.root-chip--active .root-chip-dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
 /* ── Left Panel ──────────────────────────────────────────────────────────────── */
 
 .left-panel {
@@ -64,17 +203,17 @@
 /* ── Sections ─────────────────────────────────────────────────────────────────── */
 
 .section {
-  padding: 14px 16px;
+  padding: 11px 14px;
   border-bottom: 1px solid var(--border);
 }
 
 .section-title {
   font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 3px;
+  font-size: 11px;
+  letter-spacing: 2.5px;
   color: var(--text-dim);
   text-transform: uppercase;
-  margin-bottom: 8px;
+  margin-bottom: 7px;
 }
 
 /* ── Root Info ───────────────────────────────────────────────────────────────── */
@@ -213,15 +352,15 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 11px 14px;
+  padding: 8px 14px;
   background: var(--bg-card);
   border: 1.5px solid var(--border);
   border-radius: 7px;
   color: var(--text-dim);
   font-family: var(--font-ui);
-  font-size: 14px;
-  font-weight: 600;
-  letter-spacing: 2px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
   cursor: pointer;
   transition: all 0.18s;
 }
@@ -242,13 +381,14 @@
 
 .module-select {
   width: 100%;
-  padding: 6px 10px;
+  padding: 7px 10px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 11px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
   outline: none;
 }
@@ -264,16 +404,16 @@
 .add-module-btn {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
+  gap: 8px;
+  padding: 6px 11px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
   cursor: pointer;
   transition: background .15s, border-color .15s;
 }
@@ -286,16 +426,16 @@
 .connect-btn {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
+  gap: 8px;
+  padding: 6px 11px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
   cursor: pointer;
   transition: background .15s, border-color .15s;
 }
@@ -393,16 +533,16 @@
 .delete-module-btn {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 7px 12px;
+  gap: 8px;
+  padding: 6px 11px;
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: 5px;
   color: var(--danger);
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.4px;
   cursor: pointer;
   transition: background .15s, border-color .15s;
 }

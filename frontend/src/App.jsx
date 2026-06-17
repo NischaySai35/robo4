@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import './App.css';
 import LeftPanel from './components/LeftPanel/LeftPanel.jsx';
 import SimCanvas from './components/SimCanvas/SimCanvas.jsx';
@@ -10,6 +10,100 @@ import SimTransmitPanel from './components/SimTransmitPanel/SimTransmitPanel.jsx
 import ConnectionWindow from './components/ConnectionWindow/ConnectionWindow.jsx';
 import { useIntegrationStore } from './store/integrationStore.js';
 import { useArmStore } from './store/armStore.js';
+import { useThemeStore } from './store/themeStore.js';
+import { useDocStore } from './store/docStore.js';
+import { bridge } from './three/cameraBridge.js';
+
+function DocIndicator() {
+  const name   = useDocStore(s => s.name);
+  const status = useDocStore(s => s.status);
+  const display = name ?? 'untitled';
+  return (
+    <div className="doc-indicator" title={name
+      ? `Auto-saving changes to ${name}`
+      : 'Not saved to a file yet — changes are kept locally. Use SAVE PROJECT to create a file.'}>
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="doc-icon">
+        <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+      </svg>
+      <span className="doc-name">{display}</span>
+      {name && status === 'saving' && (
+        <span className="doc-status doc-saving">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="doc-spin">
+            <path d="M8 1.5a6.5 6.5 0 106.5 6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+          </svg>
+          saving…
+        </span>
+      )}
+      {name && status === 'saved' && (
+        <span className="doc-status doc-saved">
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
+            <path d="M3 8.5l3.5 3.5L13 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          saved
+        </span>
+      )}
+      {!name && <span className="doc-status doc-dim">local only</span>}
+    </div>
+  );
+}
+
+function ThemeToggle() {
+  const theme  = useThemeStore(s => s.theme);
+  const toggle = useThemeStore(s => s.toggleTheme);
+  const dark = theme === 'dark';
+  return (
+    <button
+      className="theme-toggle"
+      onClick={toggle}
+      title={`Switch to ${dark ? 'light' : 'dark'} theme`}
+      aria-label="Toggle theme"
+    >
+      {dark ? (
+        // sun
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none">
+          <circle cx="10" cy="10" r="3.6" stroke="currentColor" strokeWidth="1.6"/>
+          <path d="M10 1.5v2.2M10 16.3v2.2M1.5 10h2.2M16.3 10h2.2M3.9 3.9l1.6 1.6M14.5 14.5l1.6 1.6M16.1 3.9l-1.6 1.6M5.5 14.5l-1.6 1.6"
+            stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"/>
+        </svg>
+      ) : (
+        // moon
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none">
+          <path d="M16.5 11.8A7 7 0 018.2 3.5 7 7 0 1016.5 11.8z"
+            stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" fill="none"/>
+        </svg>
+      )}
+    </button>
+  );
+}
+
+function SimToolbar() {
+  const homeArm = useArmStore(s => s.homeArm);
+  return (
+    <div className="sim-toolbar">
+      <button className="sim-tool-btn" onClick={homeArm} title="Home the active module">
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="none">
+          <path d="M3 9.5L10 3l7 6.5V17a1 1 0 01-1 1H6a1 1 0 01-1-1V9.5z"
+            stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" fill="none"/>
+        </svg>
+        HOME
+      </button>
+      <button className="sim-tool-btn" onClick={() => bridge.homeAll?.()} title="Home every module">
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="none">
+          <path d="M3 9.5L10 3l7 6.5V17a1 1 0 01-1 1H6a1 1 0 01-1-1V9.5z"
+            stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" fill="none"/>
+        </svg>
+        HOME ALL
+      </button>
+      <button className="sim-tool-btn sim-tool-btn--danger" onClick={() => bridge.estop?.()} title="Stop all motion now">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.6"/>
+          <rect x="5.5" y="5.5" width="5" height="5" rx="1" fill="currentColor"/>
+        </svg>
+        E-STOP
+      </button>
+    </div>
+  );
+}
 
 function WorkspaceNotification() {
   const collision = useArmStore(s => s.collision);
@@ -162,8 +256,10 @@ function AppHeader({ page, setPage }) {
     <header className="app-header">
       <div className="app-header-brand">
         <span className="app-logo">TETROBOT</span>
-        <span className="app-logo-sub">modular arms</span>
-        <span className="app-logo-byline">by nischay sai</span>
+        <span className="app-logo-tagline">
+          <span className="app-logo-sub">modular arms</span>
+          <span className="app-logo-byline">by nischay sai</span>
+        </span>
       </div>
 
       <div className="app-header-sep" />
@@ -192,6 +288,9 @@ function AppHeader({ page, setPage }) {
         </button>
       </nav>
 
+      <div className="app-header-sep" />
+      <DocIndicator />
+
       <div className="app-header-space" />
 
       <div className="app-header-right">
@@ -213,6 +312,7 @@ function AppHeader({ page, setPage }) {
         <div className="app-status-chip app-status-chip-mono">
           6 × ST3215
         </div>
+        <ThemeToggle />
       </div>
     </header>
   );
@@ -250,6 +350,18 @@ export default function App() {
   const [page,       setPage]       = useState('sim');
   const [connOpen,   setConnOpen]   = useState(false);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_W);
+
+  // Apply the theme to <html> so CSS [data-theme="dark"] overrides take effect.
+  const theme = useThemeStore(s => s.theme);
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
+  // Reflect the open project name in the browser tab title.
+  const docName = useDocStore(s => s.name);
+  useEffect(() => {
+    document.title = `TETROBOT — ${docName ?? 'untitled'}`;
+  }, [docName]);
 
   const panelWidthRef = useRef(DEFAULT_PANEL_W);
   panelWidthRef.current = panelWidth;
@@ -302,6 +414,7 @@ export default function App() {
 
           <div className="canvas-wrapper">
             <SimCanvas />
+            <SimToolbar />
             <WorkspaceNotification />
             <div className="top-right-cluster">
               <NavigationGizmo />

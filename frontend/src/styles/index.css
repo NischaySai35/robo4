@@ -6,30 +6,75 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #edf1f7;
+  /* ── LIGHT THEME (default) — white + blue accent + purple brand gradient.
+        Yellow is used ONLY for the servo cards (--accent-yellow). ── */
+  --bg: #e4eaf3;
   --bg-panel: #ffffff;
-  --bg-card: #f3f6fb;
-  --bg-card-hover: #e8eef8;
-  --border: #c8d4e4;
-  --border-bright: #b0c0d8;
-  --text: #1e3050;
-  --text-dim: #5a7090;
-  --text-bright: #0c1e38;
-  --accent: #0077dd;
-  --accent-glow: #0077dd28;
-  --warn: #c97000;
-  --danger: #cc2200;
-  --success: #009944;
+  --bg-card: #e9eff8;
+  --bg-card-hover: #d9e3f1;
+  --border: #a6b9d2;
+  --border-bright: #8aa0c1;
+  --text: #11223b;
+  --text-dim: #3f5577;
+  --text-bright: #06152c;
+
+  --accent: #0062cc;
+  --accent-glow: rgba(0, 98, 204, 0.18);
+
+  /* Servo-card accent — a normal (golden) yellow, readable on white */
+  --accent-yellow: #e0a200;
+  --accent-yellow-soft: rgba(224, 162, 0, 0.12);
+  --accent-yellow-line: rgba(224, 162, 0, 0.45);
+
+  /* Purple brand gradient (the TETROBOT wordmark) */
+  --brand-grad: linear-gradient(135deg, #0066cc 0%, #8811ee 100%);
+
+  --warn: #ad5a00;
+  --danger: #bd1c00;
+  --success: #007a36;
+  --scene-bg: #f4f2ee;
   --font-mono: 'Share Tech Mono', 'Courier New', monospace;
   --font-ui: 'Rajdhani', 'Arial', sans-serif;
   --panel-w: 340px;
 
-  /* Overlay vars — light-themed to match the white scene background */
+  /* Overlay / glass panels */
   --overlay-bg: rgba(255, 255, 255, 0.92);
-  --overlay-border: #c0d0e4;
-  --overlay-text: #3a5070;
-  --overlay-text-bright: #0c1e38;
-  --overlay-text-dim: #6a88a8;
+  --overlay-border: #a4b8d3;
+  --overlay-text: #2c4263;
+  --overlay-text-bright: #06152c;
+  --overlay-text-dim: #4c648a;
+}
+
+[data-theme="dark"] {
+  --bg: #0d111b;
+  --bg-panel: #131927;
+  --bg-card: #1b2030;
+  --bg-card-hover: #262d41;
+  --border: #2c3a52;
+  --border-bright: #3d4f6e;
+  --text: #e8edf6;
+  --text-dim: #969ab0;
+  --text-bright: #ffffff;
+
+  --accent: #4a9eff;
+  --accent-glow: rgba(74, 158, 255, 0.28);
+
+  --accent-yellow: #f0c040;
+  --accent-yellow-soft: rgba(240, 192, 64, 0.16);
+  --accent-yellow-line: rgba(240, 192, 64, 0.5);
+
+  --brand-grad: linear-gradient(135deg, #4a9eff 0%, #b66bff 100%);
+
+  --warn: #f0a23a;
+  --danger: #ff5c43;
+  --success: #34c47a;
+  --scene-bg: #0d111b;
+
+  --overlay-bg: rgba(20, 26, 40, 0.9);
+  --overlay-border: #2c3a52;
+  --overlay-text: #c9d2e2;
+  --overlay-text-bright: #ffffff;
+  --overlay-text-dim: #8b93a6;
 }
 
 :root {
@@ -50,8 +95,8 @@ kbd {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--accent);
-  background: #e8f0fc;
-  border: 1px solid #a8c0e0;
+  background: var(--accent-glow);
+  border: 1px solid var(--border);
   border-radius: 3px;
   padding: 1px 5px;
   white-space: nowrap;

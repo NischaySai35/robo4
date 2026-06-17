@@ -1,7 +1,5 @@
 import { create } from 'zustand';
 
-let _nextId = 1;
-
 const makeModule = (id, label, pos = { x: 0, y: 0, z: 0 }) => ({
   id,
   label,
@@ -15,10 +13,21 @@ const makeModule = (id, label, pos = { x: 0, y: 0, z: 0 }) => ({
 export const useMultiStore = create((set, get) => ({
   modules: [makeModule('module-0', 'Module 1', { x: 0, y: 0, z: 0 })],
   activeModuleId: 'module-0',
+  nextId: 1,   // next numeric suffix for new module ids (serialized in project files)
 
   // Welds — rigid joins between two module faces. Each: { a, b, mate:number[16] }
   // where a/b = { moduleId, faceKey }. Modules sharing welds form one assembly.
   welds: [],
+
+  // Update a (follower) module's joint angles — used by cross-module IK to drive
+  // joints in modules other than the active one.
+  setModuleAngles(id, angles) {
+    set(s => ({
+      modules: s.modules.map(m =>
+        m.id === id ? { ...m, angles: [...angles] } : m,
+      ),
+    }));
+  },
 
   // Lightweight world-transform update for a single module (used by rigid-follow
   // propagation to persist follower placements after a drag).
@@ -81,9 +90,10 @@ export const useMultiStore = create((set, get) => ({
       while (usedSlots.has(slot)) slot++;
       pos = { x: 0, y: 0, z: slot * 4.0 };
     }
-    const id    = `module-${_nextId++}`;
+    const nid   = get().nextId;
+    const id    = `module-${nid}`;
     const label = `Module ${current.length + 1}`;
-    set(s => ({ modules: [...s.modules, makeModule(id, label, pos)] }));
+    set(s => ({ modules: [...s.modules, makeModule(id, label, pos)], nextId: s.nextId + 1 }));
     return id;
   },
 
@@ -149,29 +159,21 @@ export const useMultiStore = create((set, get) => ({
   clearFaces()    { set({ face1: null,  face2: null, connectError: null }); },
   setConnectError(msg) { set({ connectError: msg }); },
 
-  // Apply the computed world transform to the joined module, record the weld,
-  // and exit connect mode. `weld` = { a, b, mate } (may be null if unavailable).
-  applyJoin(moduleId, newPos, newQuat, weld = null) {
+  // Record the weld and exit connect mode. Module world transforms are applied
+  // imperatively (and persisted via setModuleTransform) by performJoin, since a
+  // whole sub-assembly may move. `weld` = { a, b, mate } (may be null).
+  applyJoin(weld = null) {
     set(s => {
       let welds = s.welds;
       if (weld) {
         // Replace any existing weld between the same two modules, then add this one
-        const pair = new Set([weld.a.moduleId, weld.b.moduleId]);
         welds = s.welds.filter(w => {
           const wp = new Set([w.a.moduleId, w.b.moduleId]);
-          return !(wp.has(weld.a.moduleId) && wp.has(weld.b.moduleId) && wp.size === pair.size);
+          return !(wp.has(weld.a.moduleId) && wp.has(weld.b.moduleId));
         });
         welds = [...welds, weld];
       }
       return {
-        modules: s.modules.map(m =>
-          m.id === moduleId
-            ? { ...m,
-                position:   { x: newPos.x,  y: newPos.y,  z: newPos.z },
-                quaternion: { x: newQuat.x, y: newQuat.y, z: newQuat.z, w: newQuat.w },
-              }
-            : m,
-        ),
         welds,
         connectMode: false,
         face1: null,

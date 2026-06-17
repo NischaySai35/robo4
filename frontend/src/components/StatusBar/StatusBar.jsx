@@ -1,39 +1,21 @@
 import './StatusBar.css';
 import { useArmStore } from '../../store/armStore.js';
 
-const STATUS_CONFIG = {
-  idle: {
-    label: 'IDLE',
-    color: '#334455',
-    glow: '#00aaff44',
-    dot: '#00aaff',
-    pulse: false,
-  },
-  solving: {
-    label: 'FK ACTIVE',
-    color: '#1a3322',
-    glow: '#00ff8844',
-    dot: '#00ff88',
-    pulse: true,
-  },
-  limit_hit: {
-    label: 'JOINT LIMIT',
-    color: '#331100',
-    glow: '#ff440044',
-    dot: '#ff4400',
-    pulse: true,
-  },
-};
-
 export default function StatusBar() {
-  const status = useArmStore(s => s.status);
-  const cfg    = STATUS_CONFIG[status] ?? STATUS_CONFIG.idle;
+  const collision = useArmStore(s => s.collision);
+  const joints    = useArmStore(s => s.joints);
+
+  const anyLimit = joints.some(j => j.limitHit);
+  const moving   = joints.some(j => Math.abs(j.velocity) > 1); // deg/s
+
+  let cfg;
+  if (collision)     cfg = { label: 'BLOCKED',     dot: '#ff3b30', pulse: true  };
+  else if (anyLimit) cfg = { label: 'JOINT LIMIT', dot: '#ff7a00', pulse: true  };
+  else if (moving)   cfg = { label: 'MOVING',      dot: '#00cc66', pulse: true  };
+  else               cfg = { label: 'IDLE',        dot: '#00aaff', pulse: false };
 
   return (
-    <div
-      className={`status-bar fade-in ${cfg.pulse ? 'pulse' : ''}`}
-      style={{ '--status-color': cfg.color, '--status-glow': cfg.glow }}
-    >
+    <div className={`status-bar fade-in ${cfg.pulse ? 'pulse' : ''}`}>
       <div
         className="status-dot"
         style={{

@@ -1,7 +1,11 @@
 import './LeftPanel.css';
+import { useState } from 'react';
 import { useArmStore, JOINT_DEFS, ROD_IDS } from '../../store/armStore.js';
 import { useMultiStore } from '../../store/multiStore.js';
 import { bridge } from '../../three/cameraBridge.js';
+import { serializeProject } from '../../persistence/project.js';
+import { saveProjectToFile, openProjectFromFile } from '../../persistence/fileIO.js';
+import { useDocStore } from '../../store/docStore.js';
 import JointCard from '../JointCard/JointCard.jsx';
 
 export default function LeftPanel({ style }) {
@@ -37,16 +41,76 @@ export default function LeftPanel({ style }) {
 
   const activeLabel = modules.find(m => m.id === activeModuleId)?.label ?? 'Module 1';
 
+  const onSaveProject = async () => {
+    const res = await saveProjectToFile(serializeProject(), 'tetrobot.nischay');
+    if (res) useDocStore.getState().setDoc(res.name, res.handle);
+  };
+  const onOpenProject = async () => {
+    try {
+      const res = await openProjectFromFile();
+      if (!res) return;
+      const r = bridge.loadScene?.(res.data);
+      if (r && !r.ok) { alert(`Could not open project: ${r.error}`); return; }
+      useDocStore.getState().setDoc(res.name, res.handle);
+    } catch (e) {
+      alert(`Could not open file: ${e.message}`);
+    }
+  };
+  const [exportOpen, setExportOpen] = useState(false);
+  const [telemetryOpen, setTelemetryOpen] = useState(false);
+  const doExport = (fmt) => {
+    const r = bridge.exportModel?.(fmt);
+    if (r && !r.ok) { alert(r.error); return; }   // keep menu open on unsupported
+    setExportOpen(false);
+  };
+
   return (
     <aside className="left-panel fade-in" style={style}>
-      {/* Header */}
-      <div className="panel-header">
-        <div className="panel-logo">
-          <span className="logo-main">TETROBOT</span>
-          <span className="logo-sub">CONTROL SIMULATOR</span>
-        </div>
-        <div className="panel-status-dot" />
+      {/* Project file actions */}
+      <div className="section module-actions">
+        <div className="section-title">PROJECT</div>
+        <button className="add-module-btn" onClick={onOpenProject} title="Open a .nischay project file">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <path d="M2 4h4l1.5 1.5H14V13H2V4z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+          </svg>
+          OPEN PROJECT
+        </button>
+        <button className="add-module-btn" onClick={onSaveProject} title="Save the scene to a .nischay file">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <path d="M3 2h8l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+            <path d="M5 2v4h5V2M5 14v-4h6v4" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+          </svg>
+          SAVE PROJECT
+        </button>
+        <button className="add-module-btn" onClick={() => setExportOpen(true)} title="Export the model (OBJ / STL / STEP / GLB)">
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+            <path d="M8 2v8M8 10l-3-3M8 10l3-3M3 13h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+          EXPORT
+        </button>
       </div>
+
+      {/* Export format chooser */}
+      {exportOpen && (
+        <div className="export-modal-backdrop" onClick={() => setExportOpen(false)}>
+          <div className="export-modal" onClick={e => e.stopPropagation()}>
+            <div className="export-modal-title">EXPORT AS</div>
+            <button className="export-opt" onClick={() => doExport('obj')}>
+              OBJ <small>mesh + materials</small>
+            </button>
+            <button className="export-opt" onClick={() => doExport('stl')}>
+              STL <small>mesh only · 3D print</small>
+            </button>
+            <button className="export-opt export-opt--soft" onClick={() => doExport('step')}>
+              STEP <small>CAD · not supported yet</small>
+            </button>
+            <button className="export-opt" onClick={() => doExport('glb')}>
+              GLB <small>Blender / 3D viewers</small>
+            </button>
+            <button className="export-cancel" onClick={() => setExportOpen(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       {/* Module selector — shown whenever more than one module exists */}
       {modules.length > 1 && (
@@ -211,52 +275,72 @@ export default function LeftPanel({ style }) {
         </button>
       </div>
 
-      {/* Root indicator */}
+      {/* Fixed roots — one chip per module, in ROD-Mn format */}
       <div className="section">
-        <div className="section-title">FIXED ROOT</div>
-        <div className="root-info">
-          <div className="root-indicator">
-            <span className="root-glow-dot" />
-            <span className="root-name">{activeRootId}</span>
-            <span className="root-badge">ROOT</span>
-          </div>
-          <p className="root-hint">Click a rod in the viewport to set it as the fixed root.</p>
+        <div className="section-title">FIXED ROOTS</div>
+        <div className="root-grid">
+          {modules.map((m, i) => {
+            const root = m.id === activeModuleId ? activeRootId : m.activeRootId;
+            const isActive = m.id === activeModuleId;
+            return (
+              <button
+                key={m.id}
+                className={`root-chip${isActive ? ' root-chip--active' : ''}`}
+                onClick={() => setActiveModule(m.id)}
+                title={`${m.label} — root ${root}${isActive ? ' (active)' : ''}`}
+              >
+                <span className="root-chip-dot" />
+                {root}-M{i + 1}
+              </button>
+            );
+          })}
         </div>
+        <p className="root-hint">
+          Click a rod in the viewport to set the active module’s root. Click a chip to switch active module.
+        </p>
       </div>
 
-      {/* Joint telemetry */}
+      {/* Joint telemetry — collapsed by default */}
       <div className="section">
-        <div className="section-title">JOINT TELEMETRY</div>
-        <div className="joint-list">
-          {joints.map((joint, i) => (
-            <JointCard
-              key={i}
-              joint={{
-                ...joint,
-                angle:        joint.angle        * sg(i),
-                velocity:     joint.velocity     * sg(i),
-                acceleration: joint.acceleration * sg(i),
-              }}
-              index={i}
-              rawAngle={jointAngles[i] * sg(i)}
-              onArcDrag={(idx, angle) => setJointAngle(idx, angle * sg(idx))}
-              onJointHome={(idx) => setJointAngle(idx, 0)}
-              onJointSet={(idx, angle) => setJointAngle(idx, angle * sg(idx))}
-              collision={collision}
-            />
-          ))}
-        </div>
+        <button className="section-collapse" onClick={() => setTelemetryOpen(o => !o)}>
+          <span className="section-title">JOINT TELEMETRY</span>
+          <span className={`collapse-arrow${telemetryOpen ? ' open' : ''}`}>▸</span>
+        </button>
+        {telemetryOpen && (
+          <div className="joint-list">
+            {joints.map((joint, i) => (
+              <JointCard
+                key={i}
+                joint={{
+                  ...joint,
+                  angle:        joint.angle        * sg(i),
+                  velocity:     joint.velocity     * sg(i),
+                  acceleration: joint.acceleration * sg(i),
+                }}
+                index={i}
+                rawAngle={jointAngles[i] * sg(i)}
+                onArcDrag={(idx, angle) => setJointAngle(idx, angle * sg(idx))}
+                onJointHome={(idx) => setJointAngle(idx, 0)}
+                onJointSet={(idx, angle) => setJointAngle(idx, angle * sg(idx))}
+                collision={collision}
+              />
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Instructions */}
       <div className="instructions">
         <div className="section-title">CONTROLS</div>
         <ul>
-          <li><kbd>Drag</kbd> any rod in viewport → IK follows cursor</li>
-          <li><kbd>Click</kbd> a rod to set as root</li>
-          <li><kbd>Arc</kbd> drag in panel to set joint angle</li>
-          <li><kbd>ANG</kbd> input — type degrees, press Enter</li>
-          <li><kbd>Scroll</kbd> to zoom, <kbd>RMB</kbd> to orbit</li>
+          <li><kbd>Drag</kbd> any rod → arm follows cursor (IK)</li>
+          <li><kbd>Click</kbd> a rod → set it as fixed root</li>
+          <li><kbd>Connect</kbd> CONNECT MODULES, then click 2 faces</li>
+          <li><kbd>Linked</kbd> drag a joined module → whole unit moves</li>
+          <li><kbd>Arc</kbd> drag in a joint card to set its angle</li>
+          <li><kbd>ANG</kbd> type degrees, press Enter</li>
+          <li><kbd>Scroll</kbd> zoom · <kbd>RMB</kbd> orbit</li>
+          <li><kbd>MMB</kbd> / <kbd>Shift+Drag</kbd> pan</li>
         </ul>
       </div>
 

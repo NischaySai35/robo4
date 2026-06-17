@@ -84,7 +84,9 @@ export class SceneManager {
     this.controls.minDistance = 3;
     this.controls.maxDistance = 25;
     this.controls.maxPolarAngle = Math.PI * 0.48;
-    this.controls.enablePan = false; // keep arm always in view
+    this.controls.enablePan = true;
+    this.controls.screenSpacePanning = true;       // pan along camera view plane
+    this.controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN; // middle-drag = pan (scroll wheel still zooms)
     this.controls.target.set(3, 0, 0);
 
     // ── Post-processing ───────────────────────────────────────────────────────

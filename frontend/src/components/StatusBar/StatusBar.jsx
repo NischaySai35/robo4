@@ -1,4 +1,5 @@
-import { useArmStore } from '../store/armStore.js';
+import './StatusBar.css';
+import { useArmStore } from '../../store/armStore.js';
 
 const STATUS_CONFIG = {
   idle: {

@@ -1,0 +1,226 @@
+/* ── Joint Cards ─────────────────────────────────────────────────────────────── */
+
+.joint-list { display: flex; flex-direction: column; gap: 8px; }
+
+.joint-card {
+  position: relative;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 12px 12px 18px;
+  overflow: hidden;
+  transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
+}
+
+.joint-card:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--joint-color, var(--border-bright));
+  box-shadow: 0 0 0 3px var(--joint-glow, rgba(0,136,255,0.1));
+}
+
+.joint-accent {
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: var(--joint-color, var(--accent));
+  border-radius: 10px 0 0 10px;
+}
+
+.joint-card.limit-hit {
+  border-color: #ff440066;
+  background: #fff2f0;
+  animation: limitFlash 0.15s ease-in-out;
+}
+
+@keyframes limitFlash {
+  0% { background: #ffe0da; }
+  100% { background: #fff2f0; }
+}
+
+.joint-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.joint-header-right {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.joint-label {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+}
+
+/* Per-joint home/reset button */
+.joint-home-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.joint-home-btn:hover {
+  background: var(--joint-color, var(--accent));
+  border-color: transparent;
+  color: white;
+  transform: rotate(-30deg);
+}
+
+.joint-home-btn:active {
+  transform: rotate(-360deg);
+  transition: transform 0.3s ease;
+}
+
+/* Inline angle input */
+.angle-input-display {
+  cursor: text;
+  border-bottom: 1px dashed transparent;
+  transition: border-color 0.15s;
+  padding: 0 2px;
+}
+
+.angle-input-display:hover {
+  border-bottom-color: var(--border-bright);
+}
+
+.angle-input.editing {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-align: right;
+  background: var(--bg-card-hover);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  width: 70px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.limit-badge {
+  font-size: 9px;
+  letter-spacing: 1px;
+  color: var(--danger);
+  background: #ffe8e4;
+  border: 1px solid #ffaaaa;
+  border-radius: 3px;
+  padding: 1px 4px;
+  animation: badgePulse 0.6s ease-in-out infinite alternate;
+}
+
+@keyframes badgePulse {
+  from { opacity: 0.7; }
+  to   { opacity: 1; box-shadow: 0 0 6px var(--danger); }
+}
+
+.joint-body {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.joint-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+
+.stat-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  width: 32px;
+  flex-shrink: 0;
+}
+
+.stat-val {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--accent);
+  text-align: right;
+}
+
+.stat-val.accent { color: var(--warn); }
+
+.stat-val-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* ── Velocity Arrow ──────────────────────────────────────────────────────────── */
+
+.vel-arrow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.vel-dir {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: bold;
+  width: 12px;
+  text-align: center;
+}
+
+.vel-bars {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.vel-bar {
+  display: block;
+  width: 3px;
+  height: 8px;
+  border-radius: 1px;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+/* ── Collision state on joint cards ─────────────────────────────────────────── */
+
+.joint-card.collision-hit {
+  border-color: rgba(204, 34, 0, 0.5);
+  background: rgba(204, 34, 0, 0.04);
+}
+
+.collision-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  font-family: var(--font-mono);
+  background: rgba(204, 34, 0, 0.15);
+  color: var(--danger);
+  border: 1px solid rgba(204, 34, 0, 0.35);
+}

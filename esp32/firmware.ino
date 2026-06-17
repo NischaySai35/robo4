@@ -81,19 +81,17 @@ struct ServoState {
   int      rawCurrent;
   int      rawVoltage;
   int      rawTemp;
-  bool     moving;I. 
+  bool     moving;
   unsigned long lastCommandMs;
-  unsigned long stuckSinceMs;   // millis() when sustained error first detected (0 = normal)
-  unsigned long lastBoostMs;    // millis() of last boost WritePosEx
 };
 
 ServoState servos[NUM_SERVOS] = {
-  {1,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0,0,0},
-  {2,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0,0,0},
-  {3,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0,0,0},
-  {4,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0,0,0},
-  {5,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0,0,0},
-  {6,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0,0,0},
+  {1,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
+  {2,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
+  {3,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
+  {4,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
+  {5,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
+  {6,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
 };
 
 // ── Timing ────────────────────────────────────────────────────────────────────
@@ -105,19 +103,6 @@ constexpr uint8_t  MOTOR_MODE       = 1;
 constexpr uint8_t  POS_ACC_DEFAULT  = 40;
 constexpr uint8_t  MOTOR_ACC        = 30;
 
-// ── Adaptive boost constants ──────────────────────────────────────────────────
-// If position error persists > BOOST_ONSET_MS, we start pushing harder:
-//   • acc ramps from normal up to BOOST_ACC_MAX
-//   • virtual target shifts past real target by up to BOOST_OVERSHOOT_RAW
-//     (making the servo's internal error larger → more torque output)
-// Boost unwinds immediately once error drops below BOOST_EXIT_RAW.
-constexpr uint16_t BOOST_ONSET_MS      = 350;   // ms of sustained error before boost
-constexpr uint16_t BOOST_RAMP_MS       = 1800;  // ms over which boost scales 0→1
-constexpr uint16_t BOOST_INTERVAL_MS   = 120;   // re-issue boost cmd at most every N ms
-constexpr uint8_t  BOOST_ENTRY_RAW     = 15;    // ~1.3° error to enter boost
-constexpr uint8_t  BOOST_EXIT_RAW      = 6;     // ~0.5° error to exit boost (hysteresis)
-constexpr uint8_t  BOOST_ACC_MAX       = 90;    // max acc during boost (normal=POS_ACC_DEFAULT)
-constexpr float    BOOST_OVERSHOOT_RAW = 55.0f; // max virtual overshoot (~4.8°)
 
 unsigned long lastFast      = 0;
 unsigned long lastSlow      = 0;
@@ -187,64 +172,6 @@ void updateMotionFlag(ServoState& sv) {
                                   : (millis() - sv.lastCommandMs < 2000);
 }
 
-// Adaptive torque boost — called every fast tick after position is read.
-// When a sustained error is detected (servo is being held back by external force),
-// this ramps up acc and shifts the virtual target PAST the real target so the
-// servo's internal error is amplified → more torque output.
-// As soon as the error drops (force lifts), it restores the real target normally.
-void checkBoost(ServoState& sv) {
-  if (sv.mode != POS_MODE || sv.rawPos < 0 || !sv.torqueOn) {
-    sv.stuckSinceMs = 0;
-    return;
-  }
-
-  int absErr = abs(sv.rawPos - (int)sv.targetRaw);
-  unsigned long now = millis();
-
-  // ── Exit / unwind ─────────────────────────────────────────────────────────
-  if (absErr <= BOOST_EXIT_RAW) {
-    if (sv.stuckSinceMs != 0) {
-      // Was boosting — restore real target and normal acc
-      st.WritePosEx(sv.id, sv.targetRaw, sv.speedRaw, sv.acc);
-      delay(1);
-      Serial.printf("[BOOST] J%d unwind — error %d raw\n", sv.id, absErr);
-    }
-    sv.stuckSinceMs = 0;
-    sv.lastBoostMs  = 0;
-    return;
-  }
-
-  // ── Entry / sustain ───────────────────────────────────────────────────────
-  if (absErr < BOOST_ENTRY_RAW && sv.stuckSinceMs == 0) return; // below entry threshold, not yet boosting
-
-  if (sv.stuckSinceMs == 0) sv.stuckSinceMs = now; // first tick above threshold
-
-  unsigned long stuckFor = now - sv.stuckSinceMs;
-  if (stuckFor < BOOST_ONSET_MS) return; // waiting for onset delay
-
-  // Rate-limit re-issuing boost commands
-  if (now - sv.lastBoostMs < BOOST_INTERVAL_MS) return;
-  sv.lastBoostMs = now;
-
-  // ── Compute boost scale 0→1 over BOOST_RAMP_MS ───────────────────────────
-  float t = min(1.0f, (float)(stuckFor - BOOST_ONSET_MS) / (float)BOOST_RAMP_MS);
-
-  // Overshoot: push virtual target past real target in the direction we want to go
-  int dir           = (sv.rawPos > (int)sv.targetRaw) ? -1 : 1;
-  int overshootRaw  = (int)(t * BOOST_OVERSHOOT_RAW);
-  int virtualRaw    = constrain((int)sv.targetRaw + dir * overshootRaw, 0, 4095);
-
-  // Acc ramps from current setting up to BOOST_ACC_MAX
-  uint8_t boostAcc = (uint8_t)(sv.acc + (int)(t * (BOOST_ACC_MAX - sv.acc)));
-
-  st.WritePosEx(sv.id, (uint16_t)virtualRaw, sv.speedRaw, boostAcc);
-  delay(1);
-
-  if (overshootRaw > 0) {
-    Serial.printf("[BOOST] J%d t=%.2f err=%d overshoot=%d acc=%d\n",
-                  sv.id, t, absErr, overshootRaw, boostAcc);
-  }
-}
 
 void cmdPos(ServoState& sv, float deg, int speedScale, uint8_t acc) {
   sv.mode = POS_MODE;
@@ -299,10 +226,10 @@ void estopAll() {
 }
 
 // ── Telemetry ─────────────────────────────────────────────────────────────────
-// Fast tick: position only — 2 retries (lean fast path, ~2ms per servo)
+// Fast tick: position only — 1 attempt (1Mbaud bus is reliable; retry adds latency)
 void refreshFast(ServoState& sv) {
   int pos = readRetry(sv.id, [](uint8_t id){ return st.ReadPos(id); },
-                              [](int v){ return v >= 0 && v <= 4095; }, 2);
+                              [](int v){ return v >= 0 && v <= 4095; }, 1);
   if (pos >= 0) sv.rawPos = pos;
   updateMotionFlag(sv);
 }
@@ -320,17 +247,6 @@ void refreshSlow(ServoState& sv) {
   if (curr >= 0)    sv.rawCurrent = curr;
   if (volt > 0)     sv.rawVoltage = volt;
   if (temp > 0)     sv.rawTemp    = temp;
-
-  // Safety: if current exceeds 1400 mA, cut torque immediately.
-  // rawCurrent × 6.5 = mA  →  1400 / 6.5 ≈ 215 raw units
-  if (sv.rawCurrent >= 0 && sv.rawCurrent * 6.5f > 1400.0f && sv.torqueOn) {
-    Serial.printf("[SAFETY] J%d overcurrent %.0f mA — torque OFF\n",
-                  sv.id, sv.rawCurrent * 6.5f);
-    st.EnableTorque(sv.id, 0);
-    delay(2);
-    sv.torqueOn = false;
-    sv.moving   = false;
-  }
 }
 
 // ── JSON builder ──────────────────────────────────────────────────────────────
@@ -466,20 +382,49 @@ void handleCommand() {
 }
 
 // GET /api/batch?1=180.0&2=90.0&3=150.0&4=120.0&5=180.0[&speed=5&acc=20]
+// Uses SyncWritePosEx so all servos start simultaneously in one bus transaction.
 void handleBatch() {
   setCORS();
-  int     spd  = server.hasArg("speed") ? constrain(server.arg("speed").toInt(), 1, 10) : 5;
-  uint8_t acc  = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100) : POS_ACC_DEFAULT);
-  uint8_t sent = 0;
+  int     spd = server.hasArg("speed") ? constrain(server.arg("speed").toInt(), 1, 10) : 5;
+  uint8_t acc = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100) : POS_ACC_DEFAULT);
+
+  uint8_t  ids[NUM_SERVOS];
+  int16_t  positions[NUM_SERVOS];
+  uint16_t speeds[NUM_SERVOS];
+  uint8_t  accs[NUM_SERVOS];
+  uint8_t  cnt = 0;
+
   for (uint8_t id = 1; id <= NUM_SERVOS; id++) {
     String key = String(id);
     if (!server.hasArg(key)) continue;
     ServoState* sv = byId(id);
     if (!sv) continue;
-    cmdPos(*sv, server.arg(key).toFloat(), spd, acc);
-    sent++;
+    sv->mode = POS_MODE;
+    setHwMode(*sv, POS_MODE);
+    ensureTorque(*sv);
+    const bool isBend = (sv->id == 2 || sv->id == 3 || sv->id == 5);
+    sv->targetDeg     = clampF(server.arg(key).toFloat(), isBend ? 80.0f : 0.0f, isBend ? 280.0f : 360.0f);
+    sv->targetRaw     = angleToRaw(sv->targetDeg);
+    sv->speedScale    = constrain(spd, 1, 10);
+    sv->speedRaw      = speedScaleToRaw(sv->speedScale);
+    sv->acc           = (uint8_t)constrain((int)acc, 1, 100);
+    sv->lastCommandMs = millis();
+    ids[cnt]          = sv->id;
+    positions[cnt]    = (int16_t)sv->targetRaw;
+    speeds[cnt]       = sv->speedRaw;
+    accs[cnt]         = sv->acc;
+    cnt++;
   }
-  String b = F("{\"ok\":true,\"sent\":"); b += sent; b += '}';
+
+  if (cnt == 1) {
+    st.WritePosEx(ids[0], positions[0], speeds[0], accs[0]);
+    delay(3);
+  } else if (cnt > 1) {
+    st.SyncWritePosEx(ids, cnt, positions, speeds, accs);
+    delay(3);
+  }
+
+  String b = F("{\"ok\":true,\"sent\":"); b += cnt; b += '}';
   server.send(200, "application/json", b);
 }
 
@@ -573,11 +518,29 @@ void setup() {
   Serial.println(F("  GET /api/batch?1=180&2=90…&6=180"));
   Serial.println(F("================================="));
 
-  // Boot: move all servos to home (180°)
-  for (uint8_t i = 0; i < NUM_SERVOS; i++) {
-    setHwMode(servos[i], POS_MODE);
-    ensureTorque(servos[i]);
-    cmdPos(servos[i], 180.0f, 10, POS_ACC_DEFAULT);
+  // Boot: move all servos to home (180°) in one sync transaction
+  {
+    uint8_t  ids[NUM_SERVOS];
+    int16_t  positions[NUM_SERVOS];
+    uint16_t speeds[NUM_SERVOS];
+    uint8_t  accs[NUM_SERVOS];
+    for (uint8_t i = 0; i < NUM_SERVOS; i++) {
+      setHwMode(servos[i], POS_MODE);
+      ensureTorque(servos[i]);
+      servos[i].mode         = POS_MODE;
+      servos[i].targetDeg    = 180.0f;
+      servos[i].targetRaw    = angleToRaw(180.0f);
+      servos[i].speedScale   = 10;
+      servos[i].speedRaw     = speedScaleToRaw(10);
+      servos[i].acc          = POS_ACC_DEFAULT;
+      servos[i].lastCommandMs = millis();
+      ids[i]       = servos[i].id;
+      positions[i] = (int16_t)servos[i].targetRaw;
+      speeds[i]    = servos[i].speedRaw;
+      accs[i]      = servos[i].acc;
+    }
+    st.SyncWritePosEx(ids, NUM_SERVOS, positions, speeds, accs);
+    delay(3);
   }
 }
 
@@ -592,7 +555,6 @@ void loop() {
     lastFast = millis();
     for (uint8_t i = 0; i < NUM_SERVOS; i++) {
       refreshFast(servos[i]);
-      checkBoost(servos[i]);
     }
     server.handleClient();   // keep web server responsive after bulk read
   }

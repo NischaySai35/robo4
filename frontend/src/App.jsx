@@ -1,11 +1,13 @@
-import { useState } from 'react';
-import LeftPanel from './components/LeftPanel.jsx';
-import SimCanvas from './components/SimCanvas.jsx';
-import StatusBar from './components/StatusBar.jsx';
-import NavigationGizmo from './components/NavigationGizmo.jsx';
-import ViewControls from './components/ViewControls.jsx';
-import ServoController from './components/ServoController.jsx';
-import SimTransmitPanel from './components/SimTransmitPanel.jsx';
+import { useState, useRef, useCallback } from 'react';
+import './App.css';
+import LeftPanel from './components/LeftPanel/LeftPanel.jsx';
+import SimCanvas from './components/SimCanvas/SimCanvas.jsx';
+import StatusBar from './components/StatusBar/StatusBar.jsx';
+import NavigationGizmo from './components/NavigationGizmo/NavigationGizmo.jsx';
+import ViewControls from './components/ViewControls/ViewControls.jsx';
+import ServoController from './components/ServoController/ServoController.jsx';
+import SimTransmitPanel from './components/SimTransmitPanel/SimTransmitPanel.jsx';
+import ConnectionWindow from './components/ConnectionWindow/ConnectionWindow.jsx';
 import { useIntegrationStore } from './store/integrationStore.js';
 import { useArmStore } from './store/armStore.js';
 
@@ -241,8 +243,42 @@ function AppFooter({ page }) {
   );
 }
 
+const MIN_PANEL_W = 200;
+const DEFAULT_PANEL_W = 340;
+
 export default function App() {
-  const [page, setPage] = useState('sim');
+  const [page,       setPage]       = useState('sim');
+  const [connOpen,   setConnOpen]   = useState(false);
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_W);
+
+  const panelWidthRef = useRef(DEFAULT_PANEL_W);
+  panelWidthRef.current = panelWidth;
+
+  const startPanelResize = useCallback((e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startX   = e.clientX;
+    const startW   = panelWidthRef.current;
+    const maxW     = Math.floor(window.innerWidth / 2);
+    document.body.style.cursor     = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const onMove = (ev) => {
+      const next = Math.max(MIN_PANEL_W, Math.min(maxW, startW + (ev.clientX - startX)));
+      panelWidthRef.current = next;
+      setPanelWidth(next);
+    };
+    const onUp = () => {
+      document.body.style.cursor     = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+  }, []);
+
+  const toggleConn = useCallback(() => setConnOpen(v => !v), []);
 
   return (
     <div className="app-shell">
@@ -259,15 +295,18 @@ export default function App() {
             inset: 0,
           } : {}}
         >
-          <LeftPanel />
+          <LeftPanel style={{ width: panelWidth }} />
+
+          {/* Drag handle between panel and canvas */}
+          <div className="panel-resize-handle" onMouseDown={startPanelResize} />
+
           <div className="canvas-wrapper">
             <SimCanvas />
             <WorkspaceNotification />
             <div className="top-right-cluster">
               <NavigationGizmo />
-              <ViewControls />
+              <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />
             </div>
-            <SimTransmitPanel />
             <StatusBar />
           </div>
         </div>
@@ -282,6 +321,11 @@ export default function App() {
       </main>
 
       <AppFooter page={page} />
+
+      {/* Connection window — fixed overlay, always mounted so SimTransmitPanel logic keeps running */}
+      <ConnectionWindow isOpen={connOpen} onClose={() => setConnOpen(false)}>
+        <SimTransmitPanel />
+      </ConnectionWindow>
     </div>
   );
 }

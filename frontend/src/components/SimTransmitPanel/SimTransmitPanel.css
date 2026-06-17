@@ -1,0 +1,145 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   SimTransmitPanel — live transmission log overlay on Page 1 canvas
+   Dark terminal aesthetic to contrast against the light 3D canvas.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.stp-panel {
+  /* fills .conn-window-body — no absolute positioning */
+  width: 100%;
+  height: 100%;
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  font-size: 11px;
+  color: #94a3b8;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* ── Header ── */
+.stp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 11px 6px;
+  border-bottom: 1px solid rgba(100,140,200,0.15);
+  background: rgba(255,255,255,0.04);
+}
+.stp-header-left  { display: flex; align-items: center; gap: 7px; }
+.stp-header-right { display: flex; align-items: center; gap: 5px; }
+
+.stp-title {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #e2e8f0;
+  text-transform: uppercase;
+}
+
+.stp-dot {
+  width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+  animation: stpPulse 1.8s ease-in-out infinite alternate;
+}
+.stp-dot-ok  { background: #22c55e; box-shadow: 0 0 8px #22c55e88; }
+.stp-dot-off { background: #f97316; box-shadow: 0 0 8px #f9731688; }
+@keyframes stpPulse { from { opacity:.5; } to { opacity:1; } }
+
+.stp-conn-label { font-size: 10px; font-weight: 700; letter-spacing: 0.5px; }
+.stp-lat { font-size: 10px; color: #6366f1; letter-spacing: 0.5px; }
+
+.stp-btn {
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(100,140,200,0.25);
+  border-radius: 4px;
+  color: #64748b;
+  font-size: 9px;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-family: 'Share Tech Mono', monospace;
+  letter-spacing: 0.5px;
+  transition: background .15s, color .15s;
+}
+.stp-btn:hover { background: rgba(255,255,255,0.14); color: #94a3b8; }
+
+/* ── Target row ── */
+.stp-target {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 11px;
+  border-bottom: 1px solid rgba(100,140,200,0.10);
+}
+.stp-target-label {
+  font-size: 9px; color: #475569; letter-spacing: 1.2px; text-transform: uppercase;
+}
+.stp-target-url   { color: #6366f1; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stp-target-interval { font-size: 9px; color: #475569; flex-shrink: 0; }
+
+/* ── Stats ── */
+.stp-stats {
+  display: flex;
+  gap: 0;
+  padding: 5px 11px;
+  border-bottom: 1px solid rgba(100,140,200,0.10);
+}
+.stp-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  gap: 1px;
+}
+.stp-stat-k {
+  font-size: 8px;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.stp-stat-v {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  color: #94a3b8;
+}
+
+/* ── Log header ── */
+.stp-log-hdr {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px 11px 3px;
+  font-size: 8px;
+  color: #334155;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  border-bottom: 1px solid rgba(100,140,200,0.10);
+}
+.stp-log-count { color: #1e293b; }
+
+/* ── Log body ── */
+.stp-log-body {
+  padding: 4px 0;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100,140,200,0.2) transparent;
+}
+.stp-empty {
+  padding: 12px 11px;
+  color: #334155;
+  font-size: 10px;
+  text-align: center;
+}
+
+.stp-entry {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1.5px 11px;
+  transition: background .1s;
+}
+.stp-entry:hover { background: rgba(255,255,255,0.04); }
+
+.stp-e-time { color: #334155; flex-shrink: 0; font-size: 10px; }
+.stp-e-src  { font-size: 9px; font-weight: 700; flex-shrink: 0; letter-spacing: 0.3px; min-width: 27px; }
+.stp-e-msg  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }

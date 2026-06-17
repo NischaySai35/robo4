@@ -1,0 +1,85 @@
+/* ── HUD ─────────────────────────────────────────────────────────────────────── */
+
+.hud {
+  background: var(--overlay-bg);
+  border: 1px solid var(--overlay-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+  backdrop-filter: blur(12px);
+  min-width: 180px;
+  pointer-events: none;
+  box-shadow: 0 4px 20px rgba(60, 80, 140, 0.08);
+}
+
+.hud-title {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 3px;
+  color: var(--overlay-text-dim);
+  margin-bottom: 10px;
+}
+
+.hud-coords {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+
+.hud-coord {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.hud-axis {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: bold;
+  width: 12px;
+}
+.hud-axis.x { color: #cc2233; }
+.hud-axis.y { color: #007733; }
+.hud-axis.z { color: #1155cc; }
+
+.hud-val {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  color: var(--overlay-text-bright);
+  letter-spacing: 1px;
+}
+
+.reach-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.reach-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  width: 38px;
+}
+
+.reach-track {
+  flex: 1;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.reach-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.1s linear, background 0.3s;
+}
+
+.reach-pct {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  width: 40px;
+  text-align: right;
+}

@@ -1,5 +1,6 @@
+import './JointCard.css';
 import { useRef, useEffect, useCallback, useState } from 'react';
-import { JOINT_DEFS } from '../store/armStore.js';
+import { JOINT_DEFS } from '../../store/armStore.js';
 
 const RAD_TO_DEG = 180 / Math.PI;
 const DEG_TO_RAD = Math.PI / 180;

@@ -10,13 +10,14 @@
 
 import { useEffect, useRef, useCallback } from 'react';
 import * as THREE from 'three';
-import { SceneManager } from '../three/SceneManager.js';
-import { RobotFK }      from '../three/RobotFK.js';
-import { Interaction }  from '../three/Interaction.js';
-import { RenderLoop }   from '../three/RenderLoop.js';
-import { useArmStore }  from '../store/armStore.js';
-import { useMultiStore } from '../store/multiStore.js';
-import { bridge }        from '../three/cameraBridge.js';
+import { SceneManager } from '../../three/SceneManager.js';
+import { RobotFK }      from '../../three/RobotFK.js';
+import { Interaction }  from '../../three/Interaction.js';
+import { RenderLoop }   from '../../three/RenderLoop.js';
+import { useArmStore }  from '../../store/armStore.js';
+import { useMultiStore } from '../../store/multiStore.js';
+import { bridge }        from '../../three/cameraBridge.js';
+import { assemblyModuleIds, captureMate, propagateAssembly } from '../../three/assembly.js';
 
 const _raycaster = new THREE.Raycaster();
 
@@ -59,7 +60,16 @@ function performJoin(face1, face2, moduleMap) {
   fkB.robotGroup.position.copy(T_new);
   fkB.robotGroup.quaternion.copy(Q_new);
 
-  useMultiStore.getState().applyJoin(face2.moduleId, T_new, Q_new);
+  // Capture the rigid relative transform between the two faces now that both
+  // modules are in their joined configuration — used for rigid-follow every frame.
+  const mate = captureMate(fkA, face1.faceKey, fkB, face2.faceKey);
+  const weld = {
+    a: { moduleId: face1.moduleId, faceKey: face1.faceKey },
+    b: { moduleId: face2.moduleId, faceKey: face2.faceKey },
+    mate,
+  };
+
+  useMultiStore.getState().applyJoin(face2.moduleId, T_new, Q_new, weld);
 }
 
 // ── Which module owns a hit mesh? ─────────────────────────────────────────────
@@ -81,6 +91,7 @@ export default function SimCanvas() {
   const interactionRef = useRef(null);      // Interaction
   const modulesRef     = useRef(new Map()); // moduleId → { robotFK }
   const activeFKRef    = useRef(null);      // current active RobotFK ref object (passed to Interaction)
+  const appliedActiveRef = useRef('module-0'); // which module is CURRENTLY applied (imperative guard)
 
   // ── One-time mount ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -133,12 +144,14 @@ export default function SimCanvas() {
       storeActions,
     );
 
-    // Collision detection: supply bounding boxes of all non-active modules
+    // Collision detection: bounding boxes of modules NOT in the active assembly.
+    // Welded neighbours are meant to touch, so they must be excluded.
     renderLoop.getOtherModuleBounds = () => {
-      const activeId = useMultiStore.getState().activeModuleId;
+      const mStore = useMultiStore.getState();
+      const assembly = assemblyModuleIds(mStore.welds, mStore.activeModuleId);
       const boxes = [];
       for (const [mid, { robotFK }] of modulesRef.current) {
-        if (mid === activeId) continue;
+        if (assembly.has(mid)) continue;
         robotFK.robotGroup.updateMatrixWorld(true);
         const box = new THREE.Box3().setFromObject(robotFK.robotGroup);
         if (!box.isEmpty()) boxes.push(box);
@@ -146,7 +159,7 @@ export default function SimCanvas() {
       return boxes;
     };
 
-    // extraTick: update FK for all inactive modules each frame
+    // extraTick: update FK pose for all inactive modules each frame
     renderLoop.extraTick = () => {
       const mStore = useMultiStore.getState();
       const activeMid = mStore.activeModuleId;
@@ -155,6 +168,35 @@ export default function SimCanvas() {
         const mState = mStore.modules.find(m => m.id === mid);
         if (!mState) continue;
         robotFK.updateAngles(mState.angles, mState.mode ?? 'horizontal');
+      }
+    };
+
+    // postTick: rigid-follow — re-place every welded neighbour of the active
+    // (base) module so faces stay mated as the active module articulates.
+    renderLoop.postTick = () => {
+      const mStore = useMultiStore.getState();
+      if (!mStore.welds.length) return;
+      propagateAssembly(
+        mStore.activeModuleId,
+        mStore.welds,
+        (id) => modulesRef.current.get(id)?.robotFK ?? null,
+      );
+    };
+
+    // onInteractionEnd: persist follower transforms to the store after a drag,
+    // so they survive a later module switch (which reloads from the store).
+    renderLoop.onInteractionEnd = () => {
+      const mStore  = useMultiStore.getState();
+      const activeId = mStore.activeModuleId;
+      const ids = assemblyModuleIds(mStore.welds, activeId);
+      for (const mid of ids) {
+        if (mid === activeId) continue;
+        const fk = modulesRef.current.get(mid)?.robotFK;
+        if (fk) {
+          mStore.setModuleTransform(mid,
+            fk.robotGroup.position.clone(),
+            fk.robotGroup.quaternion.clone());
+        }
       }
     };
 
@@ -180,6 +222,22 @@ export default function SimCanvas() {
         { x: combined.max.x, y: combined.max.y, z: combined.max.z },
         { x: c.x, y: c.y, z: c.z },
       ];
+    };
+
+    // Compute a clear spawn position for a new module from the live world bounds
+    // of every existing module. A fresh module is anchored at its origin and
+    // extends along +X with only ~±0.2 thickness in Z, so placing its origin
+    // just beyond the assembly's +Z edge guarantees no overlap / instant collision.
+    bridge.computeFreeSpawn = () => {
+      const combined = new THREE.Box3();
+      let any = false;
+      for (const [, { robotFK }] of modulesRef.current) {
+        robotFK.robotGroup.updateMatrixWorld(true);
+        const box = new THREE.Box3().setFromObject(robotFK.robotGroup);
+        if (!box.isEmpty()) { combined.union(box); any = true; }
+      }
+      if (!any) return { x: 0, y: 0, z: 0 };
+      return { x: 0, y: 0, z: combined.max.z + 1.2 };
     };
 
     const fitTimer = setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 300);
@@ -236,25 +294,24 @@ export default function SimCanvas() {
     return () => clearTimeout(fitTimer);
   }, [moduleIds]);
 
-  // ── React to active module switch ────────────────────────────────────────────
-  const activeModuleId = useMultiStore(s => s.activeModuleId);
-
-  useEffect(() => {
-    const renderLoop  = renderLoopRef.current;
-    const sceneMgr    = sceneRef.current;
-    if (!renderLoop || !sceneMgr) return;
+  // ── Active-module activation (imperative, reusable) ──────────────────────────
+  // Save the outgoing module's live state, load the incoming module, rebuild its
+  // FK, and swap it into the RenderLoop/Interaction. Guarded by appliedActiveRef
+  // so it runs exactly once per switch whether triggered by the store-effect below
+  // or imperatively by the cross-module pointer handler.
+  const activateModule = useCallback((targetId) => {
+    const renderLoop = renderLoopRef.current;
+    if (!renderLoop) return;
+    if (appliedActiveRef.current === targetId) return; // already applied
 
     const mStore   = useMultiStore.getState();
     const armStore = useArmStore.getState();
 
     // 1. Save outgoing active module state
-    const prevActiveId = [...modulesRef.current.keys()].find(id => {
-      // We know the previous active was whoever had the renderLoop's robotFK
-      return modulesRef.current.get(id)?.robotFK === activeFKRef.current;
-    });
-    if (prevActiveId && prevActiveId !== activeModuleId) {
-      const outFK = activeFKRef.current;
-      mStore.saveModuleState(prevActiveId, {
+    const outFK  = activeFKRef.current;
+    const prevId = appliedActiveRef.current;
+    if (outFK && prevId && prevId !== targetId) {
+      mStore.saveModuleState(prevId, {
         angles:       [...armStore.jointAngles],
         activeRootId: armStore.activeRootId,
         position:     outFK.robotGroup.position.clone(),
@@ -264,13 +321,10 @@ export default function SimCanvas() {
     }
 
     // 2. Load incoming module state
-    const incoming = mStore.modules.find(m => m.id === activeModuleId);
-    if (!incoming) return;
+    const incoming = mStore.modules.find(m => m.id === targetId);
+    const inFK     = modulesRef.current.get(targetId)?.robotFK;
+    if (!incoming || !inFK) return;
 
-    const inFK = modulesRef.current.get(activeModuleId)?.robotFK;
-    if (!inFK) return;
-
-    // Restore transform
     inFK.robotGroup.position.set(
       incoming.position.x, incoming.position.y, incoming.position.z,
     );
@@ -278,19 +332,70 @@ export default function SimCanvas() {
       incoming.quaternion.x, incoming.quaternion.y, incoming.quaternion.z, incoming.quaternion.w,
     );
 
-    // Push state into armStore so LeftPanel and RenderLoop read from the right module
+    // Push state into armStore so LeftPanel/RenderLoop read the right module
     armStore.setRootAndAngles(incoming.activeRootId, incoming.angles);
     inFK.rebuild(incoming.activeRootId, incoming.angles,
       inFK.robotGroup.position.clone(), inFK.robotGroup.quaternion.clone());
 
-    // 3. Swap active FK in RenderLoop and Interaction closure
+    // 3. Swap active FK in RenderLoop (Interaction reads it via activeFKRef closure)
     activeFKRef.current = inFK;
     renderLoop.swapRobotFK(inFK);
 
-    // Re-show face indicators on new active FK if connect mode is on
+    // Force world matrices current NOW: when this runs mid-gesture (cross-module
+    // pointerdown) the Interaction raycast fires before the next render, so the
+    // freshly-rebuilt meshes must already have valid world transforms.
+    inFK.robotGroup.updateMatrixWorld(true);
+
     if (mStore.connectMode) inFK.showFaceIndicators(true);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeModuleId]);
+
+    appliedActiveRef.current = targetId;
+  }, []);
+
+  // React to store-driven active-module changes (dropdown, programmatic, etc.)
+  const activeModuleId = useMultiStore(s => s.activeModuleId);
+  useEffect(() => {
+    activateModule(activeModuleId);
+  }, [activeModuleId, activateModule]);
+
+  // ── Cross-module selection ───────────────────────────────────────────────────
+  // Capture-phase pointerdown (runs BEFORE Interaction's canvas listener): if the
+  // press lands on a rod belonging to a non-active module, switch the active
+  // module imperatively so that click-to-root and drag-to-articulate operate on
+  // the clicked module in the same gesture.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const onCaptureDown = (e) => {
+      if (e.button !== 0 || e.target !== canvas) return;
+      const ms = useMultiStore.getState();
+      if (ms.connectMode || ms.disconnectMode || ms.deleteMode) return;
+
+      const sceneMgr = sceneRef.current;
+      if (!sceneMgr) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const ndc = {
+        x:  ((e.clientX - rect.left) / rect.width)  * 2 - 1,
+        y: -((e.clientY - rect.top)  / rect.height) * 2 + 1,
+      };
+      _raycaster.setFromCamera(ndc, sceneMgr.camera);
+
+      const all = [];
+      for (const [, { robotFK }] of modulesRef.current) all.push(...robotFK.interactables);
+      const hits = _raycaster.intersectObjects(all, false);
+      if (!hits.length) return;
+
+      const mid = moduleIdOfMesh(hits[0].object, modulesRef.current);
+      if (mid && mid !== appliedActiveRef.current) {
+        activateModule(mid);
+        useMultiStore.getState().setActiveModule(mid);
+      }
+    };
+
+    window.addEventListener('mousedown', onCaptureDown, true);
+    return () => window.removeEventListener('mousedown', onCaptureDown, true);
+  }, [activateModule]);
 
   // ── Connect mode (face selection) ────────────────────────────────────────────
   const connectMode = useMultiStore(s => s.connectMode);

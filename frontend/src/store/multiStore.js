@@ -2,19 +2,38 @@ import { create } from 'zustand';
 
 let _nextId = 1;
 
-const makeModule = (id, label, zOffset = 0) => ({
+const makeModule = (id, label, pos = { x: 0, y: 0, z: 0 }) => ({
   id,
   label,
   angles: [0, 0, 0, 0, 0, 0],
   activeRootId: 'R1',
-  position:   { x: 0, y: 0, z: zOffset },
+  position:   { x: pos.x ?? 0, y: pos.y ?? 0, z: pos.z ?? 0 },
   quaternion: { x: 0, y: 0, z: 0, w: 1 },
   mode: 'horizontal',
 });
 
 export const useMultiStore = create((set, get) => ({
-  modules: [makeModule('module-0', 'Module 1', 0)],
+  modules: [makeModule('module-0', 'Module 1', { x: 0, y: 0, z: 0 })],
   activeModuleId: 'module-0',
+
+  // Welds — rigid joins between two module faces. Each: { a, b, mate:number[16] }
+  // where a/b = { moduleId, faceKey }. Modules sharing welds form one assembly.
+  welds: [],
+
+  // Lightweight world-transform update for a single module (used by rigid-follow
+  // propagation to persist follower placements after a drag).
+  setModuleTransform(id, position, quaternion) {
+    set(s => ({
+      modules: s.modules.map(m =>
+        m.id === id
+          ? { ...m,
+              position:   { x: position.x,   y: position.y,   z: position.z },
+              quaternion: { x: quaternion.x, y: quaternion.y, z: quaternion.z, w: quaternion.w },
+            }
+          : m,
+      ),
+    }));
+  },
 
   // Connect-mode face selection
   connectMode:   false,
@@ -36,25 +55,35 @@ export const useMultiStore = create((set, get) => ({
 
   // Delete a module — at least one must remain
   removeModule(id) {
-    const { modules, activeModuleId } = get();
+    const { modules, activeModuleId, welds } = get();
     if (modules.length <= 1) return;
     const remaining = modules
       .filter(m => m.id !== id)
       .map((m, i) => ({ ...m, label: `Module ${i + 1}` })); // renumber
     const newActive = activeModuleId === id ? remaining[0].id : activeModuleId;
-    set({ modules: remaining, activeModuleId: newActive });
+    // Drop any weld touching the removed module
+    const keptWelds = welds.filter(w => w.a.moduleId !== id && w.b.moduleId !== id);
+    set({ modules: remaining, activeModuleId: newActive, welds: keptWelds });
   },
 
-  addModule() {
+  // addModule(spawnPos?) — spawnPos comes from SimCanvas (live world bounds of all
+  // modules) so the new module never lands inside an existing one, regardless of
+  // how modules have been joined/repositioned. Falls back to z-slot logic if no
+  // live placement is available (e.g. before the scene has mounted).
+  addModule(spawnPos = null) {
     const current = get().modules;
-    // Find the first z-slot (multiples of 4) not occupied by any existing module
-    const usedSlots = new Set(current.map(m => Math.round(m.position.z / 4)));
-    let slot = 0;
-    while (usedSlots.has(slot)) slot++;
+    let pos;
+    if (spawnPos && typeof spawnPos.z === 'number') {
+      pos = { x: spawnPos.x ?? 0, y: spawnPos.y ?? 0, z: spawnPos.z };
+    } else {
+      const usedSlots = new Set(current.map(m => Math.round(m.position.z / 4)));
+      let slot = 0;
+      while (usedSlots.has(slot)) slot++;
+      pos = { x: 0, y: 0, z: slot * 4.0 };
+    }
     const id    = `module-${_nextId++}`;
     const label = `Module ${current.length + 1}`;
-    const zOff  = slot * 4.0;
-    set(s => ({ modules: [...s.modules, makeModule(id, label, zOff)] }));
+    set(s => ({ modules: [...s.modules, makeModule(id, label, pos)] }));
     return id;
   },
 
@@ -83,7 +112,8 @@ export const useMultiStore = create((set, get) => ({
   clearDSelections()    { set({ dSel1: null, dSel2: null, disconnectError: null }); },
   setDisconnectError(m) { set({ disconnectError: m }); },
 
-  // Move moduleId back to the first unoccupied z-slot and reset quaternion
+  // Move moduleId back to the first unoccupied z-slot, reset quaternion, and
+  // remove any welds directly joining it to the first-selected module.
   applyDisconnect(moduleId) {
     set(s => {
       const usedSlots = new Set(
@@ -91,6 +121,11 @@ export const useMultiStore = create((set, get) => ({
       );
       let slot = 0;
       while (usedSlots.has(slot)) slot++;
+      const other = s.dSel1;
+      const keptWelds = s.welds.filter(w => {
+        const pair = new Set([w.a.moduleId, w.b.moduleId]);
+        return !(pair.has(moduleId) && pair.has(other));
+      });
       return {
         modules: s.modules.map(m =>
           m.id === moduleId
@@ -100,6 +135,7 @@ export const useMultiStore = create((set, get) => ({
               }
             : m,
         ),
+        welds: keptWelds,
         disconnectMode: false,
         dSel1: null,
         dSel2: null,
@@ -113,21 +149,35 @@ export const useMultiStore = create((set, get) => ({
   clearFaces()    { set({ face1: null,  face2: null, connectError: null }); },
   setConnectError(msg) { set({ connectError: msg }); },
 
-  // Apply the computed world transform to the joined module and exit connect mode
-  applyJoin(moduleId, newPos, newQuat) {
-    set(s => ({
-      modules: s.modules.map(m =>
-        m.id === moduleId
-          ? { ...m,
-              position:   { x: newPos.x,  y: newPos.y,  z: newPos.z },
-              quaternion: { x: newQuat.x, y: newQuat.y, z: newQuat.z, w: newQuat.w },
-            }
-          : m,
-      ),
-      connectMode: false,
-      face1: null,
-      face2: null,
-      connectError: null,
-    }));
+  // Apply the computed world transform to the joined module, record the weld,
+  // and exit connect mode. `weld` = { a, b, mate } (may be null if unavailable).
+  applyJoin(moduleId, newPos, newQuat, weld = null) {
+    set(s => {
+      let welds = s.welds;
+      if (weld) {
+        // Replace any existing weld between the same two modules, then add this one
+        const pair = new Set([weld.a.moduleId, weld.b.moduleId]);
+        welds = s.welds.filter(w => {
+          const wp = new Set([w.a.moduleId, w.b.moduleId]);
+          return !(wp.has(weld.a.moduleId) && wp.has(weld.b.moduleId) && wp.size === pair.size);
+        });
+        welds = [...welds, weld];
+      }
+      return {
+        modules: s.modules.map(m =>
+          m.id === moduleId
+            ? { ...m,
+                position:   { x: newPos.x,  y: newPos.y,  z: newPos.z },
+                quaternion: { x: newQuat.x, y: newQuat.y, z: newQuat.z, w: newQuat.w },
+              }
+            : m,
+        ),
+        welds,
+        connectMode: false,
+        face1: null,
+        face2: null,
+        connectError: null,
+      };
+    });
   },
 }));

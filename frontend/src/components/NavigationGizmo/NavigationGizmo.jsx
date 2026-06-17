@@ -5,9 +5,10 @@
  * • Click center dot → reset to perspective view
  * • Drag the gizmo disc → orbit camera freely
  */
+import './NavigationGizmo.css';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import * as THREE from 'three';
-import { bridge } from '../three/cameraBridge.js';
+import { bridge } from '../../three/cameraBridge.js';
 
 const SIZE   = 110;
 const CENTER = SIZE / 2;

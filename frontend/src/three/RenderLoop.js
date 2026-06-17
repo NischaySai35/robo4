@@ -20,9 +20,6 @@ import { bridge } from './cameraBridge.js';
 const _SEG      = [ROD_LENGTHS.R2, ROD_LENGTHS.R3, ROD_LENGTHS.R4, ROD_LENGTHS.R5, ROD_LENGTHS.R6];
 const MAX_REACH = ENDCAP_SIZE * 2 + _SEG.reduce((a, b) => a + b, 0);
 
-// Reusable targets for home animation (avoid per-frame allocation)
-const _ZERO_VEC      = new THREE.Vector3(0, 0, 0);
-const _IDENTITY_QUAT = new THREE.Quaternion(0, 0, 0, 1);
 
 export class RenderLoop {
   constructor(scene, robotFK, interaction, getStore, storeActions) {
@@ -51,6 +48,14 @@ export class RenderLoop {
 
     // Optional per-frame hook called just before render (used for inactive module FK)
     this.extraTick = null;
+
+    // Optional hook called AFTER the active module's FK has updated each frame,
+    // just before render — used to rigid-follow welded neighbour modules.
+    this.postTick = null;
+
+    // Optional hook called once when a drag gesture ends — used to persist
+    // follower-module transforms back to the store.
+    this.onInteractionEnd = null;
 
     // Collision detection
     this._prevAngles   = [0, 0, 0, 0, 0, 0]; // angles from start of frame (before IK)
@@ -149,6 +154,7 @@ export class RenderLoop {
     this.interaction.callbacks.onDragEnd = () => {
       this._activeDragRodId = null;
       this.scene.setOrbitEnabled(true);
+      if (this.onInteractionEnd) this.onInteractionEnd();
     };
   }
 
@@ -222,8 +228,6 @@ export class RenderLoop {
       this._activeDragRodId = null; // cancel any active drag
 
       let startAngles = [...s.jointAngles];
-      let startPos    = this.robotFK.robotGroup.position.clone();
-      let startQuat   = this.robotFK.robotGroup.quaternion.clone();
 
       // Switch to R1 root first so the animation plays from the correct frame
       if (s.activeRootId !== 'R1') {
@@ -234,19 +238,17 @@ export class RenderLoop {
         this.robotFK.rebuild('R1', newAngles, rootPos, rootQuat);
         this._telemetry.seed(newAngles);
         startAngles = newAngles;
-        startPos    = rootPos.clone();
-        startQuat   = rootQuat.clone();
       }
 
       // Scale duration to travel distance: min 1500ms, up to ~2800ms for full-range move
       const maxDelta = Math.max(0.01, ...startAngles.map(a => Math.abs(a)));
       const duration = Math.max(1500, 600 + maxDelta * (2200 / Math.PI));
-      this._homeAnim = { startAngles, startPos, startQuat, startTime: now, duration };
+      this._homeAnim = { startAngles, startTime: now, duration };
     }
 
     // ── Home animation ────────────────────────────────────────────────────────────
     if (this._homeAnim) {
-      const { startAngles, startPos, startQuat, startTime, duration } = this._homeAnim;
+      const { startAngles, startTime, duration } = this._homeAnim;
       const raw = Math.min((now - startTime) / duration, 1.0);
       // Ease-in-out cubic: zero vel at start and end, smooth peak in the middle
       const t = raw < 0.5
@@ -260,8 +262,6 @@ export class RenderLoop {
 
       // Drive scene directly
       this.robotFK.updateAngles(animAngles, mode);
-      this.robotFK.robotGroup.position.lerpVectors(startPos, _ZERO_VEC, t);
-      this.robotFK.robotGroup.quaternion.slerpQuaternions(startQuat, _IDENTITY_QUAT, t);
 
       // Telemetry
       const limitHits = animAngles.map((a, i) => Math.abs(a) >= JOINT_DEFS[i].limit - 0.01);
@@ -277,6 +277,7 @@ export class RenderLoop {
       const dx = eePos.x - grpPos.x, dy = eePos.y - grpPos.y, dz = eePos.z - grpPos.z;
       this.act.updateEndEffector(eePos, Math.min(Math.sqrt(dx*dx+dy*dy+dz*dz) / MAX_REACH, 1.0) * 100);
 
+      if (this.postTick) this.postTick();
       this.scene.render();
 
       if (raw >= 1.0) {
@@ -284,8 +285,6 @@ export class RenderLoop {
         this._homeAnim = null;
         for (let i = 0; i < 6; i++) this.act.setJointAngle(i, 0);
         this.robotFK.updateAngles([0, 0, 0, 0, 0, 0], mode);
-        this.robotFK.robotGroup.position.set(0, 0, 0);
-        this.robotFK.robotGroup.quaternion.identity();
         this._telemetry.seed([0, 0, 0, 0, 0, 0]);
       }
       return;
@@ -387,6 +386,9 @@ export class RenderLoop {
     const dist     = Math.sqrt(dx * dx + dy * dy + dz * dz);
     const reachPct = Math.min(dist / MAX_REACH, 1.0) * 100;
     this.act.updateEndEffector(eePos, reachPct);
+
+    // ── Rigid-follow welded neighbour modules ──────────────────────────────────────
+    if (this.postTick) this.postTick();
 
     // ── Render ────────────────────────────────────────────────────────────────────
     this.scene.render();

@@ -10,9 +10,10 @@
  * Positioning: absolute right-side overlay inside .canvas-wrapper.
  */
 
+import './SimTransmitPanel.css';
 import { useEffect, useRef } from 'react';
-import { useArmStore, ROD_IDS } from '../store/armStore.js';
-import { useIntegrationStore } from '../store/integrationStore.js';
+import { useArmStore, ROD_IDS } from '../../store/armStore.js';
+import { useIntegrationStore } from '../../store/integrationStore.js';
 
 const INTERVAL_MS = 50;
 

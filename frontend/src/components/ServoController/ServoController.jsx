@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
-import { useIntegrationStore } from '../store/integrationStore.js';
+import { useIntegrationStore } from '../../store/integrationStore.js';
 import './ServoController.css';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -183,15 +183,15 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
     const rect = svgRef.current.getBoundingClientRect();
     const px = e.clientX - rect.left - cx;
     const py = e.clientY - rect.top  - cy;
-    
+
     // Get clock angle: 0 at top, 90 at right, 180 at bottom, 270 at left
     let θ = (Math.atan2(px, -py) * 180 / Math.PI + 360) % 360;
-    
+
     // Handle dead zone (lower half hemisphere below the arch)
     if (θ > 90 && θ < 270) {
       return θ > 180 ? lo : hi; // Snaps safely to left or right bounds
     }
-    
+
     // Convert upper arch clock angle back to linear scale [270 -> 0 -> 90]
     let normClock = θ >= 270 ? θ - 270 : θ + 90;
     return Math.max(lo, Math.min(hi, lo + (normClock / 180) * (hi - lo)));

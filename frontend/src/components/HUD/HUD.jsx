@@ -1,4 +1,5 @@
-import { useArmStore } from '../store/armStore.js';
+import './HUD.css';
+import { useArmStore } from '../../store/armStore.js';
 
 function ReachBar({ pct }) {
   const clampedPct = Math.min(Math.max(pct, 0), 100);

@@ -1,0 +1,39 @@
+/* ── View Controls ───────────────────────────────────────────────────────────── */
+
+.view-controls {
+  display: flex;
+  justify-content: center;
+}
+
+.view-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 14px;
+  background: rgba(255, 255, 255, 0.88);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(180, 200, 230, 0.55);
+  border-radius: 20px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  box-shadow: 0 2px 12px rgba(60, 80, 140, 0.08);
+  transition: all 0.18s;
+}
+
+.view-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  box-shadow: 0 4px 16px rgba(0, 119, 221, 0.3);
+}
+
+.view-btn--active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+  box-shadow: 0 4px 16px rgba(0, 119, 221, 0.3);
+}

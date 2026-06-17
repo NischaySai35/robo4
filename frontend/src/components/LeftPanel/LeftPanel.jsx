@@ -1,8 +1,10 @@
-import { useArmStore, JOINT_DEFS, ROD_IDS } from '../store/armStore.js';
-import { useMultiStore } from '../store/multiStore.js';
-import JointCard from './JointCard.jsx';
+import './LeftPanel.css';
+import { useArmStore, JOINT_DEFS, ROD_IDS } from '../../store/armStore.js';
+import { useMultiStore } from '../../store/multiStore.js';
+import { bridge } from '../../three/cameraBridge.js';
+import JointCard from '../JointCard/JointCard.jsx';
 
-export default function LeftPanel() {
+export default function LeftPanel({ style }) {
   const joints        = useArmStore(s => s.joints);
   const activeRootId  = useArmStore(s => s.activeRootId);
   const jointAngles   = useArmStore(s => s.jointAngles);
@@ -36,7 +38,7 @@ export default function LeftPanel() {
   const activeLabel = modules.find(m => m.id === activeModuleId)?.label ?? 'Module 1';
 
   return (
-    <aside className="left-panel fade-in">
+    <aside className="left-panel fade-in" style={style}>
       {/* Header */}
       <div className="panel-header">
         <div className="panel-logo">
@@ -77,7 +79,7 @@ export default function LeftPanel() {
           {deleteMode ? 'CANCEL DELETE' : 'DELETE MODULE'}
         </button>
 
-        <button className="add-module-btn" onClick={addModule} title="Add a new arm module to the scene">
+        <button className="add-module-btn" onClick={() => addModule(bridge.computeFreeSpawn?.())} title="Add a new arm module to the scene">
           <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
             <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
           </svg>

@@ -467,3 +467,13 @@
 .sc-log-ok   { color: #009944; }
 .sc-log-err  { color: #cc2200; }
 .sc-log-cmd  { color: #0077dd; }
+
+/* ── ServoController debug log additions ────────────────────────────────────── */
+.sc-log-src {
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  flex-shrink: 0;
+  min-width: 40px;
+}

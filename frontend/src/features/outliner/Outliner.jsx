@@ -13,6 +13,7 @@ import {
   makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin,
 } from '@/core/model/index.js';
 import { importMesh } from '@/features/import/importMesh.js';
+import { exportRobot } from '@/features/export/exportRobot.js';
 import { relativeOrigin } from '@/kinematics/modelFK.js';
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -147,6 +148,13 @@ export default function Outliner() {
 
       {selectedId && (
         <button className="ol-delete" onClick={deleteSelected}>Delete selected</button>
+      )}
+
+      {bodies.length > 0 && (
+        <div className="ol-export">
+          <button onClick={() => exportRobot('urdf')} title="Export URDF (ROS/Gazebo)">⬆ URDF</button>
+          <button onClick={() => exportRobot('idl')} title="Export comms interface">⬆ IDL</button>
+        </div>
       )}
     </div>
   );

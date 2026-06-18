@@ -185,3 +185,19 @@
   cursor: pointer;
 }
 .ol-delete:hover { background: var(--danger); color: #fff; }
+
+.ol-export { display: flex; gap: 6px; margin: 0 8px 8px; }
+.ol-export button {
+  flex: 1;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.ol-export button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }

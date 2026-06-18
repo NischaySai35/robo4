@@ -48,6 +48,31 @@ export function geometryVolume(g = {}, s = [1, 1, 1]) {
   }
 }
 
+/** Rough inertia tensor (kg·m²) about the body's center, from geometry + mass. */
+export function inertiaTensor(g = {}, s = [1, 1, 1], mass = 1) {
+  const [sx, sy, sz] = s.map((v) => Math.abs(v));
+  let ixx, iyy, izz;
+  switch (g.type) {
+    case 'box': {
+      const x = (g.size?.[0] ?? 1) * sx, y = (g.size?.[1] ?? 1) * sy, z = (g.size?.[2] ?? 1) * sz;
+      ixx = mass * (y * y + z * z) / 12; iyy = mass * (x * x + z * z) / 12; izz = mass * (x * x + y * y) / 12;
+      break;
+    }
+    case 'sphere': {
+      const r = (g.radius ?? 0.5) * Math.max(sx, sy, sz);
+      ixx = iyy = izz = (2 / 5) * mass * r * r;
+      break;
+    }
+    case 'cylinder': case 'capsule': {
+      const r = (g.radius ?? 0.5) * Math.max(sx, sy), l = (g.length ?? 1) * sz; // axis along z
+      ixx = iyy = mass * (3 * r * r + l * l) / 12; izz = 0.5 * mass * r * r;
+      break;
+    }
+    default: { const a = Math.cbrt(geometryVolume(g, s) || 1e-6); ixx = iyy = izz = mass * (2 * a * a) / 12; }
+  }
+  return { ixx, iyy, izz, ixy: 0, ixz: 0, iyz: 0 };
+}
+
 export function bodyMass(body, doc) {
   const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
   const density = m?.density ?? 1000; // kg/m³

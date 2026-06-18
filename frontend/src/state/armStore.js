@@ -32,6 +32,11 @@ const makeJoint = () => ({ angle: 0, velocity: 0, acceleration: 0, limitHit: fal
 
 export const useArmStore = create((set, get) => ({
   activeRootId: 'R1',
+  // Whether a fixed root is currently engaged. Clicking the active rod again
+  // disengages it: the arm keeps its pose but is no longer anchored, and dragging
+  // (IK) is disabled until a rod is picked again. Default engaged for a usable arm.
+  rootEngaged: true,
+  setRootEngaged: (rootEngaged) => set({ rootEngaged }),
   jointAngles: [0, 0, 0, 0, 0, 0],
   joints: Array.from({ length: 6 }, makeJoint),
 

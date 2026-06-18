@@ -122,6 +122,7 @@ export class RobotFK {
 
     // Last known root used for rebuild
     this._activeRootId = 'R1';
+    this._rootEngaged  = true; // false = root disengaged (no anchor, drag disabled)
 
     this._build('R1', [0, 0, 0, 0, 0, 0]);
     this._addFacePlanes();
@@ -256,13 +257,24 @@ export class RobotFK {
   }
 
   /**
+   * Engage/disengage the active root visually. Disengaged → the root rod drops
+   * its root highlight (no fixed anchor); engaged → it regains it.
+   */
+  setRootEngaged(engaged) {
+    this._rootEngaged = engaged;
+    const mesh = this._rodMeshes[this._activeRootId];
+    const mats = this._rodMats[this._activeRootId];
+    if (mesh && mats) mesh.material = engaged ? mats.root : mats.normal;
+  }
+
+  /**
    * Swap between normal/hover/root material on a rod mesh.
    */
   setHoverHighlight(rodId, active) {
     const mats = this._rodMats[rodId];
     if (!mats) return;
-    // Root rod keeps its root material
-    if (rodId === this._activeRootId) return;
+    // The engaged root rod keeps its root material; a disengaged root hovers normally.
+    if (rodId === this._activeRootId && this._rootEngaged) return;
     const mesh = this._rodMeshes[rodId];
     if (!mesh) return;
     mesh.material = active ? mats.hover : mats.normal;

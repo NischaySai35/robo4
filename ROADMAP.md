@@ -157,6 +157,14 @@ Current seed implementation:
 **Phase 14 — Platform polish.** Shortcuts everywhere + **command palette**; theming;
 performance (instancing/LOD/workers); versioning/collaboration; docs; auto-update.
 
+Current seed implementation:
+- **Command palette** (Ctrl/Cmd+K or Ctrl+P): fuzzy-search launcher for cross-cutting
+  actions — view switch, fit view, home/E-stop/disconnect, undo/redo, theme, connection.
+- Keyboard-driven (arrows + Enter + Esc); every command routes through the existing
+  bridge/store actions the GUI buttons use, so there is no side-door state.
+- Light/dark theming persisted via the theme store and applied on `<html data-theme>`.
+- Global undo/redo shortcuts (Ctrl+Z / Ctrl+Y) shared with the command bus.
+
 ---
 
 ## 3. Cross-cutting principles

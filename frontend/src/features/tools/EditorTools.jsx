@@ -15,6 +15,8 @@ export default function EditorTools() {
   const measureResult = useEditorStore((s) => s.measureResult);
   const simRunning = useEditorStore((s) => s.simRunning);
   const toggleSim = useEditorStore((s) => s.toggleSim);
+  const gravity = useEditorStore((s) => s.gravity);
+  const setGravity = useEditorStore((s) => s.setGravity);
 
   return (
     <div className="et-panel">
@@ -47,9 +49,22 @@ export default function EditorTools() {
         </div>
       )}
 
-      <button className={`et-sim ${simRunning ? 'et-sim--on' : ''}`} onClick={toggleSim}>
-        {simRunning ? '⏹ Stop simulation' : '▶ Simulate (gravity)'}
-      </button>
+      <div className="et-row et-gravity">
+        <label className="et-check">
+          <input type="checkbox" checked={simRunning} onChange={toggleSim} />
+          <span>Gravity</span>
+        </label>
+        <input
+          className="et-num"
+          type="number"
+          step="0.1"
+          min="0"
+          title="Gravity magnitude (m/s²)"
+          value={gravity}
+          onChange={(e) => setGravity(parseFloat(e.target.value))}
+        />
+        <span className="et-unit">m/s²</span>
+      </div>
     </div>
   );
 }

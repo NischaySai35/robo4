@@ -77,8 +77,22 @@ function IkSection({ body, doc, dispatch }) {
 
 function BodyInspector({ body, doc, dispatch, select }) {
   const id = body.id;
+  const [uniformScale, setUniformScale] = useState(true);
   const up = (patch) => dispatch(commands.updateBody(id, patch));
   const upT = (patch) => up({ transform: { ...body.transform, ...patch } });
+
+  // Scale handler: with "Uniform" on, editing any axis scales all three by the
+  // same ratio (so the shape keeps its proportions); off → per-axis as before.
+  const onScale = (v) => {
+    if (!uniformScale) { upT({ scale: v }); return; }
+    const old = body.transform.scale;
+    const i = v.findIndex((x, idx) => x !== old[idx]);
+    if (i < 0) { upT({ scale: v }); return; }
+    const next = old[i] !== 0
+      ? old.map((s) => Math.round((s * (v[i] / old[i])) * 1000) / 1000)
+      : [v[i], v[i], v[i]];
+    upT({ scale: next });
+  };
   const g = body.visual?.geometry ?? {};
   const upGeo = (geo) => up({ visual: { ...body.visual, geometry: { ...g, ...geo } } });
 
@@ -101,7 +115,11 @@ function BodyInspector({ body, doc, dispatch, select }) {
       <Vec3 label="Position" value={body.transform.position} onChange={(v) => upT({ position: v })} />
       <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(body.transform.quaternion)}
         onChange={(v) => upT({ quaternion: eulerDegToQuatArr(v) })} step={5} />
-      <Vec3 label="Scale" value={body.transform.scale} onChange={(v) => upT({ scale: v })} step={0.05} />
+      <Vec3 label="Scale" value={body.transform.scale} onChange={onScale} step={0.05} />
+      <label className="in-check in-uniform">
+        <input type="checkbox" checked={uniformScale} onChange={(e) => setUniformScale(e.target.checked)} />
+        <span>Uniform scale</span>
+      </label>
 
       <div className="in-group">GEOMETRY · {g.type}</div>
       {g.type === GeometryType.BOX && (

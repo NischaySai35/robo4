@@ -26,8 +26,8 @@ export class PhysicsSim {
     return new PhysicsSim(doc, fk, opts);
   }
 
-  constructor(doc, fk, { groundY = -3.2 } = {}) {
-    this.world = new RAPIER.World(new RAPIER.Vector3(0, -9.81, 0));
+  constructor(doc, fk, { groundY = -3.2, gravity = 9.81 } = {}) {
+    this.world = new RAPIER.World(new RAPIER.Vector3(0, -gravity, 0));
     this.bodies = new Map(); // bodyId -> RigidBody
 
     // Ground
@@ -95,6 +95,14 @@ export class PhysicsSim {
       case 'prismatic': return RAPIER.JointData.prismatic(a1, a2, ax);
       default: return RAPIER.JointData.fixed(a1, IDENT_Q, a2, IDENT_Q);
     }
+  }
+
+  /** Live-update gravity (m/s², downward) without rebuilding the world. */
+  setGravity(magnitude) {
+    const g = Number.isFinite(magnitude) ? magnitude : 0;
+    this.world.gravity = new RAPIER.Vector3(0, -g, 0);
+    // Wake every body so a gravity change takes effect even when settled.
+    for (const rb of this.bodies.values()) rb.wakeUp?.();
   }
 
   step() { this.world.step(); }

@@ -133,20 +133,25 @@ export class Interaction {
   _onMouseUp(e) {
     if (e.button !== 0 || this.paused) return;
 
-    if (this._dragging) {
-      this._dragging = false;
-      this.callbacks.onDragEnd?.();
+    // Capture and clear interaction state FIRST, so that even if a callback throws
+    // the gesture is fully released (no stuck drag / stuck cursor on the next move).
+    const wasDragging = this._dragging;
+    const hitId       = this._hitId;
+    const hitModuleId = this._hitModuleId;
+    this._dragging    = false;
+    this._hitId       = null;
+    this._hitModuleId = null;
+
+    if (wasDragging) {
       this.canvas.style.cursor = this._hoveredId ? 'grab' : 'default';
+      this.callbacks.onDragEnd?.();
     } else {
       const ndc   = this._getNDC(e.clientX, e.clientY);
       const moved = ndc.distanceTo(this._mouseDownPos);
-      if (moved < 0.015 && this._hitId) {
-        this.callbacks.onRootClick?.(this._hitModuleId, this._hitId);
+      if (moved < 0.015 && hitId) {
+        this.callbacks.onRootClick?.(hitModuleId, hitId);
       }
     }
-
-    this._hitId       = null;
-    this._hitModuleId = null;
   }
 
   _onTouchStart(e) {

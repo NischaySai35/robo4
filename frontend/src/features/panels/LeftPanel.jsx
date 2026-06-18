@@ -179,8 +179,8 @@ export default function LeftPanel({ style }) {
           <button
             className={`lp-icon-btn lp-icon-btn--danger${deleteMode ? ' lp-icon-btn--active' : ''}`}
             onClick={() => setDeleteMode(!deleteMode)}
-            disabled={modules.length <= 1}
-            title={modules.length <= 1 ? 'At least one module required' : (deleteMode ? 'Cancel delete' : 'Delete module')}
+            disabled={modules.length === 0}
+            title={modules.length === 0 ? 'No modules to delete' : (deleteMode ? 'Cancel delete' : 'Delete module')}
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"

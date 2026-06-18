@@ -1,0 +1,128 @@
+.rdock {
+  flex-shrink: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: row;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+}
+
+/* ── Icon rail ──────────────────────────────────────────────────────────────── */
+.rdock-rail {
+  flex-shrink: 0;
+  width: 46px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+.rdock-rail::-webkit-scrollbar { display: none; }
+
+.rdock-rail-btn {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.13s, color 0.13s, border-color 0.13s;
+}
+.rdock-rail-btn:hover { background: var(--bg-card); color: var(--text-bright); }
+.rdock-rail-btn.active {
+  background: var(--accent-glow);
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Sliding panel ──────────────────────────────────────────────────────────── */
+.rdock-panel {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  min-width: 240px;
+}
+
+.rdock-resize {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 5;
+}
+.rdock-resize:hover { background: var(--accent); opacity: 0.35; }
+
+.rdock-panel-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.rdock-panel-title {
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-bright);
+}
+.rdock-panel-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.rdock-panel-close:hover { background: var(--bg-card); color: var(--text-bright); }
+
+.rdock-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Each feature panel used to be its own bordered card; inside the dock the panel
+   IS the card, so strip the inner chrome from the panel root to avoid a box-in-box.
+   Only the direct child (the panel's own root) is reset — inner sections keep theirs. */
+.rdock-panel-body > * {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  box-shadow: none !important;
+  /* Panels carried a `max-height: 46vh` cap from the old stacked dock; inside the
+     dock they should fill the full available height instead of stopping short. */
+  max-height: none !important;
+  height: 100% !important;
+}

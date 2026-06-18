@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { GeometryType } from '@/core/model/index.js';
 import { getAssetObject } from '@/viewport/renderers/AssetCache.js';
 
+const _picker = new THREE.Raycaster();
 const DEFAULT_COLOR = [0.62, 0.66, 0.72, 1];
 const HILITE = new THREE.Color(0x2f7dff);
 const BLACK = new THREE.Color(0x000000);
@@ -139,6 +140,20 @@ export class BodyRenderer {
 
   /** Selection gizmo attaches to the body's container. */
   getMesh(bodyId) { return this._entries.get(bodyId)?.container ?? null; }
+
+  /** Raycast all model bodies; returns the hit bodyId or null (for canvas picking). */
+  pickBodyAt(ndc, camera) {
+    const objs = [];
+    for (const { container } of this._entries.values()) objs.push(container);
+    if (!objs.length) return null;
+    _picker.setFromCamera(ndc, camera);
+    const hits = _picker.intersectObjects(objs, true);
+    for (const h of hits) {
+      let o = h.object;
+      while (o) { if (o.userData?.bodyId) return o.userData.bodyId; o = o.parent; }
+    }
+    return null;
+  }
 
   _disposeObject(o) {
     o.traverse?.((c) => {

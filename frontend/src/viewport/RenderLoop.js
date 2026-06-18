@@ -68,6 +68,10 @@ export class RenderLoop {
     // Collision detection
     this._prevAngles   = [0, 0, 0, 0, 0, 0]; // angles from start of frame (before IK)
     this._wasColliding = false;
+    // Idle guard: the last angles we pushed to the React store. While the arm is
+    // not moving we skip telemetry / end-effector / limit store writes entirely,
+    // so the React tree isn't re-rendered 60×/sec on a static scene.
+    this._lastReportedAngles = null;
     // Set to a function () => THREE.Box3[] that returns other modules' bounding boxes
     this.getOtherModuleBounds = null;
 
@@ -115,6 +119,7 @@ export class RenderLoop {
   _setupInteractionCallbacks() {
     this.interaction.callbacks.onHoverChange = (moduleId, rodId, active) => {
       // Highlight only rods of the active/base module (its FK owns these meshes).
+      if (!this.robotFK) return; // no active FK (empty scene / mid-swap)
       const activeId = this.getActiveModuleId ? this.getActiveModuleId() : null;
       if (activeId && moduleId && moduleId !== activeId) return;
       this.robotFK.setHoverHighlight(rodId, active);
@@ -126,12 +131,22 @@ export class RenderLoop {
       if (moduleId && activeId && moduleId !== activeId && this.activateModule) {
         this.activateModule(moduleId); // swaps this.robotFK to the clicked module
       }
+      if (!this.robotFK) return; // activation failed / no FK — nothing to root
       const state = this.getStore();
-      if (rodId === state.activeRootId) return;
+      if (rodId === state.activeRootId) {
+        // Clicking the already-active root toggles engagement on/off. When
+        // disengaged the arm holds its pose but can't be dragged (no anchor).
+        const next = !state.rootEngaged;
+        this.act.setRootEngaged(next);
+        this.robotFK.setRootEngaged?.(next);
+        return;
+      }
       const mode = state.mode || 'horizontal';
       const { newAngles, rootPos, rootQuat } =
         this.robotFK.computeAnglesForRoot(rodId, mode);
       this.act.setRootAndAngles(rodId, newAngles);
+      this.act.setRootEngaged(true);
+      this.robotFK.setRootEngaged?.(true);
       this._lastRootId = rodId;
       this.robotFK.rebuild(rodId, newAngles, rootPos, rootQuat);
       this._telemetry.seed(newAngles);
@@ -161,6 +176,8 @@ export class RenderLoop {
       // Single-module drag (rod in the active/base module).
       this._activeDragModuleId = null;
       const state       = this.getStore();
+      // No active FK or no engaged root → no anchor to solve against; skip the drag.
+      if (!this.robotFK || !state.rootEngaged) { this.scene.setOrbitEnabled(true); return; }
       const rootIdx     = ROD_IDS.indexOf(state.activeRootId);
       const rodIdx      = ROD_IDS.indexOf(rodId);
       const dragNodeIdx = this._ikDragNode(rodIdx, rootIdx);
@@ -263,9 +280,14 @@ export class RenderLoop {
     // ── Inactive-module FK + other per-frame hooks ────────────────────────────────
     if (this.extraTick) this.extraTick();
 
-    // No active module (empty scene / all deleted): the model layer still renders
-    // via extraTick above; skip all arm-specific logic below.
-    if (!this.robotFK) return;
+    // No active module (empty scene / all deleted): skip arm logic, but STILL
+    // render every frame so the camera-following grid/ground keep tracking and
+    // orbit stays live. (Returning before render froze the whole viewport.)
+    if (!this.robotFK) {
+      if (this.postTick) this.postTick();
+      this.scene.render();
+      return;
+    }
 
     // ── Home ──────────────────────────────────────────────────────────────────────
     if (s.pendingHome && !this._connectMode) {
@@ -390,6 +412,16 @@ export class RenderLoop {
       if (result) { proposedAngles = result; ikActive = true; }
     }
 
+    // Has anything actually changed this frame? On a fully static scene (no drag,
+    // angles unchanged since we last reported) we skip the FK rebuild, collision
+    // sweep, and store writes — they're the work that froze interaction at 60fps.
+    const anglesChanged = !this._anglesEqual(proposedAngles, this._lastReportedAngles);
+    if (!ikActive && !anglesChanged) {
+      if (this.postTick) this.postTick();
+      this.scene.render();
+      return;
+    }
+
     // ── FK update with proposed angles ────────────────────────────────────────────
     this.robotFK.updateAngles(proposedAngles, mode);
 
@@ -443,27 +475,41 @@ export class RenderLoop {
       this.act.setCollision(collision);
     }
 
-    // ── Telemetry ─────────────────────────────────────────────────────────────────
-    const limitHits = activeAngles.map((a, i) => Math.abs(a) >= JOINT_DEFS[i].limit - 0.01);
-    const telemetry = this._telemetry.update(activeAngles, limitHits, now);
-    this.act.setJointTelemetry(telemetry);
+    // ── Telemetry / end-effector (only when the arm actually moved) ───────────────
+    // On a static scene these store writes would re-render the React tree every
+    // frame and freeze interaction. Skip them while nothing is changing.
+    const moved = ikActive || !this._anglesEqual(activeAngles, this._lastReportedAngles);
+    if (moved) {
+      const limitHits = activeAngles.map((a, i) => Math.abs(a) >= JOINT_DEFS[i].limit - 0.01);
+      const telemetry = this._telemetry.update(activeAngles, limitHits, now);
+      this.act.setJointTelemetry(telemetry);
 
-    for (let i = 0; i < JOINT_DEFS.length; i++) {
-      this.robotFK.setLimitHighlight(JOINT_DEFS[i].id, limitHits[i]);
+      for (let i = 0; i < JOINT_DEFS.length; i++) {
+        this.robotFK.setLimitHighlight(JOINT_DEFS[i].id, limitHits[i]);
+      }
+
+      const eePos   = this.robotFK.getEndEffectorWorld();
+      const rootPos = this.robotFK.robotGroup.position;
+      const dx = eePos.x - rootPos.x, dy = eePos.y - rootPos.y, dz = eePos.z - rootPos.z;
+      const dist     = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      const reachPct = Math.min(dist / MAX_REACH, 1.0) * 100;
+      this.act.updateEndEffector(eePos, reachPct);
+
+      this._lastReportedAngles = [...activeAngles];
     }
-
-    // ── End effector ──────────────────────────────────────────────────────────────
-    const eePos   = this.robotFK.getEndEffectorWorld();
-    const rootPos = this.robotFK.robotGroup.position;
-    const dx = eePos.x - rootPos.x, dy = eePos.y - rootPos.y, dz = eePos.z - rootPos.z;
-    const dist     = Math.sqrt(dx * dx + dy * dy + dz * dz);
-    const reachPct = Math.min(dist / MAX_REACH, 1.0) * 100;
-    this.act.updateEndEffector(eePos, reachPct);
 
     // ── Rigid-follow welded neighbour modules ──────────────────────────────────────
     if (this.postTick) this.postTick();
 
     // ── Render ────────────────────────────────────────────────────────────────────
     this.scene.render();
+  }
+
+  _anglesEqual(a, b) {
+    if (!a || !b || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (Math.abs(a[i] - b[i]) > 1e-5) return false;
+    }
+    return true;
   }
 }

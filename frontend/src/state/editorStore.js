@@ -6,7 +6,7 @@
 import { create } from 'zustand';
 
 export const useEditorStore = create((set, get) => ({
-  units: 'm', // 'm' | 'cm' | 'mm' — display unit (model base unit is metres)
+  units: 'mm', // 'm' | 'cm' | 'mm' — display unit (model base unit is metres)
   setUnits: (units) => set({ units }),
 
   snap: { enabled: false, translate: 0.25, rotateDeg: 15, scale: 0.1 },
@@ -22,6 +22,15 @@ export const useEditorStore = create((set, get) => ({
   simRunning: false, // live physics (gravity) preview
   setSimRunning: (simRunning) => set({ simRunning }),
   toggleSim: () => set((s) => ({ simRunning: !s.simRunning })),
+
+  // Gravity preview controls. `gravityEnabled` is a simple on/off; `gravity` is
+  // the magnitude in m/s² (Earth = 9.81) and is freely editable. When disabled,
+  // the sim still runs but bodies float (zero-g) so you can preview contacts/joints.
+  gravityEnabled: true,
+  gravity: 9.81,
+  setGravityEnabled: (gravityEnabled) => set({ gravityEnabled }),
+  toggleGravity: () => set((s) => ({ gravityEnabled: !s.gravityEnabled })),
+  setGravity: (gravity) => set({ gravity: Number.isFinite(gravity) ? gravity : 0 }),
 
   showAnalysis: false, // load heatmap + center-of-mass overlay
   toggleAnalysis: () => set((s) => ({ showAnalysis: !s.showAnalysis })),

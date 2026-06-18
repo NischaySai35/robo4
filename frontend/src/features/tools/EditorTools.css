@@ -71,3 +71,22 @@
 }
 .et-sim:hover { background: color-mix(in srgb, var(--success) 15%, transparent); }
 .et-sim--on { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+.et-gravity { gap: 6px; }
+.et-grav-toggle {
+  flex: 1;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-card);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.et-grav-toggle--on { color: var(--accent); border-color: var(--accent); background: var(--accent-glow); }
+.et-num:disabled { opacity: 0.45; cursor: not-allowed; }
+.et-unit { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }

@@ -10,14 +10,8 @@ import SimTransmitPanel from '@/features/connection/SimTransmitPanel.jsx';
 import ConnectionWindow from '@/features/connection/ConnectionWindow.jsx';
 import IntroOverlay from '@/features/intro/IntroOverlay.jsx';
 import MenuBar from '@/features/menu/MenuBar.jsx';
-import Outliner from '@/features/outliner/Outliner.jsx';
-import Inspector from '@/features/inspector/Inspector.jsx';
-import EditorTools from '@/features/tools/EditorTools.jsx';
-import AnalysisPanel from '@/features/analysis/AnalysisPanel.jsx';
-import Timeline from '@/features/animation/Timeline.jsx';
-import HardwarePanel from '@/features/hardware/HardwarePanel.jsx';
-import CopilotPanel from '@/features/ai/CopilotPanel.jsx';
-import ScriptingPanel from '@/features/scripting/ScriptingPanel.jsx';
+import RightDock from '@/features/dock/RightDock.jsx';
+import CommandPalette from '@/features/command-palette/CommandPalette.jsx';
 import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
@@ -364,6 +358,7 @@ export default function App() {
   const [connOpen,   setConnOpen]   = useState(false);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_W);
   const [showIntro,  setShowIntro]  = useState(true);
+  const [paletteOpen, setPaletteOpen] = useState(false);
 
   // Apply the theme to <html> so CSS [data-theme="dark"] overrides take effect.
   const theme = useThemeStore(s => s.theme);
@@ -406,13 +401,15 @@ export default function App() {
 
   const toggleConn = useCallback(() => setConnOpen(v => !v), []);
 
-  // Global undo/redo shortcuts (ignored while typing in inputs).
+  // Global keyboard shortcuts. The command palette (Ctrl/Cmd+K or Ctrl+P) opens
+  // even while typing; undo/redo are ignored inside text inputs.
   useEffect(() => {
     const onKey = (e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
+      const k = e.key.toLowerCase();
+      if (k === 'k' || k === 'p') { e.preventDefault(); setPaletteOpen(v => !v); return; }
       const tag = e.target?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
-      const k = e.key.toLowerCase();
       if (k === 'z' && !e.shiftKey)      { e.preventDefault(); bridge.undo?.(); }
       else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); bridge.redo?.(); }
     };
@@ -453,18 +450,8 @@ export default function App() {
             <StatusBar />
           </div>
 
-          {/* Model editor sidebar — reserves its own column so it never overlaps
-              the in-canvas gizmo / view controls. */}
-          <div className="model-dock">
-            <EditorTools />
-            <Outliner />
-            <Inspector />
-            <CopilotPanel />
-            <ScriptingPanel />
-            <Timeline />
-            <AnalysisPanel />
-            <HardwarePanel />
-          </div>
+          {/* Blender-style right dock: icon rail + one resizable panel at a time. */}
+          <RightDock />
         </div>
 
         {/* Page 2: Servo Controller — hidden with display:none (keeps polling alive) */}
@@ -482,6 +469,14 @@ export default function App() {
       <ConnectionWindow isOpen={connOpen} onClose={() => setConnOpen(false)}>
         <SimTransmitPanel />
       </ConnectionWindow>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        page={page}
+        setPage={setPage}
+        onToggleConn={toggleConn}
+      />
     </div>
   );
 }

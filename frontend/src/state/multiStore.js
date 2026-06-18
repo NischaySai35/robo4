@@ -94,7 +94,13 @@ export const useMultiStore = create((set, get) => ({
     const nid   = get().nextId;
     const id    = `module-${nid}`;
     const label = `Module ${current.length + 1}`;
-    set(s => ({ modules: [...s.modules, makeModule(id, label, pos)], nextId: s.nextId + 1 }));
+    set(s => ({
+      modules: [...s.modules, makeModule(id, label, pos)],
+      nextId: s.nextId + 1,
+      // If nothing was active (e.g. first module, or all were deleted), make this
+      // the active module so the viewport always has a live FK to hover/drag.
+      activeModuleId: s.activeModuleId ?? id,
+    }));
     return id;
   },
 

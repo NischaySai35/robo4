@@ -21,7 +21,8 @@ import { useAnimationStore } from '@/state/animationStore.js';
 import { commands } from '@/core/commands/index.js';
 import { computeFK, buildChildJointMap, originForChildWorld, mat } from '@/kinematics/modelFK.js';
 import { jointLoads, centerOfMass } from '@/kinematics/analysis.js';
-import { PhysicsSim } from '@/viewport/PhysicsSim.js';
+// PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
+// Play, so it stays out of the initial bundle and the app starts up fast.
 
 export class ModelEditor {
   constructor({ scene, camera, controls, domElement }) {
@@ -43,6 +44,17 @@ export class ModelEditor {
     // Commit the gizmo's result to the model as an undoable command on release.
     this.transform.addEventListener('mouseUp', () => this._commitTransform());
 
+    // Canvas click-picking: click a model body to select it (shows the gizmo),
+    // click empty space to deselect (hides the gizmo). A small move threshold
+    // means an orbit/drag never counts as a click.
+    this.camera = camera;
+    this.domElement = domElement;
+    this._downPos = null;
+    this._onPointerDown = (e) => { if (e.button === 0) this._downPos = { x: e.clientX, y: e.clientY }; };
+    this._onPointerUp = (e) => this._handlePick(e);
+    domElement.addEventListener('pointerdown', this._onPointerDown);
+    domElement.addEventListener('pointerup', this._onPointerUp);
+
     // React to model + selection changes.
     this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
@@ -55,6 +67,8 @@ export class ModelEditor {
     this._unsubEditor = useEditorStore.subscribe((s) => {
       this._applySnap(s.snap);
       this._handleSim(s.simRunning);
+      // Live gravity updates while the sim is running.
+      if (this._sim) this._sim.setGravity(s.gravityEnabled ? s.gravity : 0);
       if (s.showAnalysis !== this._showAnalysis) {
         this._showAnalysis = s.showAnalysis;
         if (this._doc) this._syncModel(this._doc);
@@ -103,11 +117,16 @@ export class ModelEditor {
   _startSim() {
     this._startingSim = true;
     this._attachTo(null); // can't edit while simulating
-    PhysicsSim.create(this._doc, this._fk).then((sim) => {
-      if (!this._startingSim) { sim.dispose(); return; } // stopped before ready
-      this._sim = sim;
-      this._startingSim = false;
-    }).catch((e) => { console.warn('PhysicsSim failed:', e); this._startingSim = false; });
+    const e = useEditorStore.getState();
+    import('@/viewport/PhysicsSim.js')
+      .then(({ PhysicsSim }) =>
+        PhysicsSim.create(this._doc, this._fk, { gravity: e.gravityEnabled ? e.gravity : 0 }))
+      .then((sim) => {
+        if (!this._startingSim) { sim.dispose(); return; } // stopped before ready
+        this._sim = sim;
+        this._startingSim = false;
+      })
+      .catch((err) => { console.warn('PhysicsSim failed:', err); this._startingSim = false; });
   }
 
   _stopSim() {
@@ -159,6 +178,28 @@ export class ModelEditor {
       t.setTranslationSnap(null);
       t.setRotationSnap(null);
       t.setScaleSnap?.(null);
+    }
+  }
+
+  _handlePick(e) {
+    if (e.button !== 0 || !this._downPos) return;
+    const moved = Math.hypot(e.clientX - this._downPos.x, e.clientY - this._downPos.y);
+    this._downPos = null;
+    if (moved > 4) return;                          // an orbit/drag, not a click
+    if (this.transform.dragging || this.transform.axis) return; // gizmo interaction
+    if (this._sim) return;                          // don't reselect mid-simulation
+
+    const rect = this.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const hitId = this.bodyRenderer.pickBodyAt(ndc, this.camera);
+    const sel = useSelectionStore.getState();
+    if (hitId) {
+      if (!(sel.kind === 'body' && sel.selectedId === hitId)) sel.select(hitId, 'body');
+    } else if (sel.kind === 'body') {
+      sel.clear(); // clicked empty space → hide the gizmo
     }
   }
 
@@ -231,6 +272,8 @@ export class ModelEditor {
     this._unsubModel?.();
     this._unsubSel?.();
     this._unsubEditor?.();
+    this.domElement?.removeEventListener('pointerdown', this._onPointerDown);
+    this.domElement?.removeEventListener('pointerup', this._onPointerUp);
     this._sim?.dispose();
     this.transform.detach();
     this.transform.dispose?.();

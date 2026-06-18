@@ -247,6 +247,7 @@ export default function SimCanvas() {
       updateEndEffector: armStore.updateEndEffector,
       setRootRod:        armStore.setRootRod,
       setRootAndAngles:  armStore.setRootAndAngles,
+      setRootEngaged:    armStore.setRootEngaged,
       clearPendingHome:  armStore.clearPendingHome,
       setAllAngles:      armStore.setAllAngles,
       setCollision:      armStore.setCollision,
@@ -479,11 +480,18 @@ export default function SimCanvas() {
       }
       modulesRef.current.clear();
 
+      // Pick a valid active module: honour the saved one if it still exists,
+      // otherwise fall back to the first module. A scene with modules but no
+      // (valid) active id leaves the viewport without a live FK → hover/drag crash.
+      const validActive = scene.modules.some(m => m.id === scene.activeModuleId)
+        ? scene.activeModuleId
+        : (scene.modules[0]?.id ?? null);
+
       // Replace store state
       useMultiStore.setState({
         modules: scene.modules,
         welds: scene.welds,
-        activeModuleId: scene.activeModuleId,
+        activeModuleId: validActive,
         nextId: scene.nextId,
         connectMode: false, disconnectMode: false, deleteMode: false,
         dSel1: null, dSel2: null, face1: null, face2: null,
@@ -508,8 +516,8 @@ export default function SimCanvas() {
       // Force activation of the loaded active module (or none, if empty scene).
       appliedActiveRef.current = '__none__';
       activeFKRef.current = null;
-      if (scene.activeModuleId && modulesRef.current.has(scene.activeModuleId)) {
-        activateModule(scene.activeModuleId);
+      if (validActive && modulesRef.current.has(validActive)) {
+        activateModule(validActive);
       } else {
         appliedActiveRef.current = null;
         renderLoopRef.current?.swapRobotFK(null);
@@ -519,9 +527,17 @@ export default function SimCanvas() {
       return { ok: true };
     };
 
-    // ── Undo / redo (full-scene snapshots) ────────────────────────────────────
-    const applySnapshot = (sceneJSON) => {
-      bridge.loadScene({ format: 'tetrobot-project', version: 1, scene: JSON.parse(sceneJSON) }, { fit: false });
+    // ── Undo / redo (full-project snapshots) ──────────────────────────────────
+    // A snapshot is the ENTIRE editable state: arm modules/welds (scene) AND the
+    // graph model (bodies, joints, imported STL, their transforms) AND animation.
+    // Restoring re-applies all of it, so undo/redo covers imports, moves, rotates,
+    // scales, colour, joints — not just arm edits.
+    const applySnapshot = (snapJSON) => {
+      const d = JSON.parse(snapJSON);
+      bridge.loadScene(
+        { format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation },
+        { fit: false },
+      );
     };
     bridge.undo = () => {
       const h = historyRef.current;
@@ -597,8 +613,10 @@ export default function SimCanvas() {
         const project = serializeProject();
         saveAutosave(project);                       // local crash-safety net
 
-        // Undo history — push the previous settled snapshot when the scene changes.
-        const snap = JSON.stringify(project.scene);
+        // Undo history — push the previous settled snapshot when ANY edit lands
+        // (modules OR the graph model OR animation), so imports/move/rotate/scale
+        // are all undoable, not just arm changes.
+        const snap = JSON.stringify({ scene: project.scene, model: project.model, animation: project.animation });
         const h = historyRef.current;
         if (h.suppressNext) {
           h.suppressNext = false;                    // settle after an undo/redo — don't record
@@ -1055,10 +1073,10 @@ export default function SimCanvas() {
       if (!clickedMid) return;
 
       const ms = useMultiStore.getState();
-      if (ms.modules.length <= 1) return; // guard
+      if (ms.modules.length === 0) return; // nothing to delete
 
       ms.setDeleteMode(false);
-      ms.removeModule(clickedMid);
+      ms.removeModule(clickedMid); // deleting the last module → empty scene is allowed
     };
 
     canvas.addEventListener('mousedown', onDown);

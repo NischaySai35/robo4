@@ -13,6 +13,8 @@
 
 import { bridge } from '@/viewport/cameraBridge.js';
 import { useMultiStore } from '@/state/multiStore.js';
+import { useModelStore } from '@/state/modelStore.js';
+import { makeDocument } from '../model/index.js';
 
 export const PROJECT_FORMAT  = 'tetrobot-project';
 export const PROJECT_VERSION = 1;
@@ -44,6 +46,9 @@ export function serializeProject() {
         mate: Array.isArray(w.mate) ? [...w.mate] : null,
       })),
     },
+    // Phase 0+ graph model (bodies/joints/assets). Self-contained: imported
+    // meshes are embedded, so the project file keeps them.
+    model: useModelStore.getState().doc,
   };
 }
 
@@ -103,5 +108,8 @@ export function parseProject(obj) {
     }, 0);
   }
 
-  return { modules, welds, activeModuleId, nextId };
+  // Graph model (Phase 0+). Absent in legacy files → start with an empty document.
+  const model = obj.model && obj.model.kind === 'document' ? obj.model : makeDocument();
+
+  return { modules, welds, activeModuleId, nextId, model };
 }

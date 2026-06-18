@@ -31,6 +31,7 @@ import { saveAutosave, loadAutosave } from '@/core/serialization/storage.js';
 import { downloadBlob, writeProjectToHandle } from '@/core/serialization/fileIO.js';
 import { useDocStore } from '@/state/docStore.js';
 import { useHistoryStore } from '@/state/historyStore.js';
+import { useModelStore } from '@/state/modelStore.js';
 
 const _raycaster = new THREE.Raycaster();
 
@@ -450,6 +451,9 @@ export default function SimCanvas() {
         modulesRef.current.set(mod.id, { robotFK: fk });
       }
 
+      // Load the graph model (bodies/joints/assets) into the model store.
+      if (scene.model) useModelStore.getState().loadDocument(scene.model);
+
       // Force activation of the loaded active module
       appliedActiveRef.current = '__none__';
       activeFKRef.current = null;
@@ -569,6 +573,7 @@ export default function SimCanvas() {
     };
     const unsubMulti = useMultiStore.subscribe(scheduleSave);
     const unsubArm   = useArmStore.subscribe(scheduleSave);
+    const unsubModelSave = useModelStore.subscribe(scheduleSave);
 
     const fitTimer = setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 300);
 
@@ -577,6 +582,7 @@ export default function SimCanvas() {
       clearTimeout(saveTimer);
       unsubMulti();
       unsubArm();
+      unsubModelSave();
       unsubTheme();
       renderLoop.stop();
       interaction.dispose();

@@ -11,6 +11,7 @@ import { commands } from '@/core/commands/index.js';
 import {
   makeBody, makeGeometry, GeometryType, identityOrigin,
 } from '@/core/model/index.js';
+import { importMesh } from '@/features/import/importMesh.js';
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -66,6 +67,7 @@ export default function Outliner() {
         <button onClick={() => addPrimitive(GeometryType.CYLINDER)}>+ Cyl</button>
         <button onClick={() => addPrimitive(GeometryType.SPHERE)}>+ Sphere</button>
       </div>
+      <button className="ol-import" onClick={importMesh}>⬇ Import Mesh (STL / OBJ)</button>
 
       <div className="ol-scroll">
         <div className="ol-section">Bodies ({bodies.length})</div>

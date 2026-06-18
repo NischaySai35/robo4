@@ -455,11 +455,14 @@ export default function App() {
               <NavigationGizmo />
               <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />
             </div>
-            <div className="model-dock">
-              <Outliner />
-              <Inspector />
-            </div>
             <StatusBar />
+          </div>
+
+          {/* Model editor sidebar — reserves its own column so it never overlaps
+              the in-canvas gizmo / view controls. */}
+          <div className="model-dock">
+            <Outliner />
+            <Inspector />
           </div>
         </div>
 

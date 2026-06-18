@@ -19,6 +19,7 @@ import { useSelectionStore } from '@/state/selectionStore.js';
 import { useEditorStore } from '@/state/editorStore.js';
 import { commands } from '@/core/commands/index.js';
 import { computeFK, buildChildJointMap, originForChildWorld, mat } from '@/kinematics/modelFK.js';
+import { PhysicsSim } from '@/viewport/PhysicsSim.js';
 
 export class ModelEditor {
   constructor({ scene, camera, controls, domElement }) {
@@ -44,9 +45,14 @@ export class ModelEditor {
     this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
 
-    // Gizmo snapping (Phase 3).
+    // Gizmo snapping (Phase 3) + physics sim (Phase 7).
+    this._sim = null;
+    this._startingSim = false;
     this._applySnap(useEditorStore.getState().snap);
-    this._unsubSnap = useEditorStore.subscribe((s) => this._applySnap(s.snap));
+    this._unsubEditor = useEditorStore.subscribe((s) => {
+      this._applySnap(s.snap);
+      this._handleSim(s.simRunning);
+    });
 
     // Initial paint.
     this._syncModel(useModelStore.getState().doc);
@@ -59,6 +65,38 @@ export class ModelEditor {
     this.bodyRenderer.sync(doc, this._fk);
     this.jointRenderer.sync(doc, this._fk);
     this._reattach(); // mesh may have been (re)created
+  }
+
+  // ── Physics (Phase 7) ──────────────────────────────────────────────────────
+  _handleSim(running) {
+    if (running && !this._sim && !this._startingSim) this._startSim();
+    else if (!running && (this._sim || this._startingSim)) this._stopSim();
+  }
+
+  _startSim() {
+    this._startingSim = true;
+    this._attachTo(null); // can't edit while simulating
+    PhysicsSim.create(this._doc, this._fk).then((sim) => {
+      if (!this._startingSim) { sim.dispose(); return; } // stopped before ready
+      this._sim = sim;
+      this._startingSim = false;
+    }).catch((e) => { console.warn('PhysicsSim failed:', e); this._startingSim = false; });
+  }
+
+  _stopSim() {
+    this._startingSim = false;
+    if (this._sim) { this._sim.dispose(); this._sim = null; }
+    this._syncModel(this._doc); // restore FK pose
+    this._onSelection(useSelectionStore.getState());
+  }
+
+  /** Called every render frame by SimCanvas. Steps physics and renders sim poses. */
+  tick() {
+    if (!this._sim) return;
+    this._sim.step();
+    const poses = this._sim.poses();
+    this.bodyRenderer.sync(this._doc, poses);
+    this.jointRenderer.sync(this._doc, poses);
   }
 
   _applySnap(snap) {
@@ -142,7 +180,8 @@ export class ModelEditor {
   dispose() {
     this._unsubModel?.();
     this._unsubSel?.();
-    this._unsubSnap?.();
+    this._unsubEditor?.();
+    this._sim?.dispose();
     this.transform.detach();
     this.transform.dispose?.();
     this.transform.parent?.remove(this.transform);

@@ -253,6 +253,7 @@ export default function SimCanvas() {
     // extraTick: update FK pose for all inactive modules each frame, and advance
     // any in-progress module-relayout animation (e.g. disconnect-all).
     renderLoop.extraTick = () => {
+      modelEditorRef.current?.tick(); // step physics sim when running (Phase 7)
       const mStore = useMultiStore.getState();
       const activeMid = mStore.activeModuleId;
       for (const [mid, { robotFK }] of modulesRef.current) {

@@ -18,6 +18,10 @@ export const useEditorStore = create((set, get) => ({
 
   measureResult: null, // { distance (metres), a:[x,y,z], b:[x,y,z] }
   setMeasureResult: (measureResult) => set({ measureResult }),
+
+  simRunning: false, // live physics (gravity) preview
+  setSimRunning: (simRunning) => set({ simRunning }),
+  toggleSim: () => set((s) => ({ simRunning: !s.simRunning })),
 }));
 
 // Unit conversion (model base = metres).

@@ -13,6 +13,8 @@ export default function EditorTools() {
   const measureMode = useEditorStore((s) => s.measureMode);
   const toggleMeasure = useEditorStore((s) => s.toggleMeasure);
   const measureResult = useEditorStore((s) => s.measureResult);
+  const simRunning = useEditorStore((s) => s.simRunning);
+  const toggleSim = useEditorStore((s) => s.toggleSim);
 
   return (
     <div className="et-panel">
@@ -44,6 +46,10 @@ export default function EditorTools() {
           Distance: <strong>{formatLen(measureResult.distance, units)}</strong>
         </div>
       )}
+
+      <button className={`et-sim ${simRunning ? 'et-sim--on' : ''}`} onClick={toggleSim}>
+        {simRunning ? '⏹ Stop simulation' : '▶ Simulate (gravity)'}
+      </button>
     </div>
   );
 }

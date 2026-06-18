@@ -56,3 +56,18 @@
   border-radius: 6px;
 }
 .et-result strong { font-family: var(--font-mono); color: var(--accent); }
+
+.et-sim {
+  padding: 9px;
+  border: 1px solid var(--success);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--success);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.et-sim:hover { background: color-mix(in srgb, var(--success) 15%, transparent); }
+.et-sim--on { background: var(--danger); border-color: var(--danger); color: #fff; }

@@ -132,10 +132,15 @@ function BodyInspector({ body, doc, dispatch, select }) {
   );
 }
 
-function JointInspector({ joint, dispatch }) {
+function JointInspector({ joint, doc, dispatch }) {
   const id = joint.id;
   const up = (patch) => dispatch(commands.updateJoint(id, patch));
-  const lim = joint.limit ?? { lower: -Math.PI, upper: Math.PI };
+  const lim = joint.limit ?? { lower: -Math.PI, upper: Math.PI, effort: 0, velocity: 0 };
+  const dyn = joint.dynamics ?? { damping: 0, friction: 0 };
+  const origin = joint.origin ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
+  const mimic = joint.mimic;
+  const bodies = Object.values(doc.bodies);
+  const otherJoints = Object.values(doc.joints).filter((j) => j.id !== id);
 
   return (
     <>
@@ -143,7 +148,6 @@ function JointInspector({ joint, dispatch }) {
         <span>Name</span>
         <input className="in-text" value={joint.name} onChange={(e) => up({ name: e.target.value })} />
       </label>
-
       <label className="in-field">
         <span>Type</span>
         <select className="in-text" value={joint.type} onChange={(e) => up({ type: e.target.value })}>
@@ -151,14 +155,64 @@ function JointInspector({ joint, dispatch }) {
         </select>
       </label>
 
+      <div className="in-group">RELATION</div>
+      <label className="in-field">
+        <span>Parent body</span>
+        <select className="in-text" value={joint.parentBodyId ?? ''} onChange={(e) => up({ parentBodyId: e.target.value })}>
+          {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+      </label>
+      <label className="in-field">
+        <span>Child body</span>
+        <select className="in-text" value={joint.childBodyId ?? ''} onChange={(e) => up({ childBodyId: e.target.value })}>
+          {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+        </select>
+      </label>
+
+      <div className="in-group">ORIGIN (in parent)</div>
+      <Vec3 label="Position" value={origin.position} onChange={(v) => up({ origin: { ...origin, position: v } })} />
+      <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(origin.quaternion)}
+        onChange={(v) => up({ origin: { ...origin, quaternion: eulerDegToQuatArr(v) } })} step={5} />
+
       <div className="in-group">AXIS</div>
       <Vec3 label="Axis" value={joint.axis} onChange={(v) => up({ axis: v })} step={1} />
 
-      <div className="in-group">LIMITS (rad)</div>
+      <div className="in-group">LIMITS</div>
       <div className="in-row2">
-        <Num label="Lower" value={lim.lower} onChange={(v) => up({ limit: { ...lim, lower: v } })} />
-        <Num label="Upper" value={lim.upper} onChange={(v) => up({ limit: { ...lim, upper: v } })} />
+        <Num label="Lower (rad)" value={lim.lower} onChange={(v) => up({ limit: { ...lim, lower: v } })} />
+        <Num label="Upper (rad)" value={lim.upper} onChange={(v) => up({ limit: { ...lim, upper: v } })} />
       </div>
+      <div className="in-row2">
+        <Num label="Effort" value={lim.effort} onChange={(v) => up({ limit: { ...lim, effort: v } })} />
+        <Num label="Velocity" value={lim.velocity} onChange={(v) => up({ limit: { ...lim, velocity: v } })} />
+      </div>
+
+      <div className="in-group">DYNAMICS</div>
+      <div className="in-row2">
+        <Num label="Damping" value={dyn.damping} onChange={(v) => up({ dynamics: { ...dyn, damping: v } })} step={0.01} />
+        <Num label="Friction" value={dyn.friction} onChange={(v) => up({ dynamics: { ...dyn, friction: v } })} step={0.01} />
+      </div>
+
+      <div className="in-group">MIMIC</div>
+      <label className="in-check">
+        <input type="checkbox" checked={!!mimic}
+          onChange={(e) => up({ mimic: e.target.checked ? { jointId: otherJoints[0]?.id ?? '', multiplier: 1, offset: 0 } : null })} />
+        <span>Mirror another joint</span>
+      </label>
+      {mimic && (
+        <>
+          <label className="in-field">
+            <span>Source joint</span>
+            <select className="in-text" value={mimic.jointId} onChange={(e) => up({ mimic: { ...mimic, jointId: e.target.value } })}>
+              {otherJoints.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
+            </select>
+          </label>
+          <div className="in-row2">
+            <Num label="Multiplier" value={mimic.multiplier} onChange={(v) => up({ mimic: { ...mimic, multiplier: v } })} step={0.1} />
+            <Num label="Offset" value={mimic.offset} onChange={(v) => up({ mimic: { ...mimic, offset: v } })} step={0.1} />
+          </div>
+        </>
+      )}
 
       <div className="in-group">VALUE</div>
       <div className="in-slider">
@@ -204,7 +258,7 @@ export default function Inspector() {
       <div className="in-body">
         {!entity && <div className="in-empty">Select a body or joint in the Model panel.</div>}
         {entity && kind === 'body' && <BodyInspector body={entity} doc={doc} dispatch={dispatch} select={select} />}
-        {entity && kind === 'joint' && <JointInspector joint={entity} dispatch={dispatch} />}
+        {entity && kind === 'joint' && <JointInspector joint={entity} doc={doc} dispatch={dispatch} />}
       </div>
     </div>
   );

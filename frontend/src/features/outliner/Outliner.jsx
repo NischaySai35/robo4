@@ -5,11 +5,12 @@
  * works" via the buttons here or Ctrl+Z.
  */
 import './Outliner.css';
+import { useState } from 'react';
 import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { commands } from '@/core/commands/index.js';
 import {
-  makeBody, makeGeometry, GeometryType, identityOrigin,
+  makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin,
 } from '@/core/model/index.js';
 import { importMesh } from '@/features/import/importMesh.js';
 
@@ -29,6 +30,22 @@ export default function Outliner() {
 
   const bodies = Object.values(doc.bodies);
   const joints = Object.values(doc.joints);
+
+  const [jointForm, setJointForm] = useState(null); // { parent, child, type } | null
+  const openJointForm = () => setJointForm({
+    parent: bodies[0]?.id ?? '', child: bodies[1]?.id ?? '', type: JointType.REVOLUTE,
+  });
+  const createJoint = () => {
+    const { parent, child, type } = jointForm;
+    if (!parent || !child || parent === child) return;
+    const j = makeJoint({
+      name: `Joint ${joints.length + 1}`, type,
+      parentBodyId: parent, childBodyId: child,
+    });
+    dispatch(commands.addJoint(j));
+    select(j.id, 'joint');
+    setJointForm(null);
+  };
 
   const addPrimitive = (type) => {
     const n = bodies.length;
@@ -68,6 +85,33 @@ export default function Outliner() {
         <button onClick={() => addPrimitive(GeometryType.SPHERE)}>+ Sphere</button>
       </div>
       <button className="ol-import" onClick={importMesh}>⬇ Import Mesh (STL / OBJ)</button>
+
+      {bodies.length >= 2 && !jointForm && (
+        <button className="ol-import" onClick={openJointForm}>＋ Joint (connect 2 bodies)</button>
+      )}
+      {jointForm && (
+        <div className="ol-jointform">
+          <label>Parent
+            <select value={jointForm.parent} onChange={(e) => setJointForm({ ...jointForm, parent: e.target.value })}>
+              {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+          <label>Child
+            <select value={jointForm.child} onChange={(e) => setJointForm({ ...jointForm, child: e.target.value })}>
+              {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+            </select>
+          </label>
+          <label>Type
+            <select value={jointForm.type} onChange={(e) => setJointForm({ ...jointForm, type: e.target.value })}>
+              {Object.values(JointType).map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
+          </label>
+          <div className="ol-jointform-actions">
+            <button className="ol-jf-create" disabled={jointForm.parent === jointForm.child} onClick={createJoint}>Create</button>
+            <button className="ol-jf-cancel" onClick={() => setJointForm(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
 
       <div className="ol-scroll">
         <div className="ol-section">Bodies ({bodies.length})</div>

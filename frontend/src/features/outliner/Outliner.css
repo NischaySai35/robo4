@@ -77,6 +77,50 @@
 }
 .ol-import:hover { border-color: var(--accent); color: var(--accent); border-style: solid; }
 
+.ol-jointform {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 10px 8px;
+  padding: 8px;
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  background: var(--accent-glow);
+}
+.ol-jointform label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.ol-jointform select {
+  flex: 1;
+  max-width: 150px;
+  padding: 4px 6px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+.ol-jointform-actions { display: flex; gap: 6px; }
+.ol-jf-create, .ol-jf-cancel {
+  flex: 1;
+  padding: 6px;
+  border-radius: 5px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+.ol-jf-create { background: var(--accent); color: #fff; border-color: var(--accent); }
+.ol-jf-create:disabled { opacity: 0.4; cursor: default; }
+.ol-jf-cancel { background: var(--bg); color: var(--text); }
+
 .ol-scroll {
   flex: 1;
   overflow-y: auto;

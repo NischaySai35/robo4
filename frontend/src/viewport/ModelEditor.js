@@ -12,6 +12,7 @@
  */
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer.js';
+import { JointRenderer } from '@/viewport/renderers/JointRenderer.js';
 import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { useEditorStore } from '@/state/editorStore.js';
@@ -21,6 +22,7 @@ export class ModelEditor {
   constructor({ scene, camera, controls, domElement }) {
     this.controls = controls;
     this.bodyRenderer = new BodyRenderer(scene);
+    this.jointRenderer = new JointRenderer(scene);
 
     this.transform = new TransformControls(camera, domElement);
     this.transform.setSize(0.8);
@@ -39,6 +41,7 @@ export class ModelEditor {
     // React to model + selection changes.
     this._unsubModel = useModelStore.subscribe((s) => {
       this.bodyRenderer.sync(s.doc);
+      this.jointRenderer.sync(s.doc);
       this._reattach(); // mesh may have been (re)created
     });
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
@@ -49,6 +52,7 @@ export class ModelEditor {
 
     // Initial paint.
     this.bodyRenderer.sync(useModelStore.getState().doc);
+    this.jointRenderer.sync(useModelStore.getState().doc);
     this._onSelection(useSelectionStore.getState());
   }
 
@@ -66,10 +70,12 @@ export class ModelEditor {
   }
 
   _onSelection(s) {
-    const id = s.kind === 'body' ? s.selectedId : null;
-    this.bodyRenderer.setSelected(id);
+    const bodyId = s.kind === 'body' ? s.selectedId : null;
+    const jointId = s.kind === 'joint' ? s.selectedId : null;
+    this.bodyRenderer.setSelected(bodyId);
+    this.jointRenderer.setSelected(jointId);
     if (s.gizmoMode) this.transform.setMode(s.gizmoMode);
-    this._attachTo(id);
+    this._attachTo(bodyId);
   }
 
   _attachTo(bodyId) {
@@ -115,5 +121,6 @@ export class ModelEditor {
     this.transform.dispose?.();
     this.transform.parent?.remove(this.transform);
     this.bodyRenderer.dispose();
+    this.jointRenderer.dispose();
   }
 }

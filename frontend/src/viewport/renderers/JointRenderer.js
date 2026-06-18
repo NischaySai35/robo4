@@ -9,6 +9,14 @@ import * as THREE from 'three';
 const SEL = 0xffaa00;
 const NORMAL = 0x33d17a;
 
+// Load heatmap: 0 → green, 0.5 → yellow, 1 → red.
+function heatColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  const r = t < 0.5 ? t * 2 : 1;
+  const g = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
+  return new THREE.Color(r, g, 0);
+}
+
 export class JointRenderer {
   constructor(scene) {
     this.scene = scene;
@@ -35,10 +43,15 @@ export class JointRenderer {
     );
   }
 
-  sync(doc, fk = null) {
+  sync(doc, fk = null, loads = null) {
     this._lastDoc = doc;
     this._lastFk = fk;
+    this._lastLoads = loads;
     for (const c of [...this.group.children]) { this.group.remove(c); this._dispose(c); }
+
+    const maxTorque = loads
+      ? Math.max(1e-6, ...[...loads.values()].map((l) => Math.abs(l.torque)))
+      : 0;
 
     for (const j of Object.values(doc.joints)) {
       const parent = doc.bodies[j.parentBodyId];
@@ -51,7 +64,10 @@ export class JointRenderer {
       world.decompose(pos, quat, new THREE.Vector3());
       const dir = new THREE.Vector3(...(j.axis ?? [0, 0, 1])).normalize().applyQuaternion(quat);
 
-      const color = j.id === this._selectedId ? SEL : NORMAL;
+      let color;
+      if (j.id === this._selectedId) color = SEL;
+      else if (loads) { const l = loads.get(j.id); color = l?.overload ? 0xff2200 : heatColor(Math.abs(l?.torque ?? 0) / maxTorque).getHex(); }
+      else color = NORMAL;
       const node = new THREE.Group();
       node.position.copy(pos);
 
@@ -72,7 +88,7 @@ export class JointRenderer {
 
   setSelected(id) {
     this._selectedId = id;
-    if (this._lastDoc) this.sync(this._lastDoc, this._lastFk); // recolor
+    if (this._lastDoc) this.sync(this._lastDoc, this._lastFk, this._lastLoads); // recolor
   }
 
   _dispose(o) {

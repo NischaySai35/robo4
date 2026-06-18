@@ -22,6 +22,9 @@ export const useEditorStore = create((set, get) => ({
   simRunning: false, // live physics (gravity) preview
   setSimRunning: (simRunning) => set({ simRunning }),
   toggleSim: () => set((s) => ({ simRunning: !s.simRunning })),
+
+  showAnalysis: false, // load heatmap + center-of-mass overlay
+  toggleAnalysis: () => set((s) => ({ showAnalysis: !s.showAnalysis })),
 }));
 
 // Unit conversion (model base = metres).

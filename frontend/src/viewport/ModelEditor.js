@@ -19,6 +19,7 @@ import { useSelectionStore } from '@/state/selectionStore.js';
 import { useEditorStore } from '@/state/editorStore.js';
 import { commands } from '@/core/commands/index.js';
 import { computeFK, buildChildJointMap, originForChildWorld, mat } from '@/kinematics/modelFK.js';
+import { jointLoads, centerOfMass } from '@/kinematics/analysis.js';
 import { PhysicsSim } from '@/viewport/PhysicsSim.js';
 
 export class ModelEditor {
@@ -48,10 +49,15 @@ export class ModelEditor {
     // Gizmo snapping (Phase 3) + physics sim (Phase 7).
     this._sim = null;
     this._startingSim = false;
+    this._showAnalysis = useEditorStore.getState().showAnalysis;
     this._applySnap(useEditorStore.getState().snap);
     this._unsubEditor = useEditorStore.subscribe((s) => {
       this._applySnap(s.snap);
       this._handleSim(s.simRunning);
+      if (s.showAnalysis !== this._showAnalysis) {
+        this._showAnalysis = s.showAnalysis;
+        if (this._doc) this._syncModel(this._doc);
+      }
     });
 
     // Initial paint.
@@ -63,8 +69,28 @@ export class ModelEditor {
     this._doc = doc;
     this._fk = computeFK(doc);
     this.bodyRenderer.sync(doc, this._fk);
-    this.jointRenderer.sync(doc, this._fk);
+    const loads = this._showAnalysis ? jointLoads(doc, this._fk) : null;
+    this.jointRenderer.sync(doc, this._fk, loads);
+    this._updateCOM(doc);
     this._reattach(); // mesh may have been (re)created
+  }
+
+  _updateCOM(doc) {
+    if (!this._showAnalysis || Object.keys(doc.bodies).length === 0) {
+      if (this._comMarker) this._comMarker.visible = false;
+      return;
+    }
+    if (!this._comMarker) {
+      this._comMarker = new THREE.Mesh(
+        new THREE.SphereGeometry(0.12, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0x00e0ff, depthTest: false, transparent: true, opacity: 0.9 }),
+      );
+      this._comMarker.renderOrder = 1001;
+      this.bodyRenderer.scene.add(this._comMarker);
+    }
+    const { com } = centerOfMass(doc, this._fk);
+    this._comMarker.position.set(com[0], com[1], com[2]);
+    this._comMarker.visible = true;
   }
 
   // ── Physics (Phase 7) ──────────────────────────────────────────────────────
@@ -187,5 +213,6 @@ export class ModelEditor {
     this.transform.parent?.remove(this.transform);
     this.bodyRenderer.dispose();
     this.jointRenderer.dispose();
+    if (this._comMarker) { this._comMarker.geometry.dispose(); this._comMarker.material.dispose(); this._comMarker.parent?.remove(this._comMarker); }
   }
 }

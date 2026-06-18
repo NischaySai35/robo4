@@ -72,7 +72,7 @@ export class RenderLoop {
     this.getOtherModuleBounds = null;
 
     bridge.getArmNodes = () =>
-      this.robotFK.getNodePositions().map(v => ({ x: v.x, y: v.y, z: v.z }));
+      (this.robotFK ? this.robotFK.getNodePositions().map(v => ({ x: v.x, y: v.y, z: v.z })) : []);
 
     this._setupInteractionCallbacks();
   }
@@ -262,6 +262,10 @@ export class RenderLoop {
 
     // ── Inactive-module FK + other per-frame hooks ────────────────────────────────
     if (this.extraTick) this.extraTick();
+
+    // No active module (empty scene / all deleted): the model layer still renders
+    // via extraTick above; skip all arm-specific logic below.
+    if (!this.robotFK) return;
 
     // ── Home ──────────────────────────────────────────────────────────────────────
     if (s.pendingHome && !this._connectMode) {

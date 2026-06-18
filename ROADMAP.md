@@ -131,6 +131,7 @@ polish; **IDL** message/topic/service/action definitions + generated bindings.
 **ROS 2 bridge** (rosbridge/roslibjs); sensor ingest (cameras, IMU);
 **webcam → joints** (MediaPipe) "wave hands" demo; hardware-in-the-loop with live
 telemetry; DDS/IDL comms.
+this should be for all hardware integration, not just my esp32, i may use many sensors or rasberrypi or whatever.
 
 **Phase 12 — AI layer (SLM/VLM/ALM).** Natural-language command → actions (LLM
 copilot grounded in the model + IDL); **VLM** vision perception/teleop; motion

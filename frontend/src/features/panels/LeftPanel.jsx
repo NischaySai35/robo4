@@ -46,17 +46,8 @@ export default function LeftPanel({ style }) {
     const fresh = {
       format: 'tetrobot-project',
       version: 1,
-      scene: {
-        activeModuleId: 'module-0',
-        nextId: 1,
-        modules: [{
-          id: 'module-0', label: 'Module 1',
-          angles: [0, 0, 0, 0, 0, 0], activeRootId: 'R1',
-          position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 },
-          mode: 'horizontal',
-        }],
-        welds: [],
-      },
+      scene: { activeModuleId: null, nextId: 1, modules: [], welds: [] },
+      animation: { duration: 4, tracks: {} },
     };
     const r = bridge.loadScene?.(fresh);
     if (r && !r.ok) { alert(r.error); return; }

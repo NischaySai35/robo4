@@ -71,8 +71,7 @@ export function parseProject(obj) {
   }
 
   const sc = obj.scene ?? {};
-  const rawModules = Array.isArray(sc.modules) ? sc.modules : [];
-  if (rawModules.length === 0) throw new Error('Project contains no modules.');
+  const rawModules = Array.isArray(sc.modules) ? sc.modules : []; // empty is allowed
 
   const modules = rawModules.map((m, i) => ({
     id:    String(m?.id ?? `module-${i}`),
@@ -92,7 +91,7 @@ export function parseProject(obj) {
   }));
 
   const ids = new Set(modules.map(m => m.id));
-  const activeModuleId = ids.has(sc.activeModuleId) ? sc.activeModuleId : modules[0].id;
+  const activeModuleId = ids.has(sc.activeModuleId) ? sc.activeModuleId : (modules[0]?.id ?? null);
 
   const welds = (Array.isArray(sc.welds) ? sc.welds : [])
     .filter(w => w?.a?.moduleId && w?.b?.moduleId && ids.has(w.a.moduleId) && ids.has(w.b.moduleId))

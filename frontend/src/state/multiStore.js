@@ -11,8 +11,10 @@ const makeModule = (id, label, pos = { x: 0, y: 0, z: 0 }) => ({
 });
 
 export const useMultiStore = create((set, get) => ({
-  modules: [makeModule('module-0', 'Module 1', { x: 0, y: 0, z: 0 })],
-  activeModuleId: 'module-0',
+  // Start EMPTY — the legacy 6-servo arm is no longer created by default. Build
+  // with the model (primitives / imported STL) or add a module explicitly.
+  modules: [],
+  activeModuleId: null,
   nextId: 1,   // next numeric suffix for new module ids (serialized in project files)
 
   // Welds — rigid joins between two module faces. Each: { a, b, mate:number[16] }
@@ -62,14 +64,13 @@ export const useMultiStore = create((set, get) => ({
   dSel2:          null,   // moduleId of second selected module
   disconnectError: null,
 
-  // Delete a module — at least one must remain
+  // Delete a module — all may be removed (empty scene is allowed).
   removeModule(id) {
     const { modules, activeModuleId, welds } = get();
-    if (modules.length <= 1) return;
     const remaining = modules
       .filter(m => m.id !== id)
       .map((m, i) => ({ ...m, label: `Module ${i + 1}` })); // renumber
-    const newActive = activeModuleId === id ? remaining[0].id : activeModuleId;
+    const newActive = activeModuleId === id ? (remaining[0]?.id ?? null) : activeModuleId;
     // Drop any weld touching the removed module
     const keptWelds = welds.filter(w => w.a.moduleId !== id && w.b.moduleId !== id);
     set({ modules: remaining, activeModuleId: newActive, welds: keptWelds });

@@ -139,7 +139,7 @@ export default function SimCanvas() {
   const measureToolRef = useRef(null);      // MeasureTool (Phase 3)
   const modulesRef     = useRef(new Map()); // moduleId → { robotFK }
   const activeFKRef    = useRef(null);      // current active RobotFK ref object (passed to Interaction)
-  const appliedActiveRef = useRef('module-0'); // which module is CURRENTLY applied (imperative guard)
+  const appliedActiveRef = useRef(null); // which module is CURRENTLY applied (imperative guard)
   const xDragRef         = useRef({ pickup: null }); // cross-module drag session state
   const layoutAnimRef    = useRef(null);             // active module-relayout tween
   const historyRef       = useRef({ undo: [], redo: [], last: null }); // undo/redo snapshots
@@ -169,6 +169,24 @@ export default function SimCanvas() {
     });
     modelEditorRef.current = modelEditor;
 
+    // FIT bounding box over EVERYTHING visible: arm modules + model bodies (STL).
+    bridge.getFitBox = () => {
+      const box = new THREE.Box3();
+      let has = false;
+      for (const [, { robotFK }] of modulesRef.current) {
+        robotFK.robotGroup.updateMatrixWorld(true);
+        const b = new THREE.Box3().setFromObject(robotFK.robotGroup);
+        if (!b.isEmpty()) { box.union(b); has = true; }
+      }
+      const mg = modelEditorRef.current?.bodyRenderer?.group;
+      if (mg && mg.children.length) {
+        mg.updateMatrixWorld(true);
+        const b = new THREE.Box3().setFromObject(mg);
+        if (!b.isEmpty()) { box.union(b); has = true; }
+      }
+      return has ? box : null;
+    };
+
     // Phase 3: measurement tool — raycasts model bodies + arm rods. Toggling
     // measure mode pauses arm interaction so clicks don't drag the robot.
     const measureTool = new MeasureTool({
@@ -191,16 +209,20 @@ export default function SimCanvas() {
       else { measureTool.disable(); interaction.paused = false; }
     });
 
-    // First module FK
+    // First module FK — only if a module exists (scene may start empty).
     const initialModule = multiStore.modules[0];
-    const fk0 = new RobotFK(sceneMgr.scene);
-    fk0.robotGroup.position.set(
-      initialModule.position.x,
-      initialModule.position.y,
-      initialModule.position.z,
-    );
-    modulesRef.current.set(initialModule.id, { robotFK: fk0 });
-    activeFKRef.current = fk0;
+    let fk0 = null;
+    if (initialModule) {
+      fk0 = new RobotFK(sceneMgr.scene);
+      fk0.robotGroup.position.set(
+        initialModule.position.x,
+        initialModule.position.y,
+        initialModule.position.z,
+      );
+      modulesRef.current.set(initialModule.id, { robotFK: fk0 });
+      activeFKRef.current = fk0;
+      appliedActiveRef.current = initialModule.id;
+    }
 
     // Interaction — raycasts ALL modules' rods and resolves the owning module,
     // so clicks/drags can target any module in the assembly.
@@ -483,10 +505,15 @@ export default function SimCanvas() {
       // Load the animation clip (Phase 9).
       if (scene.animation) useAnimationStore.getState().loadClip(scene.animation);
 
-      // Force activation of the loaded active module
+      // Force activation of the loaded active module (or none, if empty scene).
       appliedActiveRef.current = '__none__';
       activeFKRef.current = null;
-      activateModule(scene.activeModuleId);
+      if (scene.activeModuleId && modulesRef.current.has(scene.activeModuleId)) {
+        activateModule(scene.activeModuleId);
+      } else {
+        appliedActiveRef.current = null;
+        renderLoopRef.current?.swapRobotFK(null);
+      }
 
       if (opts.fit !== false) setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 60);
       return { ok: true };
@@ -664,6 +691,13 @@ export default function SimCanvas() {
         sceneMgr.scene.remove(robotFK.robotGroup);
         modulesRef.current.delete(mid);
       }
+    }
+
+    // All modules gone → detach the active FK so the render loop idles cleanly.
+    if (modulesRef.current.size === 0) {
+      activeFKRef.current = null;
+      appliedActiveRef.current = null;
+      renderLoopRef.current?.swapRobotFK(null);
     }
 
     // Re-fit camera smoothly after any add/remove (small delay lets the FK settle into position)

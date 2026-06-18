@@ -296,17 +296,22 @@ export class SceneManager {
    * distance so the entire arm fills about 70% of the viewport.
    */
   fitCamera() {
-    const nodes = bridge.getArmNodes ? bridge.getArmNodes() : null;
-    if (!nodes || nodes.length === 0) return;
-
-    const pts = nodes.map(n => new THREE.Vector3(n.x, n.y, n.z));
-    const center = new THREE.Vector3();
-    pts.forEach(p => center.add(p));
-    center.divideScalar(pts.length);
-
-    let maxDist = 0;
-    pts.forEach(p => { maxDist = Math.max(maxDist, p.distanceTo(center)); });
-    maxDist = Math.max(maxDist, 0.5);
+    // Prefer a bounding box over ALL content (arm modules + imported STL bodies).
+    let center, maxDist;
+    const box = bridge.getFitBox ? bridge.getFitBox() : null;
+    if (box && !box.isEmpty()) {
+      center = box.getCenter(new THREE.Vector3());
+      maxDist = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.5);
+    } else {
+      const nodes = bridge.getArmNodes ? bridge.getArmNodes() : null;
+      if (!nodes || nodes.length === 0) return;
+      const pts = nodes.map(n => new THREE.Vector3(n.x, n.y, n.z));
+      center = new THREE.Vector3();
+      pts.forEach(p => center.add(p));
+      center.divideScalar(pts.length);
+      maxDist = 0.5;
+      pts.forEach(p => { maxDist = Math.max(maxDist, p.distanceTo(center)); });
+    }
 
     // Distance so the arm bounding sphere fills ~70% of the viewport
     const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);

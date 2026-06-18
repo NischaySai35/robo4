@@ -339,26 +339,15 @@ function AppHeader({ page, setPage }) {
   );
 }
 
-function AppFooter({ page }) {
+function AppFooter() {
+  const year = new Date().getFullYear();
   return (
     <footer className="app-footer">
-      <span className="app-footer-brand">ROBO4</span>
-      <span className="app-footer-sep" />
       <span>Modular Robotics Platform</span>
-      <span className="app-footer-sep" />
-      <span>6 × ST3215 · ESP32-C3</span>
+      <span className="app-footer-name">NISCHAY SAI D R</span>
       <div className="app-footer-space" />
-      <span
-        className={`app-footer-page-pill ${page === 'sim' ? 'active' : ''}`}
-        style={{ cursor: 'pointer' }}
-      >
-        ◈ Simulator
-      </span>
-      <span
-        className={`app-footer-page-pill ${page === 'servo' ? 'active' : ''}`}
-        style={{ cursor: 'pointer' }}
-      >
-        ⚙ Servo Control
+      <span className="app-footer-legal">
+        © {year} Nischay Sai D R · All rights reserved · Proprietary &amp; confidential · Unauthorized use, copying, or distribution prohibited
       </span>
     </footer>
   );
@@ -481,7 +470,7 @@ export default function App() {
         </div>
       </main>
 
-      <AppFooter page={page} />
+      <AppFooter />
 
       {/* Connection window — fixed overlay, always mounted so SimTransmitPanel logic keeps running */}
       <ConnectionWindow isOpen={connOpen} onClose={() => setConnOpen(false)}>

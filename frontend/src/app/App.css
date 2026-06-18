@@ -280,36 +280,26 @@
   font-family: var(--font-mono);
 }
 
-.app-footer-brand {
-  font-weight: 700;
+/* Gradient name in the footer (only the name uses the TETROBOT brand gradient) */
+.app-footer-name {
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
   background: var(--brand-grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
 }
 
-.app-footer-sep {
-  color: var(--border-bright);
-  font-size: 12px;
-  flex-shrink: 0;
-}
-
 .app-footer-space { flex: 1; }
 
-.app-footer-page-pill {
-  padding: 3px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
+.app-footer-legal {
   color: var(--text-dim);
-  font-size: 10px;
-  background: var(--bg);
-  transition: all 0.18s;
-}
-
-.app-footer-page-pill.active {
-  background: var(--accent-glow);
-  border-color: var(--accent);
-  color: var(--accent);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── App Main ────────────────────────────────────────────────────────────────── */

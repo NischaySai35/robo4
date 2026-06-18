@@ -35,15 +35,17 @@ export class JointRenderer {
     );
   }
 
-  sync(doc) {
+  sync(doc, fk = null) {
     this._lastDoc = doc;
+    this._lastFk = fk;
     for (const c of [...this.group.children]) { this.group.remove(c); this._dispose(c); }
 
     for (const j of Object.values(doc.joints)) {
       const parent = doc.bodies[j.parentBodyId];
       if (!parent) continue;
 
-      const world = this._mat(parent.transform).multiply(this._originMat(j.origin));
+      const parentMat = fk?.get(j.parentBodyId)?.matrix?.clone() ?? this._mat(parent.transform);
+      const world = parentMat.multiply(this._originMat(j.origin));
       const pos = new THREE.Vector3();
       const quat = new THREE.Quaternion();
       world.decompose(pos, quat, new THREE.Vector3());
@@ -70,7 +72,7 @@ export class JointRenderer {
 
   setSelected(id) {
     this._selectedId = id;
-    if (this._lastDoc) this.sync(this._lastDoc); // recolor
+    if (this._lastDoc) this.sync(this._lastDoc, this._lastFk); // recolor
   }
 
   _dispose(o) {

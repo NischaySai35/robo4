@@ -39,7 +39,7 @@ export class BodyRenderer {
     this._selectedId = null;
   }
 
-  sync(doc) {
+  sync(doc, fk = null) {
     const seen = new Set();
 
     for (const body of Object.values(doc.bodies)) {
@@ -59,7 +59,13 @@ export class BodyRenderer {
         entry.sig = sig;
       }
       this._applyMaterial(entry.container, body, doc);
-      this._applyTransform(entry.container, body.transform);
+      // Use FK world (pos+rot) when available; child's own scale always.
+      const w = fk?.get(body.id);
+      this._applyTransform(entry.container, {
+        position: w ? w.position : body.transform.position,
+        quaternion: w ? w.quaternion : body.transform.quaternion,
+        scale: body.transform.scale,
+      });
     }
 
     for (const [id, entry] of this._entries) {

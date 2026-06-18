@@ -10,6 +10,7 @@
  * so this never competes with the legacy arm's pointer interaction. The gizmo's
  * own handles are the only viewport pointer surface it owns.
  */
+import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer.js';
 import { JointRenderer } from '@/viewport/renderers/JointRenderer.js';
@@ -17,6 +18,7 @@ import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { useEditorStore } from '@/state/editorStore.js';
 import { commands } from '@/core/commands/index.js';
+import { computeFK, buildChildJointMap, originForChildWorld, mat } from '@/kinematics/modelFK.js';
 
 export class ModelEditor {
   constructor({ scene, camera, controls, domElement }) {
@@ -39,11 +41,7 @@ export class ModelEditor {
     this.transform.addEventListener('mouseUp', () => this._commitTransform());
 
     // React to model + selection changes.
-    this._unsubModel = useModelStore.subscribe((s) => {
-      this.bodyRenderer.sync(s.doc);
-      this.jointRenderer.sync(s.doc);
-      this._reattach(); // mesh may have been (re)created
-    });
+    this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
 
     // Gizmo snapping (Phase 3).
@@ -51,9 +49,16 @@ export class ModelEditor {
     this._unsubSnap = useEditorStore.subscribe((s) => this._applySnap(s.snap));
 
     // Initial paint.
-    this.bodyRenderer.sync(useModelStore.getState().doc);
-    this.jointRenderer.sync(useModelStore.getState().doc);
+    this._syncModel(useModelStore.getState().doc);
     this._onSelection(useSelectionStore.getState());
+  }
+
+  _syncModel(doc) {
+    this._doc = doc;
+    this._fk = computeFK(doc);
+    this.bodyRenderer.sync(doc, this._fk);
+    this.jointRenderer.sync(doc, this._fk);
+    this._reattach(); // mesh may have been (re)created
   }
 
   _applySnap(snap) {
@@ -105,12 +110,33 @@ export class ModelEditor {
   _commitTransform() {
     const mesh = this.transform.object;
     if (!mesh || !this._attachedId) return;
-    const transform = {
-      position: [mesh.position.x, mesh.position.y, mesh.position.z],
-      quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
-      scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
-    };
-    useModelStore.getState().dispatch(commands.updateBody(this._attachedId, { transform }));
+    const doc = this._doc ?? useModelStore.getState().doc;
+    const dispatch = useModelStore.getState().dispatch;
+    const childJoint = buildChildJointMap(doc);
+    const joint = childJoint.get(this._attachedId);
+
+    if (joint && doc.bodies[joint.parentBodyId]) {
+      // Child of a joint: re-pose by editing the joint origin so it holds at the
+      // current joint value (scale still belongs to the body).
+      const parentMat = this._fk?.get(joint.parentBodyId)?.matrix ?? mat(doc.bodies[joint.parentBodyId].transform);
+      const childMat = new THREE.Matrix4().compose(
+        mesh.position.clone(), mesh.quaternion.clone(), new THREE.Vector3(1, 1, 1));
+      const origin = originForChildWorld(parentMat, joint, childMat);
+      dispatch(commands.updateJoint(joint.id, { origin }));
+      const body = doc.bodies[this._attachedId];
+      const sc = [mesh.scale.x, mesh.scale.y, mesh.scale.z];
+      if (body && body.transform.scale.some((v, i) => Math.abs(v - sc[i]) > 1e-6)) {
+        dispatch(commands.updateBody(this._attachedId, { transform: { ...body.transform, scale: sc } }));
+      }
+    } else {
+      dispatch(commands.updateBody(this._attachedId, {
+        transform: {
+          position: [mesh.position.x, mesh.position.y, mesh.position.z],
+          quaternion: [mesh.quaternion.x, mesh.quaternion.y, mesh.quaternion.z, mesh.quaternion.w],
+          scale: [mesh.scale.x, mesh.scale.y, mesh.scale.z],
+        },
+      }));
+    }
   }
 
   dispose() {

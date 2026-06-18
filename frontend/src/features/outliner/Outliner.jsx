@@ -13,6 +13,7 @@ import {
   makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin,
 } from '@/core/model/index.js';
 import { importMesh } from '@/features/import/importMesh.js';
+import { relativeOrigin } from '@/kinematics/modelFK.js';
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -38,9 +39,12 @@ export default function Outliner() {
   const createJoint = () => {
     const { parent, child, type } = jointForm;
     if (!parent || !child || parent === child) return;
+    // Capture the child's current pose relative to the parent so FK reproduces
+    // the authored layout at value 0.
+    const origin = relativeOrigin(doc.bodies[parent], doc.bodies[child]);
     const j = makeJoint({
       name: `Joint ${joints.length + 1}`, type,
-      parentBodyId: parent, childBodyId: child,
+      parentBodyId: parent, childBodyId: child, origin,
     });
     dispatch(commands.addJoint(j));
     select(j.id, 'joint');

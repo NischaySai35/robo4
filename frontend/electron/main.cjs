@@ -43,6 +43,18 @@ function createWindow() {
   }
 
   mainWindow.on('closed', () => { mainWindow = null; });
+
+  // ── Web Serial / device access (Phase 11 hardware) ─────────────────────────
+  // Electron needs the main process to grant device access and pick the serial
+  // port (no built-in chooser). We auto-pick the first available port.
+  const ses = mainWindow.webContents.session;
+  mainWindow.webContents.on('select-serial-port', (event, portList, _wc, callback) => {
+    event.preventDefault();
+    callback(portList.length ? portList[0].portId : '');
+  });
+  ses.setPermissionCheckHandler((_wc, permission) => permission === 'serial' || true);
+  ses.setDevicePermissionHandler(() => true);
+  ses.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
 }
 
 app.whenReady().then(() => {

@@ -6,6 +6,51 @@
 import './HardwarePanel.css';
 import { useHardwareStore } from '@/state/hardwareStore.js';
 import { hardwareBridge } from '@/hardware/HardwareBridge.js';
+import { useModelStore } from '@/state/modelStore.js';
+import { commands } from '@/core/commands/index.js';
+import { jointServoDegrees } from '@/hardware/protocol.js';
+
+// Joint → servo map: every movable joint gets a servo ID (its physical ST3215).
+// Editing here writes to the joint's model meta, so it's saved with the project and
+// used by both live streaming and the exported IDL.
+function ServoMap() {
+  const doc = useModelStore((s) => s.doc);
+  const dispatch = useModelStore((s) => s.dispatch);
+  const joints = Object.values(doc.joints).filter((j) => j.type !== 'fixed');
+  if (joints.length === 0) {
+    return <div className="hw-foot">No movable joints yet. Build a robot (import parts → create joints) to map servos.</div>;
+  }
+  const setId = (j, id) => dispatch(commands.updateJoint(j.id, {
+    meta: { ...(j.meta ?? {}), servoId: Number.isFinite(id) && id > 0 ? id : null },
+  }));
+  const autoAssign = () => joints.forEach((j, i) => setId(j, i + 1)); // 1..N
+
+  return (
+    <div className="hw-map">
+      <div className="hw-map-head">
+        <span className="hw-title">JOINT → SERVO</span>
+        <button className="hw-map-auto" onClick={autoAssign} title="Assign IDs 1…N in order">Auto 1…N</button>
+      </div>
+      <div className="hw-map-list">
+        {joints.map((j) => (
+          <div key={j.id} className="hw-map-row">
+            <span className="hw-map-name" title={j.name}>{j.name}</span>
+            <span className="hw-map-deg">{jointServoDegrees(j)}°</span>
+            <input
+              className="hw-map-id"
+              type="number"
+              min="0"
+              placeholder="—"
+              value={j.meta?.servoId ?? ''}
+              onChange={(e) => setId(j, parseInt(e.target.value, 10))}
+              title="ST3215 servo ID"
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export default function HardwarePanel() {
   const status = useHardwareStore((s) => s.status);
@@ -88,6 +133,8 @@ export default function HardwarePanel() {
           ))}
         </div>
       )}
+      <ServoMap />
+
       <div className="hw-foot">Sends newline-JSON joint commands (degrees) — see the exported IDL.</div>
     </div>
   );

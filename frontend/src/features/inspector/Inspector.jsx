@@ -13,7 +13,8 @@ import { commands } from '@/core/commands/index.js';
 import { JointType, GeometryType, makeMaterial } from '@/core/model/index.js';
 import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation.js';
 import { duplicate, mirror, array } from '@/features/ops/bodyOps.js';
-import { computeFK } from '@/kinematics/modelFK.js';
+import * as THREE from 'three';
+import { computeFK, movePivotKeepingChild } from '@/kinematics/modelFK.js';
 import { solveModelIK, chainJoints } from '@/kinematics/modelIK.js';
 import { useState } from 'react';
 
@@ -177,6 +178,10 @@ function BodyInspector({ body, doc, dispatch, select }) {
   );
 }
 
+const RAD2DEG = 180 / Math.PI;
+const DEG2RAD = Math.PI / 180;
+const rDeg = (rad) => Math.round((rad ?? 0) * RAD2DEG * 10) / 10;
+
 function JointInspector({ joint, doc, dispatch }) {
   const id = joint.id;
   const up = (patch) => dispatch(commands.updateJoint(id, patch));
@@ -184,8 +189,31 @@ function JointInspector({ joint, doc, dispatch }) {
   const dyn = joint.dynamics ?? { damping: 0, friction: 0 };
   const origin = joint.origin ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
   const mimic = joint.mimic;
+  const meta = joint.meta ?? {};
+  const upMeta = (patch) => up({ meta: { ...meta, ...patch } });
   const bodies = Object.values(doc.bodies);
   const otherJoints = Object.values(doc.joints).filter((j) => j.id !== id);
+
+  const hasLimits = joint.type === 'revolute' || joint.type === 'prismatic';
+  const setValue = (v) => dispatch(commands.setJointValue(id, v));
+  const setAxis = (a) => up({ axis: a });
+
+  const childRest = joint.childRest ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
+  // Move ONLY the pivot — Body 2 stays where it is (childRest compensates).
+  const movePivot = (newOrigin) => up({ origin: newOrigin, childRest: movePivotKeepingChild(joint, newOrigin) });
+  // Place the pivot at a world point (e.g. a body's origin / the midpoint), keeping
+  // both bodies fixed.
+  const fkAll = computeFK(doc);
+  const w1 = fkAll.get(joint.parentBodyId);
+  const w2 = fkAll.get(joint.childBodyId);
+  const setPivotWorld = (pWorld) => {
+    if (!w1) return;
+    const local = new THREE.Vector3(pWorld[0], pWorld[1], pWorld[2]).applyMatrix4(w1.matrix.clone().invert());
+    const newOrigin = { position: [local.x, local.y, local.z], quaternion: origin.quaternion };
+    up({ origin: newOrigin, childRest: movePivotKeepingChild(joint, newOrigin) });
+  };
+  const distBody1 = Math.round(Math.hypot(...origin.position) * 1000);     // mm, pivot ← Body 1
+  const distBody2 = Math.round(Math.hypot(...childRest.position) * 1000);  // mm, pivot → Body 2
 
   return (
     <>
@@ -200,37 +228,69 @@ function JointInspector({ joint, doc, dispatch }) {
         </select>
       </label>
 
-      <div className="in-group">RELATION</div>
+      <div className="in-group">BODIES · connected pair (equal — not parent/child)</div>
       <label className="in-field">
-        <span>Parent body</span>
+        <span>Body 1</span>
         <select className="in-text" value={joint.parentBodyId ?? ''} onChange={(e) => up({ parentBodyId: e.target.value })}>
           {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
       </label>
       <label className="in-field">
-        <span>Child body</span>
+        <span>Body 2</span>
         <select className="in-text" value={joint.childBodyId ?? ''} onChange={(e) => up({ childBodyId: e.target.value })}>
           {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
       </label>
 
-      <div className="in-group">ORIGIN (in parent)</div>
-      <Vec3 label="Position" value={origin.position} onChange={(v) => up({ origin: { ...origin, position: v } })} />
+      <div className="in-group">PIVOT · moves the joint only — both parts stay put</div>
+      <Vec3 label="Position (m)" value={origin.position} onChange={(v) => movePivot({ ...origin, position: v })} />
       <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(origin.quaternion)}
-        onChange={(v) => up({ origin: { ...origin, quaternion: eulerDegToQuatArr(v) } })} step={5} />
-
-      <div className="in-group">AXIS</div>
-      <Vec3 label="Axis" value={joint.axis} onChange={(v) => up({ axis: v })} step={1} />
-
-      <div className="in-group">LIMITS</div>
-      <div className="in-row2">
-        <Num label="Lower (rad)" value={lim.lower} onChange={(v) => up({ limit: { ...lim, lower: v } })} />
-        <Num label="Upper (rad)" value={lim.upper} onChange={(v) => up({ limit: { ...lim, upper: v } })} />
+        onChange={(v) => movePivot({ ...origin, quaternion: eulerDegToQuatArr(v) })} step={5} />
+      <div className="in-ops in-axis-presets">
+        <button onClick={() => w1 && setPivotWorld(w1.position)} title="Put the pivot on Body 1">◐ Body 1</button>
+        <button onClick={() => w2 && setPivotWorld(w2.position)} title="Put the pivot on Body 2">◑ Body 2</button>
+        <button
+          onClick={() => w1 && w2 && setPivotWorld(w1.position.map((c, i) => (c + w2.position[i]) / 2))}
+          title="Put the pivot midway between the parts">◎ Middle</button>
       </div>
-      <div className="in-row2">
-        <Num label="Effort" value={lim.effort} onChange={(v) => up({ limit: { ...lim, effort: v } })} />
-        <Num label="Velocity" value={lim.velocity} onChange={(v) => up({ limit: { ...lim, velocity: v } })} />
+      <div className="in-servo-hint">
+        Pivot distance — from Body 1: <strong>{distBody1} mm</strong> · from Body 2: <strong>{distBody2} mm</strong>.
+        Editing Position moves the pivot only; both parts hold their place.
       </div>
+
+      <div className="in-group">AXIS · rotation / slide direction</div>
+      <Vec3 label="Axis" value={joint.axis} onChange={setAxis} step={1} />
+      <div className="in-ops in-axis-presets">
+        <button onClick={() => setAxis([1, 0, 0])}>X</button>
+        <button onClick={() => setAxis([0, 1, 0])}>Y</button>
+        <button onClick={() => setAxis([0, 0, 1])}>Z</button>
+        <button onClick={() => setAxis(joint.axis.map((c) => -c))} title="Flip direction">⇄ Flip</button>
+      </div>
+
+      {hasLimits && (
+        <>
+          <div className="in-group">LIMITS {joint.type === 'prismatic' ? '(m)' : '(°)'}</div>
+          <div className="in-row2">
+            {joint.type === 'prismatic' ? (
+              <>
+                <Num label="Lower" value={lim.lower} onChange={(v) => up({ limit: { ...lim, lower: v } })} />
+                <Num label="Upper" value={lim.upper} onChange={(v) => up({ limit: { ...lim, upper: v } })} />
+              </>
+            ) : (
+              <>
+                <Num label="Lower°" value={rDeg(lim.lower)} step={5}
+                  onChange={(v) => up({ limit: { ...lim, lower: v * DEG2RAD } })} />
+                <Num label="Upper°" value={rDeg(lim.upper)} step={5}
+                  onChange={(v) => up({ limit: { ...lim, upper: v * DEG2RAD } })} />
+              </>
+            )}
+          </div>
+          <div className="in-row2">
+            <Num label="Effort (N·m)" value={lim.effort} onChange={(v) => up({ limit: { ...lim, effort: v } })} />
+            <Num label="Velocity" value={lim.velocity} onChange={(v) => up({ limit: { ...lim, velocity: v } })} />
+          </div>
+        </>
+      )}
 
       <div className="in-group">DYNAMICS</div>
       <div className="in-row2">
@@ -259,13 +319,45 @@ function JointInspector({ joint, doc, dispatch }) {
         </>
       )}
 
-      <div className="in-group">VALUE</div>
+      <div className="in-group">VALUE {joint.type === 'prismatic' ? '(m)' : '(°)'}</div>
       <div className="in-slider">
-        <input type="range" min={lim.lower} max={lim.upper} step={0.01}
+        <input type="range"
+          min={hasLimits ? lim.lower : -Math.PI} max={hasLimits ? lim.upper : Math.PI} step={0.01}
           value={joint.state?.value ?? 0}
-          onChange={(e) => dispatch(commands.setJointValue(id, parseFloat(e.target.value)))} />
-        <span className="in-slider-val">{r3(joint.state?.value)}</span>
+          onChange={(e) => setValue(parseFloat(e.target.value))} />
+        <span className="in-slider-val">
+          {joint.type === 'prismatic' ? r3(joint.state?.value) : `${rDeg(joint.state?.value)}°`}
+        </span>
       </div>
+      {joint.type !== 'fixed' && (
+        <div className="in-ops in-jog">
+          {hasLimits && <button onClick={() => setValue(lim.lower)} title="Go to lower limit">⤓ Min</button>}
+          <button onClick={() => setValue(0)} title="Go to home / default (0)">⌂ Home</button>
+          {hasLimits && <button onClick={() => setValue(lim.upper)} title="Go to upper limit">⤒ Max</button>}
+        </div>
+      )}
+
+      {joint.type !== 'fixed' && (
+        <>
+          <div className="in-group">SERVO · drives this joint on hardware</div>
+          <div className="in-row2">
+            <Num label="Servo ID" value={meta.servoId ?? 0} step={1}
+              onChange={(v) => upMeta({ servoId: Math.max(0, Math.round(v)) || null })} />
+            <Num label="Offset (°)" value={meta.servoOffsetDeg ?? 0} step={1}
+              onChange={(v) => upMeta({ servoOffsetDeg: v })} />
+          </div>
+          <label className="in-check">
+            <input type="checkbox" checked={!!meta.servoInvert}
+              onChange={(e) => upMeta({ servoInvert: e.target.checked })} />
+            <span>Invert direction (servo turns opposite)</span>
+          </label>
+          <div className="in-servo-hint">
+            {meta.servoId
+              ? `Joint angle → servo #${meta.servoId} in degrees. Assign/stream in the Hardware panel.`
+              : 'No servo assigned. Set an ID so the Hardware panel can drive a real ST3215.'}
+          </div>
+        </>
+      )}
     </>
   );
 }

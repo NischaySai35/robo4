@@ -1,18 +1,12 @@
 /**
  * project.js — serialize / parse the TETROBOT native project format (.nischay).
  *
- * The project file is the full editable source of truth: every module's joint
- * angles, fixed root, world transform, mode, plus all welds (with their rigid
- * `mate` matrices) and the active module. It is plain JSON and versioned.
- *
- * `serializeProject()` first asks SimCanvas (via the bridge) to commit the live
- * active-module state into multiStore, so the store is authoritative, then reads
- * it. `parseProject()` validates + normalizes an arbitrary object into a clean
- * scene description ready for SimCanvas.loadScene().
+ * The robot is the graph `model` (bodies, joints, embedded meshes) plus the
+ * animation clip. Plain JSON, versioned, self-contained. `parseProject()`
+ * validates + normalizes an arbitrary object; a legacy `scene.modules` field is
+ * tolerated but no longer used. `serializeProject()` writes the current model.
  */
 
-import { bridge } from '@/viewport/cameraBridge.js';
-import { useMultiStore } from '@/state/multiStore.js';
 import { useModelStore } from '@/state/modelStore.js';
 import { useAnimationStore } from '@/state/animationStore.js';
 import { makeDocument } from '../model/index.js';
@@ -21,36 +15,18 @@ export const PROJECT_FORMAT  = 'tetrobot-project';
 export const PROJECT_VERSION = 1;
 
 export function serializeProject() {
-  // Push the live active module (armStore + live FK transform) into multiStore.
-  bridge.commitLiveState?.();
-  const s = useMultiStore.getState();
   return {
     format:  PROJECT_FORMAT,
     version: PROJECT_VERSION,
     app:     'TETROBOT',
     savedAt: new Date().toISOString(),
-    scene: {
-      activeModuleId: s.activeModuleId,
-      nextId:         s.nextId,
-      modules: s.modules.map(m => ({
-        id:           m.id,
-        label:        m.label,
-        angles:       [...m.angles],
-        activeRootId: m.activeRootId,
-        position:     { ...m.position },
-        quaternion:   { ...m.quaternion },
-        mode:         m.mode,
-      })),
-      welds: s.welds.map(w => ({
-        a:    { moduleId: w.a.moduleId, faceKey: w.a.faceKey },
-        b:    { moduleId: w.b.moduleId, faceKey: w.b.faceKey },
-        mate: Array.isArray(w.mate) ? [...w.mate] : null,
-      })),
-    },
-    // Phase 0+ graph model (bodies/joints/assets). Self-contained: imported
-    // meshes are embedded, so the project file keeps them.
+    // `scene` is kept (empty) for backward/forward compatibility with the file
+    // format; the robot now lives entirely in the graph `model`.
+    scene: { activeModuleId: null, nextId: 1, modules: [], welds: [] },
+    // Graph model (bodies/joints/assets). Self-contained: imported meshes are
+    // embedded (base64), so the .nischay file keeps them.
     model: useModelStore.getState().doc,
-    // Phase 9 animation clip (keyframe tracks).
+    // Animation clip (keyframe tracks).
     animation: useAnimationStore.getState().exportClip(),
   };
 }

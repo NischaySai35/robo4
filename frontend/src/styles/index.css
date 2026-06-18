@@ -33,8 +33,9 @@
   --danger: #bd1c00;
   --success: #007a36;
   --scene-bg: #f4f2ee;
-  --font-mono: 'Share Tech Mono', 'Courier New', monospace;
-  --font-ui: 'Rajdhani', 'Arial', sans-serif;
+  /* Project-wide font: Times New Roman (the TETROBOT wordmark keeps its own face). */
+  --font-mono: 'Times New Roman', Times, serif;
+  --font-ui: 'Times New Roman', Times, serif;
   --panel-w: 340px;
 
   /* Overlay / glass panels */

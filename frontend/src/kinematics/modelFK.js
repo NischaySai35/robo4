@@ -59,7 +59,13 @@ export function computeFK(doc) {
       M = mat(body.transform);
     } else {
       visiting.add(bodyId);
-      M = world(j.parentBodyId).clone().multiply(originMat(j.origin)).multiply(jointDOFMatrix(j));
+      // Body 2 world = Body1 ∘ pivotOrigin ∘ DOF(value) ∘ childRest. The childRest
+      // term keeps Body 2 independent of the pivot, so the pivot can be placed
+      // anywhere between the parts without moving them.
+      M = world(j.parentBodyId).clone()
+        .multiply(originMat(j.origin))
+        .multiply(jointDOFMatrix(j))
+        .multiply(originMat(j.childRest));
       visiting.delete(bodyId);
     }
     cache.set(bodyId, M);
@@ -82,6 +88,52 @@ export function relativeOrigin(parentBody, childBody) {
   const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
   rel.decompose(p, q, s);
   return { position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w] };
+}
+
+const decompose = (M) => {
+  const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
+  M.decompose(p, q, s);
+  return { position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w] };
+};
+
+/**
+ * Build the two joint frames connecting body1 & body2 with a pivot placed at
+ * `pivotWorld` (world position; defaults to the midpoint of the two body origins).
+ * Returns { origin, childRest } so FK reproduces both bodies' current placement at
+ * value 0, with the pivot independently positioned.
+ */
+export function jointFramesForBodies(body1, body2, pivotWorld = null) {
+  const T1 = mat(body1.transform);
+  const T2 = mat(body2.transform);
+  const p1 = new THREE.Vector3().setFromMatrixPosition(T1);
+  const p2 = new THREE.Vector3().setFromMatrixPosition(T2);
+  const pv = pivotWorld
+    ? new THREE.Vector3(pivotWorld[0], pivotWorld[1], pivotWorld[2])
+    : p1.clone().add(p2).multiplyScalar(0.5); // default: middle of both bodies
+  const q1 = new THREE.Quaternion().setFromRotationMatrix(T1); // pivot aligned to Body 1
+  const J = new THREE.Matrix4().compose(pv, q1, ONE.clone());
+  return {
+    origin: decompose(T1.clone().invert().multiply(J)),       // pivot in Body 1 frame
+    childRest: decompose(J.clone().invert().multiply(T2)),    // Body 2 in pivot frame
+  };
+}
+
+/**
+ * Recompute a joint's childRest so Body 2 stays put when the pivot (`origin`) is
+ * moved to `newOrigin`. childRest' = newOrigin⁻¹ ∘ origin ∘ childRest.
+ */
+export function movePivotKeepingChild(joint, newOrigin) {
+  const On = originMat(newOrigin);
+  const Oo = originMat(joint.origin);
+  const Cr = originMat(joint.childRest);
+  return decompose(On.invert().multiply(Oo).multiply(Cr));
+}
+
+/** Distance (m) between two transform-likes' origins. */
+export function originDistance(a, b) {
+  const pa = a?.position ?? [0, 0, 0];
+  const pb = b?.position ?? [0, 0, 0];
+  return Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]);
 }
 
 /** New joint origin so the child lands at childMatrix (world) for the joint's current value. */

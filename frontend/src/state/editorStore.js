@@ -16,6 +16,15 @@ export const useEditorStore = create((set, get) => ({
   setMeasureMode: (measureMode) => set({ measureMode }),
   toggleMeasure: () => set((s) => ({ measureMode: !s.measureMode })),
 
+  // Mate tool (Phase: assembly). Click a face on part A, then a face on part B →
+  // part B snaps flush onto A (faces coincident, normals opposed). `matePick` is
+  // how many faces have been clicked (0/1) for the live hint.
+  mateMode: false,
+  matePick: 0,
+  toggleMate: () => set((s) => ({ mateMode: !s.mateMode, matePick: 0, measureMode: false })),
+  setMateMode: (mateMode) => set({ mateMode, matePick: 0 }),
+  setMatePick: (matePick) => set({ matePick }),
+
   measureResult: null, // { distance (metres), a:[x,y,z], b:[x,y,z] }
   setMeasureResult: (measureResult) => set({ measureResult }),
 

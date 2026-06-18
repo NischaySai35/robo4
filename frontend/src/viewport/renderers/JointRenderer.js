@@ -25,6 +25,8 @@ export class JointRenderer {
     scene.add(this.group);
     this._selectedId = null;
     this._lastDoc = null;
+    this._visible = new Set(); // joint ids to draw; empty → none (shown on selection)
+    this._picker = new THREE.Raycaster();
   }
 
   _mat(t) {
@@ -56,6 +58,8 @@ export class JointRenderer {
     for (const j of Object.values(doc.joints)) {
       const parent = doc.bodies[j.parentBodyId];
       if (!parent) continue;
+      // Only draw a joint when it (or one of its bodies) is selected.
+      if (!this._visible.has(j.id)) continue;
 
       const parentMat = fk?.get(j.parentBodyId)?.matrix?.clone() ?? this._mat(parent.transform);
       const world = parentMat.multiply(this._originMat(j.origin));
@@ -70,6 +74,7 @@ export class JointRenderer {
       else color = NORMAL;
       const node = new THREE.Group();
       node.position.copy(pos);
+      node.userData = { jointId: j.id };
 
       const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(), 0.9, color, 0.22, 0.12);
       arrow.traverse((o) => { if (o.material) { o.material.depthTest = false; } o.renderOrder = 999; });
@@ -89,6 +94,24 @@ export class JointRenderer {
   setSelected(id) {
     this._selectedId = id;
     if (this._lastDoc) this.sync(this._lastDoc, this._lastFk, this._lastLoads); // recolor
+  }
+
+  /** Which joints are drawn (those touching the current selection). */
+  setVisibleSet(set) {
+    this._visible = set instanceof Set ? set : new Set(set ?? []);
+    if (this._lastDoc) this.sync(this._lastDoc, this._lastFk, this._lastLoads);
+  }
+
+  /** Raycast visible joint arrows; returns the hit jointId or null. */
+  pickJointAt(ndc, camera) {
+    if (this.group.children.length === 0) return null;
+    this._picker.setFromCamera(ndc, camera);
+    const hits = this._picker.intersectObjects(this.group.children, true);
+    for (const h of hits) {
+      let o = h.object;
+      while (o) { if (o.userData?.jointId) return o.userData.jointId; o = o.parent; }
+    }
+    return null;
   }
 
   _dispose(o) {

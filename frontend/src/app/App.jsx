@@ -2,7 +2,6 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import './App.css';
 import LeftPanel from '@/features/panels/LeftPanel.jsx';
 import SimCanvas from '@/features/canvas/SimCanvas.jsx';
-import StatusBar from '@/features/panels/StatusBar.jsx';
 import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo.jsx';
 import ViewControls from '@/features/viewport-ui/ViewControls.jsx';
 import ServoController from '@/features/servo/ServoController.jsx';
@@ -13,7 +12,6 @@ import MenuBar from '@/features/menu/MenuBar.jsx';
 import RightDock from '@/features/dock/RightDock.jsx';
 import CommandPalette from '@/features/command-palette/CommandPalette.jsx';
 import { useIntegrationStore } from '@/state/integrationStore.js';
-import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
 import { useDocStore } from '@/state/docStore.js';
 import { useModelStore } from '@/state/modelStore.js';
@@ -83,68 +81,6 @@ function ThemeToggle() {
         </svg>
       )}
     </button>
-  );
-}
-
-function SimToolbar() {
-  const homeArm = useArmStore(s => s.homeArm);
-  return (
-    <div className="sim-toolbar">
-      <button className="sim-tool-btn" onClick={homeArm} title="Home the active module">
-        <svg width="13" height="13" viewBox="0 0 20 20" fill="none">
-          <path d="M3 9.5L10 3l7 6.5V17a1 1 0 01-1 1H6a1 1 0 01-1-1V9.5z"
-            stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" fill="none"/>
-        </svg>
-        HOME
-      </button>
-      <button className="sim-tool-btn" onClick={() => bridge.homeAll?.()} title="Home every module">
-        <svg width="13" height="13" viewBox="0 0 20 20" fill="none">
-          <path d="M3 9.5L10 3l7 6.5V17a1 1 0 01-1 1H6a1 1 0 01-1-1V9.5z"
-            stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" fill="none"/>
-        </svg>
-        HOME ALL
-      </button>
-      <button className="sim-tool-btn" onClick={() => bridge.disconnectAll?.()} title="Disconnect all modules and lay them out fresh">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-          <circle cx="3.5" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
-          <circle cx="12.5" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
-          <path d="M6 6l4-2.5M6 10l4 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-        </svg>
-        DISCONNECT ALL
-      </button>
-      <button className="sim-tool-btn sim-tool-btn--danger" onClick={() => bridge.estop?.()} title="Stop all motion now">
-        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-          <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="1.6"/>
-          <rect x="5.5" y="5.5" width="5" height="5" rx="1" fill="currentColor"/>
-        </svg>
-        E-STOP
-      </button>
-    </div>
-  );
-}
-
-function WorkspaceNotification() {
-  const collision = useArmStore(s => s.collision);
-  const joints    = useArmStore(s => s.joints);
-  const anyLimit  = joints.some(j => j.limitHit);
-
-  if (!collision && !anyLimit) return null;
-
-  return (
-    <div className="workspace-notification">
-      {collision && (
-        <div className="workspace-notif-row workspace-notif--collision">
-          <span className="workspace-notif-dot" />
-          COLLISION — movement blocked
-        </div>
-      )}
-      {anyLimit && !collision && (
-        <div className="workspace-notif-row workspace-notif--limit">
-          <span className="workspace-notif-dot" />
-          JOINT LIMIT reached
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -441,13 +377,10 @@ export default function App() {
 
           <div className="canvas-wrapper">
             <SimCanvas />
-            <SimToolbar />
-            <WorkspaceNotification />
             <div className="top-right-cluster">
               <NavigationGizmo />
               <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />
             </div>
-            <StatusBar />
           </div>
 
           {/* Blender-style right dock: icon rail + one resizable panel at a time. */}

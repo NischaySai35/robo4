@@ -24,4 +24,8 @@ contextBridge.exposeInMainWorld('tetrobot', {
 
   // Optional cloud AI bridge. The main process reads ANTHROPIC_API_KEY.
   askAnthropic: (opts) => ipcRenderer.invoke('ai:anthropic', opts),
+
+  // Local offline AI via Ollama (no key, no internet). Falls back gracefully.
+  askOllama: (opts) => ipcRenderer.invoke('ai:ollama', opts),
+  ollamaStatus: () => ipcRenderer.invoke('ai:ollama-status'),
 });

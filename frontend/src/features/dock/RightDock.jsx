@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './RightDock.css';
+import { useSelectionStore } from '@/state/selectionStore.js';
+import { useDockStore } from '@/state/dockStore.js';
 import EditorTools from '@/features/tools/EditorTools.jsx';
 import Outliner from '@/features/outliner/Outliner.jsx';
 import Inspector from '@/features/inspector/Inspector.jsx';
@@ -61,11 +63,12 @@ const PANELS = [
 const MIN_W = 240;
 const MAX_W = 560;
 const DEFAULT_W = 300;
-const ACTIVE_KEY = 'tetrobot:dock:active';
 const WIDTH_KEY = 'tetrobot:dock:width';
 
 export default function RightDock() {
-  const [active, setActive] = useState(() => localStorage.getItem(ACTIVE_KEY) || 'inspector');
+  const active = useDockStore((s) => s.active);
+  const toggle = useDockStore((s) => s.toggle);
+  const open = useDockStore((s) => s.open);
   const [width, setWidth] = useState(() => {
     const v = parseInt(localStorage.getItem(WIDTH_KEY) || '', 10);
     return Number.isFinite(v) ? Math.min(MAX_W, Math.max(MIN_W, v)) : DEFAULT_W;
@@ -73,12 +76,14 @@ export default function RightDock() {
   const widthRef = useRef(width);
   widthRef.current = width;
 
-  useEffect(() => {
-    if (active) localStorage.setItem(ACTIVE_KEY, active);
-  }, [active]);
   useEffect(() => { localStorage.setItem(WIDTH_KEY, String(width)); }, [width]);
 
-  const toggle = (id) => setActive((cur) => (cur === id ? null : id));
+  // Selecting a body/joint (in the viewport or Outliner) auto-opens the Inspector,
+  // so its full property/joint controls are always one click away — no hunting.
+  const selectedId = useSelectionStore((s) => s.selectedId);
+  useEffect(() => {
+    if (selectedId) open('inspector');
+  }, [selectedId, open]);
 
   const startResize = useCallback((e) => {
     if (e.button !== 0) return;
@@ -112,7 +117,7 @@ export default function RightDock() {
           <div className="rdock-resize" onMouseDown={startResize} title="Drag to resize" />
           <div className="rdock-panel-head">
             <span className="rdock-panel-title">{activeDef.title}</span>
-            <button className="rdock-panel-close" onClick={() => setActive(null)} title="Collapse panel">
+            <button className="rdock-panel-close" onClick={() => useDockStore.getState().close()} title="Collapse panel">
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
                 <path d="M4 4l6 6M10 4l-6 6" />
               </svg>

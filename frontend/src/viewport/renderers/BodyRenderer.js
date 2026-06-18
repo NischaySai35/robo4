@@ -155,6 +155,27 @@ export class BodyRenderer {
     return null;
   }
 
+  /** Raycast bodies and return the hit face as { bodyId, point, normal } in world
+   *  space (for the mate tool), or null. */
+  pickFaceAt(ndc, camera) {
+    const objs = [];
+    for (const { container } of this._entries.values()) objs.push(container);
+    if (!objs.length) return null;
+    _picker.setFromCamera(ndc, camera);
+    const hits = _picker.intersectObjects(objs, true);
+    for (const h of hits) {
+      if (!h.face) continue;
+      let o = h.object, bodyId = null;
+      while (o) { if (o.userData?.bodyId) { bodyId = o.userData.bodyId; break; } o = o.parent; }
+      if (!bodyId) continue;
+      const normal = h.face.normal.clone()
+        .applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld))
+        .normalize();
+      return { bodyId, point: h.point.clone(), normal };
+    }
+    return null;
+  }
+
   _disposeObject(o) {
     o.traverse?.((c) => {
       if (c.geometry) c.geometry.dispose();

@@ -14,7 +14,7 @@ import {
 } from '@/core/model/index.js';
 import { importMesh } from '@/features/import/importMesh.js';
 import { exportRobot } from '@/features/export/exportRobot.js';
-import { relativeOrigin } from '@/kinematics/modelFK.js';
+import { jointFramesForBodies } from '@/kinematics/modelFK.js';
 
 const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -34,18 +34,23 @@ export default function Outliner() {
   const joints = Object.values(doc.joints);
 
   const [jointForm, setJointForm] = useState(null); // { parent, child, type } | null
-  const openJointForm = () => setJointForm({
-    parent: bodies[0]?.id ?? '', child: bodies[1]?.id ?? '', type: JointType.REVOLUTE,
-  });
+  const openJointForm = () => {
+    // Default the child to whatever body is selected (the part you're attaching),
+    // and the parent to the first other body — tweak in the form before creating.
+    const child = (selectedId && doc.bodies[selectedId]) ? selectedId : (bodies[1]?.id ?? '');
+    const parent = bodies.find((b) => b.id !== child)?.id ?? '';
+    setJointForm({ parent, child, type: JointType.REVOLUTE });
+  };
   const createJoint = () => {
     const { parent, child, type } = jointForm;
     if (!parent || !child || parent === child) return;
-    // Capture the child's current pose relative to the parent so FK reproduces
-    // the authored layout at value 0.
-    const origin = relativeOrigin(doc.bodies[parent], doc.bodies[child]);
+    // Pivot defaults to the MIDDLE of the two bodies; both bodies stay where they
+    // are (origin + childRest reproduce the layout at value 0). The pivot can then
+    // be moved independently in the Inspector.
+    const { origin, childRest } = jointFramesForBodies(doc.bodies[parent], doc.bodies[child]);
     const j = makeJoint({
       name: `Joint ${joints.length + 1}`, type,
-      parentBodyId: parent, childBodyId: child, origin,
+      parentBodyId: parent, childBodyId: child, origin, childRest,
     });
     dispatch(commands.addJoint(j));
     select(j.id, 'joint');
@@ -96,12 +101,12 @@ export default function Outliner() {
       )}
       {jointForm && (
         <div className="ol-jointform">
-          <label>Parent
+          <label>Body 1
             <select value={jointForm.parent} onChange={(e) => setJointForm({ ...jointForm, parent: e.target.value })}>
               {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>
           </label>
-          <label>Child
+          <label>Body 2
             <select value={jointForm.child} onChange={(e) => setJointForm({ ...jointForm, child: e.target.value })}>
               {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
             </select>

@@ -59,16 +59,25 @@ export class ModelEditor {
     this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
 
-    // Gizmo snapping (Phase 3) + physics sim (Phase 7).
+    // Gizmo snapping (Phase 3) + physics sim (Phase 7) + mate tool (assembly).
     this._sim = null;
     this._startingSim = false;
     this._showAnalysis = useEditorStore.getState().showAnalysis;
+    this._mateMode = useEditorStore.getState().mateMode;
+    this._matePicks = [];
+    this._mateMarkers = new THREE.Group();
+    this._mateMarkers.name = 'mate-markers';
+    this.bodyRenderer.scene.add(this._mateMarkers);
     this._applySnap(useEditorStore.getState().snap);
     this._unsubEditor = useEditorStore.subscribe((s) => {
       this._applySnap(s.snap);
       this._handleSim(s.simRunning);
       // Live gravity updates while the sim is running.
       if (this._sim) this._sim.setGravity(s.gravityEnabled ? s.gravity : 0);
+      if (s.mateMode !== this._mateMode) {
+        this._mateMode = s.mateMode;
+        this._clearMate(); // reset picks/markers when entering or leaving mate mode
+      }
       if (s.showAnalysis !== this._showAnalysis) {
         this._showAnalysis = s.showAnalysis;
         if (this._doc) this._syncModel(this._doc);
@@ -194,18 +203,96 @@ export class ModelEditor {
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
-    const hitId = this.bodyRenderer.pickBodyAt(ndc, this.camera);
+
+    if (this._mateMode) { this._handleMatePick(ndc); return; }
+
     const sel = useSelectionStore.getState();
+    // A visible joint arrow takes priority — clicking it selects the joint (and the
+    // Inspector auto-opens to its editor).
+    const jointHit = this.jointRenderer.pickJointAt(ndc, this.camera);
+    if (jointHit) {
+      if (!(sel.kind === 'joint' && sel.selectedId === jointHit)) sel.select(jointHit, 'joint');
+      return;
+    }
+
+    const hitId = this.bodyRenderer.pickBodyAt(ndc, this.camera);
     if (hitId) {
       if (!(sel.kind === 'body' && sel.selectedId === hitId)) sel.select(hitId, 'body');
-    } else if (sel.kind === 'body') {
-      sel.clear(); // clicked empty space → hide the gizmo
+    } else if (sel.selectedId) {
+      sel.clear(); // clicked empty space → deselect, hiding gizmo + joint arrows
+    }
+  }
+
+  // ── Mate tool ───────────────────────────────────────────────────────────────
+  // Pick a face on the part to keep fixed, then a face on the part to move; the
+  // second part snaps flush onto the first (faces coincident, normals opposed).
+  _handleMatePick(ndc) {
+    const face = this.bodyRenderer.pickFaceAt(ndc, this.camera);
+    if (!face) return;
+    this._matePicks.push(face);
+    this._addMateMarker(face.point);
+    if (this._matePicks.length >= 2) {
+      this._applyMate(this._matePicks[0], this._matePicks[1]);
+      this._clearMate();
+      useEditorStore.getState().setMatePick(0);
+    } else {
+      useEditorStore.getState().setMatePick(this._matePicks.length);
+    }
+  }
+
+  _applyMate(a, b) {
+    const doc = useModelStore.getState().doc;
+    const body = doc.bodies[b.bodyId];
+    if (!body || a.bodyId === b.bodyId) return;
+    const pos = new THREE.Vector3(...body.transform.position);
+    const quat = new THREE.Quaternion(...body.transform.quaternion);
+    // Rotate body B so its face normal opposes A's, then translate so the clicked
+    // points coincide → the faces sit flush.
+    const q = new THREE.Quaternion().setFromUnitVectors(b.normal.clone().normalize(), a.normal.clone().negate());
+    const newQuat = q.clone().multiply(quat);
+    const v = b.point.clone().sub(pos).applyQuaternion(q);
+    const newPos = a.point.clone().sub(v);
+    useModelStore.getState().dispatch(commands.updateBody(b.bodyId, {
+      transform: {
+        ...body.transform,
+        position: [newPos.x, newPos.y, newPos.z],
+        quaternion: [newQuat.x, newQuat.y, newQuat.z, newQuat.w],
+      },
+    }));
+  }
+
+  _addMateMarker(p) {
+    const m = new THREE.Mesh(
+      new THREE.SphereGeometry(0.04, 14, 10),
+      new THREE.MeshBasicMaterial({ color: 0xffaa00, depthTest: false }),
+    );
+    m.renderOrder = 1002;
+    m.position.copy(p);
+    this._mateMarkers.add(m);
+  }
+
+  _clearMate() {
+    this._matePicks = [];
+    for (const c of [...this._mateMarkers.children]) {
+      this._mateMarkers.remove(c);
+      c.geometry?.dispose();
+      c.material?.dispose();
     }
   }
 
   _onSelection(s) {
     const bodyId = s.kind === 'body' ? s.selectedId : null;
     const jointId = s.kind === 'joint' ? s.selectedId : null;
+    // Joints are shown only when relevant: the selected joint, or any joint that
+    // touches the selected body. Nothing selected → no joint arrows.
+    const doc = this._doc ?? useModelStore.getState().doc;
+    const visible = new Set();
+    for (const j of Object.values(doc.joints)) {
+      if (j.id === jointId || (bodyId && (j.parentBodyId === bodyId || j.childBodyId === bodyId))) {
+        visible.add(j.id);
+      }
+    }
+    this.jointRenderer.setVisibleSet(visible);
     this.bodyRenderer.setSelected(bodyId);
     this.jointRenderer.setSelected(jointId);
     if (s.gizmoMode) this.transform.setMode(s.gizmoMode);
@@ -274,6 +361,8 @@ export class ModelEditor {
     this._unsubEditor?.();
     this.domElement?.removeEventListener('pointerdown', this._onPointerDown);
     this.domElement?.removeEventListener('pointerup', this._onPointerUp);
+    this._clearMate();
+    this._mateMarkers?.parent?.remove(this._mateMarkers);
     this._sim?.dispose();
     this.transform.detach();
     this.transform.dispose?.();

@@ -13,6 +13,9 @@ export default function EditorTools() {
   const measureMode = useEditorStore((s) => s.measureMode);
   const toggleMeasure = useEditorStore((s) => s.toggleMeasure);
   const measureResult = useEditorStore((s) => s.measureResult);
+  const mateMode = useEditorStore((s) => s.mateMode);
+  const toggleMate = useEditorStore((s) => s.toggleMate);
+  const matePick = useEditorStore((s) => s.matePick);
   const simRunning = useEditorStore((s) => s.simRunning);
   const toggleSim = useEditorStore((s) => s.toggleSim);
   const gravity = useEditorStore((s) => s.gravity);
@@ -42,6 +45,12 @@ export default function EditorTools() {
 
       <button className={`et-measure ${measureMode ? 'et-measure--on' : ''}`} onClick={toggleMeasure}>
         📏 {measureMode ? 'Measuring… click 2 points' : 'Measure'}
+      </button>
+
+      <button className={`et-measure ${mateMode ? 'et-measure--on' : ''}`} onClick={toggleMate}>
+        🧲 {mateMode
+          ? (matePick === 0 ? 'Mate — click face to keep FIXED' : 'Mate — click face to MOVE onto it')
+          : 'Mate faces (align parts)'}
       </button>
       {measureResult && (
         <div className="et-result">

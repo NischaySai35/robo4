@@ -9,14 +9,35 @@
 const san = (s) => String(s ?? 'j').replace(/[^A-Za-z0-9_]/g, '_');
 const RAD2DEG = 180 / Math.PI;
 
-/** Build a joint-command line from the model's movable joints. */
+/**
+ * Map a joint's value (rad) to the degrees a servo should hold, applying the
+ * per-joint servo calibration (invert + offset). ST3215 firmware thinks in degrees.
+ */
+export function jointServoDegrees(j) {
+  const m = j.meta ?? {};
+  const sign = m.servoInvert ? -1 : 1;
+  const deg = (j.state?.value ?? 0) * RAD2DEG * sign + (Number(m.servoOffsetDeg) || 0);
+  return Math.round(deg * 100) / 100;
+}
+
+/** Build a joint-command line from the model's movable joints.
+ *  - `values`: { jointName: deg }              (human-readable, backward compatible)
+ *  - `servos`: [{ id, deg }]                    (only joints with an assigned servo id)
+ */
 export function formatJointCommand(doc, { joints = null } = {}) {
   const list = joints ?? Object.values(doc.joints).filter((j) => j.type !== 'fixed');
   const values = {};
+  const servos = [];
   for (const j of list) {
     values[san(j.name)] = Math.round(((j.state?.value ?? 0) * RAD2DEG) * 100) / 100;
+    const id = j.meta?.servoId;
+    if (id != null && id !== '' && Number.isFinite(Number(id))) {
+      servos.push({ id: Number(id), deg: jointServoDegrees(j) });
+    }
   }
-  return JSON.stringify({ cmd: 'joints', t: Date.now(), values });
+  const msg = { cmd: 'joints', t: Date.now(), values };
+  if (servos.length) msg.servos = servos;
+  return JSON.stringify(msg);
 }
 
 /** Parse an incoming line → { type:'json', data } | { type:'text', data } | null. */

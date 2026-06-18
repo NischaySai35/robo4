@@ -129,3 +129,12 @@
   transition: all 0.15s;
 }
 .in-ops button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
+
+/* Axis presets / jog: compact equal-width buttons (not the 2-col ops layout). */
+.in-axis-presets button, .in-jog button { flex: 1 1 0; }
+.in-servo-hint {
+  font-size: 10.5px;
+  line-height: 1.35;
+  color: var(--text-dim);
+  margin-top: 4px;
+}

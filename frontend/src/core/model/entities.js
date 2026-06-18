@@ -103,7 +103,11 @@ export function makeJoint(params = {}) {
     type: params.type ?? JointType.REVOLUTE,
     parentBodyId: params.parentBodyId ?? null,
     childBodyId: params.childBodyId ?? null,
-    origin: params.origin ?? identityOrigin(), // joint frame relative to parent body
+    origin: params.origin ?? identityOrigin(), // pivot frame relative to Body 1
+    // Body 2's rest pose relative to the pivot frame. Decouples the pivot from the
+    // bodies: moving `origin` moves only the pivot, while Body 2 stays put (its rest
+    // world = body1 ∘ origin ∘ childRest). Identity → legacy "child sits at pivot".
+    childRest: params.childRest ?? identityOrigin(),
     axis: params.axis ?? [0, 0, 1],
     limit: params.limit ?? { lower: -Math.PI, upper: Math.PI, effort: 0, velocity: 0 },
     dynamics: params.dynamics ?? { damping: 0, friction: 0 },

@@ -149,3 +149,51 @@ ipcMain.handle('ai:anthropic', async (_evt, { system, prompt } = {}) => {
     return { ok: false, error: err?.message || 'Anthropic request failed.' };
   }
 });
+
+// Local offline AI via Ollama (https://ollama.com). Runs a small model entirely on
+// the user's machine — no internet, no API key. We talk to it from the main process
+// so there are no CORS issues. Enable by installing Ollama and pulling a small model,
+// e.g.  `ollama pull qwen2.5:1.5b`  (or set OLLAMA_MODEL).
+ipcMain.handle('ai:ollama', async (_evt, { system, prompt } = {}) => {
+  if (!prompt) return { ok: false, error: 'Prompt is required.' };
+  const host = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+  const model = process.env.OLLAMA_MODEL || 'qwen2.5:1.5b';
+  try {
+    const res = await fetch(`${host}/api/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        options: { temperature: 0.1 },
+        format: 'json',                       // ask the model for strict JSON
+        messages: [
+          ...(system ? [{ role: 'system', content: system }] : []),
+          { role: 'user', content: prompt },
+        ],
+      }),
+    });
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { ok: false, error: json?.error || `Ollama request failed (${res.status})` };
+    }
+    return { ok: true, model, text: (json?.message?.content || '').trim() };
+  } catch (err) {
+    // Most common: Ollama isn't installed/running → fall back to the local planner.
+    return { ok: false, error: err?.message || 'Ollama not reachable.' };
+  }
+});
+
+// Quick probe so the UI can show whether a local model is available.
+ipcMain.handle('ai:ollama-status', async () => {
+  const host = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
+  try {
+    const res = await fetch(`${host}/api/tags`);
+    if (!res.ok) return { ok: false };
+    const json = await res.json().catch(() => null);
+    const models = (json?.models || []).map((m) => m.name);
+    return { ok: true, models, model: process.env.OLLAMA_MODEL || 'qwen2.5:1.5b' };
+  } catch {
+    return { ok: false };
+  }
+});

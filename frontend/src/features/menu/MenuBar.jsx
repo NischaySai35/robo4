@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
 import './MenuBar.css';
-import { useMultiStore } from '@/state/multiStore.js';
-import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
 import { useHistoryStore } from '@/state/historyStore.js';
 import { bridge } from '@/viewport/cameraBridge.js';
 import { newProject, openProject, saveProject, exportModel } from '@/core/serialization/projectActions.js';
+import { importMesh } from '@/features/import/importMesh.js';
 
 const SEP = { sep: true };
 
@@ -51,10 +50,6 @@ export default function MenuBar({ onToggleConn }) {
   const canUndo        = useHistoryStore(s => s.canUndo);
   const canRedo        = useHistoryStore(s => s.canRedo);
   const theme          = useThemeStore(s => s.theme);
-  const modules        = useMultiStore(s => s.modules);
-  const connectMode    = useMultiStore(s => s.connectMode);
-  const disconnectMode = useMultiStore(s => s.disconnectMode);
-  const deleteMode     = useMultiStore(s => s.deleteMode);
 
   useEffect(() => {
     if (!open) return;
@@ -67,8 +62,6 @@ export default function MenuBar({ onToggleConn }) {
       document.removeEventListener('keydown', onKey);
     };
   }, [open]);
-
-  const ms = () => useMultiStore.getState();
 
   const menus = {
     File: [
@@ -87,18 +80,7 @@ export default function MenuBar({ onToggleConn }) {
       { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !canUndo, onClick: () => bridge.undo?.() },
       { label: 'Redo', shortcut: 'Ctrl+Y', disabled: !canRedo, onClick: () => bridge.redo?.() },
       SEP,
-      { label: 'Add Module', onClick: () => ms().addModule(bridge.computeFreeSpawn?.()) },
-      { label: connectMode ? 'Cancel Connect' : 'Connect Modules',
-        onClick: () => { const s = ms(); if (s.disconnectMode) s.setDisconnectMode(false); s.setConnectMode(!s.connectMode); } },
-      { label: disconnectMode ? 'Cancel Disconnect' : 'Disconnect Modules',
-        onClick: () => { const s = ms(); if (s.connectMode) s.setConnectMode(false); s.setDisconnectMode(!s.disconnectMode); } },
-      { label: 'Disconnect All', onClick: () => bridge.disconnectAll?.() },
-      { label: deleteMode ? 'Cancel Delete' : 'Delete Module', disabled: modules.length <= 1,
-        onClick: () => ms().setDeleteMode(!ms().deleteMode) },
-      SEP,
-      { label: 'Home (active)', onClick: () => useArmStore.getState().homeArm() },
-      { label: 'Home All',      onClick: () => bridge.homeAll?.() },
-      { label: 'E-Stop',        onClick: () => bridge.estop?.() },
+      { label: 'Import Mesh (STL / OBJ)…', onClick: () => importMesh() },
     ],
     View: [
       { label: 'Fit View',         onClick: () => bridge.fitCamera?.() },
@@ -109,7 +91,7 @@ export default function MenuBar({ onToggleConn }) {
     ],
     Help: [
       { label: 'Keyboard Shortcuts', onClick: () => alert(
-        'Shortcuts\n────────────\nCtrl+Z              Undo\nCtrl+Y / Ctrl+Shift+Z   Redo\n\nViewport\n────────────\nDrag a rod          Move (IK)\nClick a rod         Set as root\nScroll              Zoom\nRight-drag          Orbit\nMiddle / Shift-drag Pan') },
+        'Shortcuts\n────────────\nCtrl+Z              Undo\nCtrl+Y / Ctrl+Shift+Z   Redo\nCtrl+K              Command palette\n\nViewport\n────────────\nClick a part        Select · gizmo\nClick empty         Deselect\nScroll              Zoom\nRight-drag          Orbit\nMiddle / Shift-drag Pan') },
       { label: 'About TETROBOT', onClick: () => alert('TETROBOT — Modular Robotics\nby Nischay Sai') },
     ],
   };

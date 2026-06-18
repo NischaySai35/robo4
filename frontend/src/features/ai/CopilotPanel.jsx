@@ -1,45 +1,61 @@
 import './CopilotPanel.css';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { bridge } from '@/viewport/cameraBridge.js';
-import { executeAiPlan, localPlan } from './aiActions.js';
-import { requestCopilotPlan } from './aiClient.js';
+import { executeAiPlan } from './aiActions.js';
+import { requestCopilotPlan, localModelStatus, enableNeuralModel, neuralEnabled } from './aiClient.js';
 
-const suggestions = [
-  'Build a simple robot arm with 3 joints',
-  'Add a blue box body',
-  'Set joint 1 to 45 degrees',
-  'Color link 1 red',
-  'Fit view to scene',
-  'Home all modules',
-];
-
-function actionLabel(action) {
-  if (action.type === 'build_serial_arm') return `Build serial arm - ${action.joints || 3} joints`;
-  if (action.type === 'add_primitive') return `Add ${action.shape || 'primitive'}`;
-  if (action.type === 'set_joint') return `Set joint - ${Number(action.value || 0).toFixed(2)} rad`;
-  if (action.type === 'set_all_joints') return `Set ${action.values?.length || 0} joints`;
-  if (action.type === 'update_body') return 'Update body';
-  if (action.type === 'select_entity') return `Select ${action.kind}`;
-  if (action.type === 'delete_entity') return `Delete ${action.kind}`;
-  if (action.type === 'home_all') return 'Home simulator';
-  if (action.type === 'fit_view') return 'Fit view';
-  return action.type;
-}
-
+/**
+ * CopilotPanel — a small offline chat assistant. Type a request ("fit the view",
+ * "home all", "add a box", "set joint 1 to 45°") and it does it immediately. Every
+ * edit goes through the command bus, so anything it does is undoable (Ctrl+Z).
+ *
+ * Backend is whatever's available (see aiClient): a local Ollama model if running,
+ * else the cloud, else a built-in rule-based planner — all fully offline-capable.
+ */
 export default function CopilotPanel() {
   const doc = useModelStore((s) => s.doc);
   const dispatch = useModelStore((s) => s.dispatch);
   const select = useSelectionStore((s) => s.select);
   const selectedId = useSelectionStore((s) => s.selectedId);
   const selectedKind = useSelectionStore((s) => s.kind);
+
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
-  const [plan, setPlan] = useState(() => localPlan('Build a simple robot arm with 3 joints', doc));
-  const [log, setLog] = useState([]);
+  const [messages, setMessages] = useState([
+    { role: 'ai', text: 'Hi — tell me what to do. Try "fit the view", "home all", "add a box", or "set joint 1 to 45 degrees".' },
+  ]);
+  const [backend, setBackend] = useState(neuralEnabled() ? 'neural' : 'rules');
+  const [neuralLoad, setNeuralLoad] = useState(neuralEnabled() ? 'ready' : 'idle'); // idle|loading|ready
+  const [neuralPct, setNeuralPct] = useState(0);
+  const listRef = useRef(null);
 
-  const cloudReady = !!window.tetrobot?.askAnthropic;
+  // Detect a local Ollama model once (Electron only).
+  useEffect(() => {
+    let alive = true;
+    localModelStatus().then((s) => { if (alive && s.available) setBackend(`ollama · ${s.model}`); });
+    return () => { alive = false; };
+  }, []);
+
+  const enableNeural = async () => {
+    if (neuralLoad !== 'idle') return;
+    setNeuralLoad('loading');
+    try {
+      await enableNeuralModel((p) => {
+        if (p?.status === 'progress' && p.total) {
+          setNeuralPct(Math.round((p.loaded / p.total) * 100));
+        }
+      });
+      setNeuralLoad('ready');
+      setBackend((b) => (b.startsWith('ollama') ? b : 'neural · MiniLM'));
+      setMessages((m) => [...m, { role: 'ai', text: 'On-device AI ready — I now understand paraphrased commands offline.' }]);
+    } catch (e) {
+      setNeuralLoad('idle');
+      setMessages((m) => [...m, { role: 'ai', text: `Couldn't load the model (needs internet on first download): ${e.message}` }]);
+    }
+  };
+
   const counts = useMemo(() => ({
     bodies: Object.keys(doc.bodies).length,
     joints: Object.keys(doc.joints).length,
@@ -48,40 +64,35 @@ export default function CopilotPanel() {
     ? (selectedKind === 'joint' ? doc.joints[selectedId]?.name : doc.bodies[selectedId]?.name)
     : null;
 
-  const ask = async (text = input) => {
+  useEffect(() => {
+    listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
+  }, [messages]);
+
+  const send = async (text = input) => {
     const prompt = text.trim();
     if (!prompt || busy) return;
     setBusy(true);
+    setInput('');
+    setMessages((m) => [...m, { role: 'user', text: prompt }]);
     try {
-      const next = await requestCopilotPlan(prompt, doc);
-      setPlan(next);
-      setLog((rows) => [
-        { role: 'user', text: prompt },
-        { role: 'ai', text: next.note ? `${next.reply} (${next.note})` : next.reply },
-        ...rows,
-      ].slice(0, 8));
-      setInput('');
+      const plan = await requestCopilotPlan(prompt, doc);
+      const results = executeAiPlan(plan, { doc, dispatch, select, bridge });
+      const reply = results.length
+        ? `${plan.reply} ✓ ${results.join(', ')}.`
+        : (plan.reply || "I couldn't map that to an action yet.");
+      setMessages((m) => [...m, { role: 'ai', text: plan.note ? `${reply} (${plan.note})` : reply }]);
+    } catch (e) {
+      setMessages((m) => [...m, { role: 'ai', text: `Something went wrong: ${e.message}` }]);
     } finally {
       setBusy(false);
     }
-  };
-
-  const execute = () => {
-    const results = executeAiPlan(plan, { doc, dispatch, select, bridge });
-    if (results.length === 0) {
-      setLog((rows) => [{ role: 'ai', text: 'No executable action in this plan yet.' }, ...rows].slice(0, 8));
-      return;
-    }
-    setLog((rows) => [{ role: 'ai', text: `Executed: ${results.join(', ')}.` }, ...rows].slice(0, 8));
   };
 
   return (
     <div className="ai-panel">
       <div className="ai-head">
         <span className="ai-title">COPILOT</span>
-        <span className={`ai-pill ${cloudReady ? 'ai-pill--cloud' : ''}`}>
-          {cloudReady ? 'cloud/local' : 'local'}
-        </span>
+        <span className="ai-pill">{backend}</span>
       </div>
 
       <div className="ai-context">
@@ -90,53 +101,31 @@ export default function CopilotPanel() {
         {selectedName && <span>{selectedKind}: {selectedName}</span>}
       </div>
 
-      <form className="ai-form" onSubmit={(e) => { e.preventDefault(); ask(); }}>
+      {!backend.startsWith('ollama') && neuralLoad !== 'ready' && (
+        <button className="ai-neural" onClick={enableNeural} disabled={neuralLoad === 'loading'}>
+          {neuralLoad === 'loading'
+            ? `Downloading on-device AI… ${neuralPct}%`
+            : '⚡ Enable on-device AI (~23 MB, offline after download)'}
+        </button>
+      )}
+
+      <div className="ai-chat" ref={listRef}>
+        {messages.map((row, i) => (
+          <div key={i} className={`ai-msg ai-msg--${row.role}`}>{row.text}</div>
+        ))}
+        {busy && <div className="ai-msg ai-msg--ai ai-msg--busy">…</div>}
+      </div>
+
+      <form className="ai-form" onSubmit={(e) => { e.preventDefault(); send(); }}>
         <textarea
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Describe an edit..."
-          rows={3}
+          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}
+          placeholder="Tell the copilot what to do…"
+          rows={2}
         />
-        <button type="submit" disabled={busy || !input.trim()}>
-          {busy ? 'Thinking' : 'Plan'}
-        </button>
+        <button type="submit" disabled={busy || !input.trim()}>{busy ? '…' : 'Send'}</button>
       </form>
-
-      <div className="ai-suggestions">
-        {suggestions.map((s) => (
-          <button key={s} onClick={() => ask(s)} disabled={busy}>{s}</button>
-        ))}
-      </div>
-
-      {plan && (
-        <div className="ai-plan">
-          <div className="ai-plan-top">
-            <div className="ai-plan-copy">{plan.reply}</div>
-            <span>{plan.source || 'local'}</span>
-          </div>
-          {(plan.actions ?? []).length > 0 && (
-            <>
-              <div className="ai-actions">
-                {plan.actions.map((action, i) => (
-                  <span key={`${action.type}-${i}`}>{actionLabel(action)}</span>
-                ))}
-              </div>
-              <button className="ai-execute" onClick={execute}>Execute plan</button>
-            </>
-          )}
-        </div>
-      )}
-
-      {log.length > 0 && (
-        <div className="ai-log">
-          {log.map((row, i) => (
-            <div key={i} className={`ai-log-row ai-log-row--${row.role}`}>
-              <span>{row.role}</span>
-              <p>{row.text}</p>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

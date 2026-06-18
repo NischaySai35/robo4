@@ -137,7 +137,9 @@
 }
 
 .app-logo {
-  font-family: var(--font-mono);
+  /* Keep the brand wordmark in its original techy face; the rest of the app uses
+     the project font (Times New Roman). */
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
   font-size: 19px;
   font-weight: 800;
   letter-spacing: 4px;

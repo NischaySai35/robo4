@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './CommandPalette.css';
 import { bridge } from '@/viewport/cameraBridge.js';
 import { useThemeStore } from '@/state/themeStore.js';
-import { useArmStore } from '@/state/armStore.js';
 
 /**
  * Phase 14 — Command palette. A single keyboard-driven launcher (Ctrl/Cmd+K or
@@ -18,21 +17,16 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
 
   const theme       = useThemeStore(s => s.theme);
   const toggleTheme = useThemeStore(s => s.toggleTheme);
-  const homeArm     = useArmStore(s => s.homeArm);
 
   const commands = useMemo(() => [
     { id: 'sim',        title: 'Go to Simulator',        hint: 'View',    keys: '',          run: () => setPage('sim'),               when: page !== 'sim' },
     { id: 'servo',      title: 'Go to Servo Control',    hint: 'View',    keys: '',          run: () => setPage('servo'),             when: page !== 'servo' },
     { id: 'fit',        title: 'Fit view to scene',      hint: 'View',    keys: 'F',         run: () => bridge.fitCamera?.() },
-    { id: 'home',       title: 'Home active module',     hint: 'Robot',   keys: '',          run: () => homeArm() },
-    { id: 'homeall',    title: 'Home all modules',       hint: 'Robot',   keys: '',          run: () => bridge.homeAll?.() },
-    { id: 'estop',      title: 'E-STOP — stop all motion', hint: 'Robot', keys: 'Esc',       run: () => bridge.estop?.(),             danger: true },
-    { id: 'disconnect', title: 'Disconnect all modules', hint: 'Robot',   keys: '',          run: () => bridge.disconnectAll?.() },
     { id: 'undo',       title: 'Undo',                   hint: 'Edit',    keys: 'Ctrl+Z',    run: () => bridge.undo?.() },
     { id: 'redo',       title: 'Redo',                   hint: 'Edit',    keys: 'Ctrl+Y',    run: () => bridge.redo?.() },
     { id: 'theme',      title: theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', hint: 'View', keys: '', run: () => toggleTheme() },
     { id: 'conn',       title: 'Toggle connection window', hint: 'Hardware', keys: '',        run: () => onToggleConn?.() },
-  ].filter(c => c.when !== false), [page, setPage, theme, toggleTheme, homeArm, onToggleConn]);
+  ].filter(c => c.when !== false), [page, setPage, theme, toggleTheme, onToggleConn]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

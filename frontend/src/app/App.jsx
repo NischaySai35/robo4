@@ -14,7 +14,13 @@ import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
 import { useDocStore } from '@/state/docStore.js';
+import { useModelStore } from '@/state/modelStore.js';
 import { bridge } from '@/viewport/cameraBridge.js';
+
+// Phase 0 foundation: expose the core model + command bus for devtools/scripting
+// inspection (e.g. `tetrobotModel.getState().doc`). The model is the platform's
+// source of truth going forward; it does not yet drive rendering (Phase 1).
+if (typeof window !== 'undefined') window.tetrobotModel = useModelStore;
 
 function DocIndicator() {
   const name   = useDocStore(s => s.name);

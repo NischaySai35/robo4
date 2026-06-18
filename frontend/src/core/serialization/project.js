@@ -14,6 +14,7 @@
 import { bridge } from '@/viewport/cameraBridge.js';
 import { useMultiStore } from '@/state/multiStore.js';
 import { useModelStore } from '@/state/modelStore.js';
+import { useAnimationStore } from '@/state/animationStore.js';
 import { makeDocument } from '../model/index.js';
 
 export const PROJECT_FORMAT  = 'tetrobot-project';
@@ -49,6 +50,8 @@ export function serializeProject() {
     // Phase 0+ graph model (bodies/joints/assets). Self-contained: imported
     // meshes are embedded, so the project file keeps them.
     model: useModelStore.getState().doc,
+    // Phase 9 animation clip (keyframe tracks).
+    animation: useAnimationStore.getState().exportClip(),
   };
 }
 
@@ -110,6 +113,9 @@ export function parseProject(obj) {
 
   // Graph model (Phase 0+). Absent in legacy files → start with an empty document.
   const model = obj.model && obj.model.kind === 'document' ? obj.model : makeDocument();
+  const animation = obj.animation && typeof obj.animation === 'object'
+    ? { duration: Number(obj.animation.duration) || 4, tracks: obj.animation.tracks ?? {} }
+    : { duration: 4, tracks: {} };
 
-  return { modules, welds, activeModuleId, nextId, model };
+  return { modules, welds, activeModuleId, nextId, model, animation };
 }

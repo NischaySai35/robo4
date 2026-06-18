@@ -34,6 +34,7 @@ import { useDocStore } from '@/state/docStore.js';
 import { useHistoryStore } from '@/state/historyStore.js';
 import { useModelStore } from '@/state/modelStore.js';
 import { useEditorStore } from '@/state/editorStore.js';
+import { useAnimationStore } from '@/state/animationStore.js';
 
 const _raycaster = new THREE.Raycaster();
 
@@ -479,6 +480,8 @@ export default function SimCanvas() {
 
       // Load the graph model (bodies/joints/assets) into the model store.
       if (scene.model) useModelStore.getState().loadDocument(scene.model);
+      // Load the animation clip (Phase 9).
+      if (scene.animation) useAnimationStore.getState().loadClip(scene.animation);
 
       // Force activation of the loaded active module
       appliedActiveRef.current = '__none__';
@@ -600,6 +603,10 @@ export default function SimCanvas() {
     const unsubMulti = useMultiStore.subscribe(scheduleSave);
     const unsubArm   = useArmStore.subscribe(scheduleSave);
     const unsubModelSave = useModelStore.subscribe(scheduleSave);
+    // Only persist the clip's structure, not the per-frame playhead during playback.
+    const unsubAnimSave = useAnimationStore.subscribe((s, p) => {
+      if (s.tracks !== p.tracks || s.duration !== p.duration) scheduleSave();
+    });
 
     const fitTimer = setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 300);
 
@@ -609,6 +616,7 @@ export default function SimCanvas() {
       unsubMulti();
       unsubArm();
       unsubModelSave();
+      unsubAnimSave();
       unsubTheme();
       renderLoop.stop();
       interaction.dispose();

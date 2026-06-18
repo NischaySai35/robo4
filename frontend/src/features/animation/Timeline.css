@@ -1,0 +1,55 @@
+.tl-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: var(--font-ui);
+}
+
+.tl-head { display: flex; align-items: center; justify-content: space-between; }
+.tl-title { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); }
+.tl-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+
+.tl-controls { display: flex; gap: 6px; }
+.tl-controls button {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.tl-controls button:hover { border-color: var(--accent); color: var(--accent); }
+.tl-key { flex: 1; font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
+.tl-key:disabled { opacity: 0.4; cursor: default; }
+
+.tl-scrub { display: flex; align-items: center; gap: 8px; }
+.tl-scrub input { flex: 1; accent-color: var(--accent); }
+.tl-time { font-family: var(--font-mono); font-size: 11px; color: var(--text); min-width: 44px; text-align: right; }
+
+.tl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.tl-dur { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
+.tl-dur input {
+  width: 60px; padding: 4px 6px;
+  border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 11px;
+}
+.tl-clear {
+  padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--bg); color: var(--text-dim); font-size: 11px; cursor: pointer;
+}
+.tl-clear:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
+.tl-clear:disabled { opacity: 0.4; cursor: default; }
+
+.tl-keys { display: flex; flex-wrap: wrap; gap: 4px; }
+.tl-keychip {
+  padding: 3px 7px; border: 1px solid var(--accent); border-radius: 999px;
+  background: var(--accent-glow); color: var(--accent);
+  font-family: var(--font-mono); font-size: 10px; cursor: pointer;
+}
+.tl-hint { font-size: 11px; color: var(--text-dim); line-height: 1.4; }

@@ -14,6 +14,7 @@ import Outliner from '@/features/outliner/Outliner.jsx';
 import Inspector from '@/features/inspector/Inspector.jsx';
 import EditorTools from '@/features/tools/EditorTools.jsx';
 import AnalysisPanel from '@/features/analysis/AnalysisPanel.jsx';
+import Timeline from '@/features/animation/Timeline.jsx';
 import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
@@ -466,6 +467,7 @@ export default function App() {
             <EditorTools />
             <Outliner />
             <Inspector />
+            <Timeline />
             <AnalysisPanel />
           </div>
         </div>

@@ -17,6 +17,7 @@ import { JointRenderer } from '@/viewport/renderers/JointRenderer.js';
 import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { useEditorStore } from '@/state/editorStore.js';
+import { useAnimationStore } from '@/state/animationStore.js';
 import { commands } from '@/core/commands/index.js';
 import { computeFK, buildChildJointMap, originForChildWorld, mat } from '@/kinematics/modelFK.js';
 import { jointLoads, centerOfMass } from '@/kinematics/analysis.js';
@@ -116,13 +117,36 @@ export class ModelEditor {
     this._onSelection(useSelectionStore.getState());
   }
 
-  /** Called every render frame by SimCanvas. Steps physics and renders sim poses. */
+  /** Called every render frame by SimCanvas: physics sim, else animation preview. */
   tick() {
-    if (!this._sim) return;
-    this._sim.step();
-    const poses = this._sim.poses();
-    this.bodyRenderer.sync(this._doc, poses);
-    this.jointRenderer.sync(this._doc, poses);
+    if (this._sim) {
+      this._sim.step();
+      const poses = this._sim.poses();
+      this.bodyRenderer.sync(this._doc, poses);
+      this.jointRenderer.sync(this._doc, poses);
+      return;
+    }
+
+    const anim = useAnimationStore.getState();
+    if (anim.preview) {
+      if (anim.playing) anim.advance(1 / 60);
+      const values = anim.sample(anim.playhead);
+      const fk = this._fkWithOverrides(this._doc, values);
+      this.bodyRenderer.sync(this._doc, fk);
+      this.jointRenderer.sync(this._doc, fk);
+      this._animActive = true;
+    } else if (this._animActive) {
+      this._animActive = false;
+      this._syncModel(this._doc); // restore model pose
+    }
+  }
+
+  _fkWithOverrides(doc, values) {
+    const joints = {};
+    for (const [id, j] of Object.entries(doc.joints)) {
+      joints[id] = id in values ? { ...j, state: { ...j.state, value: values[id] } } : j;
+    }
+    return computeFK({ ...doc, joints });
   }
 
   _applySnap(snap) {

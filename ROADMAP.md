@@ -135,6 +135,7 @@ telemetry; DDS/IDL comms.
 **Phase 12 — AI layer (SLM/VLM/ALM).** Natural-language command → actions (LLM
 copilot grounded in the model + IDL); **VLM** vision perception/teleop; motion
 synthesis / RL hooks; "describe a robot → it builds it"; vision-guided pick demos.
+and others like extensions like claude code chat extension in vs code which has full control of platform and can directly do whatever i say like buid a simple robot arm with 3 joints, etc like that
 
 **Phase 13 — Scripting & extensibility.** Safe **JS scripting console** over the
 command bus; then **Python** via the sidecar; **plugin/addon system** (Blender-style);

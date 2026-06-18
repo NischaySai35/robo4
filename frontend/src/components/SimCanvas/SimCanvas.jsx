@@ -29,6 +29,7 @@ import { serializeProject, parseProject } from '../../persistence/project.js';
 import { saveAutosave, loadAutosave } from '../../persistence/storage.js';
 import { downloadBlob, writeProjectToHandle } from '../../persistence/fileIO.js';
 import { useDocStore } from '../../store/docStore.js';
+import { useHistoryStore } from '../../store/historyStore.js';
 
 const _raycaster = new THREE.Raycaster();
 
@@ -133,6 +134,8 @@ export default function SimCanvas() {
   const activeFKRef    = useRef(null);      // current active RobotFK ref object (passed to Interaction)
   const appliedActiveRef = useRef('module-0'); // which module is CURRENTLY applied (imperative guard)
   const xDragRef         = useRef({ pickup: null }); // cross-module drag session state
+  const layoutAnimRef    = useRef(null);             // active module-relayout tween
+  const historyRef       = useRef({ undo: [], redo: [], last: null }); // undo/redo snapshots
 
   // ── One-time mount ───────────────────────────────────────────────────────────
   useEffect(() => {
@@ -208,7 +211,8 @@ export default function SimCanvas() {
       return boxes;
     };
 
-    // extraTick: update FK pose for all inactive modules each frame
+    // extraTick: update FK pose for all inactive modules each frame, and advance
+    // any in-progress module-relayout animation (e.g. disconnect-all).
     renderLoop.extraTick = () => {
       const mStore = useMultiStore.getState();
       const activeMid = mStore.activeModuleId;
@@ -217,6 +221,31 @@ export default function SimCanvas() {
         const mState = mStore.modules.find(m => m.id === mid);
         if (!mState) continue;
         robotFK.updateAngles(mState.angles, mState.mode ?? 'horizontal');
+      }
+
+      // Module-relayout tween — lerp each module's group toward its target,
+      // and (for disconnect-all) ease all joints home at the same time.
+      const anim = layoutAnimRef.current;
+      if (anim) {
+        const raw = Math.min((performance.now() - anim.start) / anim.duration, 1);
+        const e = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
+        const activeId = appliedActiveRef.current;
+        for (const it of anim.items) {
+          it.fk.robotGroup.position.lerpVectors(it.startPos, it.endPos, e);
+          it.fk.robotGroup.quaternion.slerpQuaternions(it.startQuat, it.endQuat, e);
+          if (it.startAngles) {
+            const a = it.startAngles.map(v => v * (1 - e));   // ease toward 0 (home)
+            if (it.id === activeId) useArmStore.getState().setAllAngles(a);
+            else                    it.fk.updateAngles(a, it.mode);
+          }
+        }
+        if (raw >= 1) {
+          for (const it of anim.items) {
+            if (it.id === activeId) useArmStore.getState().setAllAngles([0, 0, 0, 0, 0, 0]);
+            else                    it.fk.updateAngles([0, 0, 0, 0, 0, 0], it.mode);
+          }
+          layoutAnimRef.current = null;
+        }
       }
     };
 
@@ -267,6 +296,45 @@ export default function SimCanvas() {
 
     // E-STOP — halt all motion immediately.
     bridge.estop = () => renderLoopRef.current?.cancelMotion();
+
+    // Disconnect every module, home all joints, and lay them out fresh — all
+    // animated smoothly from wherever each module currently is.
+    bridge.disconnectAll = () => {
+      renderLoopRef.current?.cancelMotion();           // stop any drag/home in progress
+      const armState = useArmStore.getState();
+      const before   = useMultiStore.getState();
+      const activeId = appliedActiveRef.current;
+
+      // Snapshot current live transforms + angles BEFORE the store layout changes.
+      const starts = new Map();
+      for (const [mid, { robotFK }] of modulesRef.current) {
+        robotFK.robotGroup.updateMatrixWorld(true);
+        const m = before.modules.find(x => x.id === mid);
+        starts.set(mid, {
+          pos:    robotFK.robotGroup.position.clone(),
+          quat:   robotFK.robotGroup.quaternion.clone(),
+          angles: mid === activeId ? [...armState.jointAngles] : [...(m?.angles ?? [0,0,0,0,0,0])],
+          mode:   mid === activeId ? (armState.mode || 'horizontal') : (m?.mode ?? 'horizontal'),
+        });
+      }
+
+      useMultiStore.getState().disconnectAll(); // clears welds, homes angles, sets layout
+
+      const items = [];
+      for (const mod of useMultiStore.getState().modules) {
+        const fk = modulesRef.current.get(mod.id)?.robotFK;
+        const st = starts.get(mod.id);
+        if (!fk || !st) continue;
+        items.push({
+          id: mod.id, fk, mode: st.mode,
+          startPos: st.pos, startQuat: st.quat, startAngles: st.angles,
+          endPos:  new THREE.Vector3(mod.position.x, mod.position.y, mod.position.z),
+          endQuat: new THREE.Quaternion(mod.quaternion.x, mod.quaternion.y, mod.quaternion.z, mod.quaternion.w),
+        });
+      }
+      layoutAnimRef.current = { items, start: performance.now(), duration: 800 };
+      setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 820);
+    };
 
     renderLoopRef.current = renderLoop;
     renderLoop.start();
@@ -334,7 +402,8 @@ export default function SimCanvas() {
     };
 
     // Replace the whole scene from a parsed project (tears down + rebuilds FKs).
-    bridge.loadScene = (project) => {
+    // opts.fit === false skips the camera refit (used by undo/redo).
+    bridge.loadScene = (project, opts = {}) => {
       const sceneMgr = sceneRef.current;
       if (!sceneMgr) return { ok: false, error: 'scene not ready' };
       let scene;
@@ -373,8 +442,33 @@ export default function SimCanvas() {
       activeFKRef.current = null;
       activateModule(scene.activeModuleId);
 
-      setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 60);
+      if (opts.fit !== false) setTimeout(() => { if (bridge.fitCamera) bridge.fitCamera(); }, 60);
       return { ok: true };
+    };
+
+    // ── Undo / redo (full-scene snapshots) ────────────────────────────────────
+    const applySnapshot = (sceneJSON) => {
+      bridge.loadScene({ format: 'tetrobot-project', version: 1, scene: JSON.parse(sceneJSON) }, { fit: false });
+    };
+    bridge.undo = () => {
+      const h = historyRef.current;
+      if (!h.undo.length) return;
+      if (h.last != null) h.redo.push(h.last);
+      const prev = h.undo.pop();
+      h.last = prev;
+      h.suppressNext = true;
+      applySnapshot(prev);
+      useHistoryStore.getState().setFlags(h.undo.length > 0, h.redo.length > 0);
+    };
+    bridge.redo = () => {
+      const h = historyRef.current;
+      if (!h.redo.length) return;
+      if (h.last != null) h.undo.push(h.last);
+      const next = h.redo.pop();
+      h.last = next;
+      h.suppressNext = true;
+      applySnapshot(next);
+      useHistoryStore.getState().setFlags(h.undo.length > 0, h.redo.length > 0);
     };
 
     // Export all visible module geometry. format ∈ {glb,obj,stl,step}.
@@ -429,6 +523,19 @@ export default function SimCanvas() {
       try {
         const project = serializeProject();
         saveAutosave(project);                       // local crash-safety net
+
+        // Undo history — push the previous settled snapshot when the scene changes.
+        const snap = JSON.stringify(project.scene);
+        const h = historyRef.current;
+        if (h.suppressNext) {
+          h.suppressNext = false;                    // settle after an undo/redo — don't record
+        } else if (h.last !== null && snap !== h.last) {
+          h.undo.push(h.last);
+          if (h.undo.length > 20) h.undo.shift();    // keep ~20 moves
+          h.redo = [];
+        }
+        h.last = snap;
+        useHistoryStore.getState().setFlags(h.undo.length > 0, h.redo.length > 0);
         const doc = useDocStore.getState();
         if (doc.handle) {                            // also write to the open file
           doc.setStatus('saving');
@@ -705,6 +812,10 @@ export default function SimCanvas() {
     rl.activateModule    = (id) => { activateModule(id); useMultiStore.getState().setActiveModule(id); };
     rl.crossModuleStep   = crossModuleStep;
     rl.crossModuleEnd    = crossModuleEnd;
+    rl.isInActiveAssembly = (id) => {
+      const ms = useMultiStore.getState();
+      return assemblyModuleIds(ms.welds, appliedActiveRef.current).has(id);
+    };
   }, [activateModule, crossModuleStep, crossModuleEnd]);
 
   // Cross-module selection/drag is now handled directly by Interaction (it

@@ -1,0 +1,111 @@
+/* ── Menu bar (File / Edit / View / Help + undo/redo) ────────────────────────── */
+
+.menubar {
+  height: 30px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  padding: 0 8px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  z-index: 60;
+  position: relative;
+  user-select: none;
+}
+
+.menubar-menus { display: flex; align-items: stretch; }
+.menu { position: relative; display: flex; }
+
+.menu-label {
+  padding: 0 11px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.menu-label:hover,
+.menu-label--open { background: var(--bg-card); color: var(--accent); }
+
+.menu-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  min-width: 210px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(20, 30, 50, 0.22);
+  padding: 5px;
+  z-index: 70;
+  animation: menu-pop 0.12s ease;
+}
+@keyframes menu-pop { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  width: 100%;
+  padding: 7px 10px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  text-align: left;
+  cursor: pointer;
+  position: relative;
+}
+.menu-item:hover { background: var(--accent-glow); color: var(--accent); }
+.menu-item:disabled { color: var(--text-dim); opacity: 0.45; cursor: default; }
+.menu-item:disabled:hover { background: none; color: var(--text-dim); }
+
+.menu-shortcut {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+.menu-arrow { color: var(--text-dim); font-size: 10px; }
+
+.menu-sep { height: 1px; background: var(--border); margin: 5px 6px; }
+
+.menu-item--sub { padding-right: 10px; }
+.menu-subdropdown {
+  position: absolute;
+  top: -6px;
+  left: 100%;
+  min-width: 130px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(20, 30, 50, 0.22);
+  padding: 5px;
+}
+
+.menubar-tools { display: flex; align-items: center; gap: 3px; }
+.menubar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.menubar-icon:hover:not(:disabled) { background: var(--bg-card); color: var(--accent); border-color: var(--border); }
+.menubar-icon:disabled { opacity: 0.35; cursor: default; }

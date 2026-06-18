@@ -122,6 +122,20 @@ export const useMultiStore = create((set, get) => ({
   clearDSelections()    { set({ dSel1: null, dSel2: null, disconnectError: null }); },
   setDisconnectError(m) { set({ disconnectError: m }); },
 
+  // Remove every weld, home all joints, and lay modules out fresh (z-slots, upright).
+  disconnectAll() {
+    set(s => ({
+      welds: [],
+      modules: s.modules.map((m, i) => ({
+        ...m,
+        angles:     [0, 0, 0, 0, 0, 0],
+        position:   { x: 0, y: 0, z: i * 4.0 },
+        quaternion: { x: 0, y: 0, z: 0, w: 1 },
+      })),
+      disconnectMode: false, dSel1: null, dSel2: null, disconnectError: null,
+    }));
+  },
+
   // Move moduleId back to the first unoccupied z-slot, reset quaternion, and
   // remove any welds directly joining it to the first-selected module.
   applyDisconnect(moduleId) {

@@ -78,8 +78,8 @@
 }
 
 :root {
-  --header-h: 74px;
-  --footer-h: 36px;
+  --header-h: 52px;
+  --footer-h: 30px;
 }
 
 html, body, #root {

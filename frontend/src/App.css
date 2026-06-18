@@ -120,27 +120,27 @@
   display: flex;
   align-items: center;
   gap: 0;
-  padding: 0 28px;
+  padding: 0 16px;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
-  box-shadow: 0 1px 8px rgba(30,48,80,0.06);
+  box-shadow: 0 1px 6px rgba(30,48,80,0.05);
   z-index: 50;
   position: relative;
 }
 
 .app-header-brand {
   display: flex;
-  flex-direction: column;
-  gap: 0;
-  margin-right: 22px;
+  align-items: baseline;
+  gap: 9px;
+  margin-right: 14px;
   flex-shrink: 0;
 }
 
 .app-logo {
   font-family: var(--font-mono);
-  font-size: 26px;
+  font-size: 19px;
   font-weight: 800;
-  letter-spacing: 7px;
+  letter-spacing: 4px;
   background: var(--brand-grad);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
@@ -152,13 +152,12 @@
   display: flex;
   align-items: baseline;
   gap: 6px;
-  margin-top: 3px;
 }
 
 .app-logo-sub {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 2.5px;
+  letter-spacing: 2px;
   color: var(--text-dim);
   text-transform: uppercase;
 }
@@ -166,37 +165,37 @@
 .app-logo-byline {
   font-size: 11px;
   font-weight: 800;
-  letter-spacing: 1.5px;
+  letter-spacing: 1px;
   color: var(--text);
   text-transform: uppercase;
 }
 
 .app-header-sep {
   width: 1px;
-  height: 42px;
+  height: 28px;
   background: var(--border);
   flex-shrink: 0;
-  margin: 0 20px;
+  margin: 0 12px;
 }
 
 /* Navigation tabs */
 .app-nav {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .app-nav-tab {
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 10px 23px;
-  border-radius: 10px;
+  gap: 7px;
+  padding: 7px 15px;
+  border-radius: 8px;
   border: 1px solid transparent;
   background: transparent;
   color: var(--text);
   font-family: var(--font-ui);
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 700;
   letter-spacing: 0.5px;
   cursor: pointer;
@@ -205,8 +204,8 @@
 }
 
 .app-nav-tab svg {
-  width: 17px;
-  height: 17px;
+  width: 15px;
+  height: 15px;
   opacity: 0.75;
   flex-shrink: 0;
   transition: opacity 0.18s;

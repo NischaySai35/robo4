@@ -8,6 +8,8 @@ import ViewControls from './components/ViewControls/ViewControls.jsx';
 import ServoController from './components/ServoController/ServoController.jsx';
 import SimTransmitPanel from './components/SimTransmitPanel/SimTransmitPanel.jsx';
 import ConnectionWindow from './components/ConnectionWindow/ConnectionWindow.jsx';
+import IntroOverlay from './components/IntroOverlay/IntroOverlay.jsx';
+import MenuBar from './components/MenuBar/MenuBar.jsx';
 import { useIntegrationStore } from './store/integrationStore.js';
 import { useArmStore } from './store/armStore.js';
 import { useThemeStore } from './store/themeStore.js';
@@ -93,6 +95,14 @@ function SimToolbar() {
             stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" fill="none"/>
         </svg>
         HOME ALL
+      </button>
+      <button className="sim-tool-btn" onClick={() => bridge.disconnectAll?.()} title="Disconnect all modules and lay them out fresh">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <circle cx="3.5" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
+          <circle cx="12.5" cy="8" r="2" stroke="currentColor" strokeWidth="1.5"/>
+          <path d="M6 6l4-2.5M6 10l4 2.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+        DISCONNECT ALL
       </button>
       <button className="sim-tool-btn sim-tool-btn--danger" onClick={() => bridge.estop?.()} title="Stop all motion now">
         <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
@@ -257,7 +267,7 @@ function AppHeader({ page, setPage }) {
       <div className="app-header-brand">
         <span className="app-logo">TETROBOT</span>
         <span className="app-logo-tagline">
-          <span className="app-logo-sub">modular arms</span>
+          <span className="app-logo-sub">modular robotics</span>
           <span className="app-logo-byline">by nischay sai</span>
         </span>
       </div>
@@ -323,7 +333,7 @@ function AppFooter({ page }) {
     <footer className="app-footer">
       <span className="app-footer-brand">ROBO4</span>
       <span className="app-footer-sep" />
-      <span>Modular Arm Platform</span>
+      <span>Modular Robotics Platform</span>
       <span className="app-footer-sep" />
       <span>6 × ST3215 · ESP32-C3</span>
       <div className="app-footer-space" />
@@ -350,6 +360,7 @@ export default function App() {
   const [page,       setPage]       = useState('sim');
   const [connOpen,   setConnOpen]   = useState(false);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_W);
+  const [showIntro,  setShowIntro]  = useState(true);
 
   // Apply the theme to <html> so CSS [data-theme="dark"] overrides take effect.
   const theme = useThemeStore(s => s.theme);
@@ -392,8 +403,24 @@ export default function App() {
 
   const toggleConn = useCallback(() => setConnOpen(v => !v), []);
 
+  // Global undo/redo shortcuts (ignored while typing in inputs).
+  useEffect(() => {
+    const onKey = (e) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      const tag = e.target?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey)      { e.preventDefault(); bridge.undo?.(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); bridge.redo?.(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   return (
     <div className="app-shell">
+      {showIntro && <IntroOverlay onDone={() => setShowIntro(false)} />}
+      <MenuBar onToggleConn={toggleConn} />
       <AppHeader page={page} setPage={setPage} />
 
       <main className="app-main">

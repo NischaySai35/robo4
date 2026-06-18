@@ -41,6 +41,27 @@ export default function LeftPanel({ style }) {
 
   const activeLabel = modules.find(m => m.id === activeModuleId)?.label ?? 'Module 1';
 
+  const onNewProject = () => {
+    if (!window.confirm('Start a new project? The current scene will be cleared (saved files are untouched).')) return;
+    const fresh = {
+      format: 'tetrobot-project',
+      version: 1,
+      scene: {
+        activeModuleId: 'module-0',
+        nextId: 1,
+        modules: [{
+          id: 'module-0', label: 'Module 1',
+          angles: [0, 0, 0, 0, 0, 0], activeRootId: 'R1',
+          position: { x: 0, y: 0, z: 0 }, quaternion: { x: 0, y: 0, z: 0, w: 1 },
+          mode: 'horizontal',
+        }],
+        welds: [],
+      },
+    };
+    const r = bridge.loadScene?.(fresh);
+    if (r && !r.ok) { alert(r.error); return; }
+    useDocStore.getState().setDoc(null, null); // back to "untitled", unbound
+  };
   const onSaveProject = async () => {
     const res = await saveProjectToFile(serializeProject(), 'tetrobot.nischay');
     if (res) useDocStore.getState().setDoc(res.name, res.handle);
@@ -66,28 +87,33 @@ export default function LeftPanel({ style }) {
 
   return (
     <aside className="left-panel fade-in" style={style}>
-      {/* Project file actions */}
-      <div className="section module-actions">
+      {/* Project file actions — icon buttons */}
+      <div className="section">
         <div className="section-title">PROJECT</div>
-        <button className="add-module-btn" onClick={onOpenProject} title="Open a .nischay project file">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <path d="M2 4h4l1.5 1.5H14V13H2V4z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
-          </svg>
-          OPEN PROJECT
-        </button>
-        <button className="add-module-btn" onClick={onSaveProject} title="Save the scene to a .nischay file">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <path d="M3 2h8l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
-            <path d="M5 2v4h5V2M5 14v-4h6v4" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
-          </svg>
-          SAVE PROJECT
-        </button>
-        <button className="add-module-btn" onClick={() => setExportOpen(true)} title="Export the model (OBJ / STL / STEP / GLB)">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <path d="M8 2v8M8 10l-3-3M8 10l3-3M3 13h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          EXPORT
-        </button>
+        <div className="lp-icon-row">
+          <button className="lp-icon-btn" onClick={onNewProject} title="New project">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M9 2H4v12h8V5L9 2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+              <path d="M8 7.5v3M6.5 9h3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <button className="lp-icon-btn" onClick={onOpenProject} title="Open project (.nischay)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4h4l1.5 1.5H14V13H2V4z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <button className="lp-icon-btn" onClick={onSaveProject} title="Save project (.nischay)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M3 2h8l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+              <path d="M5 2v4h5V2M5 14v-4h6v4" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/>
+            </svg>
+          </button>
+          <button className="lp-icon-btn" onClick={() => setExportOpen(true)} title="Export model (OBJ / STL / STEP / GLB)">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 2v8M8 10l-3-3M8 10l3-3M3 13h10" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Export format chooser */}
@@ -128,53 +154,49 @@ export default function LeftPanel({ style }) {
         </div>
       )}
 
-      {/* Module actions */}
-      <div className="section module-actions">
-        <button
-          className={`delete-module-btn${deleteMode ? ' delete-module-btn--active' : ''}`}
-          onClick={() => setDeleteMode(!deleteMode)}
-          disabled={modules.length <= 1}
-          title={modules.length <= 1 ? 'Cannot delete — at least one module required' : 'Click a module in the viewport to delete it'}
-        >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"
-              stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          {deleteMode ? 'CANCEL DELETE' : 'DELETE MODULE'}
-        </button>
-
-        <button className="add-module-btn" onClick={() => addModule(bridge.computeFreeSpawn?.())} title="Add a new arm module to the scene">
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-          ADD MODULE
-        </button>
-
-        <button
-          className={`connect-btn${connectMode ? ' connect-btn--active' : ''}`}
-          onClick={() => { setConnectMode(!connectMode); if (disconnectMode) setDisconnectMode(false); }}
-          title="Select end-faces on two modules to join them"
-        >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <circle cx="3"  cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
-            <circle cx="13" cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
-            <path d="M5 8h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="2 1.5"/>
-          </svg>
-          {connectMode ? 'CANCEL CONNECT' : 'CONNECT MODULES'}
-        </button>
-
-        <button
-          className={`connect-btn disconnect-btn${disconnectMode ? ' connect-btn--active disconnect-btn--active' : ''}`}
-          onClick={() => { setDisconnectMode(!disconnectMode); if (connectMode) setConnectMode(false); }}
-          title="Click two modules to separate them"
-        >
-          <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
-            <circle cx="3"  cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
-            <circle cx="13" cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
-            <path d="M5.5 6.5l5-3M5.5 9.5l5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-          </svg>
-          {disconnectMode ? 'CANCEL DISCONNECT' : 'DISCONNECT MODULES'}
-        </button>
+      {/* Module actions — icon buttons */}
+      <div className="section">
+        <div className="section-title">MODULE</div>
+        <div className="lp-icon-row">
+          <button className="lp-icon-btn" onClick={() => addModule(bridge.computeFreeSpawn?.())} title="Add module">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M8 2v12M2 8h12" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <button
+            className={`lp-icon-btn${connectMode ? ' lp-icon-btn--active' : ''}`}
+            onClick={() => { setConnectMode(!connectMode); if (disconnectMode) setDisconnectMode(false); }}
+            title={connectMode ? 'Cancel connect' : 'Connect modules'}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="3"  cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
+              <circle cx="13" cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
+              <path d="M5 8h6" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeDasharray="2 1.5"/>
+            </svg>
+          </button>
+          <button
+            className={`lp-icon-btn${disconnectMode ? ' lp-icon-btn--active lp-icon-btn--danger' : ''}`}
+            onClick={() => { setDisconnectMode(!disconnectMode); if (connectMode) setConnectMode(false); }}
+            title={disconnectMode ? 'Cancel disconnect' : 'Disconnect modules'}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <circle cx="3"  cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
+              <circle cx="13" cy="8" r="2" stroke="currentColor" strokeWidth="1.6"/>
+              <path d="M5.5 6.5l5-3M5.5 9.5l5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
+          </button>
+          <button
+            className={`lp-icon-btn lp-icon-btn--danger${deleteMode ? ' lp-icon-btn--active' : ''}`}
+            onClick={() => setDeleteMode(!deleteMode)}
+            disabled={modules.length <= 1}
+            title={modules.length <= 1 ? 'At least one module required' : (deleteMode ? 'Cancel delete' : 'Delete module')}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M2 4h12M5 4V2h6v2M6 7v5M10 7v5M3 4l1 10h8l1-10"
+                stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* Delete-mode hint */}

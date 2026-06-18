@@ -83,6 +83,50 @@
 }
 .export-cancel:hover { border-color: var(--danger); color: var(--danger); }
 
+/* ── Icon button rows (project / module actions) ─────────────────────────────── */
+
+.lp-icon-row {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.lp-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lp-icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-card-hover);
+}
+.lp-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+.lp-icon-btn:disabled:hover { border-color: var(--border); background: var(--bg-card); color: var(--text-dim); }
+
+.lp-icon-btn--active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.lp-icon-btn--danger:hover { border-color: var(--danger); color: var(--danger); }
+.lp-icon-btn--danger.lp-icon-btn--active {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 /* ── Collapsible section header ──────────────────────────────────────────────── */
 
 .section-collapse {

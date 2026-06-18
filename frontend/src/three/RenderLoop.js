@@ -144,16 +144,21 @@ export class RenderLoop {
 
       const activeId = this.getActiveModuleId ? this.getActiveModuleId() : null;
 
-      if (moduleId && activeId && moduleId !== activeId && this.crossModuleStep) {
-        // Cross-module drag: the dragged rod lives in a welded follower. The base
-        // module stays fixed; the provider builds the combined chain and solves.
-        this._activeDragRodId    = rodId;
-        this._activeDragModuleId = moduleId;
-        this.crossModuleStep(moduleId, rodId, this._activeDragNdc, this.getStore().mode || 'horizontal', true);
-        return;
+      if (moduleId && activeId && moduleId !== activeId) {
+        const connected = this.isInActiveAssembly ? this.isInActiveAssembly(moduleId) : false;
+        if (connected && this.crossModuleStep) {
+          // Cross-module drag: the dragged rod lives in a welded follower. The base
+          // module stays fixed; the provider builds the combined chain and solves.
+          this._activeDragRodId    = rodId;
+          this._activeDragModuleId = moduleId;
+          this.crossModuleStep(moduleId, rodId, this._activeDragNdc, this.getStore().mode || 'horizontal', true);
+          return;
+        }
+        // Not connected → make the dragged module active, then drag it normally.
+        if (this.activateModule) this.activateModule(moduleId);
       }
 
-      // Single-module drag (rod in the active/base module) — unchanged path.
+      // Single-module drag (rod in the active/base module).
       this._activeDragModuleId = null;
       const state       = this.getStore();
       const rootIdx     = ROD_IDS.indexOf(state.activeRootId);

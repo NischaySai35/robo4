@@ -1,0 +1,58 @@
+.et-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-family: var(--font-ui);
+}
+
+.et-row { display: flex; align-items: center; gap: 8px; }
+.et-label { font-size: 12px; color: var(--text-dim); font-weight: 600; min-width: 40px; }
+
+.et-select, .et-num {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.et-select { flex: 1; }
+.et-num { width: 64px; }
+.et-select:focus, .et-num:focus { outline: none; border-color: var(--accent); }
+
+.et-check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text); cursor: pointer; }
+.et-check input { accent-color: var(--accent); }
+
+.et-measure {
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.et-measure:hover { border-color: var(--accent); color: var(--accent); }
+.et-measure--on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.et-result {
+  font-size: 13px;
+  color: var(--text);
+  text-align: center;
+  padding: 4px;
+  background: var(--accent-glow);
+  border-radius: 6px;
+}
+.et-result strong { font-family: var(--font-mono); color: var(--accent); }

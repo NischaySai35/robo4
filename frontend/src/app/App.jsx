@@ -12,6 +12,7 @@ import IntroOverlay from '@/features/intro/IntroOverlay.jsx';
 import MenuBar from '@/features/menu/MenuBar.jsx';
 import Outliner from '@/features/outliner/Outliner.jsx';
 import Inspector from '@/features/inspector/Inspector.jsx';
+import EditorTools from '@/features/tools/EditorTools.jsx';
 import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
@@ -461,6 +462,7 @@ export default function App() {
           {/* Model editor sidebar — reserves its own column so it never overlaps
               the in-canvas gizmo / view controls. */}
           <div className="model-dock">
+            <EditorTools />
             <Outliner />
             <Inspector />
           </div>

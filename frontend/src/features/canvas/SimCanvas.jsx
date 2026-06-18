@@ -15,6 +15,7 @@ import { RobotFK }      from '@/viewport/renderers/RobotFK.js';
 import { Interaction }  from '@/viewport/Interaction.js';
 import { RenderLoop }   from '@/viewport/RenderLoop.js';
 import { ModelEditor }  from '@/viewport/ModelEditor.js';
+import { MeasureTool }  from '@/viewport/MeasureTool.js';
 import { useArmStore, JOINT_LIMIT } from '@/state/armStore.js';
 import { useMultiStore } from '@/state/multiStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
@@ -32,6 +33,7 @@ import { downloadBlob, writeProjectToHandle } from '@/core/serialization/fileIO.
 import { useDocStore } from '@/state/docStore.js';
 import { useHistoryStore } from '@/state/historyStore.js';
 import { useModelStore } from '@/state/modelStore.js';
+import { useEditorStore } from '@/state/editorStore.js';
 
 const _raycaster = new THREE.Raycaster();
 
@@ -133,6 +135,7 @@ export default function SimCanvas() {
   const renderLoopRef  = useRef(null);      // RenderLoop
   const interactionRef = useRef(null);      // Interaction
   const modelEditorRef = useRef(null);      // ModelEditor (Phase 1 model layer)
+  const measureToolRef = useRef(null);      // MeasureTool (Phase 3)
   const modulesRef     = useRef(new Map()); // moduleId → { robotFK }
   const activeFKRef    = useRef(null);      // current active RobotFK ref object (passed to Interaction)
   const appliedActiveRef = useRef('module-0'); // which module is CURRENTLY applied (imperative guard)
@@ -164,6 +167,28 @@ export default function SimCanvas() {
       domElement: sceneMgr.renderer.domElement,
     });
     modelEditorRef.current = modelEditor;
+
+    // Phase 3: measurement tool — raycasts model bodies + arm rods. Toggling
+    // measure mode pauses arm interaction so clicks don't drag the robot.
+    const measureTool = new MeasureTool({
+      scene: sceneMgr.scene,
+      camera: sceneMgr.camera,
+      domElement: sceneMgr.renderer.domElement,
+      getMeshes: () => {
+        const arm = [];
+        for (const [, { robotFK }] of modulesRef.current) arm.push(...robotFK.interactables);
+        return [modelEditor.bodyRenderer.group, ...arm];
+      },
+      onResult: (r) => useEditorStore.getState().setMeasureResult(r),
+    });
+    measureToolRef.current = measureTool;
+    let lastMeasure = false;
+    const unsubMeasure = useEditorStore.subscribe((s) => {
+      if (s.measureMode === lastMeasure) return;
+      lastMeasure = s.measureMode;
+      if (s.measureMode) { measureTool.enable(); interaction.paused = true; }
+      else { measureTool.disable(); interaction.paused = false; }
+    });
 
     // First module FK
     const initialModule = multiStore.modules[0];
@@ -586,6 +611,8 @@ export default function SimCanvas() {
       unsubTheme();
       renderLoop.stop();
       interaction.dispose();
+      unsubMeasure();
+      measureTool.dispose();
       modelEditor.dispose();
       sceneMgr.dispose();
       modulesRef.current.clear();

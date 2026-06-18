@@ -11,6 +11,7 @@ import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { commands } from '@/core/commands/index.js';
 import { JointType, GeometryType } from '@/core/model/index.js';
+import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation.js';
 
 const r3 = (v) => Math.round((v ?? 0) * 1000) / 1000;
 
@@ -57,6 +58,8 @@ function BodyInspector({ body, dispatch }) {
 
       <div className="in-group">TRANSFORM</div>
       <Vec3 label="Position" value={body.transform.position} onChange={(v) => upT({ position: v })} />
+      <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(body.transform.quaternion)}
+        onChange={(v) => upT({ quaternion: eulerDegToQuatArr(v) })} step={5} />
       <Vec3 label="Scale" value={body.transform.scale} onChange={(v) => upT({ scale: v })} step={0.05} />
 
       <div className="in-group">GEOMETRY · {g.type}</div>

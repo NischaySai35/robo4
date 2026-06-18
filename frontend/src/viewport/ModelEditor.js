@@ -14,6 +14,7 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer.js';
 import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
+import { useEditorStore } from '@/state/editorStore.js';
 import { commands } from '@/core/commands/index.js';
 
 export class ModelEditor {
@@ -42,9 +43,26 @@ export class ModelEditor {
     });
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
 
+    // Gizmo snapping (Phase 3).
+    this._applySnap(useEditorStore.getState().snap);
+    this._unsubSnap = useEditorStore.subscribe((s) => this._applySnap(s.snap));
+
     // Initial paint.
     this.bodyRenderer.sync(useModelStore.getState().doc);
     this._onSelection(useSelectionStore.getState());
+  }
+
+  _applySnap(snap) {
+    const t = this.transform;
+    if (snap?.enabled) {
+      t.setTranslationSnap(snap.translate);
+      t.setRotationSnap((snap.rotateDeg * Math.PI) / 180);
+      t.setScaleSnap?.(snap.scale);
+    } else {
+      t.setTranslationSnap(null);
+      t.setRotationSnap(null);
+      t.setScaleSnap?.(null);
+    }
   }
 
   _onSelection(s) {
@@ -92,6 +110,7 @@ export class ModelEditor {
   dispose() {
     this._unsubModel?.();
     this._unsubSel?.();
+    this._unsubSnap?.();
     this.transform.detach();
     this.transform.dispose?.();
     this.transform.parent?.remove(this.transform);

@@ -87,6 +87,24 @@ export function updateJoint(jointId, patch) {
   );
 }
 
+/** Set many joint values at once (e.g. an IK solution) as one undoable step. */
+export function setJointValues(values) {
+  const prev = {};
+  return command(
+    'Solve IK',
+    (doc) => Object.entries(values).reduce((d, [id, v]) => {
+      const j = getJoint(d, id);
+      if (!j) return d;
+      prev[id] = j.state?.value ?? 0;
+      return putEntity(d, { ...j, state: { ...j.state, value: v } });
+    }, doc),
+    (doc) => Object.entries(prev).reduce((d, [id, v]) => {
+      const j = getJoint(d, id);
+      return j ? putEntity(d, { ...j, state: { ...j.state, value: v } }) : d;
+    }, doc),
+  );
+}
+
 /** Set a joint's current articulation value (rad or m). */
 export function setJointValue(jointId, value) {
   let prev = null;

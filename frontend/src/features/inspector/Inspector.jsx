@@ -13,6 +13,9 @@ import { commands } from '@/core/commands/index.js';
 import { JointType, GeometryType, makeMaterial } from '@/core/model/index.js';
 import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation.js';
 import { duplicate, mirror, array } from '@/features/ops/bodyOps.js';
+import { computeFK } from '@/kinematics/modelFK.js';
+import { solveModelIK, chainJoints } from '@/kinematics/modelIK.js';
+import { useState } from 'react';
 
 const r3 = (v) => Math.round((v ?? 0) * 1000) / 1000;
 const clamp01 = (v) => Math.max(0, Math.min(1, v));
@@ -47,6 +50,28 @@ function Vec3({ label, value, onChange, step = 0.1 }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function IkSection({ body, doc, dispatch }) {
+  const [target, setTarget] = useState(null);
+  const chain = chainJoints(doc, body.id);
+  if (chain.length === 0) return null;
+  const tip = computeFK(doc).get(body.id)?.position ?? [0, 0, 0];
+  const t = target ?? tip;
+  const solve = () => {
+    const res = solveModelIK(doc, body.id, t);
+    if (res) dispatch(commands.setJointValues(res));
+  };
+  return (
+    <>
+      <div className="in-group">INVERSE KINEMATICS · {chain.length} DOF</div>
+      <Vec3 label="Target (world)" value={t} onChange={setTarget} />
+      <div className="in-ops">
+        <button onClick={solve}>Solve IK</button>
+        <button onClick={() => setTarget(null)}>Reset target</button>
+      </div>
+    </>
   );
 }
 
@@ -128,6 +153,8 @@ function BodyInspector({ body, doc, dispatch, select }) {
         <button onClick={() => addOne(mirror(body, 2))}>Mirror Z</button>
         <button onClick={() => dispatch(commands.addBodies(array(body, 3, [0.8, 0, 0])))}>Array ×3</button>
       </div>
+
+      <IkSection body={body} doc={doc} dispatch={dispatch} />
     </>
   );
 }

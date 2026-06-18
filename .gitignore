@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# TETROBOT — git ignore
+# Covers the whole repo (root tooling, frontend/ web+Electron app, backend/, esp32/)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Dependencies ─────────────────────────────────────────────────────────────
+node_modules/
+.pnp/
+.pnp.js
+jspm_packages/
+
+# ── Build output / bundles ───────────────────────────────────────────────────
+dist/
+dist-ssr/
+build/
+out/
+.vite/
+*.tsbuildinfo
+
+# ── Electron packaged installers / app bundles ───────────────────────────────
+release/
+release-builds/
+frontend/release/
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.snap
+*.blockmap
+# electron-builder cache
+.electron-builder/
+electron-builder.env
+
+# ── Logs & caches ────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm/
+.eslintcache
+.cache/
+*.local
+
+# ── Python (backend / tooling) ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+
+# ── Environment / secrets ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Editors / IDEs ───────────────────────────────────────────────────────────
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS cruft ─────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ── ESP32 / PlatformIO / Arduino build artifacts ─────────────────────────────
+esp32/.pio/
+esp32/build/
+*.bin
+*.elf
+*.map
+
+# ── Local dev scratch (uncomment to ignore if these are throwaway) ────────────
+# /verify*.js
+# /test_*.mjs
+# /screenshot_*.png
+# /home_*.png

@@ -1,0 +1,21 @@
+# Normalize line endings: keep LF in the repo, let Windows check out as it likes.
+* text=auto eol=lf
+
+# Windows-native scripts stay CRLF
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# Binary / asset types — never diff or normalize
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.glb  binary
+*.gltf binary
+*.stl  binary
+*.step binary
+*.stp  binary
+*.nischay binary
+*.bin  binary

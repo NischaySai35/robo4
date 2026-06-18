@@ -83,7 +83,7 @@ esp32/build/
 *.map
 
 # ── Local dev scratch (uncomment to ignore if these are throwaway) ────────────
-# /verify*.js
-# /test_*.mjs
-# /screenshot_*.png
-# /home_*.png
+/verify*.js
+/test_*.mjs
+/screenshot_*.png
+/home_*.png

@@ -26,6 +26,7 @@ function createWindow() {
     backgroundColor: '#e4eaf3',
     autoHideMenuBar: true, // hide the default OS menu — TETROBOT has its own MenuBar
     title: 'TETROBOT',
+    icon: path.join(__dirname, 'icon.ico'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

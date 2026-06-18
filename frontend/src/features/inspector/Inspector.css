@@ -101,3 +101,28 @@
   min-width: 42px;
   text-align: right;
 }
+
+.in-mat { display: flex; flex-direction: column; gap: 6px; }
+.in-mat-color { display: flex; align-items: center; justify-content: space-between; }
+.in-mat-color > span { font-size: 11px; color: var(--text-dim); }
+.in-mat-color input[type=color] {
+  width: 48px; height: 26px; padding: 0;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--bg); cursor: pointer;
+}
+.in-mat-lbl { font-size: 10px; color: var(--text-dim); min-width: 44px; }
+
+.in-ops { display: flex; flex-wrap: wrap; gap: 6px; }
+.in-ops button {
+  flex: 1 1 calc(50% - 3px);
+  padding: 6px 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.in-ops button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }

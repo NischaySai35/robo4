@@ -10,10 +10,18 @@ import './Inspector.css';
 import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { commands } from '@/core/commands/index.js';
-import { JointType, GeometryType } from '@/core/model/index.js';
+import { JointType, GeometryType, makeMaterial } from '@/core/model/index.js';
 import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation.js';
+import { duplicate, mirror, array } from '@/features/ops/bodyOps.js';
 
 const r3 = (v) => Math.round((v ?? 0) * 1000) / 1000;
+const clamp01 = (v) => Math.max(0, Math.min(1, v));
+const rgbToHex = ([r, g, b]) =>
+  '#' + [r, g, b].map((v) => Math.round(clamp01(v) * 255).toString(16).padStart(2, '0')).join('');
+const hexToRgb = (hex) => {
+  const n = parseInt(hex.slice(1), 16);
+  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
+};
 
 function Num({ label, value, onChange, step = 0.1 }) {
   return (
@@ -42,12 +50,20 @@ function Vec3({ label, value, onChange, step = 0.1 }) {
   );
 }
 
-function BodyInspector({ body, dispatch }) {
+function BodyInspector({ body, doc, dispatch, select }) {
   const id = body.id;
   const up = (patch) => dispatch(commands.updateBody(id, patch));
   const upT = (patch) => up({ transform: { ...body.transform, ...patch } });
   const g = body.visual?.geometry ?? {};
   const upGeo = (geo) => up({ visual: { ...body.visual, geometry: { ...g, ...geo } } });
+
+  const mat = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
+  const color = mat?.color ?? [0.62, 0.66, 0.72, 1];
+  const editMat = (patch) => {
+    if (mat) dispatch(commands.updateMaterial(mat.id, patch));
+    else dispatch(commands.setBodyMaterial(id, makeMaterial({ color, ...patch })));
+  };
+  const addOne = (b) => { dispatch(commands.addBody(b)); select(b.id, 'body'); };
 
   return (
     <>
@@ -76,9 +92,42 @@ function BodyInspector({ body, dispatch }) {
         <Num label="Radius" value={g.radius} onChange={(v) => upGeo({ radius: v })} step={0.05} />
       )}
 
+      <div className="in-group">MATERIAL</div>
+      <div className="in-mat">
+        <label className="in-mat-color">
+          <span>Color</span>
+          <input type="color" value={rgbToHex(color)}
+            onChange={(e) => editMat({ color: [...hexToRgb(e.target.value), color[3]] })} />
+        </label>
+        <div className="in-slider">
+          <span className="in-mat-lbl">Metal</span>
+          <input type="range" min="0" max="1" step="0.05" value={mat?.metalness ?? 0.45}
+            onChange={(e) => editMat({ metalness: parseFloat(e.target.value) })} />
+        </div>
+        <div className="in-slider">
+          <span className="in-mat-lbl">Rough</span>
+          <input type="range" min="0" max="1" step="0.05" value={mat?.roughness ?? 0.45}
+            onChange={(e) => editMat({ roughness: parseFloat(e.target.value) })} />
+        </div>
+        <div className="in-slider">
+          <span className="in-mat-lbl">Opacity</span>
+          <input type="range" min="0" max="1" step="0.05" value={color[3]}
+            onChange={(e) => editMat({ color: [color[0], color[1], color[2], parseFloat(e.target.value)] })} />
+        </div>
+      </div>
+
       <div className="in-group">INERTIAL</div>
       <Num label="Mass (kg)" value={body.inertial?.mass} onChange={(v) =>
         up({ inertial: { ...body.inertial, mass: v } })} step={0.1} />
+
+      <div className="in-group">OPERATIONS</div>
+      <div className="in-ops">
+        <button onClick={() => addOne(duplicate(body))}>Duplicate</button>
+        <button onClick={() => addOne(mirror(body, 0))}>Mirror X</button>
+        <button onClick={() => addOne(mirror(body, 1))}>Mirror Y</button>
+        <button onClick={() => addOne(mirror(body, 2))}>Mirror Z</button>
+        <button onClick={() => dispatch(commands.addBodies(array(body, 3, [0.8, 0, 0])))}>Array ×3</button>
+      </div>
     </>
   );
 }
@@ -129,6 +178,7 @@ export default function Inspector() {
   const setGizmoMode = useSelectionStore((s) => s.setGizmoMode);
   const selectedId = useSelectionStore((s) => s.selectedId);
   const kind = useSelectionStore((s) => s.kind);
+  const select = useSelectionStore((s) => s.select);
 
   const entity = selectedId
     ? (kind === 'body' ? doc.bodies[selectedId] : doc.joints[selectedId])
@@ -153,7 +203,7 @@ export default function Inspector() {
 
       <div className="in-body">
         {!entity && <div className="in-empty">Select a body or joint in the Model panel.</div>}
-        {entity && kind === 'body' && <BodyInspector body={entity} dispatch={dispatch} />}
+        {entity && kind === 'body' && <BodyInspector body={entity} doc={doc} dispatch={dispatch} select={select} />}
         {entity && kind === 'joint' && <JointInspector joint={entity} dispatch={dispatch} />}
       </div>
     </div>

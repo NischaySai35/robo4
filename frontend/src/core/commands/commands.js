@@ -123,3 +123,39 @@ export function addAsset(asset) {
     (doc) => removeFrom(doc, 'assets', asset.id),
   );
 }
+
+export function updateMaterial(id, patch) {
+  let prev = null;
+  return command(
+    'Edit material',
+    (doc) => { prev = doc.materials[id]; return prev ? putEntity(doc, { ...prev, ...patch }) : doc; },
+    (doc) => (prev ? putEntity(doc, prev) : doc),
+  );
+}
+
+/** Atomically add a material and assign it to a body (single undo step). */
+export function setBodyMaterial(bodyId, material) {
+  let prevBody = null;
+  return command(
+    'Set material',
+    (doc) => {
+      prevBody = getBody(doc, bodyId);
+      if (!prevBody) return doc;
+      const d = putEntity(doc, material);
+      return putEntity(d, { ...prevBody, visual: { ...prevBody.visual, materialId: material.id } });
+    },
+    (doc) => {
+      const d = removeFrom(doc, 'materials', material.id);
+      return prevBody ? putEntity(d, prevBody) : d;
+    },
+  );
+}
+
+/** Add several bodies at once (for array/duplicate). */
+export function addBodies(bodies) {
+  return command(
+    `Add ${bodies.length} bodies`,
+    (doc) => bodies.reduce((d, b) => putEntity(d, b), doc),
+    (doc) => bodies.reduce((d, b) => removeFrom(d, 'bodies', b.id), doc),
+  );
+}

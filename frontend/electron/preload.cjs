@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld('tetrobot', {
 
   // Read a known path without a dialog. opts: { filePath, binary }
   readFile: (opts) => ipcRenderer.invoke('file:read', opts),
+
+  // Optional cloud AI bridge. The main process reads ANTHROPIC_API_KEY.
+  askAnthropic: (opts) => ipcRenderer.invoke('ai:anthropic', opts),
 });

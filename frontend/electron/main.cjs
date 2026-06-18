@@ -110,3 +110,42 @@ ipcMain.handle('file:read', async (_evt, { filePath, binary } = {}) => {
   const buf = await fs.readFile(filePath);
   return { path: filePath, name: path.basename(filePath), data: binary ? new Uint8Array(buf) : buf.toString('utf8') };
 });
+
+// Cloud copilot IPC. Keep API keys in the main process, never in renderer code.
+ipcMain.handle('ai:anthropic', async (_evt, { system, prompt } = {}) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { ok: false, error: 'Set ANTHROPIC_API_KEY before launching Electron.' };
+  if (!prompt) return { ok: false, error: 'Prompt is required.' };
+
+  const model = process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-6';
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 900,
+        temperature: 0.1,
+        system,
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    });
+
+    const json = await res.json().catch(() => null);
+    if (!res.ok) {
+      return { ok: false, error: json?.error?.message || `Anthropic request failed (${res.status})` };
+    }
+    const text = (json?.content || [])
+      .filter((part) => part.type === 'text')
+      .map((part) => part.text)
+      .join('\n')
+      .trim();
+    return { ok: true, model, text };
+  } catch (err) {
+    return { ok: false, error: err?.message || 'Anthropic request failed.' };
+  }
+});

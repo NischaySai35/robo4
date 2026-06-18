@@ -177,3 +177,23 @@ export function addBodies(bodies) {
     (doc) => bodies.reduce((d, b) => removeFrom(d, 'bodies', b.id), doc),
   );
 }
+
+/** Add mixed model entities as one undoable operation (AI/scripting/generators). */
+export function addEntities(entities, label = `Add ${entities.length} entities`) {
+  const collectionByKind = {
+    body: 'bodies',
+    joint: 'joints',
+    material: 'materials',
+    asset: 'assets',
+    frame: 'frames',
+    constraint: 'constraints',
+  };
+  return command(
+    label,
+    (doc) => entities.reduce((d, entity) => putEntity(d, entity), doc),
+    (doc) => entities.reduceRight((d, entity) => {
+      const collection = collectionByKind[entity.kind];
+      return collection ? removeFrom(d, collection, entity.id) : d;
+    }, doc),
+  );
+}

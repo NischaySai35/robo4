@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react';
 import { fileURLToPath, URL } from 'node:url';
 
 export default defineConfig({
+  root: fileURLToPath(new URL('.', import.meta.url)),
   plugins: [react()],
   // '@' → src, so cross-directory imports don't depend on file depth (survives
   // restructures). Co-located imports (./Foo.css) stay relative. See ARCHITECTURE.md.

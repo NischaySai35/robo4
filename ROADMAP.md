@@ -138,9 +138,21 @@ copilot grounded in the model + IDL); **VLM** vision perception/teleop; motion
 synthesis / RL hooks; "describe a robot → it builds it"; vision-guided pick demos.
 and others like extensions like claude code chat extension in vs code which has full control of platform and can directly do whatever i say like buid a simple robot arm with 3 joints, etc like that
 
+Current seed implementation:
+- Docked **Copilot** panel in the model editor, grounded in current model counts.
+- Optional Electron Anthropic bridge via `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`.
+- Local offline planner for primitives, homing, and "build a robot arm with N joints".
+- AI actions execute through the command bus, so generated model edits are undoable.
+
 **Phase 13 — Scripting & extensibility.** Safe **JS scripting console** over the
 command bus; then **Python** via the sidecar; **plugin/addon system** (Blender-style);
 macros & batch ops.
+
+Current seed implementation:
+- Docked **JS Macros** panel with a restricted `api` object for model operations.
+- Macro API can build arms, add primitives, set joints, move/color/select/remove bodies, home, and fit view.
+- Scripted edits use the same command bus as GUI and Copilot edits, so they remain undoable.
+- Snippet buttons provide quick arm and part-generation macros.
 
 **Phase 14 — Platform polish.** Shortcuts everywhere + **command palette**; theming;
 performance (instancing/LOD/workers); versioning/collaboration; docs; auto-update.

@@ -16,6 +16,8 @@ import EditorTools from '@/features/tools/EditorTools.jsx';
 import AnalysisPanel from '@/features/analysis/AnalysisPanel.jsx';
 import Timeline from '@/features/animation/Timeline.jsx';
 import HardwarePanel from '@/features/hardware/HardwarePanel.jsx';
+import CopilotPanel from '@/features/ai/CopilotPanel.jsx';
+import ScriptingPanel from '@/features/scripting/ScriptingPanel.jsx';
 import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
@@ -457,6 +459,8 @@ export default function App() {
             <EditorTools />
             <Outliner />
             <Inspector />
+            <CopilotPanel />
+            <ScriptingPanel />
             <Timeline />
             <AnalysisPanel />
             <HardwarePanel />

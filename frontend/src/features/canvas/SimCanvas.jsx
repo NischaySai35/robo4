@@ -14,6 +14,7 @@ import { SceneManager } from '@/viewport/SceneManager.js';
 import { RobotFK }      from '@/viewport/renderers/RobotFK.js';
 import { Interaction }  from '@/viewport/Interaction.js';
 import { RenderLoop }   from '@/viewport/RenderLoop.js';
+import { ModelEditor }  from '@/viewport/ModelEditor.js';
 import { useArmStore, JOINT_LIMIT } from '@/state/armStore.js';
 import { useMultiStore } from '@/state/multiStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
@@ -130,6 +131,7 @@ export default function SimCanvas() {
   const sceneRef       = useRef(null);      // SceneManager
   const renderLoopRef  = useRef(null);      // RenderLoop
   const interactionRef = useRef(null);      // Interaction
+  const modelEditorRef = useRef(null);      // ModelEditor (Phase 1 model layer)
   const modulesRef     = useRef(new Map()); // moduleId → { robotFK }
   const activeFKRef    = useRef(null);      // current active RobotFK ref object (passed to Interaction)
   const appliedActiveRef = useRef('module-0'); // which module is CURRENTLY applied (imperative guard)
@@ -150,6 +152,17 @@ export default function SimCanvas() {
     sceneRef.current = sceneMgr;
     sceneMgr.applyTheme(useThemeStore.getState().theme);
     const unsubTheme = useThemeStore.subscribe(s => sceneMgr.applyTheme(s.theme));
+
+    // Phase 1: model-driven layer (generic BodyRenderer + transform gizmo).
+    // Renders entities from the core model alongside the legacy arm; selection is
+    // driven by the Outliner panel so it never competes with arm interaction.
+    const modelEditor = new ModelEditor({
+      scene: sceneMgr.scene,
+      camera: sceneMgr.camera,
+      controls: sceneMgr.controls,
+      domElement: sceneMgr.renderer.domElement,
+    });
+    modelEditorRef.current = modelEditor;
 
     // First module FK
     const initialModule = multiStore.modules[0];
@@ -567,6 +580,7 @@ export default function SimCanvas() {
       unsubTheme();
       renderLoop.stop();
       interaction.dispose();
+      modelEditor.dispose();
       sceneMgr.dispose();
       modulesRef.current.clear();
       sceneRef.current  = null;

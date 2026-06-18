@@ -358,6 +358,22 @@
 
 .top-right-cluster > * { pointer-events: auto; }
 
+/* ── Model editor dock (Outliner + Inspector) ────────────────────────────────── */
+
+.model-dock {
+  position: absolute;
+  top: 76px;
+  right: 16px;
+  bottom: 44px;
+  width: 280px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  z-index: 9;
+  pointer-events: none;
+}
+.model-dock > * { pointer-events: auto; }
+
 /* ── Panel resize handle ─────────────────────────────────────────────────────── */
 
 .panel-resize-handle {

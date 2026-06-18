@@ -10,6 +10,8 @@ import SimTransmitPanel from '@/features/connection/SimTransmitPanel.jsx';
 import ConnectionWindow from '@/features/connection/ConnectionWindow.jsx';
 import IntroOverlay from '@/features/intro/IntroOverlay.jsx';
 import MenuBar from '@/features/menu/MenuBar.jsx';
+import Outliner from '@/features/outliner/Outliner.jsx';
+import Inspector from '@/features/inspector/Inspector.jsx';
 import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useArmStore } from '@/state/armStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
@@ -452,6 +454,10 @@ export default function App() {
             <div className="top-right-cluster">
               <NavigationGizmo />
               <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />
+            </div>
+            <div className="model-dock">
+              <Outliner />
+              <Inspector />
             </div>
             <StatusBar />
           </div>

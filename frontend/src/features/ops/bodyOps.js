@@ -11,6 +11,14 @@ function cloneBody(body, overrides = {}) {
   return { ...c, ...overrides };
 }
 
+/** A copy at the EXACT same place (Blender-style "Duplicate" → grab to move). */
+export function duplicateInPlace(body) {
+  return cloneBody(body, {
+    name: `${body.name} copy`,
+    transform: structuredClone(body.transform),
+  });
+}
+
 /** A copy offset slightly so it's visible next to the original. */
 export function duplicate(body) {
   const p = body.transform.position;

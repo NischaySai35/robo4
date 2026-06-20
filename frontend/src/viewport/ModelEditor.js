@@ -14,12 +14,15 @@ import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer.js';
 import { JointRenderer } from '@/viewport/renderers/JointRenderer.js';
+import { EditModeController } from '@/viewport/EditModeController.js';
 import { useModelStore } from '@/state/modelStore.js';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { useEditorStore } from '@/state/editorStore.js';
+import { useEditModeStore } from '@/state/editModeStore.js';
 import { useAnimationStore } from '@/state/animationStore.js';
 import { commands } from '@/core/commands/index.js';
-import { computeFK, buildChildJointMap, originForChildWorld, mat } from '@/kinematics/modelFK.js';
+import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild } from '@/kinematics/modelFK.js';
+import { computeSnap, SnapIndicator } from '@/viewport/Snapper.js';
 import { jointLoads, centerOfMass } from '@/kinematics/analysis.js';
 // PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
 // Play, so it stays out of the initial bundle and the app starts up fast.
@@ -35,6 +38,13 @@ export class ModelEditor {
     this.transform.enabled = false;
     this.transform.visible = false;
     scene.add(this.transform);
+
+    // Invisible proxy the gizmo attaches to when a JOINT is selected, so the joint
+    // pivot gets its own 3-axis move/rotate handles (commit → joint origin).
+    this._jointProxy = new THREE.Object3D();
+    this._jointProxy.name = 'joint-pivot-proxy';
+    scene.add(this._jointProxy);
+    this._attachedJointId = null;
 
     // Don't let orbit fight the gizmo while dragging a handle.
     this.transform.addEventListener('dragging-changed', (e) => {
@@ -52,8 +62,11 @@ export class ModelEditor {
     this._downPos = null;
     this._onPointerDown = (e) => { if (e.button === 0) this._downPos = { x: e.clientX, y: e.clientY }; };
     this._onPointerUp = (e) => this._handlePick(e);
+    this._onPointerMove = (e) => this._handleHover(e);
     domElement.addEventListener('pointerdown', this._onPointerDown);
     domElement.addEventListener('pointerup', this._onPointerUp);
+    domElement.addEventListener('pointermove', this._onPointerMove);
+    this._snapIndicator = new SnapIndicator(scene);
 
     // React to model + selection changes.
     this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
@@ -77,12 +90,23 @@ export class ModelEditor {
       if (s.mateMode !== this._mateMode) {
         this._mateMode = s.mateMode;
         this._clearMate(); // reset picks/markers when entering or leaving mate mode
+        if (!s.mateMode) this._snapIndicator?.hide();
       }
       if (s.showAnalysis !== this._showAnalysis) {
         this._showAnalysis = s.showAnalysis;
         if (this._doc) this._syncModel(this._doc);
       }
     });
+
+    // Mesh Edit Mode (Blender-style) — owns its own gizmo/overlay; this editor
+    // steps aside (no body gizmo/picking) whenever it's active.
+    this._scene = scene;
+    this.editMode = new EditModeController({
+      scene, camera, controls, domElement, bodyRenderer: this.bodyRenderer,
+    });
+    // Re-run selection logic when Edit Mode toggles so the body gizmo detaches on
+    // enter and re-attaches on exit.
+    this._unsubEdit = useEditModeStore.subscribe(() => this._onSelection(useSelectionStore.getState()));
 
     // Initial paint.
     this._syncModel(useModelStore.getState().doc);
@@ -97,6 +121,7 @@ export class ModelEditor {
     this.jointRenderer.sync(doc, this._fk, loads);
     this._updateCOM(doc);
     this._reattach(); // mesh may have been (re)created
+    if (this.editMode?.active) this.editMode.onModelSynced();
   }
 
   _updateCOM(doc) {
@@ -147,6 +172,9 @@ export class ModelEditor {
 
   /** Called every render frame by SimCanvas: physics sim, else animation preview. */
   tick() {
+    // Always call: when active it syncs the overlay; when inactive it tears down
+    // any lingering overlay (defensive against a missed enter/leave transition).
+    this.editMode?.syncTransform();
     if (this._sim) {
       this._sim.step();
       const poses = this._sim.poses();
@@ -191,6 +219,7 @@ export class ModelEditor {
   }
 
   _handlePick(e) {
+    if (this.editMode?.active) { this._downPos = null; return; } // Edit Mode owns picking
     if (e.button !== 0 || !this._downPos) return;
     const moved = Math.hypot(e.clientX - this._downPos.x, e.clientY - this._downPos.y);
     this._downPos = null;
@@ -226,9 +255,29 @@ export class ModelEditor {
   // ── Mate tool ───────────────────────────────────────────────────────────────
   // Pick a face on the part to keep fixed, then a face on the part to move; the
   // second part snaps flush onto the first (faces coincident, normals opposed).
+  // Hover during mate mode → show the feature snap indicator (when magnet is on).
+  _handleHover(e) {
+    if (!this._mateMode || !useEditorStore.getState().snap?.enabled || this.editMode?.active) {
+      this._snapIndicator?.hide();
+      return;
+    }
+    const rect = this.domElement.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    const snap = computeSnap(ndc, this.camera, this.domElement, [this.bodyRenderer.group]);
+    if (snap) this._snapIndicator.show(snap.point, snap.type); else this._snapIndicator.hide();
+  }
+
   _handleMatePick(ndc) {
     const face = this.bodyRenderer.pickFaceAt(ndc, this.camera);
     if (!face) return;
+    // When snapping is on, refine the clicked point to the nearest vertex/edge.
+    if (useEditorStore.getState().snap?.enabled) {
+      const snap = computeSnap(ndc, this.camera, this.domElement, [this.bodyRenderer.group]);
+      if (snap) face.point = snap.point.clone();
+    }
     this._matePicks.push(face);
     this._addMateMarker(face.point);
     if (this._matePicks.length >= 2) {
@@ -295,11 +344,43 @@ export class ModelEditor {
     this.jointRenderer.setVisibleSet(visible);
     this.bodyRenderer.setSelected(bodyId);
     this.jointRenderer.setSelected(jointId);
-    if (s.gizmoMode) this.transform.setMode(s.gizmoMode);
-    this._attachTo(bodyId);
+    if (useEditModeStore.getState().active) {
+      this._attachTo(null); // Edit Mode is on → no body/joint gizmo from this editor
+    } else if (jointId) {
+      // Joints support move + rotate of the pivot (scale is meaningless → translate).
+      this.transform.setMode(s.gizmoMode === 'rotate' ? 'rotate' : 'translate');
+      this._attachToJoint(jointId);
+    } else {
+      if (s.gizmoMode) this.transform.setMode(s.gizmoMode);
+      this._attachTo(bodyId);
+    }
+  }
+
+  /** Place the proxy at the joint's pivot world transform and attach the gizmo. */
+  _attachToJoint(jointId) {
+    const doc = this._doc ?? useModelStore.getState().doc;
+    const joint = doc.joints[jointId];
+    if (!joint || !joint.parentBodyId || !doc.bodies[joint.parentBodyId]) { this._attachTo(null); return; }
+    const parentMat = this._fk?.get(joint.parentBodyId)?.matrix ?? mat(doc.bodies[joint.parentBodyId].transform);
+    const origin = joint.origin ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
+    const oMat = new THREE.Matrix4().compose(
+      new THREE.Vector3(...origin.position),
+      new THREE.Quaternion(...origin.quaternion),
+      new THREE.Vector3(1, 1, 1),
+    );
+    const world = parentMat.clone().multiply(oMat);
+    world.decompose(this._jointProxy.position, this._jointProxy.quaternion, new THREE.Vector3());
+    this._jointProxy.scale.set(1, 1, 1);
+    this._jointProxy.updateMatrixWorld(true);
+    this.transform.attach(this._jointProxy);
+    this.transform.enabled = true;
+    this.transform.visible = true;
+    this._attachedId = null;
+    this._attachedJointId = jointId;
   }
 
   _attachTo(bodyId) {
+    this._attachedJointId = null;
     const mesh = bodyId ? this.bodyRenderer.getMesh(bodyId) : null;
     if (mesh) {
       this.transform.attach(mesh);
@@ -316,14 +397,23 @@ export class ModelEditor {
 
   // Re-attach after a doc sync if the selected mesh still exists.
   _reattach() {
+    if (this.transform.dragging) return;
     const sel = useSelectionStore.getState();
-    if (sel.kind === 'body' && sel.selectedId && !this.transform.dragging) {
+    if (sel.kind === 'body' && sel.selectedId) {
       const mesh = this.bodyRenderer.getMesh(sel.selectedId);
       if (mesh && this.transform.object !== mesh) this.transform.attach(mesh);
+    } else if (sel.kind === 'joint' && sel.selectedId) {
+      // Keep the pivot proxy glued to the (possibly moved) joint pivot.
+      this._attachToJoint(sel.selectedId);
     }
   }
 
   _commitTransform() {
+    // Joint pivot drag → write back to the joint's origin (both bodies stay put).
+    if (this._attachedJointId) {
+      this._commitJointPivot();
+      return;
+    }
     const mesh = this.transform.object;
     if (!mesh || !this._attachedId) return;
     const doc = this._doc ?? useModelStore.getState().doc;
@@ -355,18 +445,44 @@ export class ModelEditor {
     }
   }
 
+  _commitJointPivot() {
+    const doc = this._doc ?? useModelStore.getState().doc;
+    const joint = doc.joints[this._attachedJointId];
+    if (!joint) return;
+    const parentMat = this._fk?.get(joint.parentBodyId)?.matrix ?? mat(doc.bodies[joint.parentBodyId].transform);
+    const world = new THREE.Matrix4().compose(
+      this._jointProxy.position.clone(),
+      this._jointProxy.quaternion.clone(),
+      new THREE.Vector3(1, 1, 1),
+    );
+    const local = parentMat.clone().invert().multiply(world);
+    const pos = new THREE.Vector3(), quat = new THREE.Quaternion();
+    local.decompose(pos, quat, new THREE.Vector3());
+    const newOrigin = {
+      position: [pos.x, pos.y, pos.z],
+      quaternion: [quat.x, quat.y, quat.z, quat.w],
+    };
+    const childRest = movePivotKeepingChild(joint, newOrigin);
+    useModelStore.getState().dispatch(commands.updateJoint(joint.id, { origin: newOrigin, childRest }));
+  }
+
   dispose() {
+    this.editMode?.dispose();
+    this._unsubEdit?.();
     this._unsubModel?.();
     this._unsubSel?.();
     this._unsubEditor?.();
     this.domElement?.removeEventListener('pointerdown', this._onPointerDown);
     this.domElement?.removeEventListener('pointerup', this._onPointerUp);
+    this.domElement?.removeEventListener('pointermove', this._onPointerMove);
+    this._snapIndicator?.dispose();
     this._clearMate();
     this._mateMarkers?.parent?.remove(this._mateMarkers);
     this._sim?.dispose();
     this.transform.detach();
     this.transform.dispose?.();
     this.transform.parent?.remove(this.transform);
+    this._jointProxy?.parent?.remove(this._jointProxy);
     this.bodyRenderer.dispose();
     this.jointRenderer.dispose();
     if (this._comMarker) { this._comMarker.geometry.dispose(); this._comMarker.material.dispose(); this._comMarker.parent?.remove(this._comMarker); }

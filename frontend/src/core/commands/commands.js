@@ -55,6 +55,26 @@ export function updateBody(bodyId, patch) {
   );
 }
 
+/** Reorder a collection ('bodies' | 'joints') to match the given id order.
+ *  Rebuilds the id→entity map in the new key order (Object key order = list order).
+ */
+export function reorderCollection(collection, idsInOrder) {
+  let prevOrder = null;
+  const rebuild = (doc, order) => {
+    const src = doc[collection] ?? {};
+    const next = {};
+    for (const id of order) if (src[id]) next[id] = src[id];
+    // keep any ids not mentioned (safety) at the end
+    for (const id of Object.keys(src)) if (!(id in next)) next[id] = src[id];
+    return { ...doc, [collection]: next };
+  };
+  return command(
+    'Reorder',
+    (doc) => { prevOrder = Object.keys(doc[collection] ?? {}); return rebuild(doc, idsInOrder); },
+    (doc) => rebuild(doc, prevOrder),
+  );
+}
+
 // ── joints ──────────────────────────────────────────────────────────────────────
 
 export function addJoint(joint) {

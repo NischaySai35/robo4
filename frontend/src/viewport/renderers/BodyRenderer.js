@@ -23,6 +23,10 @@ function primitiveGeometry(g) {
     case GeometryType.SPHERE: return new THREE.SphereGeometry(g.radius ?? 0.5, 28, 18);
     case GeometryType.CYLINDER: { const geo = new THREE.CylinderGeometry(g.radius ?? 0.5, g.radius ?? 0.5, g.length ?? 1, 28); geo.rotateX(Math.PI / 2); return geo; }
     case GeometryType.CAPSULE: { const geo = new THREE.CapsuleGeometry(g.radius ?? 0.5, g.length ?? 1, 6, 16); geo.rotateX(Math.PI / 2); return geo; }
+    case GeometryType.CONE: { const geo = new THREE.ConeGeometry(g.radius ?? 0.5, g.length ?? 1, 28); geo.rotateX(Math.PI / 2); return geo; }
+    case GeometryType.TORUS: { const geo = new THREE.TorusGeometry(g.radius ?? 0.5, g.tube ?? 0.18, 16, 40); return geo; }
+    case GeometryType.PLANE: { const [w, h] = g.size ?? [1, 1]; return new THREE.PlaneGeometry(w, h); }
+    case GeometryType.CIRCLE: return new THREE.CircleGeometry(g.radius ?? 0.5, 40);
     default: return new THREE.BoxGeometry(0.4, 0.4, 0.4);
   }
 }
@@ -85,7 +89,15 @@ export class BodyRenderer {
 
     const g = body.visual?.geometry;
     let child = null;
-    if (g?.type === GeometryType.MESH) {
+    // Edited mesh override (from Edit Mode) takes precedence — plain positions/indices.
+    if (g?.editMesh?.positions?.length) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(g.editMesh.positions), 3));
+      if (g.editMesh.indices?.length) geo.setIndex(g.editMesh.indices);
+      geo.computeVertexNormals();
+      child = new THREE.Mesh(geo, new THREE.MeshStandardMaterial());
+    }
+    if (!child && g?.type === GeometryType.MESH) {
       const assetId = g.assetId ?? body.assetId;
       const asset = assetId ? doc.assets[assetId] : null;
       child = asset ? getAssetObject(asset) : null;

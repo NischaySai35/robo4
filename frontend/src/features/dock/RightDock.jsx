@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import './RightDock.css';
 import { useSelectionStore } from '@/state/selectionStore.js';
 import { useDockStore } from '@/state/dockStore.js';
+import { useEditModeStore } from '@/state/editModeStore.js';
 import EditorTools from '@/features/tools/EditorTools.jsx';
 import Outliner from '@/features/outliner/Outliner.jsx';
 import Inspector from '@/features/inspector/Inspector.jsx';
+import EditPanel from '@/features/editmode/EditPanel.jsx';
 import CopilotPanel from '@/features/ai/CopilotPanel.jsx';
 import ScriptingPanel from '@/features/scripting/ScriptingPanel.jsx';
 import Timeline from '@/features/animation/Timeline.jsx';
@@ -27,28 +29,16 @@ const Icon = ({ children }) => (
 
 const PANELS = [
   {
-    id: 'tools', title: 'Precision & Physics', Component: EditorTools,
-    icon: <Icon><circle cx="10" cy="10" r="2.5" /><path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3M4 4l2 2M14 14l2 2M16 4l-2 2M6 14l-2 2" /></Icon>,
-  },
-  {
-    id: 'outliner', title: 'Outliner', Component: Outliner,
-    icon: <Icon><path d="M4 5h12M7 10h9M7 15h9M4 10h.01M4 15h.01" /></Icon>,
-  },
-  {
-    id: 'inspector', title: 'Inspector', Component: Inspector,
+    id: 'inspector', title: 'Properties', Component: Inspector,
     icon: <Icon><path d="M3 4h14v12H3zM3 8h14M8 8v8" /></Icon>,
   },
   {
-    id: 'copilot', title: 'AI Copilot', Component: CopilotPanel,
-    icon: <Icon><path d="M10 2l1.8 4.2L16 8l-4.2 1.8L10 14l-1.8-4.2L4 8l4.2-1.8L10 2zM15 13l.9 2.1L18 16l-2.1.9L15 19l-.9-2.1L12 16l2.1-.9L15 13z" /></Icon>,
+    id: 'outliner', title: 'Scene Tree', Component: Outliner,
+    icon: <Icon><path d="M4 5h12M7 10h9M7 15h9M4 10h.01M4 15h.01" /></Icon>,
   },
   {
-    id: 'scripting', title: 'JS Macros', Component: ScriptingPanel,
-    icon: <Icon><path d="M7 6l-4 4 4 4M13 6l4 4-4 4" /></Icon>,
-  },
-  {
-    id: 'timeline', title: 'Animation', Component: Timeline,
-    icon: <Icon><path d="M3 6h14M3 14h14M7 6v8M13 6v8" /><circle cx="7" cy="10" r="0.5" /></Icon>,
+    id: 'tools', title: 'Precision & Measure', Component: EditorTools,
+    icon: <Icon><circle cx="10" cy="10" r="2.5" /><path d="M10 1.5v3M10 15.5v3M1.5 10h3M15.5 10h3M4 4l2 2M14 14l2 2M16 4l-2 2M6 14l-2 2" /></Icon>,
   },
   {
     id: 'analysis', title: 'Analysis', Component: AnalysisPanel,
@@ -58,7 +48,25 @@ const PANELS = [
     id: 'hardware', title: 'Hardware', Component: HardwarePanel,
     icon: <Icon><path d="M6 6h8v8H6zM8 2v3M12 2v3M8 15v3M12 15v3M2 8h3M2 12h3M15 8h3M15 12h3" /></Icon>,
   },
+  {
+    id: 'copilot', title: 'AI Copilot', Component: CopilotPanel,
+    icon: <Icon><path d="M10 2l1.8 4.2L16 8l-4.2 1.8L10 14l-1.8-4.2L4 8l4.2-1.8L10 2zM15 13l.9 2.1L18 16l-2.1.9L15 19l-.9-2.1L12 16l2.1-.9L15 13z" /></Icon>,
+  },
+  {
+    id: 'timeline', title: 'Animation', Component: Timeline,
+    icon: <Icon><path d="M3 6h14M3 14h14M7 6v8M13 6v8" /><circle cx="7" cy="10" r="0.5" /></Icon>,
+  },
+  {
+    id: 'scripting', title: 'Script Macros', Component: ScriptingPanel,
+    icon: <Icon><path d="M7 6l-4 4 4 4M13 6l4 4-4 4" /></Icon>,
+  },
 ];
+
+// Shown only while mesh Edit Mode is active (prepended to the rail).
+const EDIT_PANEL = {
+  id: 'edit', title: 'Edit Mesh', Component: EditPanel,
+  icon: <Icon><path d="M3 13l8-8 4 4-8 8H3v-4z" /><path d="M11 5l4 4" /></Icon>,
+};
 
 const MIN_W = 240;
 const MAX_W = 560;
@@ -69,6 +77,9 @@ export default function RightDock() {
   const active = useDockStore((s) => s.active);
   const toggle = useDockStore((s) => s.toggle);
   const open = useDockStore((s) => s.open);
+  const editActive = useEditModeStore((s) => s.active);
+  // Edit panel sits at the top of the rail, only while Edit Mode is on.
+  const panels = editActive ? [EDIT_PANEL, ...PANELS] : PANELS;
   const [width, setWidth] = useState(() => {
     const v = parseInt(localStorage.getItem(WIDTH_KEY) || '', 10);
     return Number.isFinite(v) ? Math.min(MAX_W, Math.max(MIN_W, v)) : DEFAULT_W;
@@ -82,8 +93,14 @@ export default function RightDock() {
   // so its full property/joint controls are always one click away — no hunting.
   const selectedId = useSelectionStore((s) => s.selectedId);
   useEffect(() => {
-    if (selectedId) open('inspector');
+    if (selectedId && !useEditModeStore.getState().active) open('inspector');
   }, [selectedId, open]);
+
+  // Entering Edit Mode opens the Edit panel; leaving returns to Properties.
+  useEffect(() => {
+    if (editActive) open('edit');
+    else if (useDockStore.getState().active === 'edit') open('inspector');
+  }, [editActive, open]);
 
   const startResize = useCallback((e) => {
     if (e.button !== 0) return;
@@ -108,7 +125,7 @@ export default function RightDock() {
     document.addEventListener('mouseup', onUp);
   }, []);
 
-  const activeDef = PANELS.find((p) => p.id === active);
+  const activeDef = panels.find((p) => p.id === active);
 
   return (
     <div className="rdock">
@@ -130,7 +147,7 @@ export default function RightDock() {
       )}
 
       <div className="rdock-rail">
-        {PANELS.map((p) => (
+        {panels.map((p) => (
           <button
             key={p.id}
             className={`rdock-rail-btn ${active === p.id ? 'active' : ''}`}

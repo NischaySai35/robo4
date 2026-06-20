@@ -34,6 +34,10 @@ export const GeometryType = Object.freeze({
   CYLINDER: 'cylinder',
   SPHERE: 'sphere',
   CAPSULE: 'capsule',
+  CONE: 'cone',
+  TORUS: 'torus',
+  PLANE: 'plane',           // flat square
+  CIRCLE: 'circle',         // flat disc
   MESH: 'mesh',             // references an Asset by assetId
 });
 
@@ -66,6 +70,10 @@ export function makeGeometry(type = GeometryType.BOX, params = {}) {
     case GeometryType.CYLINDER: return { ...base, radius: params.radius ?? 0.5, length: params.length ?? 1 };
     case GeometryType.CAPSULE:  return { ...base, radius: params.radius ?? 0.5, length: params.length ?? 1 };
     case GeometryType.SPHERE:   return { ...base, radius: params.radius ?? 0.5 };
+    case GeometryType.CONE:     return { ...base, radius: params.radius ?? 0.5, length: params.length ?? 1 };
+    case GeometryType.TORUS:    return { ...base, radius: params.radius ?? 0.5, tube: params.tube ?? 0.18 };
+    case GeometryType.PLANE:    return { ...base, size: params.size ?? [1, 1] };
+    case GeometryType.CIRCLE:   return { ...base, radius: params.radius ?? 0.5 };
     case GeometryType.MESH:     return { ...base, assetId: params.assetId ?? null, scale: params.scale ?? [1, 1, 1] };
     default:                    return base;
   }

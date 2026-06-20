@@ -126,14 +126,26 @@ function BodyInspector({ body, doc, dispatch, select }) {
       {g.type === GeometryType.BOX && (
         <Vec3 label="Size" value={g.size ?? [1, 1, 1]} onChange={(v) => upGeo({ size: v })} step={0.05} />
       )}
-      {(g.type === GeometryType.CYLINDER || g.type === GeometryType.CAPSULE) && (
+      {(g.type === GeometryType.CYLINDER || g.type === GeometryType.CAPSULE || g.type === GeometryType.CONE) && (
         <div className="in-row2">
           <Num label="Radius" value={g.radius} onChange={(v) => upGeo({ radius: v })} step={0.05} />
           <Num label="Length" value={g.length} onChange={(v) => upGeo({ length: v })} step={0.05} />
         </div>
       )}
-      {g.type === GeometryType.SPHERE && (
+      {(g.type === GeometryType.SPHERE || g.type === GeometryType.CIRCLE) && (
         <Num label="Radius" value={g.radius} onChange={(v) => upGeo({ radius: v })} step={0.05} />
+      )}
+      {g.type === GeometryType.TORUS && (
+        <div className="in-row2">
+          <Num label="Radius" value={g.radius} onChange={(v) => upGeo({ radius: v })} step={0.05} />
+          <Num label="Tube" value={g.tube} onChange={(v) => upGeo({ tube: v })} step={0.02} />
+        </div>
+      )}
+      {g.type === GeometryType.PLANE && (
+        <div className="in-row2">
+          <Num label="Width"  value={(g.size ?? [1, 1])[0]} onChange={(v) => upGeo({ size: [v, (g.size ?? [1, 1])[1]] })} step={0.05} />
+          <Num label="Height" value={(g.size ?? [1, 1])[1]} onChange={(v) => upGeo({ size: [(g.size ?? [1, 1])[0], v] })} step={0.05} />
+        </div>
       )}
 
       <div className="in-group">MATERIAL</div>
@@ -379,10 +391,10 @@ export default function Inspector() {
     <div className="in-panel">
       <div className="in-head">
         <span className="in-titletxt">INSPECTOR</span>
-        {kind === 'body' && entity && (
+        {entity && (
           <div className="in-gizmo">
-            {['translate', 'rotate', 'scale'].map((m) => (
-              <button key={m} title={m}
+            {(kind === 'body' ? ['translate', 'rotate', 'scale'] : ['translate', 'rotate']).map((m) => (
+              <button key={m} title={kind === 'joint' ? `${m} pivot` : m}
                 className={`in-gz ${gizmoMode === m ? 'in-gz--on' : ''}`}
                 onClick={() => setGizmoMode(m)}>
                 {m === 'translate' ? '✥' : m === 'rotate' ? '⟳' : '⤢'}

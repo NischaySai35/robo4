@@ -43,9 +43,11 @@ function importScale(asset) {
 
 const SUPPORTED = ['stl', 'obj'];
 
-export async function importMesh() {
+/** Import a mesh. Optionally restrict the picker to `exts` (e.g. ['stl']). */
+export async function importMesh(exts) {
+  const filter = Array.isArray(exts) && exts.length ? exts : SUPPORTED;
   let picked;
-  try { picked = await pickFile(); }
+  try { picked = await pickFile(filter); }
   catch (e) { alert(`Could not open file: ${e.message}`); return; }
   if (!picked) return;
 
@@ -72,10 +74,10 @@ export async function importMesh() {
   useSelectionStore.getState().select(body.id, 'body');
 }
 
-async function pickFile() {
+async function pickFile(filter = SUPPORTED) {
   if (window.tetrobot?.isDesktop) {
     const res = await window.tetrobot.openFile({
-      filters: [{ name: 'Meshes', extensions: SUPPORTED }, { name: 'All Files', extensions: ['*'] }],
+      filters: [{ name: 'Meshes', extensions: filter }, { name: 'All Files', extensions: ['*'] }],
       binary: true,
     });
     if (!res) return null;
@@ -85,7 +87,7 @@ async function pickFile() {
   return new Promise((resolve, reject) => {
     const inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = SUPPORTED.map((e) => `.${e}`).join(',');
+    inp.accept = filter.map((e) => `.${e}`).join(',');
     inp.onchange = async () => {
       const f = inp.files?.[0];
       if (!f) { resolve(null); return; }

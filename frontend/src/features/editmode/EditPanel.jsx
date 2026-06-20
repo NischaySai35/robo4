@@ -1,0 +1,104 @@
+/**
+ * EditPanel — the right-dock panel shown only while mesh Edit Mode is active.
+ * Drives editModeStore + calls into the viewport via editBridge. Foundation set:
+ * vertex/edge/face select modes, wireframe, select all/none, delete, weld (merge),
+ * and live readouts (count / area / edge length / vertex position).
+ */
+import './EditPanel.css';
+import { useEditModeStore } from '@/state/editModeStore.js';
+import { useModelStore } from '@/state/modelStore.js';
+import { editBridge } from '@/viewport/editBridge.js';
+
+const fmt = (v, d = 3) => (v == null ? '—' : Number(v).toFixed(d));
+
+export default function EditPanel() {
+  const bodyId = useEditModeStore((s) => s.bodyId);
+  const selectMode = useEditModeStore((s) => s.selectMode);
+  const setSelectMode = useEditModeStore((s) => s.setSelectMode);
+  const wireframe = useEditModeStore((s) => s.wireframe);
+  const toggleWireframe = useEditModeStore((s) => s.toggleWireframe);
+  const exit = useEditModeStore((s) => s.exit);
+  const stats = useEditModeStore((s) => s.stats);
+  const opAmount = useEditModeStore((s) => s.opAmount);
+  const setOpAmount = useEditModeStore((s) => s.setOpAmount);
+
+  const doc = useModelStore((s) => s.doc);
+  const name = bodyId ? doc.bodies[bodyId]?.name : '—';
+
+  const MODES = [
+    { id: 'vertex', label: 'Vertices', icon: '•' },
+    { id: 'edge',   label: 'Edges',    icon: '╱' },
+    { id: 'face',   label: 'Faces',    icon: '◢' },
+  ];
+
+  return (
+    <div className="ed-panel">
+      <div className="ed-head">
+        <span className="ed-editing">Editing: <strong>{name}</strong></span>
+        <button className="ed-exit" onClick={exit} title="Exit Edit Mode (Tab)">Done</button>
+      </div>
+
+      <div className="ed-group">SELECT MODE</div>
+      <div className="ed-modes">
+        {MODES.map((m) => (
+          <button key={m.id}
+            className={`ed-mode ${selectMode === m.id ? 'ed-mode--on' : ''}`}
+            onClick={() => setSelectMode(m.id)}>
+            <span className="ed-mode-ic">{m.icon}</span>{m.label}
+          </button>
+        ))}
+      </div>
+      <p className="ed-hint">Click to select · Shift/Ctrl-click to add · drag the gizmo to move.</p>
+
+      <div className="ed-group">SELECTION</div>
+      <div className="ed-row">
+        <button className="ed-btn" onClick={() => editBridge.selectAll()}>Select all</button>
+        <button className="ed-btn" onClick={() => editBridge.deselectAll()}>Deselect</button>
+      </div>
+      <div className="ed-row">
+        <button className="ed-btn ed-btn--danger" onClick={() => editBridge.deleteSelection()}>Delete</button>
+        <button className="ed-btn" onClick={() => editBridge.mergeVertices()} title="Weld selected vertices to their average">Merge</button>
+      </div>
+
+      <div className="ed-group">OPERATIONS</div>
+      <div className="ed-row">
+        <button className="ed-btn" onClick={() => editBridge.extrude()} title="Extrude selected faces (E)" disabled={selectMode !== 'face'}>Extrude</button>
+        <button className="ed-btn" onClick={() => editBridge.subdivide()} title="Subdivide selected faces (or all)">Subdivide</button>
+      </div>
+      <div className="ed-row">
+        <button className="ed-btn" onClick={() => editBridge.inset()} title="Inset selected faces by Amount" disabled={selectMode !== 'face'}>Inset</button>
+        <button className="ed-btn" onClick={() => editBridge.duplicateSelection()} title="Duplicate selected faces" disabled={selectMode !== 'face'}>Duplicate</button>
+      </div>
+      <div className="ed-row">
+        <button className="ed-btn" onClick={() => editBridge.shrinkFatten()} title="Move selection along vertex normals by Amount">Shrink/Fatten</button>
+        <button className="ed-btn" onClick={() => editBridge.smooth()} title="Laplacian smooth (selection, or whole mesh)">Smooth</button>
+      </div>
+      <div className="ed-row">
+        <button className="ed-btn" onClick={() => editBridge.startTwoPointMove()} title="Move selection from one vertex to another">2-pt Move</button>
+        <label className="ed-amount">Amount
+          <input type="number" step="0.05" value={opAmount}
+            onChange={(e) => setOpAmount(parseFloat(e.target.value))} />
+        </label>
+      </div>
+
+      <div className="ed-group">VIEW</div>
+      <label className="ed-check">
+        <input type="checkbox" checked={wireframe} onChange={toggleWireframe} />
+        <span>Wireframe</span>
+      </label>
+
+      <div className="ed-group">READOUT</div>
+      <div className="ed-stats">
+        <div className="ed-stat"><span>Selected</span><strong>{stats.count}</strong></div>
+        {selectMode === 'face' && <div className="ed-stat"><span>Area (m²)</span><strong>{fmt(stats.area, 4)}</strong></div>}
+        {selectMode === 'edge' && <div className="ed-stat"><span>Length (m)</span><strong>{fmt(stats.length, 4)}</strong></div>}
+        {selectMode === 'vertex' && stats.point && (
+          <div className="ed-stat ed-stat--wide">
+            <span>Vertex</span>
+            <strong>{stats.point.map((v) => fmt(v, 3)).join(', ')}</strong>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

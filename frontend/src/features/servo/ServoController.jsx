@@ -1,33 +1,88 @@
 import { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
 import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
+import { useModelStore } from '@/state/modelStore.js';
 import './ServoController.css';
 
-// ── Constants ─────────────────────────────────────────────────────────────────
+// ── Dynamic servo definitions (derived from the simulator's joints) ────────────
+//
+// The servo grid is NOT hardcoded: it mirrors the joints the user builds on the
+// Simulator page (modelStore `doc.joints`). One card per movable joint. The
+// joint's *type* decides the control flavour:
+//   continuous → 'twist'  (full 0–360° spin, CW/CCW/WAVE buttons)
+//   revolute   → 'bend'   (limited range, derived from the joint's limit)
+//   prismatic  → 'linear' (slider-style; treated like bend for the angle gauge)
+//   fixed / others → skipped (no actuator)
+// Each joint's physical ST3215 id comes from `meta.servoId` (set in the Hardware
+// panel, "Auto 1…N"); we fall back to positional index when unassigned.
 
-const SERVO_DEFS = [
-  { id: 1, label: 'J1', name: 'CUBE LEFT',  type: 'twist', color: '#f59e0b' },
-  { id: 2, label: 'J2', name: 'JOINT 1',    type: 'bend',  color: '#6ee7ff' },
-  { id: 3, label: 'J3', name: 'JOINT 2',    type: 'bend',  color: '#a78bfa' },
-  { id: 4, label: 'J4', name: 'WRIST',      type: 'twist', color: '#fb923c' },
-  { id: 5, label: 'J5', name: 'JOINT 3',    type: 'bend',  color: '#34d399' },
-  { id: 6, label: 'J6', name: 'CUBE RIGHT', type: 'twist', color: '#f59e0b' },
+const RAD2DEG = 180 / Math.PI;
+
+// Distinct colours cycled across however many joints exist.
+const COLOR_CYCLE = [
+  '#f59e0b', '#6ee7ff', '#a78bfa', '#fb923c', '#34d399',
+  '#f43f5e', '#38bdf8', '#c084fc', '#facc15', '#4ade80',
 ];
 
-// Pre-compute type + within-type number for each servo ID
-// twist: J1=1, J4=2, J6=3   bend: J2=1, J3=2, J5=3
-const SERVO_TYPE_NUM = (() => {
+function jointKind(type) {
+  switch (type) {
+    case 'continuous': return 'twist';
+    case 'prismatic':  return 'linear';
+    case 'revolute':   return 'bend';
+    default:           return 'bend';
+  }
+}
+
+// Map a joint's radian limits → servo-degree gauge bounds (0 rad → 180° centre).
+function gaugeBounds(kind, limit) {
+  if (kind === 'twist') return { lo: 0, hi: 360 };
+  const lower = limit?.lower ?? -Math.PI;
+  const upper = limit?.upper ??  Math.PI;
+  let lo = Math.max(0, Math.min(360, 180 + lower * RAD2DEG));
+  let hi = Math.max(0, Math.min(360, 180 + upper * RAD2DEG));
+  if (hi <= lo + 1) { lo = 80; hi = 280; } // degenerate → sensible default
+  return { lo, hi };
+}
+
+/** Build the dynamic servo defs from the model document's joints. */
+function servoDefsFromDoc(doc) {
+  const joints = Object.values(doc?.joints ?? {}).filter((j) => j.type !== 'fixed');
+  return joints.map((j, i) => {
+    const kind = jointKind(j.type);
+    const { lo, hi } = gaugeBounds(kind, j.limit);
+    const assigned = Number(j.meta?.servoId);
+    return {
+      id: Number.isFinite(assigned) && assigned > 0 ? assigned : i + 1,
+      jointId: j.id,
+      label: `J${i + 1}`,
+      name: (j.name ?? `Joint ${i + 1}`).toUpperCase(),
+      type: kind,
+      jointType: j.type,
+      color: COLOR_CYCLE[i % COLOR_CYCLE.length],
+      lo, hi,
+    };
+  });
+}
+
+// Per-id type + within-type ordinal (twist: 1,2,3…  bend: 1,2,3…), used for the
+// header overcurrent label. Recomputed whenever the defs change.
+function servoTypeNumMap(defs) {
   const map = {};
   let t = 0, b = 0;
-  for (const d of SERVO_DEFS) {
+  for (const d of defs) {
     if (d.type === 'twist') map[d.id] = { type: 'twist', num: ++t };
     else                    map[d.id] = { type: 'bend',  num: ++b };
   }
   return map;
-})();
+}
 
 const MAX_HISTORY  = 120;
-const POLL_MS      = 50;
+const POLL_MS      = 50;     // full-speed telemetry poll — ONLY runs once the ESP
+                            // has answered (see the probe state machine below)
+const PROBE_MS         = 300;   // attempt cadence while probing for the ESP
+const PROBE_WINDOW_MS  = 5000;  // give up probing after 5s of silence
+const MAX_LIVE_FAILS   = 10;    // consecutive live-poll failures (~0.5s) before
+                                // declaring the link dead and stopping the loop
 const DEFAULT_URL  = 'http://nischaylap.local';
 const TEMP_WARN    = 55;
 const SERVO_MA_MAX = 2000;
@@ -46,32 +101,32 @@ function pushH(arr, val) {
   return next;
 }
 
-function initServoState() {
+function initServoState(defs) {
   const s = {};
-  for (const d of SERVO_DEFS) s[d.id] = { history: { current: [], load: [] } };
+  for (const d of defs) s[d.id] = { history: { current: [], load: [] } };
   return s;
 }
 
-function totalCurrentmA(servos) {
-  return SERVO_DEFS.reduce((sum, d) => sum + (servos[d.id]?.currentmA ?? 0), 0);
+function totalCurrentmA(defs, servos) {
+  return defs.reduce((sum, d) => sum + (servos[d.id]?.currentmA ?? 0), 0);
 }
 
-function hottestServo(servos) {
+function hottestServo(defs, servos) {
   let best = null, bestT = -Infinity;
-  for (const d of SERVO_DEFS) {
+  for (const d of defs) {
     const t = servos[d.id]?.tempC;
     if (t != null && t > bestT) { bestT = t; best = d.label; }
   }
   return best ? `${best} (${bestT}°C)` : '—';
 }
 
-function onlineCount(servos) {
-  return SERVO_DEFS.filter(d => servos[d.id]?.connected).length;
+function onlineCount(defs, servos) {
+  return defs.filter(d => servos[d.id]?.connected).length;
 }
 
-function computeAlerts(servos, totalMA) {
+function computeAlerts(defs, servos, totalMA) {
   const out = [];
-  for (const def of SERVO_DEFS) {
+  for (const def of defs) {
     const sv = servos[def.id];
     if (!sv) continue;
     if (sv.tempC != null && sv.tempC > TEMP_WARN)
@@ -312,8 +367,8 @@ function ServoCard({ def, data, onCmd }) {
   const torqueOn  = data?.torque    ?? false;
   const modeTxt   = data?.mode      ?? '—';
 
-  const lo = def.type === 'twist' ? 0   : 80;
-  const hi = def.type === 'twist' ? 360 : 280;
+  const lo = def.lo ?? (def.type === 'twist' ? 0   : 80);
+  const hi = def.hi ?? (def.type === 'twist' ? 360 : 280);
 
   const go   = () => onCmd(def.id, 'pos', { angle, speed, acc });
   const home = () => { setAngle('180'); onCmd(def.id, 'pos', { angle: 180, speed, acc }); };
@@ -463,8 +518,8 @@ function ServoCard({ def, data, onCmd }) {
 
 // ── GroupControl ──────────────────────────────────────────────────────────────
 
-function GroupControl({ onCmd, onEstop }) {
-  const all = SERVO_DEFS.map(d => d.id);
+function GroupControl({ defs, onCmd, onEstop }) {
+  const all = defs.map(d => d.id);
   const g   = (cmd, extra = {}) => all.forEach(id => onCmd(id, cmd, extra));
 
   return (
@@ -491,7 +546,7 @@ function GroupControl({ onCmd, onEstop }) {
 
 // ── SequenceRecorder ──────────────────────────────────────────────────────────
 
-function SequenceRecorder({ servos, onCmd }) {
+function SequenceRecorder({ defs, servos, onCmd }) {
   const [frames,   setFrames]   = useState([]);
   const [playing,  setPlaying]  = useState(false);
   const [playIdx,  setPlayIdx]  = useState(-1);
@@ -499,7 +554,7 @@ function SequenceRecorder({ servos, onCmd }) {
   const abortRef = useRef(false);
 
   const capture = () => {
-    const frame = SERVO_DEFS.map(d => ({
+    const frame = defs.map(d => ({
       id: d.id, label: d.label, angle: servos[d.id]?.currentAngle ?? 180,
     }));
     setFrames(prev => [...prev, frame]);
@@ -601,7 +656,7 @@ function SequenceRecorder({ servos, onCmd }) {
 
 // ── PresetPanel ───────────────────────────────────────────────────────────────
 
-function PresetPanel({ servos, onApply }) {
+function PresetPanel({ defs, servos, onApply }) {
   const [presets,   setPresets]   = useState(() => {
     try { return JSON.parse(localStorage.getItem('sc_presets') || '[]'); }
     catch { return []; }
@@ -615,7 +670,7 @@ function PresetPanel({ servos, onApply }) {
 
   const savePreset = () => {
     const name = nameInput.trim() || `Preset ${presets.length + 1}`;
-    const snapshot = SERVO_DEFS.map(d => ({
+    const snapshot = defs.map(d => ({
       id: d.id, angle: servos[d.id]?.currentAngle ?? 180,
     }));
     persist([...presets.filter(p => p.name !== name), { name, snapshot }]);
@@ -651,7 +706,7 @@ function PresetPanel({ servos, onApply }) {
       <div className="sc-presets-hdr">
         <span>⭐ Presets</span>
         <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: 11 }}>
-          snapshots all 6 servo angles
+          snapshots all {defs.length} servo angle{defs.length !== 1 ? 's' : ''}
         </span>
         <div style={{ flex: 1 }} />
         <button className="sc-btn sc-btn-sm" onClick={exportPresets} disabled={presets.length === 0}>
@@ -752,6 +807,17 @@ function DebugLog({ log, onClear }) {
 // ── Main ServoController ───────────────────────────────────────────────────────
 
 export default function ServoController() {
+  // ── Dynamic servo defs (mirror the simulator's joints) ─────────────────────
+  const doc  = useModelStore(s => s.doc);
+  const defs = useMemo(() => servoDefsFromDoc(doc), [doc]);
+  const typeNumMap = useMemo(() => servoTypeNumMap(defs), [defs]);
+  // Keep a ref so the (stable) poll callback can read the latest defs without
+  // being re-created on every joint edit.
+  const defsRef = useRef(defs);
+  useEffect(() => { defsRef.current = defs; }, [defs]);
+  const typeNumRef = useRef(typeNumMap);
+  useEffect(() => { typeNumRef.current = typeNumMap; }, [typeNumMap]);
+
   // ── Integration store ─────────────────────────────────────────────────────
   const intEspUrl       = useIntegrationStore(s => s.espUrl);
   const pushCtrlLog     = useIntegrationStore(s => s.pushCtrlLog);
@@ -773,9 +839,13 @@ export default function ServoController() {
   const [espUrl,       setEspUrl]       = useState(intEspUrl);
   const [inputUrl,     setInputUrl]     = useState(intEspUrl);
   const [connected,    setConnected]    = useState(false);
+  // Link lifecycle: 'probing' (looking for the ESP, max 5s) → 'live' (full-speed
+  // 50ms polling) or 'stopped' (no requests at all until the user hits Connect).
+  const [linkState,    setLinkState]    = useState('probing');
+  const [probeNonce,   setProbeNonce]   = useState(0); // bump to restart probing
   const [latencyMs,    setLatencyMs]    = useState(null);
   const [lastUpdateStr, setLastUpdateStr] = useState('—');
-  const [servos,       setServos]       = useState(initServoState);
+  const [servos,       setServos]       = useState(() => initServoState(defs));
   const [wifiInfo,     setWifiInfo]     = useState(null);
   const [alerts,       setAlerts]       = useState([]);
 
@@ -784,6 +854,10 @@ export default function ServoController() {
   const dismissRef = useRef(new Set());
   const connectedRef = useRef(false);
   const espUrlRef    = useRef(espUrl);
+  const linkStateRef    = useRef('probing');
+  const probeDeadlineRef = useRef(0);
+  const failCountRef     = useRef(0);
+  useEffect(() => { linkStateRef.current = linkState; }, [linkState]);
 
   // Keep refs current for use inside async callbacks
   useEffect(() => { connectedRef.current = connected; }, [connected]);
@@ -795,7 +869,7 @@ export default function ServoController() {
 
   // ── Poll ────────────────────────────────────────────────────────────────────
   const poll = useCallback(async () => {
-    if (busyRef.current) return;
+    if (busyRef.current) return connectedRef.current; // skipped, not a failure
     busyRef.current = true;
     const t0 = Date.now();
     try {
@@ -833,6 +907,7 @@ export default function ServoController() {
         });
 
         const newAlerts = computeAlerts(
+          defsRef.current,
           Object.fromEntries((data.servos ?? []).map(sv => [sv.id, sv])),
           totalMA
         ).filter(a => !dismissRef.current.has(a.id));
@@ -853,7 +928,7 @@ export default function ServoController() {
         const oc = (data.servos ?? [])
           .filter(s => s.connected && s.currentmA != null && s.currentmA > 700)
           .map(s => {
-            const tn = SERVO_TYPE_NUM[s.id] ?? { type: 'twist', num: s.id };
+            const tn = typeNumRef.current[s.id] ?? { type: 'twist', num: s.id };
             return { id: s.id, label: s.label ?? `J${s.id}`, type: tn.type, typeNum: tn.num, currentmA: s.currentmA };
           });
         setOvercurrentServos(oc);
@@ -861,9 +936,10 @@ export default function ServoController() {
         // Log poll summary every ~4s (every 16th poll at 250ms)
         if (Math.random() < 0.063) {
           const hottest = (data.servos ?? []).reduce((m, s) => s.tempC > m ? s.tempC : m, 0);
-          pushCtrlLog('info', 'POLL', `${onCnt}/6 online · ${lat}ms · ${(totalMA/1000).toFixed(2)}A · ${hottest}°C`);
+          pushCtrlLog('info', 'POLL', `${onCnt}/${defsRef.current.length} online · ${lat}ms · ${(totalMA/1000).toFixed(2)}A · ${hottest}°C`);
         }
       }
+      return true; // ESP answered — reachable
     } catch (err) {
       if (connectedRef.current) {
         pushCtrlLog('error', 'SYS', `ESP lost — ${err.message}`);
@@ -871,16 +947,60 @@ export default function ServoController() {
       setConnected(false);
       setIntConnected(false, null);
       setServoOnlineCount(0);
+      return false; // unreachable
     } finally {
       busyRef.current = false;
     }
   }, [espUrl, pushCtrlLog, setIntConnected]);
 
+  // Connection-aware poll loop. Three phases, one request in flight at a time:
+  //   probing — try every PROBE_MS for up to 5s. First success → 'live'.
+  //   live    — poll at full speed (POLL_MS). Stop after MAX_LIVE_FAILS in a row.
+  //   stopped — no requests at all. The user must hit Connect/Try again to retry.
+  // This means an offline ESP generates ZERO network traffic (no busy cursor),
+  // while a present one is polled at the full 50ms.
   useEffect(() => {
-    poll();
-    pollRef.current = setInterval(poll, POLL_MS);
-    return () => clearInterval(pollRef.current);
-  }, [poll]);
+    let cancelled = false;
+    probeDeadlineRef.current = Date.now() + PROBE_WINDOW_MS;
+    failCountRef.current = 0;
+    setLinkState('probing');
+    linkStateRef.current = 'probing';
+
+    const tick = async () => {
+      if (cancelled) return;
+      const ok = await poll();
+      if (cancelled) return;
+
+      if (ok) {
+        failCountRef.current = 0;
+        if (linkStateRef.current !== 'live') { linkStateRef.current = 'live'; setLinkState('live'); }
+        pollRef.current = setTimeout(tick, POLL_MS);
+        return;
+      }
+
+      // Poll failed —
+      if (linkStateRef.current === 'live') {
+        failCountRef.current += 1;
+        if (failCountRef.current >= MAX_LIVE_FAILS) {
+          pushCtrlLog('error', 'SYS', 'ESP unreachable — polling stopped. Press Connect to retry.');
+          linkStateRef.current = 'stopped'; setLinkState('stopped');
+          return; // halt the loop entirely
+        }
+        pollRef.current = setTimeout(tick, POLL_MS);
+        return;
+      }
+
+      // Still probing —
+      if (Date.now() < probeDeadlineRef.current) {
+        pollRef.current = setTimeout(tick, PROBE_MS);
+      } else {
+        pushCtrlLog('offline', 'OFF', `No ESP at ${espUrlRef.current} after 5s — polling off. Press Connect to retry.`);
+        linkStateRef.current = 'stopped'; setLinkState('stopped');
+      }
+    };
+    tick();
+    return () => { cancelled = true; clearTimeout(pollRef.current); };
+  }, [poll, probeNonce, pushCtrlLog]);
 
   // ── Commands ────────────────────────────────────────────────────────────────
   const sendCmd = useCallback(async (servoId, cmd, extra = {}, src = 'USER') => {
@@ -900,7 +1020,7 @@ export default function ServoController() {
       }
     }
 
-    const label = SERVO_DEFS.find(d => d.id === servoId)?.label ?? servoId;
+    const label = defsRef.current.find(d => d.id === servoId)?.label ?? servoId;
     const desc  = `${label} → ${cmd}${extra.angle !== undefined ? ` ${Number(extra.angle).toFixed(1)}°` : ''}`;
     pushCtrlLog('cmd', src, desc);
     const qs = new URLSearchParams({ servo: String(servoId), cmd, ...extra });
@@ -929,7 +1049,9 @@ export default function ServoController() {
     const finalUrl = url.startsWith('http') ? url : `http://${url}`;
     setEspUrl(finalUrl);
     setIntEspUrl(finalUrl);
-    pushCtrlLog('info', 'SYS', `Connecting to ${finalUrl}`);
+    pushCtrlLog('info', 'SYS', `Probing ${finalUrl} (5s)…`);
+    // Restart the probe loop even if the URL is unchanged ("Try again").
+    setProbeNonce(n => n + 1);
   };
 
   // ── Consume pending angles from sim ────────────────────────────────────────
@@ -984,9 +1106,9 @@ export default function ServoController() {
   }, []);
 
   // ── Stats ───────────────────────────────────────────────────────────────────
-  const totalCurrent = useMemo(() => totalCurrentmA(servos), [servos]);
-  const hottest      = useMemo(() => hottestServo(servos),   [servos]);
-  const onlineCnt    = useMemo(() => onlineCount(servos),    [servos]);
+  const totalCurrent = useMemo(() => totalCurrentmA(defs, servos), [defs, servos]);
+  const hottest      = useMemo(() => hottestServo(defs, servos),   [defs, servos]);
+  const onlineCnt    = useMemo(() => onlineCount(defs, servos),    [defs, servos]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
@@ -997,7 +1119,9 @@ export default function ServoController() {
         <div className="sc-topbar">
           <div className="sc-brand">
             <p className="sc-brand-title">TETROBOT Servo Controller</p>
-            <p className="sc-brand-sub">6 × ST3215 Smart Servo · Real-time telemetry</p>
+            <p className="sc-brand-sub">
+              {defs.length} × ST3215 Smart Servo · mirrors simulator joints · Real-time telemetry
+            </p>
           </div>
           <div className="sc-topbar-space" />
           <div className="sc-url-row">
@@ -1007,16 +1131,18 @@ export default function ServoController() {
               onKeyDown={e => e.key === 'Enter' && handleConnect()}
               placeholder="http://nischaylap.local"
             />
-            <button className="sc-btn" onClick={handleConnect}>Connect</button>
+            <button className="sc-btn" onClick={handleConnect}>
+              {linkState === 'stopped' ? 'Try again' : 'Connect'}
+            </button>
           </div>
           <div className="sc-topbar-sep" />
           <div className="sc-pill">
-            <span className={`sc-dot ${connected ? 'ok' : 'bad'}`} />
-            {connected ? 'Live' : 'Disconnected'}
+            <span className={`sc-dot ${linkState === 'live' ? 'ok' : linkState === 'probing' ? 'warn' : 'bad'}`} />
+            {linkState === 'live' ? 'Live' : linkState === 'probing' ? 'Connecting…' : 'Offline (paused)'}
           </div>
           <div className="sc-pill">
-            <span className={`sc-dot ${onlineCnt === 6 ? 'ok' : onlineCnt > 0 ? 'warn' : 'bad'}`} />
-            {onlineCnt} / 6
+            <span className={`sc-dot ${defs.length > 0 && onlineCnt === defs.length ? 'ok' : onlineCnt > 0 ? 'warn' : 'bad'}`} />
+            {onlineCnt} / {defs.length}
           </div>
           {latencyMs != null && <div className="sc-pill">{latencyMs} ms</div>}
           <button className="sc-estop" onClick={estopAll}>⚡ E-STOP ALL</button>
@@ -1028,7 +1154,7 @@ export default function ServoController() {
         {/* ── Live status bar (sticky, always visible) ── */}
         <div className="sc-livestrip">
           <span className="sc-ls-label">SERVOS</span>
-          {SERVO_DEFS.map(def => {
+          {defs.map(def => {
             const sv   = servos[def.id];
             const isOn = sv?.connected ?? false;
             const ang  = sv?.currentAngle != null && isOn ? Math.round(sv.currentAngle) + '°' : '—';
@@ -1075,20 +1201,31 @@ export default function ServoController() {
         </div>
 
         {/* ── Group control ── */}
-        <GroupControl onCmd={sendCmd} onEstop={estopAll} />
+        <GroupControl defs={defs} onCmd={sendCmd} onEstop={estopAll} />
 
         {/* ── Servo grid ── */}
-        <div className="sc-grid">
-          {SERVO_DEFS.map(def => (
-            <ServoCard key={def.id} def={def} data={servos[def.id]} onCmd={sendCmd} />
-          ))}
-        </div>
+        {defs.length === 0 ? (
+          <div className="sc-empty">
+            <p className="sc-empty-title">No joints yet</p>
+            <p className="sc-empty-sub">
+              Go to the <strong>Simulator</strong> page and create joints (Build → Create joint).
+              Each movable joint shows up here as a servo — revolute joints get a limited dial,
+              continuous joints get a full-rotation dial with spin controls.
+            </p>
+          </div>
+        ) : (
+          <div className="sc-grid">
+            {defs.map(def => (
+              <ServoCard key={def.jointId ?? def.id} def={def} data={servos[def.id]} onCmd={sendCmd} />
+            ))}
+          </div>
+        )}
 
         {/* ── Sequence recorder ── */}
-        <SequenceRecorder servos={servos} onCmd={sendCmd} />
+        <SequenceRecorder defs={defs} servos={servos} onCmd={sendCmd} />
 
         {/* ── Presets ── */}
-        <PresetPanel servos={servos} onApply={applyPreset} />
+        <PresetPanel defs={defs} servos={servos} onApply={applyPreset} />
 
         {/* ── Debug log ── */}
         <DebugLog log={ctrlLog} onClear={clearCtrlLog} />

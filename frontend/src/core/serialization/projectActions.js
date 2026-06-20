@@ -4,7 +4,7 @@
  */
 
 import { serializeProject } from './project.js';
-import { saveProjectToFile, openProjectFromFile } from './fileIO.js';
+import { saveProjectToFile, openProjectFromFile, writeProjectToHandle } from './fileIO.js';
 import { useDocStore } from '@/state/docStore.js';
 import { bridge } from '@/viewport/cameraBridge.js';
 
@@ -22,7 +22,24 @@ export function newProject() {
   useDocStore.getState().setDoc(null, null);
 }
 
+/** Save to the current file handle if we have one; otherwise prompt (Save As). */
 export async function saveProject() {
+  const { handle, name } = useDocStore.getState();
+  if (handle) {
+    try {
+      useDocStore.getState().setStatus('saving');
+      await writeProjectToHandle(handle, serializeProject());
+      useDocStore.getState().setDoc(name, handle);
+      return;
+    } catch (e) {
+      if (e?.name !== 'AbortError') console.warn('Save failed, falling back to Save As:', e);
+    }
+  }
+  return saveProjectAs();
+}
+
+/** Always prompt for a new file location. */
+export async function saveProjectAs() {
   const res = await saveProjectToFile(serializeProject(), 'tetrobot.nischay');
   if (res) useDocStore.getState().setDoc(res.name, res.handle);
 }

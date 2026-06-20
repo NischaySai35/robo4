@@ -7,8 +7,8 @@
  * the robot; orbit stays enabled (a click ≠ a drag).
  */
 import * as THREE from 'three';
+import { computeSnap, SnapIndicator } from '@/viewport/Snapper.js';
 
-const _ray = new THREE.Raycaster();
 const _ndc = new THREE.Vector2();
 
 export class MeasureTool {
@@ -24,7 +24,11 @@ export class MeasureTool {
     this.group.name = 'measure';
     scene.add(this.group);
 
+    this._indicator = new SnapIndicator(scene); // feature snapping is built-in here
+    this._preview = null; // live line from first point to the hovered point
+
     this._onDown = this._onDown.bind(this);
+    this._onMove = this._onMove.bind(this);
     this._enabled = false;
   }
 
@@ -32,35 +36,71 @@ export class MeasureTool {
     if (this._enabled) return;
     this._enabled = true;
     this.dom.addEventListener('pointerdown', this._onDown);
+    this.dom.addEventListener('pointermove', this._onMove);
   }
 
   disable() {
     this._enabled = false;
     this.dom.removeEventListener('pointerdown', this._onDown);
+    this.dom.removeEventListener('pointermove', this._onMove);
+    this._indicator.hide();
     this._clear();
   }
 
-  _onDown(e) {
-    if (e.button !== 0) return;
+  _ndcFrom(e) {
     const rect = this.dom.getBoundingClientRect();
     _ndc.set(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
-    _ray.setFromCamera(_ndc, this.camera);
-    const hits = _ray.intersectObjects(this.getMeshes(), true);
-    if (!hits.length) return;
+    return _ndc;
+  }
 
-    if (this.points.length >= 2) this._clear();
-    const p = hits[0].point.clone();
+  // Hover: show the snap indicator and a live preview line / distance once the
+  // first point is placed.
+  _onMove(e) {
+    const snap = computeSnap(this._ndcFrom(e), this.camera, this.dom, this.getMeshes());
+    if (!snap) { this._indicator.hide(); return; }
+    this._indicator.show(snap.point, snap.type);
+    if (this.points.length === 1) {
+      this._updatePreview(this.points[0], snap.point);
+      this.onResult?.({ distance: this.points[0].distanceTo(snap.point), a: this.points[0].toArray(), b: snap.point.toArray(), live: true });
+    }
+  }
+
+  _onDown(e) {
+    if (e.button !== 0) return;
+    const snap = computeSnap(this._ndcFrom(e), this.camera, this.dom, this.getMeshes());
+    if (!snap) return;
+
+    if (this.points.length >= 2) { this._clear(); }
+    const p = snap.point.clone();
     this.points.push(p);
     this._addMarker(p);
 
     if (this.points.length === 2) {
+      this._removePreview();
       this._addLine(this.points[0], this.points[1]);
       const distance = this.points[0].distanceTo(this.points[1]);
       this.onResult?.({ distance, a: this.points[0].toArray(), b: this.points[1].toArray() });
     }
+  }
+
+  _updatePreview(a, b) {
+    if (!this._preview) {
+      this._preview = new THREE.Line(
+        new THREE.BufferGeometry().setFromPoints([a, b]),
+        new THREE.LineDashedMaterial({ color: 0xff3366, dashSize: 0.08, gapSize: 0.05, depthTest: false }),
+      );
+      this._preview.renderOrder = 1000;
+      this.group.add(this._preview);
+    } else {
+      this._preview.geometry.setFromPoints([a, b]);
+    }
+    this._preview.computeLineDistances();
+  }
+  _removePreview() {
+    if (this._preview) { this.group.remove(this._preview); this._preview.geometry.dispose(); this._preview.material.dispose(); this._preview = null; }
   }
 
   _addMarker(p) {
@@ -82,6 +122,7 @@ export class MeasureTool {
 
   _clear() {
     this.points = [];
+    this._preview = null;
     for (const c of [...this.group.children]) {
       this.group.remove(c);
       c.geometry?.dispose();
@@ -91,6 +132,7 @@ export class MeasureTool {
 
   dispose() {
     this.disable();
+    this._indicator.dispose();
     this.scene.remove(this.group);
   }
 }

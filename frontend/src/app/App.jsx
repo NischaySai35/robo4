@@ -15,45 +15,32 @@ import { useIntegrationStore } from '@/state/integrationStore.js';
 import { useThemeStore } from '@/state/themeStore.js';
 import { useDocStore } from '@/state/docStore.js';
 import { useModelStore } from '@/state/modelStore.js';
+import { useSelectionStore } from '@/state/selectionStore.js';
+import { saveProject } from '@/core/serialization/projectActions.js';
+import { deleteSelectedEntity } from '@/features/editing/deleteSelected.js';
+import { commands } from '@/core/commands/index.js';
+import { duplicateInPlace } from '@/features/ops/bodyOps.js';
+import { useEditModeStore } from '@/state/editModeStore.js';
+import { editBridge } from '@/viewport/editBridge.js';
 import { bridge } from '@/viewport/cameraBridge.js';
+
+/** Duplicate the selected body in place, select the copy, and enter move mode. */
+function duplicateSelectedInPlace() {
+  const { selectedId, kind } = useSelectionStore.getState();
+  if (!selectedId || kind !== 'body') return;
+  const { doc, dispatch } = useModelStore.getState();
+  const body = doc.bodies[selectedId];
+  if (!body) return;
+  const copy = duplicateInPlace(body);
+  dispatch(commands.addBody(copy));
+  useSelectionStore.getState().select(copy.id, 'body');
+  useSelectionStore.getState().setGizmoMode('translate');
+}
 
 // Phase 0 foundation: expose the core model + command bus for devtools/scripting
 // inspection (e.g. `tetrobotModel.getState().doc`). The model is the platform's
 // source of truth going forward; it does not yet drive rendering (Phase 1).
 if (typeof window !== 'undefined') window.tetrobotModel = useModelStore;
-
-function DocIndicator() {
-  const name   = useDocStore(s => s.name);
-  const status = useDocStore(s => s.status);
-  const display = name ?? 'untitled';
-  return (
-    <div className="doc-indicator" title={name
-      ? `Auto-saving changes to ${name}`
-      : 'Not saved to a file yet — changes are kept locally. Use SAVE PROJECT to create a file.'}>
-      <svg width="13" height="13" viewBox="0 0 16 16" fill="none" className="doc-icon">
-        <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
-      </svg>
-      <span className="doc-name">{display}</span>
-      {name && status === 'saving' && (
-        <span className="doc-status doc-saving">
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" className="doc-spin">
-            <path d="M8 1.5a6.5 6.5 0 106.5 6.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
-          </svg>
-          saving…
-        </span>
-      )}
-      {name && status === 'saved' && (
-        <span className="doc-status doc-saved">
-          <svg width="11" height="11" viewBox="0 0 16 16" fill="none">
-            <path d="M3 8.5l3.5 3.5L13 4.5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-          </svg>
-          saved
-        </span>
-      )}
-      {!name && <span className="doc-status doc-dim">local only</span>}
-    </div>
-  );
-}
 
 function ThemeToggle() {
   const theme  = useThemeStore(s => s.theme);
@@ -242,9 +229,6 @@ function AppHeader({ page, setPage }) {
         </button>
       </nav>
 
-      <div className="app-header-sep" />
-      <DocIndicator />
-
       <div className="app-header-space" />
 
       <div className="app-header-right">
@@ -341,17 +325,56 @@ export default function App() {
   // even while typing; undo/redo are ignored inside text inputs.
   useEffect(() => {
     const onKey = (e) => {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      const k = e.key.toLowerCase();
-      if (k === 'k' || k === 'p') { e.preventDefault(); setPaletteOpen(v => !v); return; }
       const tag = e.target?.tagName;
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable) return;
-      if (k === 'z' && !e.shiftKey)      { e.preventDefault(); bridge.undo?.(); }
-      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); bridge.redo?.(); }
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable;
+
+      if (e.ctrlKey || e.metaKey) {
+        const k = e.key.toLowerCase();
+        if (k === 'k' || k === 'p') { e.preventDefault(); setPaletteOpen(v => !v); return; }
+        if (typing) return;
+        if (k === 's') { e.preventDefault(); saveProject(); return; }
+        if (k === 'z' && !e.shiftKey)      { e.preventDefault(); bridge.undo?.(); }
+        else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); bridge.redo?.(); }
+        return;
+      }
+
+      if (typing || page !== 'sim') return;
+      const k = e.key.toLowerCase();
+      const { selectedId, kind } = useSelectionStore.getState();
+      const edit = useEditModeStore.getState();
+
+      // Tab toggles mesh Edit Mode (enter needs a selected body).
+      if (e.key === 'Tab') {
+        if (edit.active) { e.preventDefault(); edit.exit(); }
+        else if (selectedId && kind === 'body') { e.preventDefault(); edit.enter(selectedId); }
+        return;
+      }
+
+      // In Edit Mode: mesh-op shortcuts (faces/verts), not object-level ones.
+      if (edit.active) {
+        if (e.key === 'Delete' || e.key === 'Backspace' || k === 'x') { e.preventDefault(); editBridge.deleteSelection(); }
+        else if (k === 'e') { e.preventDefault(); editBridge.extrude(); }
+        else if (k === 'g') { e.preventDefault(); editBridge.startTwoPointMove(); }
+        else if (k === 'a') { e.preventDefault(); editBridge.selectAll(); }
+        return;
+      }
+
+      // Delete / Backspace / X delete the selected body or joint.
+      if (e.key === 'Delete' || e.key === 'Backspace' || k === 'x') {
+        if (selectedId) { e.preventDefault(); deleteSelectedEntity(); }
+        return;
+      }
+      // Blender-style transform mode keys (only meaningful for a selected body).
+      if (kind === 'body' && selectedId) {
+        if (k === 'd') { e.preventDefault(); duplicateSelectedInPlace(); return; }
+        if (k === 'm') { e.preventDefault(); useSelectionStore.getState().setGizmoMode('translate'); return; }
+        if (k === 'r') { e.preventDefault(); useSelectionStore.getState().setGizmoMode('rotate'); return; }
+        if (k === 's') { e.preventDefault(); useSelectionStore.getState().setGizmoMode('scale'); return; }
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, []);
+  }, [page]);
 
   return (
     <div className="app-shell">

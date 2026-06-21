@@ -10,6 +10,7 @@ import ConnectionWindow from '@/features/connection/ConnectionWindow';
 import IntroOverlay from '@/features/intro/IntroOverlay';
 import MenuBar from '@/features/menu/MenuBar';
 import RightDock from '@/features/dock/RightDock';
+import HumanoidActionBar from '@/features/humanoid/HumanoidActionBar';
 import LoadingBar from '@/features/common/LoadingBar';
 import CommandPalette from '@/features/command-palette/CommandPalette';
 import { useIntegrationStore } from '@/state/integrationStore';
@@ -242,6 +243,8 @@ function AppHeader({ page, setPage }: any) {
           Servo Control
         </button>
       </nav>
+
+      <HumanoidActionBar />
 
       <div className="app-header-space" />
 

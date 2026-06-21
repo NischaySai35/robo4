@@ -58,6 +58,18 @@ export class JointRenderer {
       ? Math.max(1e-6, ...[...loads.values()].map((l) => Math.abs(l.torque)))
       : 0;
 
+    // Scale the axis arrow + marker to the model so they read well on a small
+    // desktop arm and a large rig alike (the old fixed 0.9 m arrow dwarfed small
+    // models — that giant stray arrow sticking out of the part).
+    const pts: any[] = [];
+    if (fk?.values) for (const w of fk.values()) if (w?.position) pts.push(new THREE.Vector3(...w.position));
+    let L = 1;
+    if (pts.length) L = new THREE.Box3().setFromPoints(pts).getSize(new THREE.Vector3()).length() || 1;
+    const aLen = Math.min(Math.max(L * 0.14, 0.04), 1.2);
+    const aHead = aLen * 0.28;
+    const aWidth = aLen * 0.16;
+    const sphR = aLen * 0.09;
+
     for (const j of Object.values(doc.joints)) {
       if (!j.parentBodyId) continue;
       const parent = doc.bodies[j.parentBodyId];
@@ -80,12 +92,12 @@ export class JointRenderer {
       node.position.copy(pos);
       node.userData = { jointId: j.id };
 
-      const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(), 0.9, color, 0.22, 0.12);
+      const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(), aLen, color, aHead, aWidth);
       arrow.traverse((o: any) => { if (o.material) { o.material.depthTest = false; } o.renderOrder = 999; });
       node.add(arrow);
 
       const sph = new THREE.Mesh(
-        new THREE.SphereGeometry(0.07, 12, 10),
+        new THREE.SphereGeometry(sphR, 12, 10),
         new THREE.MeshBasicMaterial({ color, depthTest: false }),
       );
       sph.renderOrder = 999;

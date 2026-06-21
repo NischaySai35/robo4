@@ -1,331 +1,198 @@
-# TETROBOT — Modular Robotic Arm Simulator & Controller
+# TETROBOT — GUI-first Robotics Modeling, Simulation & Autonomy Platform
 
-A full-stack platform for simulating, visualizing, and controlling a 6-DOF modular robotic arm. The browser-based 3D simulator runs inverse kinematics in real time and streams joint commands to an ESP32-C3 microcontroller driving ST3215 smart servos over a WiFi link.
+Design any robot **without writing code**, simulate it (kinematics + physics),
+analyze it (mass, torque, stress), animate it, and run a full **native autonomy
+stack** (navigation, motion planning, perception, learning, behaviour trees) — all
+in one app. No ROS, no middleware, no servers. Optionally drive real hardware
+(ESP32-C3 + ST3215 smart servos) over WiFi.
 
----
+> One rich model, many backends: a single JSON-serializable robot **document** is
+> the source of truth; the 3D viewport, physics, analysis, exporters, hardware and
+> autonomy are all *views* of it.
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
-- [Tech Stack](#tech-stack)
-- [Getting Started](#getting-started)
-- [Hardware Setup](#hardware-setup)
-- [Pages & UI](#pages--ui)
-- [Kinematics Chain](#kinematics-chain)
-- [API Reference](#api-reference)
-- [Data Flow](#data-flow)
-- [Configuration](#configuration)
+By **Nischay Sai D R** · Proprietary & confidential.
 
 ---
 
-## Overview
+## Highlights
 
-TETROBOT is a 7-rod, 6-joint articulated arm built from modular segments. The platform has three layers:
-
-| Layer | Role |
-|---|---|
-| **Frontend** (React + Three.js) | 3D simulator, IK drag control, servo dashboard |
-| **Backend** (FastAPI) | REST stub — ready to proxy ESP32 in production |
-| **Firmware** (ESP32-C3 Arduino) | WiFi API + ST3215 servo bus driver |
-
-The simulator page lets you drag the end effector (or any rod) in 3D space. The FABRIK IK solver computes joint angles, which are sampled every 100 ms and forwarded to real hardware if connected.
-
----
-
-## Features
-
-### Simulator (Page 1)
-- Interactive **3D arm visualization** using Three.js scene graph
-- **Forward kinematics (FK)** — live render of all joint angles
-- **Inverse kinematics (IK)** — drag the tip; FABRIK solver drives the joints
-- **Root switching** — click any rod to make it the fixed anchor; world poses are preserved
-- **Joint telemetry overlay** — angle, velocity, acceleration, limit-hit indicator per joint
-- **Horizontal / vertical mode** — XZ-plane or XY-plane orientation
-- **SimTransmit log** — shows every batch sent to ESP32 with timestamps
-- **End-effector status bar** — position (x, y, z) and reach percentage
-
-### Servo Controller (Page 2)
-- **Live telemetry polling** at 200 ms from ESP32 per servo
-- **AngleGauge** — SVG semi-circle drag control per servo
-- Per-servo buttons: GO, CW, CCW, WAVE, STOP, 180°, Torque toggle
-- Speed and acceleration sliders
-- Real-time **current (mA) and load graphs** per servo
-- **Group control** — Bend group (J2, J3, J5) and Twist group (J1, J4, J6)
-- **Sequence recorder** — capture frames, play back, export/import JSON
-- **Preset manager** — save and load arm positions to localStorage
-- **Thermal alerts** — banner when any servo exceeds 55 °C or total draw exceeds 8 A
-- **Debug log** — timestamped command/response feed
+- **Code-free robot builder** — compose rigid **bodies** (box / cylinder / capsule /
+  sphere / cone / torus / imported STL/OBJ mesh) and **joints** (revolute, continuous,
+  prismatic, fixed, …) into any kinematic graph. Move/rotate/scale gizmos, snapping,
+  measure tool, face-mate assembly, and a Blender-style mesh **Edit Mode**.
+- **Kinematics** — generic forward kinematics over the graph + **inverse kinematics**
+  (damped-least-squares and FABRIK). **Drag-from-tip IK**: grab any link and the chain
+  solves to follow.
+- **Physics** — live gravity simulation on Rapier with anchored roots, joint limits,
+  servo-style holding motors, and a per-pair **self-collision** model (parts that are
+  jointed or nest at rest pass through; everything else collides solidly).
+- **Engineering analysis** — total mass, center of mass, per-joint gravity-holding
+  **torque & estimated servo current**, and a Fusion-style **surface stress heatmap**
+  painted across the meshes, plus a live multi-metric telemetry chart.
+- **Animation** — keyframe joint poses on a timeline; scrub, play, and pose live with IK.
+- **Native autonomy stack (no ROS)** — occupancy/costmap + **A\*** navigation, joint-space
+  **RRT** motion planning with real collision checking, simulated **LiDAR** + occupancy
+  **mapping**, a Gym-style RL env with an **Evolution-Strategies** trainer, and a
+  **Behaviour-Tree** mission engine.
+- **Built-in robots** — generate a complete **6-DOF robot arm** or a **~20-DOF humanoid**
+  in one click, with walk / jump / wave / home actions for the humanoid.
+- **AI Copilot** — in-app assistant (Transformers.js) that can build/edit the model.
+- **Projects** — save/load self-contained, encrypted **`.nischay`** files (geometry +
+  embedded meshes + animation, all in one file). Export to OBJ / STL / GLB / URDF / IDL.
+- **Desktop + web** — runs as an Electron desktop app or in the browser.
+- **Hardware control** — a Servo Control page drives ST3215 servos via an ESP32-C3.
 
 ---
 
 ## Architecture
 
 ```
-Browser
-  ├─ Page 1: Simulator
-  │    Three.js scene ←→ armStore (Zustand)
-  │         │
-  │    SimTransmitPanel ──► integrationStore.pendingAngles
-  │                               │ (100 ms sampler, Δ ≥ 0.8°)
-  │                               ▼
-  └─ Page 2: Servo Controller ──► GET /api/batch → ESP32
-                                          │
-                                    ST3215 servo bus (UART RS-485, 1 Mbaud)
-                                          │
-                                   Servos 1 – 5
+                      ┌──────────────────────────────────────────┐
+                      │   Model document  (core/model, commands)  │   ← single source of truth
+                      │   bodies · joints · materials · assets     │     (undoable, serializable)
+                      └──────────────────────────────────────────┘
+            ┌──────────────┬──────────────┬───────────────┬───────────────┬─────────────┐
+            ▼              ▼              ▼               ▼               ▼             ▼
+       Viewport        Physics        Kinematics       Analysis       Autonomy      Exporters
+   (Three.js render,  (Rapier sim,   (FK / IK /       (mass, CoM,    (nav, RRT,    (.nischay,
+    gizmos, overlays)  collisions)    FABRIK)          torque, stress) lidar, RL, BT) OBJ/STL/GLB/URDF)
+                                                                                          │
+                                                                         Hardware ── ESP32-C3 ── ST3215 bus
 ```
+
+See [`frontend/ARCHITECTURE.md`](frontend/ARCHITECTURE.md) and
+[`ROADMAP.md`](ROADMAP.md) / [`ROADMAP_ROBOTICS.md`](ROADMAP_ROBOTICS.md) for details.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 robo4/
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx                  # Root shell, tab routing, header/footer
-│   │   ├── store/
-│   │   │   ├── armStore.js          # Joint angles, telemetry, drag state
-│   │   │   └── integrationStore.js  # Sim ↔ ESP bridge, logs, stats
-│   │   ├── components/
-│   │   │   ├── SimCanvas.jsx        # Three.js canvas mount + lifecycle
-│   │   │   ├── LeftPanel.jsx        # Joint telemetry, root selector
-│   │   │   ├── ServoController.jsx  # Full servo dashboard (Page 2)
-│   │   │   ├── SimTransmitPanel.jsx # Transmission overlay (Page 1)
-│   │   │   └── StatusBar.jsx        # End-effector position strip
-│   │   ├── three/
-│   │   │   ├── RobotFK.js           # Scene graph, FK render, root switching
-│   │   │   ├── RenderLoop.js        # 60 fps loop, IK solver calls
-│   │   │   └── Interaction.js       # Raycasting, drag callbacks
-│   │   └── math/
-│   │       ├── kinematics.js        # Pure FK math (no Three.js)
-│   │       └── fabrik.js            # FABRIK IK solver
-│   ├── package.json
-│   └── vite.config.js               # Dev server port 5173
-├── backend/
-│   ├── main.py                      # FastAPI app, CORS, router mount
-│   ├── routers/arm.py               # REST endpoints (stubbed)
-│   ├── config.py                    # Env-based config
-│   └── requirements.txt
-├── esp32/
-│   └── firmware.ino                 # ESP32-C3 WiFi server + servo bus driver
-├── test_ik_direct.mjs               # IK algorithm unit tests
-└── playwright_zustand.js            # E2E test utilities
+├── frontend/                       # The app (100% TypeScript, strict)
+│   ├── electron/                   # Desktop shell (main.cjs, launch.cjs)
+│   └── src/
+│       ├── core/
+│       │   ├── model/              # entities + Document graph model (the "DDL")
+│       │   ├── commands/           # undoable command bus
+│       │   ├── factory/            # robotArm.ts, humanoid.ts generators
+│       │   └── serialization/      # .nischay codec, project I/O, exporters
+│       ├── kinematics/             # modelFK, modelIK (DLS), fabrik, analysis (mass/torque/stress)
+│       ├── viewport/               # SceneManager, ModelEditor, PhysicsSim (Rapier), renderers
+│       ├── robotics/               # NATIVE autonomy stack
+│       │   ├── nav/                # occupancyGrid, astar, pathFollower, worldModel
+│       │   ├── planning/           # rrt.ts (joint-space motion planning)
+│       │   ├── collision.ts        # self/world collision model
+│       │   ├── sensors/            # lidar.ts (scene raycast)
+│       │   ├── rl/                 # gymEnv.ts, es.ts (Evolution Strategies)
+│       │   └── behavior/           # behaviorTree.ts engine
+│       ├── features/               # UI: dock panels, menus, autonomy, humanoid, servo, AI, ...
+│       └── state/                  # Zustand stores (model, selection, dock, autonomy, ...)
+├── backend/                        # Optional FastAPI stub (proxy to ESP32)
+├── esp32/                          # ESP32-C3 firmware (WiFi API + ST3215 driver)
+├── tools/                          # Blender import add-on, helpers
+├── ROADMAP.md                      # Platform roadmap
+└── ROADMAP_ROBOTICS.md             # Native autonomy-stack roadmap
 ```
 
 ---
 
-## Tech Stack
+## Tech stack
 
-### Frontend
-| Package | Version | Purpose |
-|---|---|---|
-| React | 18.3.1 | UI framework |
-| Three.js | 0.164.1 | 3D rendering |
-| Zustand | 4.5.2 | State management |
-| Vite | 5.3.4 | Dev server & bundler |
-| Postprocessing | 6.36.3 | Post-render effects |
-
-### Backend
-| Package | Version | Purpose |
-|---|---|---|
-| FastAPI | 0.111.0 | REST API |
-| Uvicorn | 0.30.0 | ASGI server |
-| Pydantic | 2.7.0 | Data validation |
-| PySerial | 3.5 | Serial comms (optional) |
-
-### Firmware
-- Arduino for ESP32-C3
-- SCServo library (ST3215 half-duplex RS-485 bus)
-- WiFi + WebServer + ESPmDNS
+| Area | Stack |
+|---|---|
+| App | React 18 + TypeScript (strict), Vite 5, Zustand |
+| 3D | Three.js, postprocessing |
+| Physics | Rapier3D (`@dimforge/rapier3d-compat`, WASM) |
+| Charts | uPlot |
+| AI | `@huggingface/transformers` (Transformers.js) |
+| Desktop | Electron 33 + electron-builder |
+| Hardware | ESP32-C3 (Arduino) + SCServo / ST3215 RS-485 bus |
+| Backend (optional) | FastAPI + Uvicorn |
 
 ---
 
-## Getting Started
+## Getting started
 
-### Prerequisites
-- Node.js 18+
-- Python 3.10+
-- (Optional) Arduino IDE 1.8+ or PlatformIO for firmware
-
-### 1. Run the Frontend
+### Web (dev)
 
 ```bash
 cd frontend
 npm install
-npm run dev
+npm run dev          # http://localhost:5173
+npm run typecheck    # tsc --noEmit
+npm run build        # production build
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+### Desktop (Electron)
 
 ```bash
-# Production build
-npm run build
-npm run preview
+cd frontend
+npm run electron:dev   # Vite + Electron together
+npm run electron:build # packaged installer (Windows NSIS)
 ```
 
-### 2. Run the Backend (optional stub)
+### Backend (optional stub)
 
 ```bash
 cd backend
 pip install -r requirements.txt
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+uvicorn main:app --reload --port 8000
 ```
-
-API docs available at [http://localhost:8000/docs](http://localhost:8000/docs).
-
-### 3. Flash the ESP32 Firmware (for real hardware)
-
-1. Open `esp32/firmware.ino` in Arduino IDE
-2. Install board: **ESP32-C3** (Espressif Systems)
-3. Install library: **SCServo**
-4. Edit WiFi credentials in the sketch:
-   ```cpp
-   const char* ssid = "YOUR_SSID";
-   const char* password = "YOUR_PASSWORD";
-   ```
-5. Select board → Upload
-6. The ESP32 will advertise itself as `tetrobot.local` (or your chosen mDNS name)
-7. In the Servo Controller page, set the ESP URL to `http://tetrobot.local`
 
 ---
 
-## Hardware Setup
+## Using it
 
-```
-ESP32-C3
-  GPIO5 ──► RS-485 transceiver ──► ST3215 servo bus
-  (UART TX/RX, half-duplex, 1 Mbaud)
+1. **Build or load a robot.** Drop in primitives/meshes and connect joints, or use
+   **File ▸ New 6-DOF Robot Arm** / **New Humanoid Robot** for a complete sample.
+2. **Pose & simulate.** Toggle the top-view **IK** button and drag a link; enable
+   **Gravity** to run physics. Open **Analysis ▸ Overlay** for the stress heatmap.
+3. **Animate.** Keyframe poses on the **Animation** timeline; scrub and play.
+4. **Autonomy.** Open the **Autonomy** panel: add obstacles, build a LiDAR map, set a
+   goal and **Navigate**; plan a collision-checked arm trajectory (**RRT**); **Train**
+   a reach policy (Evolution Strategies); or run a **Behaviour-Tree** patrol mission.
+   With the humanoid loaded, **Walk / Jump / Wave / Home** appear in the top bar.
+5. **Save / export.** **File ▸ Save Project As** writes a self-contained `.nischay`
+   (geometry + embedded meshes + animation, encrypted). Export OBJ / STL / GLB / URDF.
 
-Servo IDs: 1, 2, 3, 4, 5  (set via servo programmer before assembly)
+### The `.nischay` project file
 
-Power: 7.4 V LiPo or regulated 8 V supply, ≥5 A continuous
-```
-
-### Arm Physical Layout
-
-```
-R1 ─J1─ R2 ─J2─ R3 ─J3─ R4 ─J4─ R5 ─J5─ R6 ─J6─ R7
-```
-
-| Segment | Type | Notes |
-|---|---|---|
-| R1, R7 | End caps | Cube mesh |
-| R2 – R6 | Rods | Cylinder mesh, configurable lengths |
-| J1, J4, J6 | Twist joints | ±180° (full rotation) |
-| J2, J3, J5 | Bend joints | ±100° (mechanical limit) |
+A `.nischay` file is the model document + animation, serialized to JSON and wrapped in
+an encrypted binary container (SHA-256 keystream XOR with a per-file salt). It is
+**self-contained** — imported meshes are embedded as base64 — so a single file carries
+the whole robot. It opens in any copy of TETROBOT. (This is app-format obfuscation, not
+secure DRM, since the key ships in the client.)
 
 ---
 
-## Pages & UI
-
-### Page 1 — 3D Simulator
-
-| Area | Function |
-|---|---|
-| Left panel | Per-joint angle / velocity / acceleration readout, root selector, home button |
-| 3D canvas | Click rod to set root; drag rod/end-effector for IK; RMB orbit; scroll zoom |
-| SimTransmit overlay | Log of every batch command sent to ESP32 |
-| Status bar | End-effector XYZ position, reach % |
-
-### Page 2 — Servo Controller
-
-| Area | Function |
-|---|---|
-| Top bar | ESP URL input, connect/disconnect, latency, online servo count |
-| Servo cards (×5) | AngleGauge, GO/CW/CCW/WAVE/STOP buttons, speed & acc sliders, live graphs |
-| Group Control | Bend group / Twist group batch commands |
-| Sequence Recorder | Record frames, play back, export/import JSON |
-| Preset Manager | Named saves to localStorage |
-| Alert banner | Thermal / overcurrent warnings |
-| Debug log | Timestamped command & response feed |
-
----
-
-## Kinematics Chain
+## Hardware (optional)
 
 ```
-R1 —[J1 twist]— R2 —[J2 bend]— R3 —[J3 bend]— R4 —[J4 twist]— R5 —[J5 bend]— R6 —[J6 twist]— R7
+ESP32-C3  ──► RS-485 transceiver ──► ST3215 smart-servo bus (half-duplex, 1 Mbaud)
+Power: 7.4 V LiPo / regulated supply, sized to the servo count
 ```
 
-**Forward kinematics** (`math/kinematics.js`) — walks the chain from the active root, composing rotation matrices at each joint.
+The **Servo Control** page polls live telemetry (angle, current, temperature, load,
+voltage), drives each servo (GO / CW / CCW / WAVE / STOP / torque), supports group
+control, sequence recording, presets, and thermal/overcurrent alerts. One ST3215 maps
+to each movable joint in the model.
 
-**Inverse kinematics** (`math/fabrik.js`) — FABRIK (Forward And Backward Reaching IK) solver that runs inside the 60 fps render loop during drag interactions.
-
-**Root switching** — any rod can become the fixed anchor. `RobotFK.computeAnglesForRoot()` snapshots world quaternions and recomputes all local joint angles so the visual pose is preserved.
-
----
-
-## API Reference
-
-### ESP32 Firmware Endpoints
+### ESP32 firmware endpoints
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/` | Health check |
-| `GET` | `/api/telemetry` | All 5 servos: angle, current, temp, load, voltage |
-| `GET` | `/api/command` | Single servo command: `?servo=N&cmd=pos&angle=Y&speed=Z&acc=W` |
-| `GET` | `/api/batch` | Multi-servo positions: `?1=180&2=90&3=150&4=120&5=180&speed=5&acc=20` |
+| `GET` | `/api/telemetry` | Per-servo angle, current, temp, load, voltage |
+| `GET` | `/api/command` | Single servo: `?servo=N&cmd=pos&angle=Y&speed=Z&acc=W` |
+| `GET` | `/api/batch` | Multi-servo positions in one request |
 
-### Backend REST (FastAPI stub)
-
-| Method | Path | Description |
-|---|---|---|
-| `POST` | `/arm/angles` | Send joint angles |
-| `GET` | `/arm/status` | Robot state |
-| `POST` | `/arm/stop` | Emergency stop |
-| `POST` | `/arm/home` | Move to home position |
-| `GET` | `/arm/config` | Hardware configuration |
+Flash `esp32/firmware.ino` (Arduino, ESP32-C3 board + SCServo library), set WiFi
+credentials, and point the Servo Control page at the device.
 
 ---
 
-## Data Flow
+## License
 
-### Simulator → Hardware
-
-1. User drags a rod in the 3D view
-2. FABRIK solver updates `armStore.jointAngles`
-3. `SimTransmitPanel` samples every 100 ms; sends batch if any joint changed by ≥ 0.8°
-4. `integrationStore.pendingAngles` is updated
-5. `ServoController` detects pending angles, fires `GET /api/batch` to ESP32
-6. ESP32 drives servos, returns telemetry
-7. Transmission log updates in the overlay on Page 1
-
-### Servo Controller → Hardware (direct)
-
-1. User drags `AngleGauge` on a servo card
-2. Component calls `sendCmd(id, 'pos', { angle, speed, acc })`
-3. Fetches `GET /api/command?servo=N&cmd=pos&angle=Y&speed=Z&acc=W`
-4. ESP32 executes, response logged to debug panel
-
----
-
-## Configuration
-
-### Frontend — `frontend/vite.config.js`
-- Dev server port: **5173**
-
-### Backend — environment variables (`backend/config.py`)
-
-| Variable | Default | Description |
-|---|---|---|
-| `SERIAL_PORT` | — | Serial port for direct USB connection |
-| `ESP32_IP` | — | Static IP of the ESP32 |
-| `DEBUG` | `false` | Enable verbose logging |
-
-### Firmware — edit `esp32/firmware.ino`
-
-```cpp
-const char* ssid     = "YOUR_SSID";
-const char* password = "YOUR_PASSWORD";
-const char* hostname = "tetrobot";      // accessible at tetrobot.local
-```
-
----
-
-## Author
-
-Nischay Sai D R
+© Nischay Sai D R. All rights reserved. Proprietary & confidential — unauthorized use,
+copying, or distribution is prohibited.

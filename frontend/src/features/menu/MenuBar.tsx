@@ -5,7 +5,7 @@ import { useHistoryStore } from '@/state/historyStore';
 import { useDocStore } from '@/state/docStore';
 import { useDockStore } from '@/state/dockStore';
 import { bridge } from '@/viewport/cameraBridge';
-import { newProject, openProject, saveProject, saveProjectAs, exportModel } from '@/core/serialization/projectActions';
+import { newProject, newRobotArm, newHumanoid, openProject, saveProject, saveProjectAs, exportModel } from '@/core/serialization/projectActions';
 import { importMesh } from '@/features/import/importMesh';
 import { exportRobot } from '@/features/export/exportRobot';
 
@@ -91,6 +91,8 @@ export default function MenuBar({ onToggleConn }: any) {
   const menus = {
     File: [
       { label: 'New Project',     onClick: newProject },
+      { label: 'New 6-DOF Robot Arm', onClick: newRobotArm },
+      { label: 'New Humanoid Robot', onClick: newHumanoid },
       { label: 'Open Project…',   onClick: openProject },
       SEP,
       { label: 'Save Project',    shortcut: 'Ctrl+S', onClick: saveProject },
@@ -127,6 +129,7 @@ export default function MenuBar({ onToggleConn }: any) {
       { label: 'AI Copilot',              onClick: () => openPanel('copilot') },
       { label: 'Hardware / Servos',       onClick: () => openPanel('hardware') },
       { label: 'Analysis',                onClick: () => openPanel('analysis') },
+      { label: 'Camera & Render',         onClick: () => openPanel('camera') },
       { label: 'Precision & Measure',     onClick: () => openPanel('tools') },
       { label: 'Animation',               onClick: () => openPanel('timeline') },
       { label: 'JS Macros',               onClick: () => openPanel('scripting') },

@@ -26,6 +26,10 @@ import { useDocStore } from '@/state/docStore';
 import { useHistoryStore } from '@/state/historyStore';
 import { useModelStore } from '@/state/modelStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { useAutonomyStore } from '@/state/autonomyStore';
+import { scan2D } from '@/robotics/sensors/lidar';
+import { computeFK } from '@/kinematics/modelFK';
+import { robotBaseXZ } from '@/robotics/nav/worldModel';
 
 export default function SimCanvas() {
   const canvasRef = useRef<any>(null);
@@ -59,6 +63,87 @@ export default function SimCanvas() {
       const box = new THREE.Box3().setFromObject(g);
       return box.isEmpty() ? null : box;
     };
+
+    // ── Autonomy overlay: nav path, goal ring, LiDAR points ────────────────────
+    const autoGroup = new THREE.Group();
+    autoGroup.name = 'autonomy-overlay';
+    sceneMgr.scene.add(autoGroup);
+    const clearAuto = () => {
+      for (const c of [...autoGroup.children]) {
+        autoGroup.remove(c);
+        (c as any).geometry?.dispose?.();
+        (c as any).material?.dispose?.();
+      }
+    };
+    const drawAuto = () => {
+      clearAuto();
+      const st = useAutonomyStore.getState();
+      if (st.path && st.path.length > 1) {
+        const pts = st.path.map(([x, z]) => new THREE.Vector3(x, 0.03, z));
+        const line = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(pts),
+          new THREE.LineBasicMaterial({ color: 0x10b0ff, depthTest: false }),
+        );
+        line.renderOrder = 998;
+        autoGroup.add(line);
+      }
+      if (st.goal) {
+        const m = new THREE.Mesh(
+          new THREE.TorusGeometry(0.18, 0.03, 8, 24),
+          new THREE.MeshBasicMaterial({ color: 0x10b0ff, depthTest: false }),
+        );
+        m.rotation.x = Math.PI / 2;
+        m.position.set(st.goal[0], 0.04, st.goal[1]);
+        m.renderOrder = 999;
+        autoGroup.add(m);
+      }
+      if (st.showLidar && st.lidar) {
+        const arr = new Float32Array(st.lidar.points.length * 3);
+        st.lidar.points.forEach((p, i) => { arr[i * 3] = p[0]; arr[i * 3 + 1] = p[1]; arr[i * 3 + 2] = p[2]; });
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(arr, 3));
+        const pts = new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xff3344, size: 0.06, depthTest: false }));
+        pts.renderOrder = 999;
+        autoGroup.add(pts);
+      }
+    };
+    const unsubAuto = useAutonomyStore.subscribe(drawAuto);
+    drawAuto();
+
+    // LiDAR scan against obstacle meshes (from the robot base, or a given origin).
+    const lidarRay = new THREE.Raycaster();
+    bridge.scanLidar = (origin) => {
+      const doc = useModelStore.getState().doc;
+      let o: THREE.Vector3;
+      if (origin) o = new THREE.Vector3(origin[0], origin[1], origin[2]);
+      else { const [bx, bz] = robotBaseXZ(doc, computeFK(doc)); o = new THREE.Vector3(bx, 0.35, bz); }
+      const targets: any[] = [];
+      for (const b of Object.values(doc.bodies)) {
+        if ((b.meta as any)?.obstacle) { const c = modelEditor.bodyRenderer.getMesh(b.id); if (c) targets.push(c); }
+      }
+      const scan = scan2D(lidarRay, targets, o, { rays: 140, maxRange: 8 });
+      useAutonomyStore.getState().setLidar(scan);
+      return scan;
+    };
+
+    // Click-to-set-goal: while in goal mode, a canvas click drops the goal on the ground.
+    const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    const goalRay = new THREE.Raycaster();
+    const onGoalClick = (e: any) => {
+      if (!useAutonomyStore.getState().settingGoal) return;
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      goalRay.setFromCamera(ndc, sceneMgr.camera);
+      const pt = new THREE.Vector3();
+      if (goalRay.ray.intersectPlane(groundPlane, pt)) {
+        useAutonomyStore.getState().setGoal([pt.x, pt.z]);
+        useAutonomyStore.getState().setSettingGoal(false);
+      }
+    };
+    canvas.addEventListener('pointerdown', onGoalClick);
 
     // Measure tool (Phase 3) — raycasts model bodies.
     const measureTool = new MeasureTool({
@@ -202,6 +287,11 @@ export default function SimCanvas() {
       unsubMeasure();
       unsubModelSave();
       unsubAnimSave();
+      unsubAuto();
+      canvas.removeEventListener('pointerdown', onGoalClick);
+      clearAuto();
+      sceneMgr.scene.remove(autoGroup);
+      bridge.scanLidar = undefined;
       measureTool.dispose();
       modelEditor.dispose();
       sceneMgr.dispose();

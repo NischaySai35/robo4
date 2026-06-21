@@ -7,6 +7,8 @@ import { serializeProject } from './project';
 import { saveProjectToFile, openProjectFromFile, writeProjectToHandle } from './fileIO';
 import { useDocStore } from '@/state/docStore';
 import { bridge } from '@/viewport/cameraBridge';
+import { buildRobotArmProject } from '@/core/factory/robotArm';
+import { buildHumanoidProject } from '@/core/factory/humanoid';
 
 export function newProject() {
   if (!window.confirm('Start a new project? The current scene will be cleared (saved files are untouched).')) return;
@@ -18,6 +20,22 @@ export function newProject() {
     animation: { duration: 4, tracks: {} },
   };
   const r = bridge.loadScene?.(fresh);
+  if (r && !r.ok) { alert(r.error); return; }
+  useDocStore.getState().setDoc(null, null);
+}
+
+/** Load the built-in articulated 6-DOF arm sample into the scene. */
+export function newRobotArm() {
+  if (!window.confirm('Load the 6-DOF robot arm sample? The current scene will be replaced (saved files are untouched).')) return;
+  const r = bridge.loadScene?.(buildRobotArmProject());
+  if (r && !r.ok) { alert(r.error); return; }
+  useDocStore.getState().setDoc(null, null);
+}
+
+/** Load the built-in 20-DOF humanoid sample into the scene. */
+export function newHumanoid() {
+  if (!window.confirm('Load the humanoid robot sample? The current scene will be replaced (saved files are untouched).')) return;
+  const r = bridge.loadScene?.(buildHumanoidProject());
   if (r && !r.ok) { alert(r.error); return; }
   useDocStore.getState().setDoc(null, null);
 }

@@ -1,14 +1,47 @@
 import './ViewControls.css';
 import { useCallback } from 'react';
 import { bridge } from '@/viewport/cameraBridge';
+import { useDockStore } from '@/state/dockStore';
+import { useEditorStore } from '@/state/editorStore';
 
 export default function ViewControls({ isConnOpen, onConnToggle }: any) {
   const fitCamera = useCallback(() => {
     if (bridge.fitCamera) bridge.fitCamera();
   }, []);
+  const camActive = useDockStore((s) => s.active === 'camera');
+  const toggleCam = useCallback(() => useDockStore.getState().toggle('camera'), []);
+  const ikDrag = useEditorStore((s) => s.ikDrag);
+  const toggleIk = useEditorStore((s) => s.toggleIkDrag);
 
   return (
     <div className="view-controls">
+      <button
+        className={`view-btn${camActive ? ' view-btn--active' : ''}`}
+        onClick={toggleCam}
+        title="Camera settings"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M1.5 4.5h2L4.7 3h4.6l1.2 1.5h2v7h-11z"
+            stroke="currentColor" strokeWidth="1.3" strokeLinejoin="round"/>
+          <circle cx="7" cy="8" r="2.1" stroke="currentColor" strokeWidth="1.3"/>
+        </svg>
+        CAM
+      </button>
+
+      <button
+        className={`view-btn${ikDrag ? ' view-btn--active' : ''}`}
+        onClick={toggleIk}
+        title="Drag-from-tip IK — grab any link and pull it; the joints solve to follow"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="3" cy="11" r="1.6" stroke="currentColor" strokeWidth="1.3"/>
+          <path d="M3.6 9.8L7 5.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+          <path d="M7 5.5l3.5-2" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+          <circle cx="11" cy="3" r="1.8" fill="currentColor"/>
+        </svg>
+        IK
+      </button>
+
       <button className="view-btn" onClick={fitCamera} title="Fit arm in view">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <rect x="1" y="1" width="4" height="4" rx="1"

@@ -1,15 +1,16 @@
 /**
- * LiveTelemetryChart — real-time uPlot strip chart of per-joint telemetry
- * (Phase 8 "live data plots").
+ * LiveTelemetryChart — real-time multi-metric strip chart (Phase 8 "live plots").
  *
- * Series come from the actual model joints (modelStore.doc.joints), using their
- * real names — NOT any fixed/legacy arm. The model stores only each joint's
- * position (state.value); velocity and acceleration are derived here by finite
- * differencing over time, so the chart is fully generic for any robot.
+ * Unlike a single-metric view, this overlays EVERY metric at once — position,
+ * velocity, acceleration, torque, current, stress — as separate lines. Because the
+ * units are wildly different, each line is auto-normalised to its own running
+ * peak (so you read deviations/shape, not absolute scale); the Y axis is therefore
+ * meaningless and hidden. Hovering shows each line's REAL value (with its unit) in
+ * the legend. A checkbox list below toggles any line on/off.
  *
- * It streams ONLY while a real data source is active — live physics preview,
- * connected hardware, or animation playback. When nothing is driving the joints
- * it sits idle (no fake stream) and says so.
+ * Values are aggregated across the model's joints as the worst-case (largest
+ * magnitude) joint, so it stays a compact overview for any robot. It streams only
+ * while a real source drives the joints (physics, hardware, or animation).
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
@@ -18,73 +19,87 @@ import { useModelStore } from '@/state/modelStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useHardwareStore } from '@/state/hardwareStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { useSelectionStore } from '@/state/selectionStore';
+import { computeFK } from '@/kinematics/modelFK';
+import { jointLoads, ST3215 } from '@/kinematics/analysis';
 
 const RAD2DEG = 180 / Math.PI;
-const SAMPLE_MS = 50;      // 20 Hz capture
-const WINDOW = 600;        // ~30 s of history
-
+const SAMPLE_MS = 50;   // 20 Hz capture
+const WINDOW = 600;     // ~30 s of history
 const ANGULAR = new Set(['revolute', 'continuous']);
 
-const METRICS = {
-  position:     { label: 'Position (° / m)',          unit: 'pos' },
-  velocity:     { label: 'Velocity (°/s / m/s)',      unit: 'vel' },
-  acceleration: { label: 'Acceleration (°/s² / m/s²)', unit: 'acc' },
-};
+// The overlaid metrics. `unit` is shown on hover; `color` is the line colour.
+const SERIES = [
+  { key: 'velocity',     label: 'Velocity',     unit: '°/s',  color: '#3b82f6' },
+  { key: 'acceleration', label: 'Acceleration', unit: '°/s²', color: '#22c55e' },
+  { key: 'torque',       label: 'Torque',       unit: 'N·m',  color: '#e11d48' },
+  { key: 'current',      label: 'Current',      unit: 'A',    color: '#a855f7' },
+  { key: 'stress',       label: 'Stress',       unit: '%',    color: '#06b6d4' },
+] as const;
 
-const COLORS = ['#ff8800', '#3b82f6', '#22c55e', '#e11d48', '#a855f7', '#06b6d4', '#eab308', '#14b8a6'];
+const signedMax = (arr: number[]) => arr.reduce((m, v) => (Math.abs(v) > Math.abs(m) ? v : m), 0);
 
 export default function LiveTelemetryChart() {
-  const [metric, setMetric] = useState('position');
   const hostRef = useRef<any>(null);
   const plotRef = useRef<any>(null);
-  const dataRef = useRef<any>(null);          // [xs, y0, y1, …]
+  const dataRef = useRef<any>(null);   // [xs, …normalised series]  (what uPlot draws)
+  const realRef = useRef<any>(null);   // [xs, …real series]        (what hover shows)
   const t0Ref = useRef(performance.now());
-  const prevRef = useRef<any>(null);          // { t, pos[], vel[] } for differencing
+  const prevRef = useRef<any>(null);   // { t, pos, vel } for differencing
+  const [enabled, setEnabled] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(SERIES.map((s) => [s.key, true])),
+  );
 
-  // Generic joint list straight from the model — id + display name + angular?.
   const doc = useModelStore((s) => s.doc);
   const jointList = useMemo(
-    () => Object.values(doc.joints).map((j) => ({ id: j.id, name: j.name, angular: ANGULAR.has(j.type) })),
+    () => Object.values(doc.joints).map((j) => ({ id: j.id, angular: ANGULAR.has(j.type) })),
     [doc.joints],
   );
-  // Stable identity so the plot only rebuilds when the joint set really changes.
-  const sig = jointList.map((j) => `${j.id}:${j.name}`).join('|');
+  // Selected joint → chart shows just that joint; nothing selected → totals.
+  const selJoint = useSelectionStore((s) => (s.kind === 'joint' ? s.selectedId : null));
+  const selName = selJoint ? doc.joints[selJoint]?.name : null;
+  const sig = `${jointList.map((j) => j.id).join('|')}#${selJoint ?? ''}`;
 
-  // A "live source" = something actually moving the joints.
   const simRunning = useEditorStore((s) => s.simRunning);
   const connected = useHardwareStore((s) => s.status === 'connected');
   const playing = useAnimationStore((s) => s.playing);
   const hasSource = simRunning || connected || playing;
 
-  // (Re)build uPlot when the joint set or metric changes (uPlot can't restructure
-  // series in place).
+  // Build uPlot once per joint set. Series visibility is toggled live (no rebuild).
   useEffect(() => {
     const host = hostRef.current;
     if (!host || !jointList.length) return undefined;
 
-    dataRef.current = [[], ...jointList.map(() => [])];
+    dataRef.current = [[], ...SERIES.map(() => [])];
+    realRef.current = [[], ...SERIES.map(() => [])];
     prevRef.current = null;
     t0Ref.current = performance.now();
 
     const plot = new uPlot({
       width: host.clientWidth || 280,
       height: 200,
-      scales: { x: { time: false } },
+      scales: { x: { time: false }, y: { auto: true } },
       legend: { show: true, live: true },
       cursor: { drag: { x: true, y: false } },
       series: [
         { label: 't (s)', value: (_u, v) => (v == null ? '' : v.toFixed(1)) },
-        ...jointList.map((j, i) => ({
-          label: j.name,
-          stroke: COLORS[i % COLORS.length],
+        ...SERIES.map((s, i) => ({
+          label: s.label,
+          stroke: s.color,
           width: 1.6,
+          show: enabled[s.key],
           points: { show: false },
-          value: (_u: any, v: any) => (v == null ? '' : v.toFixed(2)),
+          // Hover/legend shows the REAL value (read from realRef by data index).
+          value: (_u: any, _v: any, _si: any, idx: any) => {
+            const r = realRef.current?.[i + 1]?.[idx];
+            return r == null ? '' : `${r.toFixed(2)} ${s.unit}`;
+          },
         })),
       ],
       axes: [
         { stroke: '#888', grid: { stroke: 'rgba(128,128,128,0.15)' }, ticks: { stroke: 'rgba(128,128,128,0.2)' } },
-        { stroke: '#888', grid: { stroke: 'rgba(128,128,128,0.15)' }, ticks: { stroke: 'rgba(128,128,128,0.2)' }, size: 50 },
+        // Y is normalised → hide ticks/labels (the legend carries real values).
+        { show: false },
       ],
     }, dataRef.current, host);
     plotRef.current = plot;
@@ -92,38 +107,66 @@ export default function LiveTelemetryChart() {
     const ro = new ResizeObserver(() => plot.setSize({ width: host.clientWidth || 280, height: 200 }));
     ro.observe(host);
     return () => { ro.disconnect(); plot.destroy(); plotRef.current = null; };
-  }, [sig, metric]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [sig]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Sampling loop — only while a real source is driving the joints. Reads each
-  // joint's position from the model and derives velocity/acceleration over time.
+  // Sampling loop — reads joints + computes all metrics, normalises for drawing.
   useEffect(() => {
     if (!hasSource || !jointList.length) return undefined;
-    const want = METRICS[metric as keyof typeof METRICS].unit;
     const id = setInterval(() => {
-      const data = dataRef.current, plot = plotRef.current;
-      if (!data || !plot) return;
-      const joints = useModelStore.getState().doc.joints;
+      const data = dataRef.current, real = realRef.current, plot = plotRef.current;
+      if (!data || !real || !plot) return;
+      const d = useModelStore.getState().doc;
+      const joints = d.joints;
       const now = performance.now();
       const t = (now - t0Ref.current) / 1000;
 
-      const pos = jointList.map((j) => {
+      const fk = computeFK(d);
+      const loads = jointLoads(d, fk);
+      // Selected joint → just that joint; otherwise aggregate over ALL joints
+      // (velocity/accel = worst-case joint; torque/current = total; stress = peak).
+      const set = selJoint && joints[selJoint]
+        ? [{ id: selJoint, angular: ANGULAR.has(joints[selJoint].type) }]
+        : jointList;
+      const posArr = set.map((j) => {
         const v = joints[j.id]?.state?.value ?? 0;
         return j.angular ? v * RAD2DEG : v;
       });
+      const torArr = set.map((j) => loads.get(j.id)?.torque ?? 0);
+      const pos = signedMax(posArr);
       const prev = prevRef.current;
       const dt = prev ? Math.max(1e-3, (now - prev.t) / 1000) : 0;
-      const vel = pos.map((p, i) => (prev ? (p - prev.pos[i]) / dt : 0));
-      const acc = vel.map((vv, i) => (prev ? (vv - prev.vel[i]) / dt : 0));
+      const vel = prev ? (pos - prev.pos) / dt : 0;
+      const acc = prev ? (vel - prev.vel) / dt : 0;
       prevRef.current = { t: now, pos, vel };
 
-      const row = want === 'vel' ? vel : want === 'acc' ? acc : pos;
-      data[0].push(t);
-      for (let i = 0; i < jointList.length; i++) data[i + 1].push(row[i]);
-      if (data[0].length > WINDOW) for (const col of data) col.shift();
+      const tor = torArr.reduce((a, b) => a + b, 0);                       // total torque
+      const cur = set.reduce((a, j) => a + (loads.get(j.id)?.current ?? 0), 0); // total current
+      const stress = Math.min(1, Math.max(0, ...torArr.map(Math.abs)) / ST3215.stallTorque) * 100;
+      const vals = [vel, acc, tor, cur, stress];
+
+      real[0].push(t);
+      for (let i = 0; i < SERIES.length; i++) real[i + 1].push(vals[i]);
+      if (real[0].length > WINDOW) for (const col of real) col.shift();
+
+      // Normalise each series to its own running peak so all overlay legibly.
+      data[0] = real[0];
+      for (let i = 0; i < SERIES.length; i++) {
+        const col = real[i + 1];
+        let peak = 1e-9;
+        for (const v of col) peak = Math.max(peak, Math.abs(v));
+        data[i + 1] = col.map((v: number) => v / peak);
+      }
       plot.setData(data);
     }, SAMPLE_MS);
     return () => clearInterval(id);
-  }, [hasSource, metric, sig]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [hasSource, sig, selJoint]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = (key: string) => {
+    const next = !enabled[key];
+    setEnabled((e) => ({ ...e, [key]: next }));
+    const idx = SERIES.findIndex((s) => s.key === key);
+    plotRef.current?.setSeries(idx + 1, { show: next });
+  };
 
   if (!jointList.length) {
     return <div className="an-chart-idle">Add joints to plot live telemetry.</div>;
@@ -132,12 +175,7 @@ export default function LiveTelemetryChart() {
   return (
     <div className="an-chart">
       <div className="an-chart-head">
-        <span className="an-chart-title">{METRICS[metric as keyof typeof METRICS].label}</span>
-        <select value={metric} onChange={(e) => setMetric(e.target.value)}>
-          <option value="position">Position</option>
-          <option value="velocity">Velocity</option>
-          <option value="acceleration">Acceleration</option>
-        </select>
+        <span className="an-chart-title">{selName ? `${selName} · normalised` : 'All joints · total (normalised)'}</span>
       </div>
       <div className="an-chart-wrap">
         <div className="an-chart-host" ref={hostRef} />
@@ -147,6 +185,17 @@ export default function LiveTelemetryChart() {
             Start physics, connect hardware, or play an animation.
           </div>
         )}
+      </div>
+
+      <div className="an-tlist">
+        {SERIES.map((s) => (
+          <label key={s.key} className="an-titem">
+            <input type="checkbox" checked={enabled[s.key]} onChange={() => toggle(s.key)} />
+            <span className="an-tswatch" style={{ background: s.color }} />
+            <span className="an-tlabel">{s.label}</span>
+            <span className="an-tunit">{s.unit}</span>
+          </label>
+        ))}
       </div>
     </div>
   );

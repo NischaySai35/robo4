@@ -21,6 +21,13 @@
 
 .an-empty { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
 
+.an-legend { display: flex; flex-direction: column; gap: 3px; }
+.an-legend-bar {
+  height: 10px; border-radius: 4px; border: 1px solid var(--border);
+  background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
+}
+.an-legend-labels { display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); }
+
 .an-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .an-table th {
   text-align: right; color: var(--text-dim); font-weight: 600; font-size: 10px;
@@ -58,6 +65,14 @@
   background: color-mix(in srgb, var(--bg-panel) 70%, transparent);
   border-radius: 8px; pointer-events: none;
 }
+/* Metric toggle list under the chart */
+.an-tlist { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; }
+.an-titem { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text); cursor: pointer; }
+.an-titem input { accent-color: var(--accent); margin: 0; }
+.an-tswatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.an-tlabel { color: var(--text); }
+.an-tunit { color: var(--text-dim); font-size: 10px; }
+
 /* uPlot legend: compact + theme-aware */
 .an-chart .u-legend { font-size: 10px; }
 .an-chart .u-legend .u-marker { width: 10px; height: 10px; }

@@ -71,12 +71,18 @@ export default function NavigationGizmo() {
     return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); };
   }, []);
 
+  // Snap to an axis view, pivoting around the CURRENT orbit target (so a prior
+  // pan is preserved) via the pan-aware bridge helper. Falls back to the old
+  // origin-locked behaviour only if the helper isn't wired yet.
   const snap = useCallback((key: any) => {
+    const ax = AXES.find(a => a.key === key);
+    if (ax && bridge.snapToAxis) { bridge.snapToAxis(ax.dir); return; }
     const view = SNAP_VIEWS[key as keyof typeof SNAP_VIEWS];
     if (view && bridge.animateTo) bridge.animateTo(view.pos, view.lookAt);
   }, []);
 
   const snapPersp = useCallback(() => {
+    if (bridge.snapToAxis) { bridge.snapToAxis([0, 0.6, 0.9]); return; }
     if (bridge.animateTo) bridge.animateTo(PERSP_VIEW.pos, PERSP_VIEW.lookAt);
   }, []);
 

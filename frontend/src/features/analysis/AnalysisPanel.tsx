@@ -41,6 +41,13 @@ export default function AnalysisPanel() {
         <div><span>Center of mass</span><strong>{com.map((v) => v.toFixed(2)).join(', ')}</strong></div>
       </div>
 
+      {show && (
+        <div className="an-legend">
+          <div className="an-legend-bar" />
+          <div className="an-legend-labels"><span>low load</span><span>high load</span></div>
+        </div>
+      )}
+
       {joints.length === 0 && <div className="an-empty">Add joints to see holding torque & current.</div>}
       {joints.length > 0 && (
         <table className="an-table">

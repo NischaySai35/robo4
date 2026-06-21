@@ -11,7 +11,7 @@
  * Node-testable. Mesh volume is a rough default (no bounds in the model yet).
  */
 import * as THREE from 'three';
-import { computeFK, mat } from './modelFK';
+import { computeFK, mat, buildChildJointMap } from './modelFK';
 import type { Document, Body, Geometry } from '@/core/model/index';
 
 const G = new THREE.Vector3(0, -9.81, 0); // gravity field
@@ -139,6 +139,77 @@ export function jointLoads(doc: Document, fk = computeFK(doc)) {
     }
     const torque = torqueVec.dot(axis);
     out.set(j.id, { torque, current: estimateCurrent(torque), overload: Math.abs(torque) > ST3215.stallTorque });
+  }
+  return out;
+}
+
+// ── Surface stress field (FEA-style heatmap) ────────────────────────────────
+const MOVABLE = new Set(['revolute', 'continuous', 'prismatic']);
+
+/** Fusion-style scalar→colour ramp: 0 blue → cyan → green → yellow → 1 red. */
+export function stressColor(t: number): [number, number, number] {
+  t = Math.max(0, Math.min(1, t));
+  const stops: [number, number, number][] = [[0, 0, 1], [0, 1, 1], [0, 1, 0], [1, 1, 0], [1, 0, 0]];
+  const x = t * 4, i = Math.min(3, Math.floor(x)), f = x - i;
+  const a = stops[i], b = stops[i + 1];
+  return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+}
+
+/**
+ * Per-body stress field for surface colouring. For each body returns the world
+ * anchors of the load path through it (proximal support → distal joint) and the
+ * normalised load (0..1 of peak) at each end. A vertex's colour is then the ramp
+ * of the load interpolated along that segment — high where the member is most
+ * loaded (near a heavily-torqued joint), fading toward lightly loaded ends.
+ *
+ * This is a fast load-transmission proxy (not a true FEA solve), but it produces
+ * the familiar continuous blue→red gradient over the actual geometry.
+ */
+export function bodyStressField(doc: Document, fk = computeFK(doc), loads = jointLoads(doc, fk)) {
+  const childJoint = buildChildJointMap(doc);
+  const parentJoints = new Map<any, any[]>();
+  for (const j of Object.values(doc.joints)) {
+    if (!parentJoints.has(j.parentBodyId)) parentJoints.set(j.parentBodyId, []);
+    parentJoints.get(j.parentBodyId)!.push(j);
+  }
+  const tor = (j: any) => Math.abs(loads.get(j.id)?.torque ?? 0);
+  let maxT = 1e-6;
+  for (const j of Object.values(doc.joints)) maxT = Math.max(maxT, tor(j));
+
+  const pivotWorld = (j: any) => {
+    const pm = fk.get(j.parentBodyId)?.matrix?.clone() ?? mat(doc.bodies[j.parentBodyId]?.transform);
+    return new THREE.Vector3().setFromMatrixPosition(pm.multiply(originMat(j.origin)));
+  };
+
+  const out = new Map<string, { P: number[]; D: number[]; tP: number; tD: number; maxTorque: number }>();
+  for (const body of Object.values(doc.bodies)) {
+    const center = new THREE.Vector3(...(fk.get(body.id)?.position ?? [0, 0, 0]));
+
+    // Walk up through welds to the first movable joint that supports this body.
+    let Mprox = maxT, Panchor = center.clone(), cur: any = body.id, guard = 0;
+    while (guard++ < 64) {
+      const j = childJoint.get(cur);
+      if (!j) { Mprox = maxT; Panchor = center.clone(); break; }       // root → carries all
+      if (MOVABLE.has(j.type)) { Mprox = tor(j); Panchor = pivotWorld(j); break; }
+      cur = j.parentBodyId;
+      if (!cur) { Mprox = maxT; break; }
+    }
+
+    // Distal end: the strongest movable joint hanging off this body (else a free tip).
+    let Mdist = 0, Danchor = center.clone().multiplyScalar(2).sub(Panchor);
+    const dj = (parentJoints.get(body.id) ?? []).filter((j) => MOVABLE.has(j.type));
+    if (dj.length) {
+      const main = dj.reduce((a, b) => (tor(b) > tor(a) ? b : a));
+      Mdist = tor(main); Danchor = pivotWorld(main);
+    }
+
+    out.set(body.id, {
+      P: [Panchor.x, Panchor.y, Panchor.z],
+      D: [Danchor.x, Danchor.y, Danchor.z],
+      tP: Math.min(Mprox / maxT, 1),
+      tD: Math.min(Mdist / maxT, 1),
+      maxTorque: maxT,
+    });
   }
   return out;
 }

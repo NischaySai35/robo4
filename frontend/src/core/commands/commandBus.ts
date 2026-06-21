@@ -74,6 +74,18 @@ export class CommandBus {
     return this._doc;
   }
 
+  /**
+   * Apply a doc→doc transform WITHOUT recording undo history. For high-frequency,
+   * non-authoritative updates (live action playback, IK scrub) where flooding the
+   * undo stack would be useless. History (and autosave snapshots) capture the
+   * settled pose afterwards.
+   */
+  applyTransient(fn: any) {
+    this._doc = fn(this._doc);
+    this._emit('transient', null);
+    return this._doc;
+  }
+
   /** Replace the document and clear history (e.g. on file open / new project). */
   reset(doc: any) {
     this._doc = doc;

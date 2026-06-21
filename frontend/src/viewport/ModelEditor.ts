@@ -24,9 +24,10 @@ import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { commands } from '@/core/commands/index';
 import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild } from '@/kinematics/modelFK';
+import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
 import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
 import { stripNegativeTranslate } from '@/viewport/gizmoUtil';
-import { jointLoads, centerOfMass } from '@/kinematics/analysis';
+import { jointLoads, centerOfMass, bodyStressField } from '@/kinematics/analysis';
 // PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
 // Play, so it stays out of the initial bundle and the app starts up fast.
 
@@ -58,9 +59,13 @@ export class ModelEditor {
     scene.add(this._jointProxy);
     this._attachedJointId = null;
 
-    // Don't let orbit fight the gizmo while dragging a handle.
+    // Don't let orbit fight the gizmo while dragging a handle. Also remember that
+    // a gizmo interaction just happened, so the click that ends it is not mistaken
+    // for a click on empty space (which would otherwise deselect).
+    this._gizmoActive = false;
     this.transform.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
+      if (e.value) this._gizmoActive = true;
     });
 
     // Commit the gizmo's result to the model as an undoable command on release.
@@ -72,9 +77,19 @@ export class ModelEditor {
     this.camera = camera;
     this.domElement = domElement;
     this._downPos = null;
-    this._onPointerDown = (e: any) => { if (e.button === 0) this._downPos = { x: e.clientX, y: e.clientY }; };
-    this._onPointerUp = (e: any) => this._handlePick(e);
-    this._onPointerMove = (e: any) => this._handleHover(e);
+    // Drag-from-tip IK state.
+    this._ikDrag = useEditorStore.getState().ikDrag;
+    this._ikActive = false;
+    this._ikTip = null;
+    this._ikRay = new THREE.Raycaster();
+    this._ikPlane = new THREE.Plane();
+    this._onPointerDown = (e: any) => {
+      if (e.button !== 0) return;
+      this._downPos = { x: e.clientX, y: e.clientY };
+      if (this._ikDrag && !this.editMode?.active && !this._sim && !this._mateMode) this._tryStartIK(e);
+    };
+    this._onPointerUp = (e: any) => { if (this._ikActive) { this._endIK(); return; } this._handlePick(e); };
+    this._onPointerMove = (e: any) => { if (this._ikActive) { this._dragIK(e); return; } this._handleHover(e); };
     this._onDblClick = (e: any) => this._handleDblClick(e);
     domElement.addEventListener('pointerdown', this._onPointerDown);
     domElement.addEventListener('pointerup', this._onPointerUp);
@@ -89,6 +104,7 @@ export class ModelEditor {
     // Gizmo snapping (Phase 3) + physics sim (Phase 7) + mate tool (assembly).
     this._sim = null;
     this._startingSim = false;
+    this._lastPlayhead = -1; // last animation playhead we wrote into the doc
     this._showAnalysis = useEditorStore.getState().showAnalysis;
     this._mateMode = useEditorStore.getState().mateMode;
     this._matePicks = [];
@@ -97,6 +113,8 @@ export class ModelEditor {
     this.bodyRenderer.scene.add(this._mateMarkers);
     this._applySnap(useEditorStore.getState().snap);
     this._unsubEditor = useEditorStore.subscribe((s) => {
+      this._ikDrag = s.ikDrag;
+      if (!s.ikDrag && this._ikActive) this._endIK();
       this._applySnap(s.snap);
       this._handleSim(s.simRunning);
       // Live gravity updates while the sim is running.
@@ -108,6 +126,7 @@ export class ModelEditor {
       }
       if (s.showAnalysis !== this._showAnalysis) {
         this._showAnalysis = s.showAnalysis;
+        if (!s.showAnalysis && this._doc) this.bodyRenderer.clearStress(this._doc);
         if (this._doc) this._syncModel(this._doc);
       }
     });
@@ -133,6 +152,7 @@ export class ModelEditor {
     this.bodyRenderer.sync(doc, this._fk);
     const loads = this._showAnalysis ? jointLoads(doc, this._fk) : null;
     this.jointRenderer.sync(doc, this._fk, loads);
+    if (this._showAnalysis && loads) this.bodyRenderer.applyStress(bodyStressField(doc, this._fk, loads));
     this._updateCOM(doc);
     this._reattach(); // mesh may have been (re)created
     if (this.editMode?.active) this.editMode.onModelSynced();
@@ -145,13 +165,19 @@ export class ModelEditor {
     }
     if (!this._comMarker) {
       this._comMarker = new THREE.Mesh(
-        new THREE.SphereGeometry(0.12, 16, 12),
+        new THREE.SphereGeometry(1, 16, 12), // unit sphere; scaled to the model below
         new THREE.MeshBasicMaterial({ color: 0x00e0ff, depthTest: false, transparent: true, opacity: 0.9 }),
       );
       this._comMarker.renderOrder = 1001;
       this.bodyRenderer.scene.add(this._comMarker);
     }
+    // Size the marker to the model so it doesn't dwarf a small desktop arm.
+    const pts: any[] = [];
+    for (const w of this._fk.values()) if (w?.position) pts.push(new THREE.Vector3(...w.position));
+    const L = pts.length ? (new THREE.Box3().setFromPoints(pts).getSize(new THREE.Vector3()).length() || 1) : 1;
+    const r = Math.min(Math.max(L * 0.025, 0.01), 0.12);
     const { com } = centerOfMass(doc, this._fk);
+    this._comMarker.scale.setScalar(r);
     this._comMarker.position.set(com[0], com[1], com[2]);
     this._comMarker.visible = true;
   }
@@ -194,19 +220,30 @@ export class ModelEditor {
       const poses = this._sim.poses();
       this.bodyRenderer.sync(this._doc, poses);
       this.jointRenderer.sync(this._doc, poses);
+      if (this._showAnalysis) this.bodyRenderer.applyStress(bodyStressField(this._doc, poses));
       return;
     }
 
     const anim = useAnimationStore.getState();
     if (anim.preview) {
       if (anim.playing) anim.advance(1 / 60);
-      const values = anim.sample(anim.playhead);
-      const fk = this._fkWithOverrides(this._doc, values);
-      this.bodyRenderer.sync(this._doc, fk);
-      this.jointRenderer.sync(this._doc, fk);
+      // Drive the pose from the clip ONLY while actually playing or when the
+      // playhead just moved (scrub). When paused on a frame we leave the model
+      // alone, so live edits (IK drag, gizmo) are visible and can be keyframed —
+      // otherwise the clip sample would overwrite them every frame. Samples are
+      // written into the doc (transient) so render + analysis stay in sync.
+      if (anim.playing || anim.playhead !== this._lastPlayhead) {
+        this._lastPlayhead = anim.playhead;
+        const values = anim.sample(anim.playhead);
+        if (Object.keys(values).length) {
+          useModelStore.getState().applyTransient((d: any) => this._withJointValues(d, values));
+          // The model-store subscription runs _syncModel → renders & analyses the doc.
+        }
+      }
       this._animActive = true;
     } else if (this._animActive) {
       this._animActive = false;
+      this._lastPlayhead = -1;
       this._syncModel(this._doc); // restore model pose
     }
   }
@@ -217,6 +254,19 @@ export class ModelEditor {
       joints[id] = id in values ? { ...j, state: { ...j.state, value: values[id] } } : j;
     }
     return computeFK({ ...doc, joints });
+  }
+
+  /** Immutable doc with the given joint values applied (for animation playback). */
+  _withJointValues(doc: Document, values: any) {
+    const joints: Record<string, any> = { ...doc.joints };
+    let changed = false;
+    for (const [id, v] of Object.entries(values)) {
+      const j = joints[id];
+      if (!j) continue;
+      joints[id] = { ...j, state: { ...j.state, value: v } };
+      changed = true;
+    }
+    return changed ? { ...doc, joints } : doc;
   }
 
   _applySnap(snap: any) {
@@ -232,13 +282,61 @@ export class ModelEditor {
     }
   }
 
+  _ndc(e: any) {
+    const rect = this.domElement.getBoundingClientRect();
+    return new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+  }
+
+  // ── Drag-from-tip IK ─────────────────────────────────────────────────────
+  // Grab any body that sits on a movable chain and pull it toward the cursor by
+  // solving the joints from that body up to its root. The drag happens on a plane
+  // through the grabbed point, facing the camera, so motion feels 1:1.
+  _tryStartIK(e: any) {
+    if (this.transform.dragging) return;
+    const hitId = this.bodyRenderer.pickBodyAt(this._ndc(e), this.camera);
+    if (!hitId || !this._doc) return;
+    if (chainJoints(this._doc, hitId).length === 0) return; // not articulated → let normal click handle it
+    const w = this._fk?.get(hitId);
+    const p = new THREE.Vector3(...(w?.position ?? [0, 0, 0]));
+    const n = new THREE.Vector3();
+    this.camera.getWorldDirection(n);
+    this._ikPlane.setFromNormalAndCoplanarPoint(n, p);
+    this._ikTip = hitId;
+    this._ikActive = true;
+    this.controls.enabled = false;
+    this._attachTo(null); // no gizmo while pulling
+  }
+
+  _dragIK(e: any) {
+    if (!this._ikTip || !this._doc) return;
+    this._ikRay.setFromCamera(this._ndc(e), this.camera);
+    const target = new THREE.Vector3();
+    if (!this._ikRay.ray.intersectPlane(this._ikPlane, target)) return;
+    const values = solveModelIK(this._doc, this._ikTip, [target.x, target.y, target.z]);
+    if (values) useModelStore.getState().dispatch(commands.setJointValues(values));
+  }
+
+  _endIK() {
+    this._ikActive = false;
+    this._ikTip = null;
+    this._downPos = null;
+    this.controls.enabled = true;
+  }
+
   _handlePick(e: any) {
     if (this.editMode?.active) { this._downPos = null; return; } // Edit Mode owns picking
     if (e.button !== 0 || !this._downPos) return;
     const moved = Math.hypot(e.clientX - this._downPos.x, e.clientY - this._downPos.y);
     this._downPos = null;
     if (moved > 4) return;                          // an orbit/drag, not a click
-    if (this.transform.dragging || this.transform.axis) return; // gizmo interaction
+    // A gizmo handle interaction (drag OR a click on a handle) just ended — skip
+    // this pick so it doesn't deselect. Note: we deliberately do NOT bail merely
+    // because `transform.axis` is set, since the translate gizmo's invisible pick
+    // planes are huge and would block click-to-deselect on genuinely empty space.
+    if (this.transform.dragging || this._gizmoActive) { this._gizmoActive = false; return; }
     if (this._sim) return;                          // don't reselect mid-simulation
 
     const rect = this.domElement.getBoundingClientRect();

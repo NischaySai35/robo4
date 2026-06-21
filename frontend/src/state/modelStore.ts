@@ -27,6 +27,8 @@ interface ModelState {
   undo: () => void;
   redo: () => void;
   loadDocument: (doc: Document) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  applyTransient: (fn: (doc: Document) => Document) => void;
 }
 
 export const useModelStore = create<ModelState>((set) => {
@@ -50,5 +52,7 @@ export const useModelStore = create<ModelState>((set) => {
     redo: () => { bus.redo(); },
     /** Replace the document (file open / new project) and clear history. */
     loadDocument: (doc) => { bus.reset(doc); sync(); },
+    /** High-frequency update that bypasses undo history (action playback). */
+    applyTransient: (fn) => { bus.applyTransient(fn); },
   };
 });

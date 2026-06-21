@@ -83,7 +83,7 @@ export class SceneManager {
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.07;
-    this.controls.minDistance = 3;
+    this.controls.minDistance = 0.1;
     this.controls.maxDistance = 25;
     this.controls.maxPolarAngle = Math.PI * 0.48;
     this.controls.enablePan = true;
@@ -102,6 +102,57 @@ export class SceneManager {
     bridge.camera = this.camera;
     bridge.animateTo = (pos, lookAt, ms) => this.animateCameraTo(pos, lookAt, ms);
     bridge.fitCamera = () => this.fitCamera();
+
+    // Camera Settings panel: read current lens/control state…
+    bridge.getCameraState = () => ({
+      fov:         this.camera.fov,
+      focalLength: this.camera.getFocalLength(),
+      near:        this.camera.near,
+      far:         this.camera.far,
+      minDistance: this.controls.minDistance,
+      maxDistance: this.controls.maxDistance,
+      distance:    this.camera.position.distanceTo(this.controls.target),
+    });
+    // …and apply a partial patch (only the fields present are changed).
+    // Every value is validated: a non-finite number (e.g. from a half-typed
+    // input) is ignored so it can never poison the projection matrix and blank
+    // the viewport.
+    bridge.applyCameraState = (p: any) => {
+      const cam = this.camera, ctl = this.controls;
+      const fin = (v: any) => typeof v === 'number' && Number.isFinite(v);
+      if (fin(p.focalLength)) cam.setFocalLength(THREE.MathUtils.clamp(p.focalLength, 8, 300));
+      if (fin(p.fov))         cam.fov = THREE.MathUtils.clamp(p.fov, 10, 120);
+      if (fin(p.near))        cam.near = Math.max(0.001, p.near);
+      if (fin(p.far))         cam.far = Math.max(cam.near + 0.01, p.far);
+      cam.updateProjectionMatrix();
+      if (fin(p.minDistance)) ctl.minDistance = Math.max(0.1, p.minDistance);
+      if (fin(p.maxDistance)) ctl.maxDistance = Math.max(ctl.minDistance, p.maxDistance);
+      if (fin(p.distance)) {
+        const dir = cam.position.clone().sub(ctl.target);
+        if (dir.lengthSq() < 1e-9) dir.set(0, 0, 1);
+        dir.normalize().multiplyScalar(THREE.MathUtils.clamp(p.distance, ctl.minDistance, ctl.maxDistance));
+        cam.position.copy(ctl.target).add(dir);
+      }
+      ctl.update();
+    };
+
+    // Snap the camera to look down `dir` (e.g. [1,0,0] for +X) while KEEPING the
+    // current orbit target — so axis views / perspective reset pivot around the
+    // place you panned to, not the scene origin.
+    bridge.snapToAxis = (dir: number[], ms?: number) => {
+      const t = this.controls.target.clone();
+      const dist = Math.max(this.camera.position.distanceTo(t), 0.5);
+      const v = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize().multiplyScalar(dist);
+      const pos = t.clone().add(v);
+      this.animateCameraTo({ x: pos.x, y: pos.y, z: pos.z }, { x: t.x, y: t.y, z: t.z }, ms);
+    };
+
+    // Capture the current frame as a data URL (used by the Render → Export
+    // button). Force a fresh composite first so the read-back is never blank.
+    bridge.captureImage = (mime = 'image/png', quality = 0.92) => {
+      this.composer.render();
+      return this.renderer.domElement.toDataURL(mime, quality);
+    };
 
     // Gizmo drag: orbit camera without OrbitControls event interference
     bridge.orbitDelta = (dx, dy) => {

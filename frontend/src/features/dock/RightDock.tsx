@@ -10,6 +10,8 @@ import CopilotPanel from '@/features/ai/CopilotPanel';
 import ScriptingPanel from '@/features/scripting/ScriptingPanel';
 import Timeline from '@/features/animation/Timeline';
 import AnalysisPanel from '@/features/analysis/AnalysisPanel';
+import CameraPanel from '@/features/camera/CameraPanel';
+import AutonomyPanel from '@/features/autonomy/AutonomyPanel';
 import HardwarePanel from '@/features/hardware/HardwarePanel';
 
 /**
@@ -44,8 +46,16 @@ const PANELS = [
     icon: <Icon><path d="M3 16V4M3 16h14M6 13l3-4 2.5 2.5L16 6" /></Icon>,
   },
   {
+    id: 'camera', title: 'Camera Settings', Component: CameraPanel,
+    icon: <Icon><path d="M3 6h3l1.5-2h5L14 6h3v9H3z" /><circle cx="10" cy="10" r="2.5" /></Icon>,
+  },
+  {
     id: 'hardware', title: 'Hardware', Component: HardwarePanel,
     icon: <Icon><path d="M6 6h8v8H6zM8 2v3M12 2v3M8 15v3M12 15v3M2 8h3M2 12h3M15 8h3M15 12h3" /></Icon>,
+  },
+  {
+    id: 'autonomy', title: 'Autonomy', Component: AutonomyPanel,
+    icon: <Icon><circle cx="10" cy="10" r="2" /><path d="M10 2v3M10 15v3M2 10h3M15 10h3M10 10l5-3" /></Icon>,
   },
   {
     id: 'copilot', title: 'AI Copilot', Component: CopilotPanel,
@@ -122,37 +132,112 @@ export default function RightDock() {
     document.addEventListener('mouseup', onUp);
   }, []);
 
-  const activeDef = panels.find((p) => p.id === shownId);
+  const split = useDockStore((s) => s.split);
+  const secondary = useDockStore((s) => s.secondary);
+  const toggleSplit = useDockStore((s) => s.toggleSplit);
+  const setSecondary = useDockStore((s) => s.setSecondary);
+  // Split is only honoured outside mesh Edit Mode (which owns the panel layout).
+  const splitOn = split && !editActive;
+
+  // Vertical split ratio (top pane height fraction), drag the divider to change.
+  const [ratio, setRatio] = useState(0.5);
+  const splitRef = useRef<HTMLDivElement>(null);
+  const startVResize = useCallback((e: any) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const onMove = (ev: any) => {
+      const box = splitRef.current?.getBoundingClientRect();
+      if (!box) return;
+      setRatio(Math.min(0.85, Math.max(0.15, (ev.clientY - box.top) / box.height)));
+    };
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
+  const defOf = (id: any) => panels.find((p) => p.id === id);
+  const activeDef = defOf(shownId);
+  const secondaryDef = defOf(secondary);
   const collapse = () => { if (editActive) setEditPick(null); else useDockStore.getState().close(); };
   const pick = (id: any) => {
     if (editActive) setEditPick((cur) => (cur === id ? null : id)); // toggle within Edit Mode
+    else if (splitOn) useDockStore.getState().open(id); // in split, rail sets the top pane
     else toggle(id);
   };
 
+  // One pane: a panel-picker header + the panel body. Written as a plain function
+  // (not a nested component) so React reconciles the panel bodies across renders
+  // instead of remounting them on every divider drag. `onPick` swaps which panel
+  // this slot shows, so in split mode you can choose any two panels.
+  const renderPane = (def: any, onPick: any, onClose?: any) => (
+    <div className="rdock-pane">
+      <div className="rdock-panel-head">
+        <select className="rdock-pane-select" value={def?.id ?? ''} onChange={(e) => onPick(e.target.value)}>
+          {panels.map((p) => <option key={p.id} value={p.id}>{p.title}</option>)}
+        </select>
+        {onClose && (
+          <button className="rdock-panel-close" onClick={onClose} title="Collapse panel">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+              <path d="M4 4l6 6M10 4l-6 6" />
+            </svg>
+          </button>
+        )}
+      </div>
+      <div className="rdock-panel-body">{def && <def.Component />}</div>
+    </div>
+  );
+
+  const showPanel = splitOn ? (activeDef || secondaryDef) : activeDef;
+
   return (
     <div className="rdock">
-      {activeDef && (
+      {showPanel && (
         <div className="rdock-panel" style={{ width }}>
           <div className="rdock-resize" onMouseDown={startResize} title="Drag to resize" />
-          <div className="rdock-panel-head">
-            <span className="rdock-panel-title">{activeDef.title}</span>
-            <button className="rdock-panel-close" onClick={collapse} title="Collapse panel">
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
-                <path d="M4 4l6 6M10 4l-6 6" />
-              </svg>
-            </button>
-          </div>
-          <div className="rdock-panel-body">
-            <activeDef.Component />
-          </div>
+
+          {splitOn ? (
+            <div className="rdock-split" ref={splitRef}>
+              <div className="rdock-pane-wrap" style={{ height: `${ratio * 100}%` }}>
+                {renderPane(activeDef, (id: any) => useDockStore.getState().open(id), collapse)}
+              </div>
+              <div className="rdock-hsplit" onMouseDown={startVResize} title="Drag to resize panes" />
+              <div className="rdock-pane-wrap" style={{ height: `${(1 - ratio) * 100}%` }}>
+                {renderPane(secondaryDef, (id: any) => setSecondary(id))}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="rdock-panel-head">
+                <span className="rdock-panel-title">{activeDef?.title}</span>
+                <button className="rdock-panel-close" onClick={collapse} title="Collapse panel">
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round">
+                    <path d="M4 4l6 6M10 4l-6 6" />
+                  </svg>
+                </button>
+              </div>
+              <div className="rdock-panel-body">{activeDef && <activeDef.Component />}</div>
+            </>
+          )}
         </div>
       )}
 
       <div className="rdock-rail">
+        {!editActive && (
+          <button
+            className={`rdock-rail-btn rdock-split-btn ${splitOn ? 'active' : ''}`}
+            onClick={toggleSplit}
+            title="Split view — show two panels at once"
+            aria-label="Split view"
+          >
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="14" height="14" rx="1.5" /><path d="M3 10h14" />
+            </svg>
+          </button>
+        )}
         {panels.map((p) => (
           <button
             key={p.id}
-            className={`rdock-rail-btn ${shownId === p.id ? 'active' : ''}`}
+            className={`rdock-rail-btn ${shownId === p.id ? 'active' : ''} ${splitOn && secondary === p.id ? 'active-2' : ''}`}
             onClick={() => pick(p.id)}
             title={p.title}
             aria-label={p.title}

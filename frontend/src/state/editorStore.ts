@@ -34,6 +34,8 @@ interface EditorState {
   setGravity: (g: number) => void;
   showAnalysis: boolean;
   toggleAnalysis: () => void;
+  ikDrag: boolean;
+  toggleIkDrag: () => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -74,6 +76,12 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   showAnalysis: false, // load heatmap + center-of-mass overlay
   toggleAnalysis: () => set((s) => ({ showAnalysis: !s.showAnalysis })),
+
+  // Drag-from-tip inverse kinematics. When on, dragging any body in the viewport
+  // pulls it toward the cursor by solving the joint chain from that body up to its
+  // root (instead of selecting/moving the single body).
+  ikDrag: false,
+  toggleIkDrag: () => set((s) => ({ ikDrag: !s.ikDrag })),
 }));
 
 // Unit conversion (model base = metres).

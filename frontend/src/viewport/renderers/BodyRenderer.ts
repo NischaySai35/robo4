@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import { GeometryType } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
 import { getAssetObject } from '@/viewport/renderers/AssetCache';
+import { stressColor } from '@/kinematics/analysis';
 
 const _picker = new THREE.Raycaster();
 const DEFAULT_COLOR = [0.62, 0.66, 0.72, 1];
@@ -118,6 +119,9 @@ export class BodyRenderer {
   }
 
   _applyMaterial(container: any, body: any, doc: any) {
+    // In stress-overlay mode the meshes are vertex-coloured by load; don't stomp
+    // their colours with the solid material (re-painted via applyStress instead).
+    if (this._stress) { this._paintContainer(container, body.id); return; }
     const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
     const [r, gg, b, a] = m?.color ?? DEFAULT_COLOR;
     this._forEachMesh(container, (mesh: any) => {
@@ -138,6 +142,65 @@ export class BodyRenderer {
     obj.position.set(px, py, pz);
     obj.quaternion.set(qx, qy, qz, qw);
     obj.scale.set(sx, sy, sz);
+  }
+
+  // ── FEA-style surface stress heatmap ───────────────────────────────────────
+  /** Paint every body with a blue→red load gradient. `field` = bodyStressField(). */
+  applyStress(field: any) {
+    this._stress = field;
+    for (const [id, { container }] of this._entries) this._paintContainer(container, id);
+  }
+
+  _paintContainer(container: any, bodyId: any) {
+    const f = this._stress?.get(bodyId);
+    container.updateMatrixWorld(true);
+    this._forEachMesh(container, (mesh: any) => this._paintMesh(mesh, f));
+  }
+
+  _paintMesh(mesh: any, f: any) {
+    const geo = mesh.geometry;
+    if (!geo?.attributes?.position) return;
+    const pos = geo.attributes.position;
+    const colors = new Float32Array(pos.count * 3);
+    // Missing field → neutral (low) so nothing flashes the wrong colour.
+    const P = new THREE.Vector3(...(f?.P ?? [0, 0, 0]));
+    const D = new THREE.Vector3(...(f?.D ?? [0, 1, 0]));
+    const tP = f?.tP ?? 0, tD = f?.tD ?? 0;
+    const dir = D.clone().sub(P);
+    const len2 = Math.max(dir.lengthSq(), 1e-9);
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+      const u = Math.min(1, Math.max(0, v.sub(P).dot(dir) / len2));
+      const [r, g, b] = stressColor(tP + (tD - tP) * u);
+      colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
+    }
+    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const mat = mesh.material;
+    if (mat && !Array.isArray(mat)) {
+      mat.vertexColors = true;
+      mat.color.setRGB(1, 1, 1);
+      mat.metalness = 0.05;
+      mat.roughness = 0.7;
+      mat.opacity = 1; mat.transparent = false;
+      mat.needsUpdate = true;
+    }
+  }
+
+  /** Leave stress mode: drop vertex colours and restore solid materials. */
+  clearStress(doc?: Document) {
+    this._stress = null;
+    for (const [id, { container }] of this._entries) {
+      this._forEachMesh(container, (mesh: any) => {
+        mesh.geometry?.deleteAttribute?.('color');
+        if (mesh.material && !Array.isArray(mesh.material)) {
+          mesh.material.vertexColors = false;
+          mesh.material.needsUpdate = true;
+        }
+      });
+      const body = doc?.bodies?.[id];
+      if (body && doc) this._applyMaterial(container, body, doc);
+    }
   }
 
   setSelected(bodyId: any) { this._selectedId = bodyId; this._refreshHighlight(); }

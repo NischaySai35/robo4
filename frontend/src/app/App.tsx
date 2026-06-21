@@ -74,7 +74,7 @@ function ThemeToggle() {
 
 // ── Battery indicator ─────────────────────────────────────────────────────────
 
-function BatteryIcon({ pct, color, width = 28, height = 13 }) {
+function BatteryIcon({ pct, color, width = 28, height = 13 }: any) {
   const nubW  = 2.5;
   const bodyW = width - nubW;
   const pad   = 1.8;
@@ -188,7 +188,7 @@ function OvercurrentWarning() {
   );
 }
 
-function AppHeader({ page, setPage }) {
+function AppHeader({ page, setPage }: any) {
   const connected        = useIntegrationStore(s => s.connected);
   const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
 
@@ -307,7 +307,7 @@ export default function App() {
   const panelWidthRef = useRef(DEFAULT_PANEL_W);
   panelWidthRef.current = panelWidth;
 
-  const startPanelResize = useCallback((e) => {
+  const startPanelResize = useCallback((e: any) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const startX   = e.clientX;
@@ -316,7 +316,7 @@ export default function App() {
     document.body.style.cursor     = 'col-resize';
     document.body.style.userSelect = 'none';
 
-    const onMove = (ev) => {
+    const onMove = (ev: any) => {
       const next = Math.max(MIN_PANEL_W, Math.min(maxW, startW + (ev.clientX - startX)));
       panelWidthRef.current = next;
       setPanelWidth(next);
@@ -336,7 +336,7 @@ export default function App() {
   // Global keyboard shortcuts. The command palette (Ctrl/Cmd+K or Ctrl+P) opens
   // even while typing; undo/redo are ignored inside text inputs.
   useEffect(() => {
-    const onKey = (e) => {
+    const onKey = (e: any) => {
       const tag = e.target?.tagName;
       const typing = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable;
 

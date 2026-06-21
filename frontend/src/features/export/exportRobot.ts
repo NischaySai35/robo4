@@ -13,7 +13,7 @@ function robotName() {
   return n ? n.replace(/\.[^.]+$/, '') : 'tetrobot';
 }
 
-async function save(text, filename, ext) {
+async function save(text: any, filename: any, ext: any) {
   if (window.tetrobot?.isDesktop) {
     await window.tetrobot.saveFile({
       data: text, defaultName: filename,
@@ -24,7 +24,7 @@ async function save(text, filename, ext) {
   }
 }
 
-export async function exportRobot(fmt) {
+export async function exportRobot(fmt: any) {
   const doc = useModelStore.getState().doc;
   if (Object.keys(doc.bodies).length === 0) {
     alert('Nothing to export yet — add bodies/joints to the model first.');

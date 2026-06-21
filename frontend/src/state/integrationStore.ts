@@ -22,7 +22,7 @@ function ts() {
   return `${hh}:${mm}:${ss}.${ms}`;
 }
 
-function mk(level, src, msg) {
+function mk(level: any, src: any, msg: any) {
   return { id: `${Date.now()}-${Math.random().toString(36).slice(2,7)}`, time: ts(), level, src, msg };
 }
 

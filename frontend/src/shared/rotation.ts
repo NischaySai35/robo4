@@ -10,13 +10,13 @@ const _e = new THREE.Euler();
 const R2D = 180 / Math.PI;
 const D2R = Math.PI / 180;
 
-export function quatArrToEulerDeg([x, y, z, w]) {
+export function quatArrToEulerDeg([x, y, z, w]: any) {
   _q.set(x, y, z, w);
   _e.setFromQuaternion(_q, 'XYZ');
   return [_e.x * R2D, _e.y * R2D, _e.z * R2D];
 }
 
-export function eulerDegToQuatArr([x, y, z]) {
+export function eulerDegToQuatArr([x, y, z]: any) {
   _e.set(x * D2R, y * D2R, z * D2R, 'XYZ');
   _q.setFromEuler(_e);
   return [_q.x, _q.y, _q.z, _q.w];

@@ -15,7 +15,7 @@ const _obj = new OBJLoader();
 const _cache = new Map(); // assetId -> THREE.Object3D (template; callers clone)
 
 /** Parse an asset's embedded data into a Three.js object (centered at origin). */
-function parse(asset) {
+function parse(asset: any) {
   const bytes = base64ToBytes(asset.data);
   const fmt = (asset.format || '').toLowerCase();
 
@@ -40,7 +40,7 @@ function parse(asset) {
 }
 
 /** Get a fresh clone of the parsed asset object, or null if unsupported/failed. */
-export function getAssetObject(asset) {
+export function getAssetObject(asset: any) {
   if (!asset?.data) return null;
   try {
     if (!_cache.has(asset.id)) {
@@ -55,4 +55,4 @@ export function getAssetObject(asset) {
   }
 }
 
-export function clearAsset(assetId) { _cache.delete(assetId); }
+export function clearAsset(assetId: any) { _cache.delete(assetId); }

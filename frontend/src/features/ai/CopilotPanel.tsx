@@ -42,7 +42,7 @@ export default function CopilotPanel() {
     if (neuralLoad !== 'idle') return;
     setNeuralLoad('loading');
     try {
-      await enableNeuralModel((p) => {
+      await enableNeuralModel((p: any) => {
         if (p?.status === 'progress' && p.total) {
           setNeuralPct(Math.round((p.loaded / p.total) * 100));
         }

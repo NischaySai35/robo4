@@ -16,18 +16,18 @@ const AXIS = { X: 'x', Y: 'y', Z: 'z' };
  *  object.position to (0,0,0), so we discriminate by the geometry's bounding-box
  *  center: the negative-axis handle sits at center ≈ -0.5 (gizmo) / -0.3 (picker),
  *  while the positive arrow (+0.5) and the shaft line (+0.25) stay. */
-export function stripNegativeTranslate(control) {
+export function stripNegativeTranslate(control: any) {
   const g = control?._gizmo;
   if (!g) return;
   const _c = new THREE.Vector3();
-  const strip = (group) => {
+  const strip = (group: any) => {
     if (!group) return;
     for (const child of [...group.children]) {
-      const ax = AXIS[child.name];
+      const ax = AXIS[child.name as keyof typeof AXIS];
       if (!ax || !child.geometry) continue;
       child.geometry.computeBoundingBox();
       child.geometry.boundingBox.getCenter(_c);
-      if (_c[ax] < -0.05) group.remove(child); // negative-direction handle
+      if ((_c as any)[ax] < -0.05) group.remove(child); // negative-direction handle
     }
   };
   strip(g.gizmo?.translate);

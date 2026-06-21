@@ -19,16 +19,16 @@ import { computeFK, movePivotKeepingChild } from '@/kinematics/modelFK';
 import { solveModelIK, chainJoints } from '@/kinematics/modelIK';
 import { useState } from 'react';
 
-const r3 = (v) => Math.round((v ?? 0) * 1000) / 1000;
-const clamp01 = (v) => Math.max(0, Math.min(1, v));
-const rgbToHex = ([r, g, b]) =>
+const r3 = (v: any) => Math.round((v ?? 0) * 1000) / 1000;
+const clamp01 = (v: any) => Math.max(0, Math.min(1, v));
+const rgbToHex = ([r, g, b]: any) =>
   '#' + [r, g, b].map((v) => Math.round(clamp01(v) * 255).toString(16).padStart(2, '0')).join('');
-const hexToRgb = (hex) => {
+const hexToRgb = (hex: any) => {
   const n = parseInt(hex.slice(1), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 };
 
-function Num({ label, value, onChange, step = 0.1 }) {
+function Num({ label, value, onChange, step = 0.1 }: any) {
   return (
     <label className="in-num">
       <span>{label}</span>
@@ -38,7 +38,7 @@ function Num({ label, value, onChange, step = 0.1 }) {
   );
 }
 
-function Vec3({ label, value, onChange, step = 0.1 }) {
+function Vec3({ label, value, onChange, step = 0.1 }: any) {
   return (
     <div className="in-vec">
       <div className="in-vec-label">{label}</div>
@@ -55,7 +55,7 @@ function Vec3({ label, value, onChange, step = 0.1 }) {
   );
 }
 
-function IkSection({ body, doc, dispatch }) {
+function IkSection({ body, doc, dispatch }: any) {
   const [target, setTarget] = useState(null);
   const chain = chainJoints(doc, body.id);
   if (chain.length === 0) return null;
@@ -77,34 +77,34 @@ function IkSection({ body, doc, dispatch }) {
   );
 }
 
-function BodyInspector({ body, doc, dispatch, select }) {
+function BodyInspector({ body, doc, dispatch, select }: any) {
   const id = body.id;
   const [uniformScale, setUniformScale] = useState(true);
-  const up = (patch) => dispatch(commands.updateBody(id, patch));
-  const upT = (patch) => up({ transform: { ...body.transform, ...patch } });
+  const up = (patch: any) => dispatch(commands.updateBody(id, patch));
+  const upT = (patch: any) => up({ transform: { ...body.transform, ...patch } });
 
   // Scale handler: with "Uniform" on, editing any axis scales all three by the
   // same ratio (so the shape keeps its proportions); off → per-axis as before.
-  const onScale = (v) => {
+  const onScale = (v: any) => {
     if (!uniformScale) { upT({ scale: v }); return; }
     const old = body.transform.scale;
-    const i = v.findIndex((x, idx) => x !== old[idx]);
+    const i = v.findIndex((x: any, idx: any) => x !== old[idx]);
     if (i < 0) { upT({ scale: v }); return; }
     const next = old[i] !== 0
-      ? old.map((s) => Math.round((s * (v[i] / old[i])) * 1000) / 1000)
+      ? old.map((s: any) => Math.round((s * (v[i] / old[i])) * 1000) / 1000)
       : [v[i], v[i], v[i]];
     upT({ scale: next });
   };
   const g = body.visual?.geometry ?? {};
-  const upGeo = (geo) => up({ visual: { ...body.visual, geometry: { ...g, ...geo } } });
+  const upGeo = (geo: any) => up({ visual: { ...body.visual, geometry: { ...g, ...geo } } });
 
   const mat = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
   const color = mat?.color ?? [0.62, 0.66, 0.72, 1];
-  const editMat = (patch) => {
+  const editMat = (patch: any) => {
     if (mat) dispatch(commands.updateMaterial(mat.id, patch));
     else dispatch(commands.setBodyMaterial(id, makeMaterial({ color, ...patch })));
   };
-  const addOne = (b) => { dispatch(commands.addBody(b)); select(b.id, 'body'); };
+  const addOne = (b: any) => { dispatch(commands.addBody(b)); select(b.id, 'body'); };
 
   return (
     <>
@@ -114,9 +114,9 @@ function BodyInspector({ body, doc, dispatch, select }) {
       </label>
 
       <div className="in-group">TRANSFORM</div>
-      <Vec3 label="Position" value={body.transform.position} onChange={(v) => upT({ position: v })} />
+      <Vec3 label="Position" value={body.transform.position} onChange={(v: any) => upT({ position: v })} />
       <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(body.transform.quaternion)}
-        onChange={(v) => upT({ quaternion: eulerDegToQuatArr(v) })} step={5} />
+        onChange={(v: any) => upT({ quaternion: eulerDegToQuatArr(v) })} step={5} />
       <Vec3 label="Scale" value={body.transform.scale} onChange={onScale} step={0.05} />
       <label className="in-check in-uniform">
         <input type="checkbox" checked={uniformScale} onChange={(e) => setUniformScale(e.target.checked)} />
@@ -125,27 +125,27 @@ function BodyInspector({ body, doc, dispatch, select }) {
 
       <div className="in-group">GEOMETRY · {g.type}</div>
       {g.type === GeometryType.BOX && (
-        <Vec3 label="Size" value={g.size ?? [1, 1, 1]} onChange={(v) => upGeo({ size: v })} step={0.05} />
+        <Vec3 label="Size" value={g.size ?? [1, 1, 1]} onChange={(v: any) => upGeo({ size: v })} step={0.05} />
       )}
       {(g.type === GeometryType.CYLINDER || g.type === GeometryType.CAPSULE || g.type === GeometryType.CONE) && (
         <div className="in-row2">
-          <Num label="Radius" value={g.radius} onChange={(v) => upGeo({ radius: v })} step={0.05} />
-          <Num label="Length" value={g.length} onChange={(v) => upGeo({ length: v })} step={0.05} />
+          <Num label="Radius" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} step={0.05} />
+          <Num label="Length" value={g.length} onChange={(v: any) => upGeo({ length: v })} step={0.05} />
         </div>
       )}
       {(g.type === GeometryType.SPHERE || g.type === GeometryType.CIRCLE) && (
-        <Num label="Radius" value={g.radius} onChange={(v) => upGeo({ radius: v })} step={0.05} />
+        <Num label="Radius" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} step={0.05} />
       )}
       {g.type === GeometryType.TORUS && (
         <div className="in-row2">
-          <Num label="Radius" value={g.radius} onChange={(v) => upGeo({ radius: v })} step={0.05} />
-          <Num label="Tube" value={g.tube} onChange={(v) => upGeo({ tube: v })} step={0.02} />
+          <Num label="Radius" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} step={0.05} />
+          <Num label="Tube" value={g.tube} onChange={(v: any) => upGeo({ tube: v })} step={0.02} />
         </div>
       )}
       {g.type === GeometryType.PLANE && (
         <div className="in-row2">
-          <Num label="Width"  value={(g.size ?? [1, 1])[0]} onChange={(v) => upGeo({ size: [v, (g.size ?? [1, 1])[1]] })} step={0.05} />
-          <Num label="Height" value={(g.size ?? [1, 1])[1]} onChange={(v) => upGeo({ size: [(g.size ?? [1, 1])[0], v] })} step={0.05} />
+          <Num label="Width"  value={(g.size ?? [1, 1])[0]} onChange={(v: any) => upGeo({ size: [v, (g.size ?? [1, 1])[1]] })} step={0.05} />
+          <Num label="Height" value={(g.size ?? [1, 1])[1]} onChange={(v: any) => upGeo({ size: [(g.size ?? [1, 1])[0], v] })} step={0.05} />
         </div>
       )}
 
@@ -174,7 +174,7 @@ function BodyInspector({ body, doc, dispatch, select }) {
       </div>
 
       <div className="in-group">INERTIAL</div>
-      <Num label="Mass (kg)" value={body.inertial?.mass} onChange={(v) =>
+      <Num label="Mass (kg)" value={body.inertial?.mass} onChange={(v: any) =>
         up({ inertial: { ...body.inertial, mass: v } })} step={0.1} />
 
       <div className="in-group">OPERATIONS</div>
@@ -193,33 +193,33 @@ function BodyInspector({ body, doc, dispatch, select }) {
 
 const RAD2DEG = 180 / Math.PI;
 const DEG2RAD = Math.PI / 180;
-const rDeg = (rad) => Math.round((rad ?? 0) * RAD2DEG * 10) / 10;
+const rDeg = (rad: any) => Math.round((rad ?? 0) * RAD2DEG * 10) / 10;
 
 function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; dispatch: any }) {
   const id = joint.id;
-  const up = (patch) => dispatch(commands.updateJoint(id, patch));
+  const up = (patch: any) => dispatch(commands.updateJoint(id, patch));
   const lim = joint.limit ?? { lower: -Math.PI, upper: Math.PI, effort: 0, velocity: 0 };
   const dyn = joint.dynamics ?? { damping: 0, friction: 0 };
   const origin = joint.origin ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
   const mimic = joint.mimic;
   const meta = joint.meta ?? {};
-  const upMeta = (patch) => up({ meta: { ...meta, ...patch } });
+  const upMeta = (patch: any) => up({ meta: { ...meta, ...patch } });
   const bodies = Object.values(doc.bodies);
   const otherJoints = Object.values(doc.joints).filter((j) => j.id !== id);
 
   const hasLimits = joint.type === 'revolute' || joint.type === 'prismatic';
-  const setValue = (v) => dispatch(commands.setJointValue(id, v));
-  const setAxis = (a) => up({ axis: a });
+  const setValue = (v: any) => dispatch(commands.setJointValue(id, v));
+  const setAxis = (a: any) => up({ axis: a });
 
   const childRest = joint.childRest ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
   // Move ONLY the pivot — Body 2 stays where it is (childRest compensates).
-  const movePivot = (newOrigin) => up({ origin: newOrigin, childRest: movePivotKeepingChild(joint, newOrigin) });
+  const movePivot = (newOrigin: any) => up({ origin: newOrigin, childRest: movePivotKeepingChild(joint, newOrigin) });
   // Place the pivot at a world point (e.g. a body's origin / the midpoint), keeping
   // both bodies fixed.
   const fkAll = computeFK(doc);
   const w1 = fkAll.get(joint.parentBodyId);
   const w2 = fkAll.get(joint.childBodyId);
-  const setPivotWorld = (pWorld) => {
+  const setPivotWorld = (pWorld: any) => {
     if (!w1) return;
     const local = new THREE.Vector3(pWorld[0], pWorld[1], pWorld[2]).applyMatrix4(w1.matrix.clone().invert());
     const newOrigin = { position: [local.x, local.y, local.z], quaternion: origin.quaternion };
@@ -256,14 +256,14 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
       </label>
 
       <div className="in-group">PIVOT · moves the joint only — both parts stay put</div>
-      <Vec3 label="Position (m)" value={origin.position} onChange={(v) => movePivot({ ...origin, position: v })} />
+      <Vec3 label="Position (m)" value={origin.position} onChange={(v: any) => movePivot({ ...origin, position: v })} />
       <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(origin.quaternion)}
-        onChange={(v) => movePivot({ ...origin, quaternion: eulerDegToQuatArr(v) })} step={5} />
+        onChange={(v: any) => movePivot({ ...origin, quaternion: eulerDegToQuatArr(v) })} step={5} />
       <div className="in-ops in-axis-presets">
         <button onClick={() => w1 && setPivotWorld(w1.position)} title="Put the pivot on Body 1">◐ Body 1</button>
         <button onClick={() => w2 && setPivotWorld(w2.position)} title="Put the pivot on Body 2">◑ Body 2</button>
         <button
-          onClick={() => w1 && w2 && setPivotWorld(w1.position.map((c, i) => (c + w2.position[i]) / 2))}
+          onClick={() => w1 && w2 && setPivotWorld(w1.position.map((c: any, i: any) => (c + w2.position[i]) / 2))}
           title="Put the pivot midway between the parts">◎ Middle</button>
       </div>
       <div className="in-servo-hint">
@@ -277,7 +277,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
         <button onClick={() => setAxis([1, 0, 0])}>X</button>
         <button onClick={() => setAxis([0, 1, 0])}>Y</button>
         <button onClick={() => setAxis([0, 0, 1])}>Z</button>
-        <button onClick={() => setAxis(joint.axis.map((c) => -c))} title="Flip direction">⇄ Flip</button>
+        <button onClick={() => setAxis(joint.axis.map((c: any) => -c))} title="Flip direction">⇄ Flip</button>
       </div>
 
       {hasLimits && (
@@ -286,29 +286,29 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
           <div className="in-row2">
             {joint.type === 'prismatic' ? (
               <>
-                <Num label="Lower" value={lim.lower} onChange={(v) => up({ limit: { ...lim, lower: v } })} />
-                <Num label="Upper" value={lim.upper} onChange={(v) => up({ limit: { ...lim, upper: v } })} />
+                <Num label="Lower" value={lim.lower} onChange={(v: any) => up({ limit: { ...lim, lower: v } })} />
+                <Num label="Upper" value={lim.upper} onChange={(v: any) => up({ limit: { ...lim, upper: v } })} />
               </>
             ) : (
               <>
                 <Num label="Lower°" value={rDeg(lim.lower)} step={5}
-                  onChange={(v) => up({ limit: { ...lim, lower: v * DEG2RAD } })} />
+                  onChange={(v: any) => up({ limit: { ...lim, lower: v * DEG2RAD } })} />
                 <Num label="Upper°" value={rDeg(lim.upper)} step={5}
-                  onChange={(v) => up({ limit: { ...lim, upper: v * DEG2RAD } })} />
+                  onChange={(v: any) => up({ limit: { ...lim, upper: v * DEG2RAD } })} />
               </>
             )}
           </div>
           <div className="in-row2">
-            <Num label="Effort (N·m)" value={lim.effort} onChange={(v) => up({ limit: { ...lim, effort: v } })} />
-            <Num label="Velocity" value={lim.velocity} onChange={(v) => up({ limit: { ...lim, velocity: v } })} />
+            <Num label="Effort (N·m)" value={lim.effort} onChange={(v: any) => up({ limit: { ...lim, effort: v } })} />
+            <Num label="Velocity" value={lim.velocity} onChange={(v: any) => up({ limit: { ...lim, velocity: v } })} />
           </div>
         </>
       )}
 
       <div className="in-group">DYNAMICS</div>
       <div className="in-row2">
-        <Num label="Damping" value={dyn.damping} onChange={(v) => up({ dynamics: { ...dyn, damping: v } })} step={0.01} />
-        <Num label="Friction" value={dyn.friction} onChange={(v) => up({ dynamics: { ...dyn, friction: v } })} step={0.01} />
+        <Num label="Damping" value={dyn.damping} onChange={(v: any) => up({ dynamics: { ...dyn, damping: v } })} step={0.01} />
+        <Num label="Friction" value={dyn.friction} onChange={(v: any) => up({ dynamics: { ...dyn, friction: v } })} step={0.01} />
       </div>
 
       <div className="in-group">MIMIC</div>
@@ -326,8 +326,8 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
             </select>
           </label>
           <div className="in-row2">
-            <Num label="Multiplier" value={mimic.multiplier} onChange={(v) => up({ mimic: { ...mimic, multiplier: v } })} step={0.1} />
-            <Num label="Offset" value={mimic.offset} onChange={(v) => up({ mimic: { ...mimic, offset: v } })} step={0.1} />
+            <Num label="Multiplier" value={mimic.multiplier} onChange={(v: any) => up({ mimic: { ...mimic, multiplier: v } })} step={0.1} />
+            <Num label="Offset" value={mimic.offset} onChange={(v: any) => up({ mimic: { ...mimic, offset: v } })} step={0.1} />
           </div>
         </>
       )}
@@ -355,9 +355,9 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
           <div className="in-group">SERVO · drives this joint on hardware</div>
           <div className="in-row2">
             <Num label="Servo ID" value={meta.servoId ?? 0} step={1}
-              onChange={(v) => upMeta({ servoId: Math.max(0, Math.round(v)) || null })} />
+              onChange={(v: any) => upMeta({ servoId: Math.max(0, Math.round(v)) || null })} />
             <Num label="Offset (°)" value={meta.servoOffsetDeg ?? 0} step={1}
-              onChange={(v) => upMeta({ servoOffsetDeg: v })} />
+              onChange={(v: any) => upMeta({ servoOffsetDeg: v })} />
           </div>
           <label className="in-check">
             <input type="checkbox" checked={!!meta.servoInvert}

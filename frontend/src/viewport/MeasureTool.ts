@@ -14,7 +14,7 @@ const _ndc = new THREE.Vector2();
 export class MeasureTool {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor({ scene, camera, domElement, getMeshes, onResult }) {
+  constructor({ scene, camera, domElement, getMeshes, onResult }: any) {
     this.scene = scene;
     this.camera = camera;
     this.dom = domElement;
@@ -49,7 +49,7 @@ export class MeasureTool {
     this._clear();
   }
 
-  _ndcFrom(e) {
+  _ndcFrom(e: any) {
     const rect = this.dom.getBoundingClientRect();
     _ndc.set(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
@@ -60,7 +60,7 @@ export class MeasureTool {
 
   // Hover: show the snap indicator and a live preview line / distance once the
   // first point is placed.
-  _onMove(e) {
+  _onMove(e: any) {
     const snap = computeSnap(this._ndcFrom(e), this.camera, this.dom, this.getMeshes());
     if (!snap) { this._indicator.hide(); return; }
     this._indicator.show(snap.point, snap.type);
@@ -70,7 +70,7 @@ export class MeasureTool {
     }
   }
 
-  _onDown(e) {
+  _onDown(e: any) {
     if (e.button !== 0) return;
     const snap = computeSnap(this._ndcFrom(e), this.camera, this.dom, this.getMeshes());
     if (!snap) return;
@@ -88,7 +88,7 @@ export class MeasureTool {
     }
   }
 
-  _updatePreview(a, b) {
+  _updatePreview(a: any, b: any) {
     if (!this._preview) {
       this._preview = new THREE.Line(
         new THREE.BufferGeometry().setFromPoints([a, b]),
@@ -105,7 +105,7 @@ export class MeasureTool {
     if (this._preview) { this.group.remove(this._preview); this._preview.geometry.dispose(); this._preview.material.dispose(); this._preview = null; }
   }
 
-  _addMarker(p) {
+  _addMarker(p: any) {
     const m = new THREE.Mesh(
       new THREE.SphereGeometry(0.06, 16, 12),
       new THREE.MeshBasicMaterial({ color: 0xff3366, depthTest: false }),
@@ -115,7 +115,7 @@ export class MeasureTool {
     this.group.add(m);
   }
 
-  _addLine(a, b) {
+  _addLine(a: any, b: any) {
     const geo = new THREE.BufferGeometry().setFromPoints([a, b]);
     const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: 0xff3366, depthTest: false }));
     line.renderOrder = 1000;

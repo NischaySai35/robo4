@@ -18,20 +18,20 @@ const COLLECTIONS = {
   asset: 'assets', frame: 'frames', constraint: 'constraints',
 };
 
-function collectionFor(entity) {
-  const c = COLLECTIONS[entity.kind];
+function collectionFor(entity: any) {
+  const c = COLLECTIONS[entity.kind as keyof typeof COLLECTIONS];
   if (!c) throw new Error(`Unknown entity kind: ${entity.kind}`);
   return c;
 }
 
 /** Insert or replace an entity by its kind. Returns a new document. */
-export function putEntity(doc, entity) {
+export function putEntity(doc: any, entity: any) {
   const c = collectionFor(entity);
   return { ...doc, [c]: { ...doc[c], [entity.id]: entity } };
 }
 
 /** Remove an entity from a named collection by id. Returns a new document. */
-export function removeFrom(doc, collection, id) {
+export function removeFrom(doc: any, collection: any, id: any) {
   if (!doc[collection] || !(id in doc[collection])) return doc;
   const next = { ...doc[collection] };
   delete next[id];

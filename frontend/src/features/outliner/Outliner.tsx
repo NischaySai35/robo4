@@ -23,7 +23,7 @@ export default function Outliner() {
   const select = useSelectionStore((s) => s.select);
   const clear = useSelectionStore((s) => s.clear);
   // Single click selects; double click opens the Inspector (Properties).
-  const openInspector = (id, kind) => { select(id, kind); useDockStore.getState().open('inspector'); };
+  const openInspector = (id: any, kind: any) => { select(id, kind); useDockStore.getState().open('inspector'); };
 
   const bodies = Object.values(doc.bodies);
   const joints = Object.values(doc.joints);

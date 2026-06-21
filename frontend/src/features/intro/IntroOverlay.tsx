@@ -8,7 +8,7 @@ const EXIT = 750;  // ms exit transition
 const WORD  = 'TETROBOT'.split('');
 const CUBES = [0, 1, 2, 3, 4, 5]; // six modules assembling
 
-export default function IntroOverlay({ onDone }) {
+export default function IntroOverlay({ onDone }: any) {
   const [exiting, setExiting] = useState(false);
   const done = useRef(false);
 

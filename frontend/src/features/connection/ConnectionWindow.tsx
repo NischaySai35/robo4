@@ -1,7 +1,7 @@
 import './ConnectionWindow.css';
 import { useState, useRef, useCallback, useEffect } from 'react';
 
-export default function ConnectionWindow({ isOpen, onClose, children }) {
+export default function ConnectionWindow({ isOpen, onClose, children }: any) {
   const [pos,     setPos]     = useState<any>(null);          // null = CSS default (top-right)
   const [size,    setSize]    = useState({ w: 300, h: 430 });
   const [visible, setVisible] = useState(false);
@@ -20,7 +20,7 @@ export default function ConnectionWindow({ isOpen, onClose, children }) {
   }, [isOpen]);
 
   // Drag from header
-  const startDrag = useCallback((e) => {
+  const startDrag = useCallback((e: any) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const rect = windowRef.current?.getBoundingClientRect();
@@ -30,7 +30,7 @@ export default function ConnectionWindow({ isOpen, onClose, children }) {
     document.body.style.cursor = 'grabbing';
     document.body.style.userSelect = 'none';
 
-    const onMove = (e) => {
+    const onMove = (e: any) => {
       setPos({
         x: Math.max(0, Math.min(window.innerWidth  - 80, e.clientX - offX)),
         y: Math.max(0, Math.min(window.innerHeight - 40, e.clientY - offY)),
@@ -47,7 +47,7 @@ export default function ConnectionWindow({ isOpen, onClose, children }) {
   }, []);
 
   // Resize from bottom-right corner
-  const startResize = useCallback((e) => {
+  const startResize = useCallback((e: any) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
@@ -57,7 +57,7 @@ export default function ConnectionWindow({ isOpen, onClose, children }) {
     document.body.style.cursor = 'nwse-resize';
     document.body.style.userSelect = 'none';
 
-    const onMove = (e) => {
+    const onMove = (e: any) => {
       setSize({
         w: Math.max(240, startW + (e.clientX - startX)),
         h: Math.max(280, startH + (e.clientY - startY)),

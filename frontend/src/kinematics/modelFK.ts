@@ -14,7 +14,7 @@ import type { Document, Origin } from '@/core/model/index';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 
-export function mat(t) {
+export function mat(t: any) {
   return new THREE.Matrix4().compose(
     new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
     new THREE.Quaternion(...(t?.quaternion ?? [0, 0, 0, 1])),
@@ -22,10 +22,10 @@ export function mat(t) {
   );
 }
 
-const originMat = (o) => mat(o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
+const originMat = (o: any) => mat(o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
 
 /** The joint's degree-of-freedom transform at its current value. */
-export function jointDOFMatrix(joint) {
+export function jointDOFMatrix(joint: any) {
   const v = joint.state?.value ?? 0;
   const axis = new THREE.Vector3(...(joint.axis ?? [0, 0, 1]));
   if (axis.lengthSq() < 1e-9) axis.set(0, 0, 1);
@@ -45,12 +45,12 @@ export function buildChildJointMap(doc: Document) {
 }
 
 /** Compute world transforms for every body. Returns Map id -> {position, quaternion, matrix}. */
-export function computeFK(doc) {
+export function computeFK(doc: any) {
   const childJoint = buildChildJointMap(doc);
   const cache = new Map();
   const visiting = new Set();
 
-  function world(bodyId) {
+  function world(bodyId: any): any {
     if (cache.has(bodyId)) return cache.get(bodyId);
     const body = doc.bodies[bodyId];
     if (!body) return new THREE.Matrix4();
@@ -84,14 +84,14 @@ export function computeFK(doc) {
 }
 
 /** Rest origin (child-in-parent) from two bodies' authored transforms. */
-export function relativeOrigin(parentBody, childBody) {
+export function relativeOrigin(parentBody: any, childBody: any) {
   const rel = mat(parentBody.transform).invert().multiply(mat(childBody.transform));
   const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
   rel.decompose(p, q, s);
   return { position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w] };
 }
 
-const decompose = (M) => {
+const decompose = (M: any) => {
   const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
   M.decompose(p, q, s);
   return { position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w] };
@@ -103,7 +103,7 @@ const decompose = (M) => {
  * Returns { origin, childRest } so FK reproduces both bodies' current placement at
  * value 0, with the pivot independently positioned.
  */
-export function jointFramesForBodies(body1, body2, pivotWorld = null) {
+export function jointFramesForBodies(body1: any, body2: any, pivotWorld = null) {
   const T1 = mat(body1.transform);
   const T2 = mat(body2.transform);
   const p1 = new THREE.Vector3().setFromMatrixPosition(T1);
@@ -123,7 +123,7 @@ export function jointFramesForBodies(body1, body2, pivotWorld = null) {
  * Recompute a joint's childRest so Body 2 stays put when the pivot (`origin`) is
  * moved to `newOrigin`. childRest' = newOrigin⁻¹ ∘ origin ∘ childRest.
  */
-export function movePivotKeepingChild(joint, newOrigin) {
+export function movePivotKeepingChild(joint: any, newOrigin: any) {
   const On = originMat(newOrigin);
   const Oo = originMat(joint.origin);
   const Cr = originMat(joint.childRest);
@@ -131,14 +131,14 @@ export function movePivotKeepingChild(joint, newOrigin) {
 }
 
 /** Distance (m) between two transform-likes' origins. */
-export function originDistance(a, b) {
+export function originDistance(a: any, b: any) {
   const pa = a?.position ?? [0, 0, 0];
   const pb = b?.position ?? [0, 0, 0];
   return Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]);
 }
 
 /** New joint origin so the child lands at childMatrix (world) for the joint's current value. */
-export function originForChildWorld(parentMatrix, joint, childMatrix) {
+export function originForChildWorld(parentMatrix: any, joint: any, childMatrix: any) {
   const rel = parentMatrix.clone().invert().multiply(childMatrix).multiply(jointDOFMatrix(joint).invert());
   const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
   rel.decompose(p, q, s);

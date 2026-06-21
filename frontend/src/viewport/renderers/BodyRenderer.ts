@@ -18,7 +18,7 @@ const DEFAULT_COLOR = [0.62, 0.66, 0.72, 1];
 const HILITE = new THREE.Color(0x2f7dff);
 const BLACK = new THREE.Color(0x000000);
 
-function primitiveGeometry(g) {
+function primitiveGeometry(g: any) {
   switch (g?.type) {
     case GeometryType.BOX: { const [x, y, z] = g.size ?? [1, 1, 1]; return new THREE.BoxGeometry(x, y, z); }
     case GeometryType.SPHERE: return new THREE.SphereGeometry(g.radius ?? 0.5, 28, 18);
@@ -33,12 +33,12 @@ function primitiveGeometry(g) {
 }
 
 // What changes force a rebuild of a body's visual child.
-const visualSignature = (body) => JSON.stringify({ g: body.visual?.geometry ?? {}, a: body.visual?.geometry?.assetId ?? body.assetId ?? null });
+const visualSignature = (body: any) => JSON.stringify({ g: body.visual?.geometry ?? {}, a: body.visual?.geometry?.assetId ?? body.assetId ?? null });
 
 export class BodyRenderer {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor(scene) {
+  constructor(scene: any) {
     this.scene = scene;
     this.group = new THREE.Group();
     this.group.name = 'model-bodies';
@@ -86,7 +86,7 @@ export class BodyRenderer {
     this._refreshHighlight();
   }
 
-  _buildVisual(container, body, doc) {
+  _buildVisual(container: any, body: any, doc: any) {
     // clear old children
     for (const c of [...container.children]) { container.remove(c); this._disposeObject(c); }
 
@@ -108,19 +108,19 @@ export class BodyRenderer {
     }
     if (!child) child = new THREE.Mesh(primitiveGeometry(g), new THREE.MeshStandardMaterial());
 
-    child.traverse?.((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    child.traverse?.((o: any) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
     if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
     container.add(child);
   }
 
-  _forEachMesh(container, fn) {
-    container.traverse((o) => { if (o.isMesh) fn(o); });
+  _forEachMesh(container: any, fn: any) {
+    container.traverse((o: any) => { if (o.isMesh) fn(o); });
   }
 
-  _applyMaterial(container, body, doc) {
+  _applyMaterial(container: any, body: any, doc: any) {
     const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
     const [r, gg, b, a] = m?.color ?? DEFAULT_COLOR;
-    this._forEachMesh(container, (mesh) => {
+    this._forEachMesh(container, (mesh: any) => {
       if (!mesh.material || Array.isArray(mesh.material)) return;
       mesh.material.color.setRGB(r, gg, b);
       mesh.material.metalness = m?.metalness ?? 0.45;
@@ -130,7 +130,7 @@ export class BodyRenderer {
     });
   }
 
-  _applyTransform(obj, t) {
+  _applyTransform(obj: any, t: any) {
     if (!t) return;
     const [px, py, pz] = t.position ?? [0, 0, 0];
     const [qx, qy, qz, qw] = t.quaternion ?? [0, 0, 0, 1];
@@ -140,12 +140,12 @@ export class BodyRenderer {
     obj.scale.set(sx, sy, sz);
   }
 
-  setSelected(bodyId) { this._selectedId = bodyId; this._refreshHighlight(); }
+  setSelected(bodyId: any) { this._selectedId = bodyId; this._refreshHighlight(); }
 
   _refreshHighlight() {
     for (const [id, { container }] of this._entries) {
       const on = id === this._selectedId;
-      this._forEachMesh(container, (mesh) => {
+      this._forEachMesh(container, (mesh: any) => {
         if (!mesh.material || Array.isArray(mesh.material)) return;
         mesh.material.emissive = on ? HILITE : BLACK;
         mesh.material.emissiveIntensity = on ? 0.5 : 0;
@@ -154,10 +154,10 @@ export class BodyRenderer {
   }
 
   /** Selection gizmo attaches to the body's container. */
-  getMesh(bodyId) { return this._entries.get(bodyId)?.container ?? null; }
+  getMesh(bodyId: any) { return this._entries.get(bodyId)?.container ?? null; }
 
   /** Raycast all model bodies; returns the hit bodyId or null (for canvas picking). */
-  pickBodyAt(ndc, camera) {
+  pickBodyAt(ndc: any, camera: any) {
     const objs: any[] = [];
     for (const { container } of this._entries.values()) objs.push(container);
     if (!objs.length) return null;
@@ -172,7 +172,7 @@ export class BodyRenderer {
 
   /** Raycast bodies and return the hit face as { bodyId, point, normal } in world
    *  space (for the mate tool), or null. */
-  pickFaceAt(ndc, camera) {
+  pickFaceAt(ndc: any, camera: any) {
     const objs: any[] = [];
     for (const { container } of this._entries.values()) objs.push(container);
     if (!objs.length) return null;
@@ -191,14 +191,14 @@ export class BodyRenderer {
     return null;
   }
 
-  _disposeObject(o) {
-    o.traverse?.((c) => {
+  _disposeObject(o: any) {
+    o.traverse?.((c: any) => {
       if (c.geometry) c.geometry.dispose();
-      if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach((m) => m.dispose?.());
+      if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach((m: any) => m.dispose?.());
     });
     if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose?.(); }
   }
-  _disposeContainer(container) { for (const c of container.children) this._disposeObject(c); }
+  _disposeContainer(container: any) { for (const c of container.children) this._disposeObject(c); }
 
   dispose() {
     for (const { container } of this._entries.values()) this._disposeContainer(container);

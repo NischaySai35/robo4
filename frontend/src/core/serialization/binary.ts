@@ -3,7 +3,7 @@
  * Mesh assets are embedded as base64 in the model so .nischay stays self-contained.
  */
 
-export function bytesToBase64(bytes) {
+export function bytesToBase64(bytes: any) {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   let binary = '';
   const CHUNK = 0x8000;
@@ -13,7 +13,7 @@ export function bytesToBase64(bytes) {
   return btoa(binary);
 }
 
-export function base64ToBytes(b64) {
+export function base64ToBytes(b64: any) {
   const binary = atob(b64);
   const out = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i);

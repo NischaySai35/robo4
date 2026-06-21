@@ -17,7 +17,7 @@ const SNAP_EDGE_PX = 10;
 
 const TYPE_COLOR = { vertex: 0x22dd88, edge: 0x3388ff, face: 0xff8800 };
 
-function closestPointOnSegment(p, a, b) {
+function closestPointOnSegment(p: any, a: any, b: any) {
   const ab = b.clone().sub(a);
   const t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / (ab.lengthSq() || 1), 0, 1);
   return a.clone().add(ab.multiplyScalar(t));
@@ -27,7 +27,7 @@ function closestPointOnSegment(p, a, b) {
  * Resolve a snap at the given NDC coordinate.
  * @returns {{point:THREE.Vector3, type:'vertex'|'edge'|'face', normal?:THREE.Vector3}|null}
  */
-export function computeSnap(ndc, camera, dom, meshes) {
+export function computeSnap(ndc: any, camera: any, dom: any, meshes: any) {
   if (!meshes?.length) return null;
   _ray.setFromCamera(ndc, camera);
   const hits = _ray.intersectObjects(meshes, true);
@@ -39,7 +39,7 @@ export function computeSnap(ndc, camera, dom, meshes) {
     (ndc.x * 0.5 + 0.5) * rect.width,
     (-ndc.y * 0.5 + 0.5) * rect.height,
   );
-  const toPx = (v) => {
+  const toPx = (v: any) => {
     const p = v.clone().project(camera);
     return new THREE.Vector2((p.x * 0.5 + 0.5) * rect.width, (-p.y * 0.5 + 0.5) * rect.height);
   };
@@ -79,7 +79,7 @@ export function computeSnap(ndc, camera, dom, meshes) {
 export class SnapIndicator {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor(scene) {
+  constructor(scene: any) {
     this.scene = scene;
     this.mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.055, 16, 12),
@@ -90,8 +90,8 @@ export class SnapIndicator {
     scene.add(this.mesh);
   }
 
-  show(point, type = 'vertex') {
-    this.mesh.material.color.setHex(TYPE_COLOR[type] ?? TYPE_COLOR.face);
+  show(point: any, type = 'vertex') {
+    this.mesh.material.color.setHex(TYPE_COLOR[type as keyof typeof TYPE_COLOR] ?? TYPE_COLOR.face);
     this.mesh.position.copy(point);
     this.mesh.visible = true;
   }

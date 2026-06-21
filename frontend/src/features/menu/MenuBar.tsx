@@ -31,11 +31,11 @@ function DocIndicator() {
   );
 }
 
-function Dropdown({ items, onClose }) {
+function Dropdown({ items, onClose }: any) {
   const [sub, setSub] = useState<any>(null);
   return (
     <div className="menu-dropdown">
-      {items.map((it, i) => {
+      {items.map((it: any, i: any) => {
         if (it.sep) return <div key={i} className="menu-sep" />;
         if (it.submenu) {
           return (
@@ -44,7 +44,7 @@ function Dropdown({ items, onClose }) {
               <span>{it.label}</span><span className="menu-arrow">▸</span>
               {sub === i && (
                 <div className="menu-subdropdown">
-                  {it.submenu.map((s, j) => (
+                  {it.submenu.map((s: any, j: any) => (
                     <button key={j} className="menu-item" onClick={() => { onClose(); s.onClick(); }}>
                       {s.label}
                     </button>
@@ -66,7 +66,7 @@ function Dropdown({ items, onClose }) {
   );
 }
 
-export default function MenuBar({ onToggleConn }) {
+export default function MenuBar({ onToggleConn }: any) {
   const [open, setOpen] = useState<any>(null);
   const barRef = useRef<any>(null);
 
@@ -76,8 +76,8 @@ export default function MenuBar({ onToggleConn }) {
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (e) => { if (barRef.current && !barRef.current.contains(e.target)) setOpen(null); };
-    const onKey  = (e) => { if (e.key === 'Escape') setOpen(null); };
+    const onDown = (e: any) => { if (barRef.current && !barRef.current.contains(e.target)) setOpen(null); };
+    const onKey  = (e: any) => { if (e.key === 'Escape') setOpen(null); };
     document.addEventListener('mousedown', onDown);
     document.addEventListener('keydown', onKey);
     return () => {
@@ -154,7 +154,7 @@ export default function MenuBar({ onToggleConn }) {
             >
               {name}
             </button>
-            {open === name && <Dropdown items={menus[name]} onClose={() => setOpen(null)} />}
+            {open === name && <Dropdown items={menus[name as keyof typeof menus]} onClose={() => setOpen(null)} />}
           </div>
         ))}
       </div>

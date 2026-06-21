@@ -12,10 +12,10 @@ import {
 import { jointFramesForBodies } from '@/kinematics/modelFK';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
 
-const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+const cap = (s: any) => s.charAt(0).toUpperCase() + s.slice(1);
 
 // Small inline icon helper.
-const I = ({ children }) => (
+const I = ({ children }: any) => (
   <svg width="16" height="16" viewBox="0 0 20 20" fill="none"
     stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
     {children}
@@ -34,7 +34,7 @@ const PRIMITIVES = [
   { type: GeometryType.CAPSULE,  label: 'Capsule',  params: { radius: 0.35, length: 0.9 } },
 ];
 
-export default function LeftPanel({ style }) {
+export default function LeftPanel({ style }: any) {
   const doc = useModelStore((s) => s.doc);
   const dispatch = useModelStore((s) => s.dispatch);
   const select = useSelectionStore((s) => s.select);
@@ -62,7 +62,7 @@ export default function LeftPanel({ style }) {
   const [editing, setEditing] = useState<any>(null); // { id, kind, text } | null
 
   // ── Build actions ──────────────────────────────────────────────────────────
-  const addPrimitive = (type, params) => {
+  const addPrimitive = (type: any, params: any) => {
     const n = bodies.length;
     const body = makeBody({
       name: `${cap(type)} ${n + 1}`,
@@ -90,9 +90,9 @@ export default function LeftPanel({ style }) {
   };
 
   // ── Project explorer actions ────────────────────────────────────────────────
-  const openInspectorFor = (id, kind) => { select(id, kind); openPanel('inspector'); };
+  const openInspectorFor = (id: any, kind: any) => { select(id, kind); openPanel('inspector'); };
 
-  const startRename = (id, kind, name) => setEditing({ id, kind, text: name });
+  const startRename = (id: any, kind: any, name: any) => setEditing({ id, kind, text: name });
   const commitRename = () => {
     if (!editing) return;
     const name = editing.text.trim();
@@ -103,7 +103,7 @@ export default function LeftPanel({ style }) {
     setEditing(null);
   };
 
-  const move = (collection, ids, idx, dir) => {
+  const move = (collection: any, ids: any, idx: any, dir: any) => {
     const arr = [...ids];
     const j = idx + dir;
     if (j < 0 || j >= arr.length) return;
@@ -114,7 +114,7 @@ export default function LeftPanel({ style }) {
   const bodyIds = bodies.map((b) => b.id);
   const jointIds = joints.map((j) => j.id);
 
-  const renderRow = (entity, kind, ids, idx, collection, extra) => {
+  const renderRow = (entity: any, kind: any, ids: any, idx: any, collection: any, extra: any) => {
     const isSel = selectedId === entity.id;
     const isEditing = editing && editing.id === entity.id;
     return (

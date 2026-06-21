@@ -15,7 +15,7 @@ const RAD2DEG = 180 / Math.PI;
  * Map a joint's value (rad) to the degrees a servo should hold, applying the
  * per-joint servo calibration (invert + offset). ST3215 firmware thinks in degrees.
  */
-export function jointServoDegrees(j) {
+export function jointServoDegrees(j: any) {
   const m = j.meta ?? {};
   const sign = m.servoInvert ? -1 : 1;
   const deg = (j.state?.value ?? 0) * RAD2DEG * sign + (Number(m.servoOffsetDeg) || 0);
@@ -44,7 +44,7 @@ export function formatJointCommand(doc: Document, { joints = null } = {}) {
 }
 
 /** Parse an incoming line → { type:'json', data } | { type:'text', data } | null. */
-export function parseTelemetry(line) {
+export function parseTelemetry(line: any) {
   const s = (line ?? '').trim();
   if (!s) return null;
   try { return { type: 'json', data: JSON.parse(s) }; }

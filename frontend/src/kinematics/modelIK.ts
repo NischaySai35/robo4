@@ -14,7 +14,7 @@ import type { Document } from '@/core/model/index';
 const MOVABLE = new Set(['revolute', 'continuous', 'prismatic']);
 
 /** Ordered movable joints from root → tip for the chain ending at tipId. */
-export function chainJoints(doc, tipId) {
+export function chainJoints(doc: any, tipId: any) {
   const childJoint = buildChildJointMap(doc);
   const out: any[] = [];
   const seen = new Set();
@@ -40,7 +40,7 @@ function tipPosition(doc: Document, tipId: string, values: Record<string, number
 }
 
 // Invert a symmetric 3x3 (returns null if singular).
-function inv3(m) {
+function inv3(m: any) {
   const [a, b, c, d, e, f, g, h, i] = m;
   const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
   const det = a * A + b * B + c * C;
@@ -53,7 +53,7 @@ function inv3(m) {
   ];
 }
 
-const clampLimit = (j, v) => {
+const clampLimit = (j: any, v: any) => {
   if (j.type === 'continuous') return v;
   const lo = j.limit?.lower ?? -Math.PI, hi = j.limit?.upper ?? Math.PI;
   return Math.max(lo, Math.min(hi, v));
@@ -62,11 +62,11 @@ const clampLimit = (j, v) => {
 /**
  * Solve IK. Returns { jointId: newValue } for the chain joints (or null if no chain).
  */
-export function solveModelIK(doc, tipId, target, { iterations = 24, lambda = 0.6, eps = 1e-4, tol = 1e-3 } = {}) {
+export function solveModelIK(doc: any, tipId: any, target: any, { iterations = 24, lambda = 0.6, eps = 1e-4, tol = 1e-3 } = {}) {
   const chain = chainJoints(doc, tipId);
   if (chain.length === 0) return null;
 
-  const values = {};
+  const values: Record<string, any> = {};
   for (const j of chain) values[j.id] = j.state?.value ?? 0;
   const tgt = new THREE.Vector3(target[0], target[1], target[2]);
 

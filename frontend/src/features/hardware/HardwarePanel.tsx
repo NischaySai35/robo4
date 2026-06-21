@@ -20,7 +20,7 @@ function ServoMap() {
   if (joints.length === 0) {
     return <div className="hw-foot">No movable joints yet. Build a robot (import parts → create joints) to map servos.</div>;
   }
-  const setId = (j, id) => dispatch(commands.updateJoint(j.id, {
+  const setId = (j: any, id: any) => dispatch(commands.updateJoint(j.id, {
     meta: { ...(j.meta ?? {}), servoId: Number.isFinite(id) && id > 0 ? id : null },
   }));
   const autoAssign = () => joints.forEach((j, i) => setId(j, i + 1)); // 1..N

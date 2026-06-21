@@ -71,8 +71,8 @@ export default function NavigationGizmo() {
     return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); };
   }, []);
 
-  const snap = useCallback((key) => {
-    const view = SNAP_VIEWS[key];
+  const snap = useCallback((key: any) => {
+    const view = SNAP_VIEWS[key as keyof typeof SNAP_VIEWS];
     if (view && bridge.animateTo) bridge.animateTo(view.pos, view.lookAt);
   }, []);
 
@@ -81,14 +81,14 @@ export default function NavigationGizmo() {
   }, []);
 
   // Drag-to-orbit: pointer events on the gizmo background disc
-  const onBgPointerDown = useCallback((e) => {
+  const onBgPointerDown = useCallback((e: any) => {
     e.stopPropagation();
     svgRef.current?.setPointerCapture(e.pointerId);
     dragging.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
   }, []);
 
-  const onBgPointerMove = useCallback((e) => {
+  const onBgPointerMove = useCallback((e: any) => {
     if (!dragging.current) return;
     const dx = e.clientX - lastPos.current.x;
     const dy = e.clientY - lastPos.current.y;
@@ -96,7 +96,7 @@ export default function NavigationGizmo() {
     if (bridge.orbitDelta) bridge.orbitDelta(dx, dy);
   }, []);
 
-  const onBgPointerUp = useCallback((e) => {
+  const onBgPointerUp = useCallback((e: any) => {
     dragging.current = false;
     svgRef.current?.releasePointerCapture(e.pointerId);
   }, []);

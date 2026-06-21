@@ -11,7 +11,7 @@ const SEL = 0xffaa00;
 const NORMAL = 0x33d17a;
 
 // Load heatmap: 0 → green, 0.5 → yellow, 1 → red.
-function heatColor(t) {
+function heatColor(t: any) {
   t = Math.max(0, Math.min(1, t));
   const r = t < 0.5 ? t * 2 : 1;
   const g = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
@@ -21,7 +21,7 @@ function heatColor(t) {
 export class JointRenderer {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor(scene) {
+  constructor(scene: any) {
     this.scene = scene;
     this.group = new THREE.Group();
     this.group.name = 'model-joints';
@@ -32,14 +32,14 @@ export class JointRenderer {
     this._picker = new THREE.Raycaster();
   }
 
-  _mat(t) {
+  _mat(t: any) {
     return new THREE.Matrix4().compose(
       new THREE.Vector3(...(t.position ?? [0, 0, 0])),
       new THREE.Quaternion(...(t.quaternion ?? [0, 0, 0, 1])),
       new THREE.Vector3(...(t.scale ?? [1, 1, 1])),
     );
   }
-  _originMat(o) {
+  _originMat(o: any) {
     const oo = o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
     return new THREE.Matrix4().compose(
       new THREE.Vector3(...(oo.position ?? [0, 0, 0])),
@@ -95,19 +95,19 @@ export class JointRenderer {
     }
   }
 
-  setSelected(id) {
+  setSelected(id: any) {
     this._selectedId = id;
     if (this._lastDoc) this.sync(this._lastDoc, this._lastFk, this._lastLoads); // recolor
   }
 
   /** Which joints are drawn (those touching the current selection). */
-  setVisibleSet(set) {
+  setVisibleSet(set: any) {
     this._visible = set instanceof Set ? set : new Set(set ?? []);
     if (this._lastDoc) this.sync(this._lastDoc, this._lastFk, this._lastLoads);
   }
 
   /** Raycast visible joint arrows; returns the hit jointId or null. */
-  pickJointAt(ndc, camera) {
+  pickJointAt(ndc: any, camera: any) {
     if (this.group.children.length === 0) return null;
     this._picker.setFromCamera(ndc, camera);
     const hits = this._picker.intersectObjects(this.group.children, true);
@@ -118,8 +118,8 @@ export class JointRenderer {
     return null;
   }
 
-  _dispose(o) {
-    o.traverse?.((c) => { c.geometry?.dispose?.(); if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach((m) => m.dispose?.()); });
+  _dispose(o: any) {
+    o.traverse?.((c: any) => { c.geometry?.dispose?.(); if (c.material) (Array.isArray(c.material) ? c.material : [c.material]).forEach((m: any) => m.dispose?.()); });
   }
 
   dispose() {

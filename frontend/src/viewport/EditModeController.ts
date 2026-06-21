@@ -34,7 +34,7 @@ if (import.meta.hot) (import.meta.hot as any).decline();
 export class EditModeController {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor({ scene, camera, controls, domElement, bodyRenderer }) {
+  constructor({ scene, camera, controls, domElement, bodyRenderer }: any) {
     this.scene = scene;
     this.camera = camera;
     this.controls = controls;
@@ -59,13 +59,13 @@ export class EditModeController {
     this.gizmo.visible = false;
     stripNegativeTranslate(this.gizmo); // only +X/+Y/+Z move arrows
     scene.add(this.gizmo);
-    this.gizmo.addEventListener('dragging-changed', (e) => { this.controls.enabled = !e.value; });
+    this.gizmo.addEventListener('dragging-changed', (e: any) => { this.controls.enabled = !e.value; });
     this.gizmo.addEventListener('objectChange', () => this._onGizmoDrag());
     this.gizmo.addEventListener('mouseUp', () => this._commit());
 
     this._down = null;
-    this._onDown = (e) => { if (e.button === 0) this._down = { x: e.clientX, y: e.clientY }; };
-    this._onUp = (e) => this._handlePick(e);
+    this._onDown = (e: any) => { if (e.button === 0) this._down = { x: e.clientX, y: e.clientY }; };
+    this._onUp = (e: any) => this._handlePick(e);
     domElement.addEventListener('pointerdown', this._onDown);
     domElement.addEventListener('pointerup', this._onUp);
 
@@ -106,7 +106,7 @@ export class EditModeController {
   }
 
   // ── enter / leave ──────────────────────────────────────────────────────────
-  _enter(bodyId) {
+  _enter(bodyId: any) {
     this._leave();
     const container = this.bodyRenderer.getMesh(bodyId);
     if (!container) { useEditModeStore.getState().exit(); return; }
@@ -129,7 +129,7 @@ export class EditModeController {
     // those, show the loading bar and defer the heavy work one frame so the bar
     // paints and the click feels responsive instead of freezing.
     let tris = 0;
-    container.traverse((o) => {
+    container.traverse((o: any) => {
       if (!o.isMesh || !o.geometry) return;
       tris += (o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count) / 3;
     });
@@ -169,7 +169,7 @@ export class EditModeController {
   }
 
   /** Bake the body's current geometry → indexed {positions, indices} in local space. */
-  _bake(bodyId, container) {
+  _bake(bodyId: any, container: any) {
     const doc = useModelStore.getState().doc;
     const body = doc.bodies[bodyId];
     const existing = body?.visual?.geometry?.editMesh;
@@ -177,7 +177,7 @@ export class EditModeController {
       return { positions: [...existing.positions], indices: [...(existing.indices ?? [])] };
     }
     let mesh: any = null;
-    container.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+    container.traverse((o: any) => { if (o.isMesh && !mesh) mesh = o; });
     if (!mesh) return null;
     let geo = mesh.geometry.clone();
     // Weld by POSITION only. Primitive geometries (cylinder, sphere…) ship with an
@@ -286,14 +286,14 @@ export class EditModeController {
     const dpr = window.devicePixelRatio || 1;
     const w = (this.domElement.clientWidth || 1) * dpr;
     const h = (this.domElement.clientHeight || 1) * dpr;
-    this.overlay.traverse((o) => { if (o.material?.isLineMaterial) o.material.resolution.set(w, h); });
+    this.overlay.traverse((o: any) => { if (o.material?.isLineMaterial) o.material.resolution.set(w, h); });
   }
 
   _edgeIndices() {
     const idx = this.work.indices;
     const seen = new Set<any>();
     const out: any[] = [];
-    const add = (a, b) => {
+    const add = (a: any, b: any) => {
       const key = a < b ? `${a}_${b}` : `${b}_${a}`;
       if (seen.has(key)) return;
       seen.add(key); out.push(a, b);
@@ -348,7 +348,7 @@ export class EditModeController {
     }
     const { selectMode, selection } = useEditModeStore.getState();
     const P = this.work.positions;
-    const vAt = (i) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]];
+    const vAt = (i: any) => [P[i * 3], P[i * 3 + 1], P[i * 3 + 2]];
 
     if (selectMode === 'vertex' && selection.length) {
       const a: any[] = [];
@@ -383,17 +383,17 @@ export class EditModeController {
     this._updateGizmo();
   }
 
-  _applyWireframe(on) {
+  _applyWireframe(on: any) {
     if (!this.container) return;
-    this.container.traverse((o) => {
+    this.container.traverse((o: any) => {
       if (!o.isMesh || !o.material) return;
       const mats = Array.isArray(o.material) ? o.material : [o.material];
-      mats.forEach((m) => { if (m) m.wireframe = !!on; });
+      mats.forEach((m: any) => { if (m) m.wireframe = !!on; });
     });
   }
 
   // ── picking ──────────────────────────────────────────────────────────────────
-  _handlePick(e) {
+  _handlePick(e: any) {
     if (!this.overlay || e.button !== 0 || !this._down) return;
     const moved = Math.hypot(e.clientX - this._down.x, e.clientY - this._down.y);
     this._down = null;
@@ -416,23 +416,23 @@ export class EditModeController {
     else this._pickFaceOrEdge(selectMode, additive);
   }
 
-  _pickVertex(additive) {
+  _pickVertex(additive: any) {
     const hits = this._ray.intersectObject(this.points, false);
     if (!hits.length) { if (!additive) this._setSelection([]); return; }
     const vi = hits[0].index;
-    this._toggleInSelection(vi, additive, (a, b) => a === b);
+    this._toggleInSelection(vi, additive, (a: any, b: any) => a === b);
   }
 
-  _pickFaceOrEdge(mode, additive) {
+  _pickFaceOrEdge(mode: any, additive: any) {
     // Build a temporary solid mesh for face raycast (overlay points/lines aren't faces).
     let mesh: any = null;
-    this.container.traverse((o) => { if (o.isMesh && !mesh) mesh = o; });
+    this.container.traverse((o: any) => { if (o.isMesh && !mesh) mesh = o; });
     if (!mesh) return;
     const hits = this._ray.intersectObject(mesh, false);
     if (!hits.length) { if (!additive) this._setSelection([]); return; }
     const h = hits[0];
     const tri = h.faceIndex;
-    if (mode === 'face') { this._toggleInSelection(tri, additive, (a, b) => a === b); return; }
+    if (mode === 'face') { this._toggleInSelection(tri, additive, (a: any, b: any) => a === b); return; }
 
     // edge: nearest of the triangle's 3 edges to the hit point (in local space).
     const inv = new THREE.Matrix4().copy(this.container.matrixWorld).invert();
@@ -448,7 +448,7 @@ export class EditModeController {
     if (best) this._toggleEdge(best, additive);
   }
 
-  _toggleInSelection(item, additive, eq) {
+  _toggleInSelection(item: any, additive: any, eq: any) {
     const cur = useEditModeStore.getState().selection;
     const exists = cur.some((x) => eq(x, item));
     if (additive) {
@@ -463,8 +463,8 @@ export class EditModeController {
     this._setSelection([item]);
   }
 
-  _toggleEdge(edge, additive) {
-    const eq = (a, b) => a[0] === b[0] && a[1] === b[1];
+  _toggleEdge(edge: any, additive: any) {
+    const eq = (a: any, b: any) => a[0] === b[0] && a[1] === b[1];
     const cur = useEditModeStore.getState().selection;
     const exists = cur.some((x) => eq(x, edge));
     if (additive) {
@@ -479,7 +479,7 @@ export class EditModeController {
     this._setSelection([edge]);
   }
 
-  _setSelection(sel) { useEditModeStore.getState().setSelection(sel); this._rebuildSelectionMeshes(); }
+  _setSelection(sel: any) { useEditModeStore.getState().setSelection(sel); this._rebuildSelectionMeshes(); }
 
   _selectAll() {
     this._showGizmo = true;
@@ -491,7 +491,7 @@ export class EditModeController {
 
   _edgePairs() {
     const idx = this.work.indices, seen = new Set<any>(), out: any[] = [];
-    const add = (a, b) => { const k = a < b ? `${a}_${b}` : `${b}_${a}`; if (!seen.has(k)) { seen.add(k); out.push(a < b ? [a, b] : [b, a]); } };
+    const add = (a: any, b: any) => { const k = a < b ? `${a}_${b}` : `${b}_${a}`; if (!seen.has(k)) { seen.add(k); out.push(a < b ? [a, b] : [b, a]); } };
     for (let i = 0; i < idx.length; i += 3) { add(idx[i], idx[i + 1]); add(idx[i + 1], idx[i + 2]); add(idx[i + 2], idx[i]); }
     return out;
   }
@@ -511,7 +511,7 @@ export class EditModeController {
     this.gizmo.attach(this._proxy);
     this.gizmo.enabled = true; this.gizmo.visible = true;
     this._dragVerts = [...set];
-    this._dragStart = this._dragVerts.map((v) => this._v(v).clone());
+    this._dragStart = this._dragVerts.map((v: any) => this._v(v).clone());
   }
 
   _detachGizmo() {
@@ -625,16 +625,16 @@ export class EditModeController {
     this._refreshGeometryAttributes();
   }
 
-  _pushVertex(x, y, z) { this.work.positions.push(x, y, z); return this.work.positions.length / 3 - 1; }
+  _pushVertex(x: any, y: any, z: any) { this.work.positions.push(x, y, z); return this.work.positions.length / 3 - 1; }
 
   // Shared "region cap" operation used by extrude and inset: duplicate the verts
   // of the selected face region (moved by `moveFn`), re-point the selected tris to
   // the copies, and bridge the boundary edges with wall triangles. Returns true on
   // success; leaves the same triangle slots selected (the new cap).
-  _regionCap(selTris, moveFn) {
+  _regionCap(selTris: any, moveFn: any) {
     const I = this.work.indices;
-    const key = (a, b) => (a < b ? `${a}_${b}` : `${b}_${a}`);
-    const triEdges = (t) => { const i = t * 3; return [[I[i], I[i + 1]], [I[i + 1], I[i + 2]], [I[i + 2], I[i]]]; };
+    const key = (a: any, b: any) => (a < b ? `${a}_${b}` : `${b}_${a}`);
+    const triEdges = (t: any) => { const i = t * 3; return [[I[i], I[i + 1]], [I[i + 1], I[i + 2]], [I[i + 2], I[i]]]; };
 
     const count = new Map<any, any>();
     const used = new Set<any>();
@@ -653,7 +653,7 @@ export class EditModeController {
     return ctx;
   }
 
-  _regionNormal(selTris) {
+  _regionNormal(selTris: any) {
     const I = this.work.indices, n = new THREE.Vector3();
     for (const t of selTris) {
       const i = t * 3; const a = this._v(I[i]), b = this._v(I[i + 1]), c = this._v(I[i + 2]);
@@ -663,9 +663,9 @@ export class EditModeController {
     return n.normalize();
   }
 
-  _centroidOf(verts) {
+  _centroidOf(verts: any) {
     const c = new THREE.Vector3();
-    verts.forEach((v) => c.add(this._v(v)));
+    verts.forEach((v: any) => c.add(this._v(v)));
     return verts.length ? c.multiplyScalar(1 / verts.length) : c;
   }
 
@@ -677,15 +677,15 @@ export class EditModeController {
     const n = this._regionNormal(selTris);
     const ctx0 = { boundary: [] as any[] };
     // Default offset ≈ average boundary edge length so the extrusion is visible.
-    const I = this.work.indices, key = (a, b) => (a < b ? `${a}_${b}` : `${b}_${a}`);
+    const I = this.work.indices, key = (a: any, b: any) => (a < b ? `${a}_${b}` : `${b}_${a}`);
     const count = new Map<any, any>();
-    const te = (t) => { const i = t * 3; return [[I[i], I[i + 1]], [I[i + 1], I[i + 2]], [I[i + 2], I[i]]]; };
+    const te = (t: any) => { const i = t * 3; return [[I[i], I[i + 1]], [I[i + 1], I[i + 2]], [I[i + 2], I[i]]]; };
     for (const t of selTris) for (const [a, b] of te(t)) count.set(key(a, b), (count.get(key(a, b)) || 0) + 1);
     let len = 0, nb = 0;
     for (const t of selTris) for (const [a, b] of te(t)) if (count.get(key(a, b)) === 1) { len += this._v(a).distanceTo(this._v(b)); nb++; ctx0.boundary.push([a, b]); }
     const offset = nb ? (len / nb) * 0.5 : 0.2;
 
-    this._regionCap(selTris, (p) => p.clone().add(n.clone().multiplyScalar(offset)));
+    this._regionCap(selTris, (p: any) => p.clone().add(n.clone().multiplyScalar(offset)));
     this._setSelection(selTris);
     this._rebuildOverlayGeometry();
     this._commit();
@@ -698,7 +698,7 @@ export class EditModeController {
     if (st.selectMode !== 'face' || !st.selection.length) return;
     const amount = Math.max(0, useEditModeStore.getState().opAmount || 0.1);
     const selTris = [...new Set(st.selection)];
-    this._regionCap(selTris, (p, ctx) => {
+    this._regionCap(selTris, (p: any, ctx: any) => {
       const dir = ctx.centroid.clone().sub(p);
       const d = dir.length();
       return d <= amount ? ctx.centroid.clone() : p.clone().add(dir.multiplyScalar(amount / d));
@@ -736,7 +736,7 @@ export class EditModeController {
       const nb = adj.get(v);
       if (!nb || !nb.size) return;
       const c = new THREE.Vector3();
-      nb.forEach((u) => c.add(this._v(u)));
+      nb.forEach((u: any) => c.add(this._v(u)));
       c.multiplyScalar(1 / nb.size);
       next.set(v, this._v(v).lerp(c, 0.5));
     });
@@ -758,7 +758,7 @@ export class EditModeController {
   _adjacency() {
     const adj = new Map<any, any>();
     const I = this.work.indices;
-    const link = (a, b) => { if (!adj.has(a)) adj.set(a, new Set<any>()); adj.get(a).add(b); };
+    const link = (a: any, b: any) => { if (!adj.has(a)) adj.set(a, new Set<any>()); adj.get(a).add(b); };
     for (let i = 0; i < I.length; i += 3) {
       const a = I[i], b = I[i + 1], c = I[i + 2];
       link(a, b); link(b, a); link(b, c); link(c, b); link(c, a); link(a, c);
@@ -773,8 +773,8 @@ export class EditModeController {
     const all = [...Array(I.length / 3).keys()];
     const target = (st.selectMode === 'face' && st.selection.length) ? new Set(st.selection) : new Set(all);
     const mid = new Map<any, any>();
-    const key = (a, b) => (a < b ? `${a}_${b}` : `${b}_${a}`);
-    const getMid = (a, b) => {
+    const key = (a: any, b: any) => (a < b ? `${a}_${b}` : `${b}_${a}`);
+    const getMid = (a: any, b: any) => {
       const k = key(a, b); if (mid.has(k)) return mid.get(k);
       const m = this._v(a).add(this._v(b)).multiplyScalar(0.5);
       const idx = this._pushVertex(m.x, m.y, m.z); mid.set(k, idx); return idx;
@@ -798,7 +798,7 @@ export class EditModeController {
     if (st.selectMode !== 'face' || !st.selection.length) return;
     const I = this.work.indices;
     const map = new Map<any, any>();
-    const dup = (v) => { if (map.has(v)) return map.get(v); const p = this._v(v); const n = this._pushVertex(p.x, p.y, p.z); map.set(v, n); return n; };
+    const dup = (v: any) => { if (map.has(v)) return map.get(v); const p = this._v(v); const n = this._pushVertex(p.x, p.y, p.z); map.set(v, n); return n; };
     const base = I.length / 3;
     const newSel: any[] = [];
     for (let k = 0; k < st.selection.length; k++) {
@@ -837,7 +837,7 @@ export class EditModeController {
     this._showGizmo = true; this._updateGizmo();
   }
 
-  _showTpMarker(p) {
+  _showTpMarker(p: any) {
     if (!p) { if (this._tpMarker) { this.overlay.remove(this._tpMarker); this._disposeObj(this._tpMarker); this._tpMarker = null; } return; }
     if (!this._tpMarker) {
       this._tpMarker = new THREE.Mesh(
@@ -854,7 +854,7 @@ export class EditModeController {
   _updateStats() {
     const { selectMode, selection } = useEditModeStore.getState();
     const W = this.container.matrixWorld;
-    const vW = (i) => this._v(i).applyMatrix4(W);
+    const vW = (i: any) => this._v(i).applyMatrix4(W);
     let area = 0, length = 0, point: any = null;
     if (selectMode === 'face') {
       for (const t of selection) {
@@ -872,13 +872,13 @@ export class EditModeController {
   }
 
   // ── helpers ────────────────────────────────────────────────────────────────
-  _v(i) { return new THREE.Vector3(this.work.positions[i * 3], this.work.positions[i * 3 + 1], this.work.positions[i * 3 + 2]); }
-  _distPointToSeg(p, a, b) {
+  _v(i: any) { return new THREE.Vector3(this.work.positions[i * 3], this.work.positions[i * 3 + 1], this.work.positions[i * 3 + 2]); }
+  _distPointToSeg(p: any, a: any, b: any) {
     const ab = b.clone().sub(a), t = THREE.MathUtils.clamp(p.clone().sub(a).dot(ab) / (ab.lengthSq() || 1), 0, 1);
     return p.distanceTo(a.clone().add(ab.multiplyScalar(t)));
   }
-  _disposeObj(o) { o.geometry?.dispose?.(); o.material?.dispose?.(); }
-  _disposeGroup(g) { g.traverse((o) => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); }
+  _disposeObj(o: any) { o.geometry?.dispose?.(); o.material?.dispose?.(); }
+  _disposeGroup(g: any) { g.traverse((o: any) => { o.geometry?.dispose?.(); o.material?.dispose?.(); }); }
 
   /** Called by ModelEditor to know whether to suppress its own gizmo/picking. */
   get active() { return useEditModeStore.getState().active; }

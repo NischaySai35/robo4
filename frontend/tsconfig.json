@@ -1,8 +1,8 @@
 {
-  // Transitional config: the whole codebase is TS and typecheck is green here.
-  // strict mode (incl. strictNullChecks) is ON and green. `noImplicitAny` is the
-  // last relaxation — turning it on flags ~600 un-annotated params in the dynamic
-  // viewport/AI/scripting glue (low-value `: any` busywork); enable when desired.
+  // Full strict mode — all flags on and green. `useUnknownInCatchVariables` is the
+  // one deliberate exception (catch vars stay `any` so handlers read `e.message`
+  // without per-site narrowing — a common, pragmatic choice). `allowJs` is harmless
+  // (no .js left in src) and can be removed later.
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
@@ -10,7 +10,6 @@
     "jsx": "react-jsx",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "strict": true,
-    "noImplicitAny": false,
     "useUnknownInCatchVariables": false,
     "noEmit": true,
     "allowJs": true,

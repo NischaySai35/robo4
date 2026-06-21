@@ -44,7 +44,7 @@ export class CommandBus {
   }
 
   /** Apply a command, push it on the undo stack, clear the redo stack. */
-  dispatch(command) {
+  dispatch(command: any) {
     if (!command || typeof command.redo !== 'function') {
       throw new Error('dispatch() requires a command with redo()/undo()');
     }
@@ -75,7 +75,7 @@ export class CommandBus {
   }
 
   /** Replace the document and clear history (e.g. on file open / new project). */
-  reset(doc) {
+  reset(doc: any) {
     this._doc = doc;
     this._undo.length = 0;
     this._redo.length = 0;
@@ -84,12 +84,12 @@ export class CommandBus {
   }
 
   /** Subscribe to any change. Returns an unsubscribe fn. */
-  subscribe(fn) {
+  subscribe(fn: any) {
     this._listeners.add(fn);
     return () => this._listeners.delete(fn);
   }
 
-  _emit(action, command) {
+  _emit(action: any, command: any) {
     for (const fn of this._listeners) fn({ action, command, doc: this._doc });
   }
 }
@@ -98,6 +98,6 @@ export class CommandBus {
  * Helper to build a command from a forward op + its inverse. `capture` runs at
  * apply time so the command can record state needed to undo (e.g. the prior value).
  */
-export function command(label, redo, undo) {
+export function command(label: any, redo: any, undo: any) {
   return { label, redo, undo };
 }

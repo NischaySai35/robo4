@@ -12,7 +12,7 @@ const TOLERANCE = 0.001;
 // ── 3-D helpers ──────────────────────────────────────────────────────────────
 
 /** Normalize 3-D vector; returns { x:1,y:0,z:0 } for degenerate input. */
-function normalize3(v) {
+function normalize3(v: any) {
   const len = Math.sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
   return len > 1e-10 ? { x: v.x / len, y: v.y / len, z: v.z / len } : { x: 1, y: 0, z: 0 };
 }
@@ -21,7 +21,7 @@ function normalize3(v) {
  * Rodrigues rotation: rotate point p around unit axis k at centre c.
  *   v_rot = v·cos + (k×v)·sin + k·(k·v)·(1−cos)
  */
-function rotateAroundAxis(p, k, c, cosA, sinA) {
+function rotateAroundAxis(p: any, k: any, c: any, cosA: any, sinA: any) {
   const x = p.x - c.x, y = p.y - c.y, z = p.z - c.z;
   const dot = k.x * x + k.y * y + k.z * z;
   return {
@@ -33,22 +33,22 @@ function rotateAroundAxis(p, k, c, cosA, sinA) {
 
 // ── 2-D helpers ──────────────────────────────────────────────────────────────
 
-function dist2(a, b) {
+function dist2(a: any, b: any) {
   const dx = b.x - a.x, dy = b.y - a.y;
   return Math.sqrt(dx * dx + dy * dy);
 }
 
-function lerp2(a, b, t) {
+function lerp2(a: any, b: any, t: any) {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
-function normalize2(v) {
+function normalize2(v: any) {
   const len = Math.sqrt(v.x * v.x + v.y * v.y);
   return len < 1e-10 ? { x: 1, y: 0 } : { x: v.x / len, y: v.y / len };
 }
 
 /** Signed angle from direction a→b, range (−π, π]. */
-function signedAngle2(ax, ay, bx, by) {
+function signedAngle2(ax: any, ay: any, bx: any, by: any) {
   return Math.atan2(ax * by - ay * bx, ax * bx + ay * by);
 }
 
@@ -91,7 +91,7 @@ const ZERO_CROSS_BAND = 0.30; // rad ≈ 17°
  *  3. Reach-limit hard-freeze (passed in via `freeze`): when the target is beyond
  *     chain reach AND the joint is already at its limit, hold it completely fixed.
  */
-function clampAngle(angle, limit, prevAngle, freeze = false) {
+function clampAngle(angle: any, limit: any, prevAngle: any, freeze = false) {
   if (freeze && prevAngle !== null) {
     return { clamped: prevAngle, hitLimit: true };
   }
@@ -130,13 +130,13 @@ function clampAngle(angle, limit, prevAngle, freeze = false) {
 
 // ── Projection helpers ───────────────────────────────────────────────────────
 
-export function to2D(node, mode) {
+export function to2D(node: any, mode: any) {
   return mode === 'horizontal'
     ? { x: node.x, y: node.z }
     : { x: node.x, y: node.y };
 }
 
-export function from2D(pt2, node3d, mode) {
+export function from2D(pt2: any, node3d: any, mode: any) {
   return mode === 'horizontal'
     ? { x: pt2.x, y: node3d.y, z: pt2.y }
     : { x: pt2.x, y: pt2.y, z: node3d.z };
@@ -166,7 +166,7 @@ export function from2D(pt2, node3d, mode) {
  */
 function fabrik2D(pts2: any, segLens: any, anchorIdx: any, targetIdx: any, target: any, limit: any, anchorDir: { x: number; y: number } | null = null) {
   const n = pts2.length;
-  const pts = pts2.map(p => ({ ...p }));
+  const pts = pts2.map((p: any) => ({ ...p }));
   const limitHits = new Array(n).fill(false);
 
   // ── Seed lastAngles from current geometry (cross-frame wrap detection) ─────
@@ -174,7 +174,7 @@ function fabrik2D(pts2: any, segLens: any, anchorIdx: any, targetIdx: any, targe
   // This gives the wrap-detector a valid "previous angle" from frame 1.
   const lastAngles = new Array(n).fill(null);
 
-  function seedAngle(i, inX, inY) {
+  function seedAngle(i: any, inX: any, inY: any) {
     const prev = pts[i - 1], curr = pts[i];
     const dx = curr.x - prev.x, dy = curr.y - prev.y;
     const d = Math.sqrt(dx * dx + dy * dy);
@@ -225,7 +225,7 @@ function fabrik2D(pts2: any, segLens: any, anchorIdx: any, targetIdx: any, targe
   // ── Reachability clamp (only for anchor→target segment count) ─────────────
   const chainLo = Math.min(anchorIdx, targetIdx);
   const chainHi = Math.max(anchorIdx, targetIdx);
-  const subLen = segLens.slice(chainLo, chainHi).reduce((s, l) => s + l, 0);
+  const subLen = segLens.slice(chainLo, chainHi).reduce((s: any, l: any) => s + l, 0);
   const dToTarget = dist2(pts[anchorIdx], target);
   let effectiveTarget = { ...target };
   const atReachLimit = dToTarget >= subLen * 0.95; // target at/near chain reach
@@ -400,7 +400,7 @@ function fabrik2D(pts2: any, segLens: any, anchorIdx: any, targetIdx: any, targe
 // cubeRollAngles: [rollL, rollR] in radians, stored externally to avoid
 // the ambiguity of deriving roll from geometry (atan2(y,-z) is wrong for
 // arms bent in +Z).  Passed from the store every frame.
-export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, limit, cubeRollAngles) {
+export function solveIK(nodes3d: any, segLens: any, rootRod: any, dragNode: any, dragTarget: any, mode: any, limit: any, cubeRollAngles: any) {
   const n = nodes3d.length;
 
   const isEndcapRoot = rootRod < 0 || rootRod >= n - 1;
@@ -437,14 +437,14 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
 
     if (Math.abs(rollAngle) > 0.005) {
       const cosR = Math.cos(-rollAngle), sinR = Math.sin(-rollAngle);
-      const unrollPt = (nd) => rotateAroundAxis(nd, rollDir, rollAnchor, cosR, sinR);
+      const unrollPt = (nd: any) => rotateAroundAxis(nd, rollDir, rollAnchor, cosR, sinR);
       workNodes  = nodes3d.map(unrollPt);
       workTarget = unrollPt(dragTarget);
     }
   }
 
   // 2-D projection on the (possibly unrolled) working frame.
-  const pts2 = workNodes.map(nd => to2D(nd, mode));
+  const pts2 = workNodes.map((nd: any) => to2D(nd, mode));
   const target2 = to2D(workTarget, mode);
 
   // Root-rod direction — only meaningful when there IS a root rod (not endcap).
@@ -456,13 +456,13 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
     if (rLen > 1e-10) rootDir = { x: rdx / rLen, y: rdy / rLen };
   }
 
-  let pts2Result = pts2.map(p => ({ ...p }));
+  let pts2Result = pts2.map((p: any) => ({ ...p }));
   const limitHits = new Array(n).fill(false);
 
   // For endcap roots, compute anchorDir from current geometry instead of null.
   // Without this, the first bend joint from the anchor has no seed for the rate-limiter
   // and can snap 180° in a single frame (visible jitter).
-  function _anchorDirFromGeom(fromIdx, toIdx) {
+  function _anchorDirFromGeom(fromIdx: any, toIdx: any) {
     const dx = pts2[toIdx].x - pts2[fromIdx].x;
     const dy = pts2[toIdx].y - pts2[fromIdx].y;
     const len = Math.sqrt(dx * dx + dy * dy);
@@ -497,7 +497,7 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
   }
 
   // Reconstruct 3-D positions in the working (unrolled) frame.
-  let nodes = workNodes.map((n3, i) => {
+  let nodes = workNodes.map((n3: any, i: any) => {
     if (i === anchorL || i === anchorR) return { ...nodes3d[i] };
     return from2D(pts2Result[i], n3, mode);
   });
@@ -506,7 +506,7 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
   // Use the same local rod axis (rollDir) that was used to unroll.
   if (rollAnchor && Math.abs(rollAngle) > 0.005) {
     const cosR = Math.cos(rollAngle), sinR = Math.sin(rollAngle);
-    nodes = nodes.map((nd, i) => {
+    nodes = nodes.map((nd: any, i: any) => {
       if (i === anchorL || i === anchorR) return { ...nodes3d[i] };
       return rotateAroundAxis(nd, rollDir, rollAnchor, cosR, sinR);
     });
@@ -530,7 +530,7 @@ export function solveIK(nodes3d, segLens, rootRod, dragNode, dragTarget, mode, l
  */
 // storedRoll: the current accumulated roll for the cube being moved, kept in the
 // store rather than derived from geometry to avoid sign-ambiguity with +Z bends.
-export function applyJointAngleDirect(nodes3d, mode, panelIdx, desiredAngle, rootRod, limit, storedRoll = 0) {
+export function applyJointAngleDirect(nodes3d: any, mode: any, panelIdx: any, desiredAngle: any, rootRod: any, limit: any, storedRoll = 0) {
   const n = nodes3d.length;
   const isEndcap = panelIdx === 0 || panelIdx === n - 1;
 
@@ -549,7 +549,7 @@ export function applyJointAngleDirect(nodes3d, mode, panelIdx, desiredAngle, roo
     if (Math.abs(delta) < 1e-6) return nodes3d;
 
     const cosD = Math.cos(delta), sinD = Math.sin(delta);
-    return nodes3d.map((n, i) => {
+    return nodes3d.map((n: any, i: any) => {
       if (i < rotFrom || i > rotTo) return n;
       return rotateAroundAxis(n, rodDir, pivot, cosD, sinD);
     });
@@ -557,7 +557,7 @@ export function applyJointAngleDirect(nodes3d, mode, panelIdx, desiredAngle, roo
 
   // ── Bend joints: 2-D in-plane rotation ────────────────────────────────────
   const clamped = Math.max(-limit, Math.min(limit, desiredAngle));
-  const pts2    = nodes3d.map(n => to2D(n, mode));
+  const pts2    = nodes3d.map((n: any) => to2D(n, mode));
   const nodeIdx = panelIdx; // 1, 2, or 3
 
   // Current bend angle at this joint
@@ -594,7 +594,7 @@ export function applyJointAngleDirect(nodes3d, mode, panelIdx, desiredAngle, roo
     };
   }
 
-  return nodes3d.map((n3, i) => from2D(newPts2[i], n3, mode));
+  return nodes3d.map((n3: any, i: any) => from2D(newPts2[i], n3, mode));
 }
 
 /**
@@ -613,7 +613,7 @@ export function applyJointAngleDirect(nodes3d, mode, panelIdx, desiredAngle, roo
  */
 // cubeRollAngles: [rollL, rollR] — passed from the store; avoids geometry-based
 // computation which is sign-ambiguous for arms bent in the +Z direction.
-export function extractJointAngles(nodes3d, mode, cubeRollAngles) {
+export function extractJointAngles(nodes3d: any, mode: any, cubeRollAngles: any) {
   const rollL = cubeRollAngles ? (cubeRollAngles[0] ?? 0) : 0;
   const rollR = cubeRollAngles ? (cubeRollAngles[1] ?? 0) : 0;
 

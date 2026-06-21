@@ -62,7 +62,7 @@ export class PhysicsSim {
     }
   }
 
-  _density(body, doc) {
+  _density(body: any, doc: any) {
     const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
     return m?.density ?? 1000;
   }
@@ -87,7 +87,7 @@ export class PhysicsSim {
     }
   }
 
-  _jointData(j) {
+  _jointData(j: any) {
     const o = j.origin?.position ?? [0, 0, 0];
     const a1 = { x: o[0], y: o[1], z: o[2] };
     const a2 = { x: 0, y: 0, z: 0 };
@@ -101,7 +101,7 @@ export class PhysicsSim {
   }
 
   /** Live-update gravity (m/s², downward) without rebuilding the world. */
-  setGravity(magnitude) {
+  setGravity(magnitude: any) {
     const g = Number.isFinite(magnitude) ? magnitude : 0;
     this.world.gravity = new RAPIER.Vector3(0, -g, 0);
     // Wake every body so a gravity change takes effect even when settled.

@@ -53,7 +53,7 @@ export class WebSerialTransport {
     } catch { /* read aborted on close */ }
   }
 
-  async send(text) {
+  async send(text: any) {
     if (this._writer) await this._writer.write(this._enc!.encode(text + '\n'));
   }
 
@@ -85,7 +85,7 @@ export class WebSocketTransport {
     });
   }
 
-  send(text) { if (this.ws?.readyState === 1) this.ws.send(text + '\n'); }
+  send(text: any) { if (this.ws?.readyState === 1) this.ws.send(text + '\n'); }
   close() { try { this.ws?.close(); } catch { /* */ } }
 }
 

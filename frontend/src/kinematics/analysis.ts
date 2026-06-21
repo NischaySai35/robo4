@@ -28,7 +28,7 @@ export function estimateCurrent(torqueNm: number) {
   return Math.min(ST3215.idle + Math.abs(torqueNm) / ST3215.Kt, ST3215.stallCurrent);
 }
 
-function originMat(o) {
+function originMat(o: any) {
   const oo = o ?? {};
   return new THREE.Matrix4().compose(
     new THREE.Vector3(...(oo.position ?? [0, 0, 0])),
@@ -96,7 +96,7 @@ export function centerOfMass(doc: Document, fk = computeFK(doc)) {
 }
 
 // Bodies downstream of (and including) a body, following parent→child joints.
-function subtreeBodies(childrenOf, start) {
+function subtreeBodies(childrenOf: any, start: any) {
   const out = new Set([start]);
   const q = [start];
   while (q.length) {

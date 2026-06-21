@@ -30,7 +30,7 @@ export class TelemetryTracker {
     }));
   }
 
-  update(rawAngles, limitHits, timestamp) {
+  update(rawAngles: any, limitHits: any, timestamp: any) {
     for (let j = 0; j < this.numJoints; j++) {
       const hist = this.history[j];
       hist.push({ angle: rawAngles[j], time: timestamp });
@@ -84,7 +84,7 @@ export class TelemetryTracker {
     this.smoothed.forEach(s => { s.angle = 0; s.velocity = 0; s.acceleration = 0; });
   }
 
-  seed(angles) {
+  seed(angles: any) {
     this.history.forEach(h => h.splice(0));
     for (let j = 0; j < this.numJoints; j++) {
       this.smoothed[j] = {
@@ -97,6 +97,6 @@ export class TelemetryTracker {
   }
 }
 
-function ema(current, previous, alpha) {
+function ema(current: any, previous: any, alpha: any) {
   return alpha * current + (1 - alpha) * previous;
 }

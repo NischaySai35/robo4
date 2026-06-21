@@ -15,7 +15,7 @@ import { bridge } from './cameraBridge';
 export class SceneManager {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor(canvas) {
+  constructor(canvas: any) {
     this.canvas = canvas;
     this._init();
   }
@@ -210,7 +210,7 @@ export class SceneManager {
   }
 
   // Switch scene background / grid / ground colours for light or dark theme.
-  applyTheme(theme) {
+  applyTheme(theme: any) {
     const dark = theme === 'dark';
     this._theme = theme;
     this.scene.background = new THREE.Color(dark ? 0x0d111b : 0xf4f2ee);
@@ -238,7 +238,7 @@ export class SceneManager {
     }
   }
 
-  _buildPostProcessing(w, h) {
+  _buildPostProcessing(w: any, h: any) {
     this.composer = new EffectComposer(this.renderer);
 
     const renderPass = new RenderPass(this.scene, this.camera);
@@ -268,12 +268,12 @@ export class SceneManager {
   }
 
   /** Enable or disable orbit controls (disabled while dragging). */
-  setOrbitEnabled(enabled) {
+  setOrbitEnabled(enabled: any) {
     this.controls.enabled = enabled;
   }
 
   /** Animate camera to a target position/lookAt over `ms` milliseconds. */
-  animateCameraTo(targetPos, targetLookAt, ms = 700) {
+  animateCameraTo(targetPos: any, targetLookAt: any, ms = 700) {
     const startPos = this.camera.position.clone();
     const startTarget = this.controls.target.clone();
     const endPos = new THREE.Vector3(...(Object.values(targetPos) as number[]));
@@ -334,6 +334,6 @@ export class SceneManager {
   }
 }
 
-function easeInOut(t) {
+function easeInOut(t: any) {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 }

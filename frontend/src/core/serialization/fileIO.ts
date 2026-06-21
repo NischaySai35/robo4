@@ -11,7 +11,7 @@ import { encodeProject, decodeProject } from './codec';
 const ACCEPT_SAVE = { 'application/octet-stream': ['.nischay'] };
 const ACCEPT_OPEN = { 'application/octet-stream': ['.nischay'], 'application/json': ['.json'] };
 
-export function downloadBlob(blob, filename) {
+export function downloadBlob(blob: any, filename: any) {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -21,7 +21,7 @@ export function downloadBlob(blob, filename) {
 }
 
 /** Encrypt + save a project object. Returns { name, handle } (handle null on download fallback), or null if cancelled. */
-export async function saveProjectToFile(project, suggestedName = 'untitled.nischay') {
+export async function saveProjectToFile(project: any, suggestedName = 'untitled.nischay') {
   const bytes = await encodeProject(project);
 
   if (window.showSaveFilePicker) {
@@ -75,7 +75,7 @@ export async function openProjectFromFile() {
 }
 
 /** Silently re-encrypt + write a project to an already-granted file handle (for auto-save). */
-export async function writeProjectToHandle(handle, project) {
+export async function writeProjectToHandle(handle: any, project: any) {
   const bytes = await encodeProject(project);
   const w = await handle.createWritable();
   await w.write(bytes);

@@ -15,17 +15,17 @@ import type { Document } from '@/core/model/index';
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 
-const san = (s) => String(s ?? 'x').replace(/[^A-Za-z0-9_]/g, '_');
-const n = (v) => (Math.abs(v) < 1e-9 ? '0' : (+v).toFixed(6));
+const san = (s: any) => String(s ?? 'x').replace(/[^A-Za-z0-9_]/g, '_');
+const n = (v: any) => (Math.abs(v) < 1e-9 ? '0' : (+v).toFixed(6));
 
-function rpy(quat) {
+function rpy(quat: any) {
   _q.set(quat[0], quat[1], quat[2], quat[3]);
   _e.setFromQuaternion(_q, 'XYZ');
   return `${n(_e.x)} ${n(_e.y)} ${n(_e.z)}`;
 }
-const xyz = (p) => `${n(p[0])} ${n(p[1])} ${n(p[2])}`;
+const xyz = (p: any) => `${n(p[0])} ${n(p[1])} ${n(p[2])}`;
 
-function geometryXML(g) {
+function geometryXML(g: any) {
   switch (g?.type) {
     case 'box': return `<box size="${xyz(g.size ?? [1, 1, 1])}"/>`;
     case 'sphere': return `<sphere radius="${n(g.radius ?? 0.5)}"/>`;
@@ -35,7 +35,7 @@ function geometryXML(g) {
   }
 }
 
-function linkXML(body, doc) {
+function linkXML(body: any, doc: any) {
   const g = body.visual?.geometry ?? {};
   const mat = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
   const m = bodyMass(body, doc);
@@ -62,7 +62,7 @@ function linkXML(body, doc) {
   </link>`;
 }
 
-function jointXML(j, doc) {
+function jointXML(j: any, doc: any) {
   const p = doc.bodies[j.parentBodyId], c = doc.bodies[j.childBodyId];
   const o = j.origin ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
   const lim = j.limit ?? {};

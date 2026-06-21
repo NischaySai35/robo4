@@ -27,7 +27,7 @@ let _loading: any = null;
 let _intentVecs: any = null; // [{ id, vecs: Float32Array[] }]
 
 /** Lazy-load the embedding pipeline and precompute the intent vectors. */
-export async function ensureLocalModel(onProgress) {
+export async function ensureLocalModel(onProgress: any) {
   if (_extractor) return _extractor;
   if (!_loading) {
     _loading = (async () => {
@@ -37,7 +37,7 @@ export async function ensureLocalModel(onProgress) {
         dtype: 'q8',
         progress_callback: onProgress,
       });
-      const embed = async (t) => (await extractor(t, { pooling: 'mean', normalize: true })).data;
+      const embed = async (t: any) => (await extractor(t, { pooling: 'mean', normalize: true })).data;
       _intentVecs = [];
       for (const intent of INTENTS) {
         const vecs: any[] = [];
@@ -51,10 +51,10 @@ export async function ensureLocalModel(onProgress) {
   return _loading;
 }
 
-const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
+const dot = (a: any, b: any) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
 
 /** Classify text → { intent, score } using the loaded model, or null. */
-export async function classifyIntent(text) {
+export async function classifyIntent(text: any) {
   if (!_extractor || !_intentVecs) return null;
   const v = (await _extractor(text, { pooling: 'mean', normalize: true })).data;
   let best: any = null;
@@ -71,7 +71,7 @@ export async function classifyIntent(text) {
  * Turn text into an executable plan using the neural classifier (+ a little number
  * extraction). Returns a plan { reply, actions, source } or null if not confident.
  */
-export async function semanticPlan(text, doc) {
+export async function semanticPlan(text: any, doc: any) {
   const hit = await classifyIntent(text);
   if (!hit || hit.score < THRESHOLD) return null;
 
@@ -93,4 +93,4 @@ export async function semanticPlan(text, doc) {
   }
 }
 
-const plan = (reply, actions) => ({ reply, actions, source: 'neural' });
+const plan = (reply: any, actions: any) => ({ reply, actions, source: 'neural' });

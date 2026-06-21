@@ -4,7 +4,7 @@ import { ensureLocalModel, semanticPlan } from './localModel';
 // Whether the on-device neural model has been enabled this session.
 let _neuralOn = false;
 export function neuralEnabled() { return _neuralOn; }
-export async function enableNeuralModel(onProgress) {
+export async function enableNeuralModel(onProgress: any) {
   await ensureLocalModel(onProgress);
   _neuralOn = true;
 }
@@ -20,7 +20,7 @@ export async function enableNeuralModel(onProgress) {
  * Every backend returns the same plan shape, so the UI/executor don't care which
  * one answered. This is the "one model, many backends" rule applied to AI.
  */
-export async function requestCopilotPlan(input, doc) {
+export async function requestCopilotPlan(input: any, doc: any) {
   const system = makeSystemPrompt(doc);
 
   // 1) Local offline model (Ollama), if reachable.

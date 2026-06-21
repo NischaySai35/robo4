@@ -27,7 +27,7 @@ const FIT_TARGET_M = 1.0;
 const SANE_MIN_M = 0.01;   // 10 mm
 const SANE_MAX_M = 20.0;   // 20 m
 
-function importScale(asset) {
+function importScale(asset: any) {
   const obj = getAssetObject(asset);
   if (!obj) return [MM_TO_M, MM_TO_M, MM_TO_M];
   const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
@@ -47,7 +47,7 @@ const SUPPORTED = ['stl', 'obj'];
 /** Import a mesh. Optionally restrict the picker to `exts` (e.g. ['stl']). */
 export async function importMesh(exts?: string[]) {
   const filter = Array.isArray(exts) && exts.length ? exts : SUPPORTED;
-  let picked;
+  let picked: any;
   try { picked = await pickFile(filter); }
   catch (e) { alert(`Could not open file: ${e.message}`); return; }
   if (!picked) return;

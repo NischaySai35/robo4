@@ -2,7 +2,7 @@ import './ViewControls.css';
 import { useCallback } from 'react';
 import { bridge } from '@/viewport/cameraBridge';
 
-export default function ViewControls({ isConnOpen, onConnToggle }) {
+export default function ViewControls({ isConnOpen, onConnToggle }: any) {
   const fitCamera = useCallback(() => {
     if (bridge.fitCamera) bridge.fitCamera();
   }, []);

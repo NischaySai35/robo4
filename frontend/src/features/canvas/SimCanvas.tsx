@@ -66,7 +66,7 @@ export default function SimCanvas() {
       camera: sceneMgr.camera,
       domElement: sceneMgr.renderer.domElement,
       getMeshes: () => [modelEditor.bodyRenderer.group],
-      onResult: (r) => useEditorStore.getState().setMeasureResult(r),
+      onResult: (r: any) => useEditorStore.getState().setMeasureResult(r),
     });
     let lastMeasure = false;
     const unsubMeasure = useEditorStore.subscribe((s) => {
@@ -127,7 +127,7 @@ export default function SimCanvas() {
 
     // ── Undo / redo (full-project snapshots: model + animation) ──────────────────
     const history: { undo: string[]; redo: string[]; last: string | null; suppressNext: boolean } = { undo: [], redo: [], last: null, suppressNext: false };
-    const applySnapshot = (snapJSON) => {
+    const applySnapshot = (snapJSON: any) => {
       const d = JSON.parse(snapJSON);
       bridge.loadScene!({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false });
     };

@@ -17,14 +17,14 @@ class Bridge {
   _unsubStream: any;
   constructor() { this.transport = null; this._unsubStream = null; }
 
-  async connect(type, opts) {
-    const Transport = TRANSPORTS[type];
+  async connect(type: any, opts: any) {
+    const Transport = TRANSPORTS[type as keyof typeof TRANSPORTS];
     if (!Transport) throw new Error(`Unknown transport: ${type}`);
     const hw = useHardwareStore.getState();
     hw.setStatus('connecting');
     this.transport = new Transport({
-      onLine: (line) => this._onLine(line),
-      onStatus: (status) => useHardwareStore.getState().setStatus(status),
+      onLine: (line: any) => this._onLine(line),
+      onStatus: (status: any) => useHardwareStore.getState().setStatus(status),
     });
     try {
       await this.transport.connect(opts);
@@ -51,7 +51,7 @@ class Bridge {
   }
 
   /** Live-stream joint values: re-send (throttled) whenever the model changes. */
-  setStreaming(on) {
+  setStreaming(on: any) {
     useHardwareStore.getState().setStreaming(on);
     if (on && !this._unsubStream) {
       let last = 0;
@@ -68,7 +68,7 @@ class Bridge {
     }
   }
 
-  _onLine(line) {
+  _onLine(line: any) {
     useHardwareStore.getState().pushLog('rx', line);
     const p = parseTelemetry(line);
     if (p?.type === 'json' && p.data) {

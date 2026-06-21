@@ -10,7 +10,7 @@ import type { SelectMode } from '@/state/editModeStore';
 import { useModelStore } from '@/state/modelStore';
 import { editBridge } from '@/viewport/editBridge';
 
-const fmt = (v, d = 3) => (v == null ? '—' : Number(v).toFixed(d));
+const fmt = (v: any, d = 3) => (v == null ? '—' : Number(v).toFixed(d));
 
 export default function EditPanel() {
   const bodyId = useEditModeStore((s) => s.bodyId);

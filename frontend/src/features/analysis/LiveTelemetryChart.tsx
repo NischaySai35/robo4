@@ -79,7 +79,7 @@ export default function LiveTelemetryChart() {
           stroke: COLORS[i % COLORS.length],
           width: 1.6,
           points: { show: false },
-          value: (_u, v) => (v == null ? '' : v.toFixed(2)),
+          value: (_u: any, v: any) => (v == null ? '' : v.toFixed(2)),
         })),
       ],
       axes: [
@@ -98,7 +98,7 @@ export default function LiveTelemetryChart() {
   // joint's position from the model and derives velocity/acceleration over time.
   useEffect(() => {
     if (!hasSource || !jointList.length) return undefined;
-    const want = METRICS[metric].unit;
+    const want = METRICS[metric as keyof typeof METRICS].unit;
     const id = setInterval(() => {
       const data = dataRef.current, plot = plotRef.current;
       if (!data || !plot) return;
@@ -132,7 +132,7 @@ export default function LiveTelemetryChart() {
   return (
     <div className="an-chart">
       <div className="an-chart-head">
-        <span className="an-chart-title">{METRICS[metric].label}</span>
+        <span className="an-chart-title">{METRICS[metric as keyof typeof METRICS].label}</span>
         <select value={metric} onChange={(e) => setMetric(e.target.value)}>
           <option value="position">Position</option>
           <option value="velocity">Velocity</option>

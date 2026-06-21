@@ -57,7 +57,7 @@ export async function openProject() {
   }
 }
 
-export function exportModel(fmt) {
+export function exportModel(fmt: any) {
   const r = bridge.exportModel?.(fmt);
   if (r && !r.ok) alert(r.error);
 }

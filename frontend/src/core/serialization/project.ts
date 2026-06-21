@@ -31,14 +31,14 @@ export function serializeProject() {
   };
 }
 
-const num = (v, d = 0) => (Number.isFinite(+v) ? +v : d);
+const num = (v: any, d = 0) => (Number.isFinite(+v) ? +v : d);
 
 /**
  * Validate + normalize an arbitrary parsed object into a clean scene:
  *   { modules, welds, activeModuleId, nextId }
  * Throws on anything that isn't a recognizable TETROBOT project.
  */
-export function parseProject(obj) {
+export function parseProject(obj: any) {
   if (!obj || typeof obj !== 'object' || obj.format !== PROJECT_FORMAT) {
     throw new Error('Not a TETROBOT project file.');
   }
@@ -49,11 +49,11 @@ export function parseProject(obj) {
   const sc = obj.scene ?? {};
   const rawModules = Array.isArray(sc.modules) ? sc.modules : []; // empty is allowed
 
-  const modules = rawModules.map((m, i) => ({
+  const modules = rawModules.map((m: any, i: any) => ({
     id:    String(m?.id ?? `module-${i}`),
     label: String(m?.label ?? `Module ${i + 1}`),
     angles: Array.isArray(m?.angles) && m.angles.length === 6
-      ? m.angles.map(a => num(a, 0))
+      ? m.angles.map((a: any) => num(a, 0))
       : [0, 0, 0, 0, 0, 0],
     activeRootId: typeof m?.activeRootId === 'string' ? m.activeRootId : 'R1',
     position: {
@@ -66,12 +66,12 @@ export function parseProject(obj) {
     mode: m?.mode === 'vertical' ? 'vertical' : 'horizontal',
   }));
 
-  const ids = new Set(modules.map(m => m.id));
+  const ids = new Set(modules.map((m: any) => m.id));
   const activeModuleId = ids.has(sc.activeModuleId) ? sc.activeModuleId : (modules[0]?.id ?? null);
 
   const welds = (Array.isArray(sc.welds) ? sc.welds : [])
-    .filter(w => w?.a?.moduleId && w?.b?.moduleId && ids.has(w.a.moduleId) && ids.has(w.b.moduleId))
-    .map(w => ({
+    .filter((w: any) => w?.a?.moduleId && w?.b?.moduleId && ids.has(w.a.moduleId) && ids.has(w.b.moduleId))
+    .map((w: any) => ({
       a:    { moduleId: w.a.moduleId, faceKey: w.a.faceKey },
       b:    { moduleId: w.b.moduleId, faceKey: w.b.faceKey },
       mate: Array.isArray(w.mate) && w.mate.length === 16 ? w.mate.map(Number) : null,
@@ -80,7 +80,7 @@ export function parseProject(obj) {
   let nextId = Number(sc.nextId);
   if (!Number.isFinite(nextId)) {
     // Derive from the highest numeric id suffix so new modules don't collide.
-    nextId = 1 + modules.reduce((mx, m) => {
+    nextId = 1 + modules.reduce((mx: any, m: any) => {
       const n = parseInt(String(m.id).replace(/\D/g, ''), 10);
       return Number.isFinite(n) ? Math.max(mx, n) : mx;
     }, 0);

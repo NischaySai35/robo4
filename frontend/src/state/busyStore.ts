@@ -51,5 +51,5 @@ export const useBusyStore = create<BusyState>((set, get) => ({
 /** Convenience: is anything busy + the most recent label. */
 export function busySnapshot(state: BusyState) {
   const ids = Object.keys(state.tasks);
-  return { active: ids.length > 0, label: ids.length ? state.tasks[ids[ids.length - 1]] : '' };
+  return { active: ids.length > 0, label: ids.length ? state.tasks[ids[ids.length - 1] as any] : '' };
 }

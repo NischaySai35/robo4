@@ -80,7 +80,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => ({
   },
 
   deleteKeyAt: (t) => set((s) => {
-    const tracks = {};
+    const tracks: Record<string, any> = {};
     for (const [jid, keys] of Object.entries(s.tracks)) tracks[jid] = keys.filter((k) => Math.abs(k.t - t) > 1e-3);
     return { tracks };
   }),
@@ -102,7 +102,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => ({
 
   /** Sample all tracks at time t → { jointId: value }. */
   sample: (t) => {
-    const out = {};
+    const out: Record<string, any> = {};
     for (const [jid, keys] of Object.entries(get().tracks)) {
       const v = sampleTrack(keys, t);
       if (v !== undefined) out[jid] = v;

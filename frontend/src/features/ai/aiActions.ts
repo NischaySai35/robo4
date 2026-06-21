@@ -10,9 +10,9 @@ import {
   makeMaterial,
 } from '@/core/model/index';
 
-const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
-const num = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
-const vec3 = (v, fallback) => Array.isArray(v) && v.length >= 3
+const clamp = (v: any, min: any, max: any) => Math.max(min, Math.min(max, v));
+const num = (v: any, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
+const vec3 = (v: any, fallback: any) => Array.isArray(v) && v.length >= 3
   ? [num(v[0], fallback[0]), num(v[1], fallback[1]), num(v[2], fallback[2])]
   : fallback;
 const colorFromHex = (hex: string): RGBA | null => {
@@ -20,7 +20,7 @@ const colorFromHex = (hex: string): RGBA | null => {
   const n = parseInt(hex.slice(1), 16);
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1];
 };
-const rad = (value, unit) => unit === 'deg' ? num(value) * Math.PI / 180 : num(value);
+const rad = (value: any, unit: any) => unit === 'deg' ? num(value) * Math.PI / 180 : num(value);
 
 export function summarizeDocument(doc: Document) {
   return {
@@ -221,7 +221,7 @@ export function localPlan(input: any, doc: Document) {
   if (colorMatch) {
     const colors = { red: '#cc3322', green: '#22aa66', blue: '#2277cc', yellow: '#e0a200', white: '#eeeeee', black: '#111111', gray: '#777777' };
     const body = entityByName(doc, 'body', colorMatch[1]);
-    const color = colors[colorMatch[2]] || colorMatch[2];
+    const color = colors[colorMatch[2] as keyof typeof colors] || colorMatch[2];
     if (body) {
       return {
         reply: `I can recolor ${body.name}.`,
@@ -261,13 +261,13 @@ export function localPlan(input: any, doc: Document) {
   };
 }
 
-function primitiveGeometry(shape) {
+function primitiveGeometry(shape: any) {
   if (shape === 'cylinder') return makeGeometry(GeometryType.CYLINDER, { radius: 0.22, length: 0.8 });
   if (shape === 'sphere') return makeGeometry(GeometryType.SPHERE, { radius: 0.35 });
   return makeGeometry(GeometryType.BOX, { size: [0.7, 0.7, 0.7] });
 }
 
-export function buildSerialArmEntities(action) {
+export function buildSerialArmEntities(action: any) {
   const jointCount = clamp(Number(action.joints) || 3, 1, 12);
   const linkLength = clamp(Number(action.linkLength) || 0.8, 0.25, 3);
   const linkSize = clamp(Number(action.linkSize) || 0.22, 0.08, 0.8);

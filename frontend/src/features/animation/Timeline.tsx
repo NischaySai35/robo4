@@ -19,7 +19,7 @@ export default function Timeline() {
 
   const addKey = () => {
     const doc = useModelStore.getState().doc;
-    const vals = {};
+    const vals: Record<string, any> = {};
     for (const j of Object.values(doc.joints)) vals[j.id] = j.state?.value ?? 0;
     if (Object.keys(vals).length) a.addKeyframe(vals);
   };

@@ -19,7 +19,7 @@ import HardwarePanel from '@/features/hardware/HardwarePanel';
  * keeps maximum room instead of every feature being stacked at once.
  */
 
-const Icon = ({ children }) => (
+const Icon = ({ children }: any) => (
   <svg width="18" height="18" viewBox="0 0 20 20" fill="none"
     stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
     {children}
@@ -99,14 +99,14 @@ export default function RightDock() {
   // click only selects (in the viewport and Outliner). Properties opens on
   // DOUBLE-click (Outliner row / viewport body) instead.
 
-  const startResize = useCallback((e) => {
+  const startResize = useCallback((e: any) => {
     if (e.button !== 0) return;
     e.preventDefault();
     const startX = e.clientX;
     const startW = widthRef.current;
     document.body.style.cursor = 'col-resize';
     document.body.style.userSelect = 'none';
-    const onMove = (ev) => {
+    const onMove = (ev: any) => {
       // Dragging left (negative dx) widens the panel since it grows leftward.
       const next = Math.min(MAX_W, Math.max(MIN_W, startW + (startX - ev.clientX)));
       widthRef.current = next;
@@ -124,7 +124,7 @@ export default function RightDock() {
 
   const activeDef = panels.find((p) => p.id === shownId);
   const collapse = () => { if (editActive) setEditPick(null); else useDockStore.getState().close(); };
-  const pick = (id) => {
+  const pick = (id: any) => {
     if (editActive) setEditPick((cur) => (cur === id ? null : id)); // toggle within Edit Mode
     else toggle(id);
   };

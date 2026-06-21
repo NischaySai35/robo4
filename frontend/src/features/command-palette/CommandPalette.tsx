@@ -9,7 +9,7 @@ import { useThemeStore } from '@/state/themeStore';
  * users never have to hunt through panels. Every command routes through the same
  * bridge / store actions the GUI buttons use, so nothing here is a side door.
  */
-export default function CommandPalette({ open, onClose, page, setPage, onToggleConn }) {
+export default function CommandPalette({ open, onClose, page, setPage, onToggleConn }: any) {
   const [query, setQuery]   = useState('');
   const [active, setActive] = useState(0);
   const inputRef = useRef<any>(null);
@@ -56,7 +56,7 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
 
   if (!open) return null;
 
-  const runAt = (idx) => {
+  const runAt = (idx: any) => {
     const cmd = filtered[idx];
     if (!cmd) return;
     onClose();
@@ -64,7 +64,7 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
     requestAnimationFrame(() => cmd.run());
   };
 
-  const onKeyDown = (e) => {
+  const onKeyDown = (e: any) => {
     if (e.key === 'ArrowDown')      { e.preventDefault(); setActive(i => Math.min(i + 1, filtered.length - 1)); }
     else if (e.key === 'ArrowUp')   { e.preventDefault(); setActive(i => Math.max(i - 1, 0)); }
     else if (e.key === 'Enter')     { e.preventDefault(); runAt(active); }

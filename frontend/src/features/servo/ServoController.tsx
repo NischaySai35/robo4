@@ -26,7 +26,7 @@ const COLOR_CYCLE = [
   '#f43f5e', '#38bdf8', '#c084fc', '#facc15', '#4ade80',
 ];
 
-function jointKind(type) {
+function jointKind(type: any) {
   switch (type) {
     case 'continuous': return 'twist';
     case 'prismatic':  return 'linear';
@@ -36,7 +36,7 @@ function jointKind(type) {
 }
 
 // Map a joint's radian limits → servo-degree gauge bounds (0 rad → 180° centre).
-function gaugeBounds(kind, limit) {
+function gaugeBounds(kind: any, limit: any) {
   if (kind === 'twist') return { lo: 0, hi: 360 };
   const lower = limit?.lower ?? -Math.PI;
   const upper = limit?.upper ??  Math.PI;
@@ -68,8 +68,8 @@ function servoDefsFromDoc(doc?: Document | null) {
 
 // Per-id type + within-type ordinal (twist: 1,2,3…  bend: 1,2,3…), used for the
 // header overcurrent label. Recomputed whenever the defs change.
-function servoTypeNumMap(defs) {
-  const map = {};
+function servoTypeNumMap(defs: any) {
+  const map: Record<string, any> = {};
   let t = 0, b = 0;
   for (const d of defs) {
     if (d.type === 'twist') map[d.id] = { type: 'twist', num: ++t };
@@ -92,28 +92,28 @@ const TOTAL_MA_MAX = 8000;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmt(v, d = 1) {
+function fmt(v: any, d = 1) {
   if (v == null || !Number.isFinite(Number(v))) return '—';
   return Number(v).toFixed(d);
 }
 
-function pushH(arr, val) {
+function pushH(arr: any, val: any) {
   const next = [...arr, val];
   if (next.length > MAX_HISTORY) next.shift();
   return next;
 }
 
-function initServoState(defs) {
-  const s = {};
+function initServoState(defs: any) {
+  const s: Record<string, any> = {};
   for (const d of defs) s[d.id] = { history: { current: [], load: [] } };
   return s;
 }
 
-function totalCurrentmA(defs, servos) {
-  return defs.reduce((sum, d) => sum + (servos[d.id]?.currentmA ?? 0), 0);
+function totalCurrentmA(defs: any, servos: any) {
+  return defs.reduce((sum: any, d: any) => sum + (servos[d.id]?.currentmA ?? 0), 0);
 }
 
-function hottestServo(defs, servos) {
+function hottestServo(defs: any, servos: any) {
   let best = null, bestT = -Infinity;
   for (const d of defs) {
     const t = servos[d.id]?.tempC;
@@ -122,11 +122,11 @@ function hottestServo(defs, servos) {
   return best ? `${best} (${bestT}°C)` : '—';
 }
 
-function onlineCount(defs, servos) {
-  return defs.filter(d => servos[d.id]?.connected).length;
+function onlineCount(defs: any, servos: any) {
+  return defs.filter((d: any) => servos[d.id]?.connected).length;
 }
 
-function computeAlerts(defs, servos, totalMA) {
+function computeAlerts(defs: any, servos: any, totalMA: any) {
   const out: any[] = [];
   for (const def of defs) {
     const sv = servos[def.id];
@@ -143,7 +143,7 @@ function computeAlerts(defs, servos, totalMA) {
 
 // ── MiniChart ─────────────────────────────────────────────────────────────────
 
-function MiniChart({ values, color }) {
+function MiniChart({ values, color }: any) {
   const rawId = useId();
   const uid = 'scg' + rawId.replace(/[^a-zA-Z0-9]/g, '');
 
@@ -160,9 +160,9 @@ function MiniChart({ values, color }) {
   const min = Math.min(...values);
   const max = Math.max(...values);
   const range = max - min || 1;
-  const mapY = v => H - 5 - ((v - min) / range) * (H - 10);
+  const mapY = (v: any) => H - 5 - ((v - min) / range) * (H - 10);
 
-  const pts = values.map((v, i) =>
+  const pts = values.map((v: any, i: any) =>
     `${((i / (values.length - 1)) * W).toFixed(1)},${mapY(v).toFixed(1)}`
   );
   const ptsStr = pts.join(' ');
@@ -196,7 +196,7 @@ function MiniChart({ values, color }) {
 // Fill:   CCW arc from left endpoint UPWARD to current position
 //         → always renders going upward, never downward
 
-function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDrag }) {
+function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDrag }: any) {
   const W  = size;
   const cx = W / 2;
   const R  = cx - 7;
@@ -208,13 +208,13 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
   const lastCmd  = useRef(0);
 
   // clock angle (0=12-o'clock, CW+) → SVG x,y
-  const toXY = (clk, r) => {
+  const toXY = (clk: any, r: any) => {
     const rad = (clk + 90) * (Math.PI / 180);
     return [cx + r * Math.cos(rad), cy + r * Math.sin(rad)];
   };
 
   // servo → clock:  lo → 270° (left)   180 → 180° (bottom)   hi → 90° (right)
-  const s2c = (v) => (270 - (1-(v - lo) / (hi - lo)) * 180) % 360;
+  const s2c = (v: any) => (270 - (1-(v - lo) / (hi - lo)) * 180) % 360;
 
   const [lx, ly] = toXY(270, R);   // left  = lo endpoint   (top-left)
   const [rx, ry] = toXY(90,  R);   // right = hi endpoint   (top-right)
@@ -236,7 +236,7 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
   }
 
   // Drag: pointer → servo degrees
-  const angleFromPointer = useCallback((e) => {
+  const angleFromPointer = useCallback((e: any) => {
     if (!svgRef.current) return null;
     const rect = svgRef.current.getBoundingClientRect();
     const px = e.clientX - rect.left - cx;
@@ -255,7 +255,7 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
     return Math.max(lo, Math.min(hi, lo + (normClock / 180) * (hi - lo)));
   }, [cx, cy, lo, hi]);
 
-  const handlePointerDown = useCallback((e) => {
+  const handlePointerDown = useCallback((e: any) => {
     if (!onDrag) return;
     e.currentTarget.setPointerCapture(e.pointerId);
     dragging.current = true;
@@ -263,7 +263,7 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
     if (v != null) { lastCmd.current = Date.now(); onDrag(v); }
   }, [onDrag, angleFromPointer]);
 
-  const handlePointerMove = useCallback((e) => {
+  const handlePointerMove = useCallback((e: any) => {
     if (!dragging.current || !onDrag) return;
     const now = Date.now();
     if (now - lastCmd.current < 60) return;
@@ -337,11 +337,11 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
 
 // ── AlertBanner ───────────────────────────────────────────────────────────────
 
-function AlertBanner({ alerts, onDismiss }) {
+function AlertBanner({ alerts, onDismiss }: any) {
   if (alerts.length === 0) return null;
   return (
     <div className="sc-alerts">
-      {alerts.map(a => (
+      {alerts.map((a: any) => (
         <div key={a.id} className={`sc-alert sc-alert-${a.kind}`}>
           <span className="sc-alert-icon">{a.kind === 'bad' ? '🔴' : '🟡'}</span>
           <span className="sc-alert-msg">{a.msg}</span>
@@ -354,7 +354,7 @@ function AlertBanner({ alerts, onDismiss }) {
 
 // ── ServoCard ─────────────────────────────────────────────────────────────────
 
-function ServoCard({ def, data, onCmd }) {
+function ServoCard({ def, data, onCmd }: any) {
   const [angle, setAngle] = useState('180');
   const [speed, setSpeed] = useState(10);
   const [acc, setAcc]     = useState(20);
@@ -376,9 +376,9 @@ function ServoCard({ def, data, onCmd }) {
   const home = () => { setAngle('180'); onCmd(def.id, 'pos', { angle: 180, speed, acc }); };
 
   // When servo is offline treat all sensor values as null (show —)
-  const live = (v) => isOnline ? v : null;
+  const live = (v: any) => isOnline ? v : null;
   // Raw integer fields that use -1 as sentinel → also treat as null
-  const rawLive = (v) => (isOnline && v != null && v >= 0) ? v : null;
+  const rawLive = (v: any) => (isOnline && v != null && v >= 0) ? v : null;
 
   const STATS = [
     ['Angle',   live(data?.currentAngle),        '°',    2],
@@ -403,7 +403,7 @@ function ServoCard({ def, data, onCmd }) {
             target={gaugeTarget}
             color={c}
             lo={lo} hi={hi}
-            onDrag={(deg) => onCmd(def.id, 'pos', { angle: deg.toFixed(1), speed, acc })}
+            onDrag={(deg: any) => onCmd(def.id, 'pos', { angle: deg.toFixed(1), speed, acc })}
           />
           <div className="sc-card-info">
             <div className="sc-card-title">
@@ -520,9 +520,9 @@ function ServoCard({ def, data, onCmd }) {
 
 // ── GroupControl ──────────────────────────────────────────────────────────────
 
-function GroupControl({ defs, onCmd, onEstop }) {
-  const all = defs.map(d => d.id);
-  const g   = (cmd, extra = {}) => all.forEach(id => onCmd(id, cmd, extra));
+function GroupControl({ defs, onCmd, onEstop }: any) {
+  const all = defs.map((d: any) => d.id);
+  const g   = (cmd: any, extra = {}) => all.forEach((id: any) => onCmd(id, cmd, extra));
 
   return (
     <div className="sc-group-strip">
@@ -548,7 +548,7 @@ function GroupControl({ defs, onCmd, onEstop }) {
 
 // ── SequenceRecorder ──────────────────────────────────────────────────────────
 
-function SequenceRecorder({ defs, servos, onCmd }) {
+function SequenceRecorder({ defs, servos, onCmd }: any) {
   const [frames,   setFrames]   = useState<any[]>([]);
   const [playing,  setPlaying]  = useState(false);
   const [playIdx,  setPlayIdx]  = useState(-1);
@@ -556,7 +556,7 @@ function SequenceRecorder({ defs, servos, onCmd }) {
   const abortRef = useRef(false);
 
   const capture = () => {
-    const frame = defs.map(d => ({
+    const frame = defs.map((d: any) => ({
       id: d.id, label: d.label, angle: servos[d.id]?.currentAngle ?? 180,
     }));
     setFrames(prev => [...prev, frame]);
@@ -584,7 +584,7 @@ function SequenceRecorder({ defs, servos, onCmd }) {
     setPlayIdx(-1);
   };
 
-  const removeFrame = i => setFrames(prev => prev.filter((_, j) => j !== i));
+  const removeFrame = (i: any) => setFrames(prev => prev.filter((_, j) => j !== i));
 
   const exportSeq = () => {
     const blob = new Blob([JSON.stringify(frames, null, 2)], { type: 'application/json' });
@@ -594,7 +594,7 @@ function SequenceRecorder({ defs, servos, onCmd }) {
     a.click();
   };
 
-  const importSeq = e => {
+  const importSeq = (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -642,7 +642,7 @@ function SequenceRecorder({ defs, servos, onCmd }) {
           {frames.map((frame, i) => (
             <div key={i} className={`sc-seq-frame ${playIdx === i ? 'sc-seq-frame-active' : ''}`}>
               <span className="sc-seq-frame-num">#{i + 1}</span>
-              {frame.map(({ label, angle }) => (
+              {frame.map(({ label, angle }: any) => (
                 <span key={label} className="sc-seq-chip">
                   {label} {Math.round(angle)}°
                 </span>
@@ -658,28 +658,28 @@ function SequenceRecorder({ defs, servos, onCmd }) {
 
 // ── PresetPanel ───────────────────────────────────────────────────────────────
 
-function PresetPanel({ defs, servos, onApply }) {
+function PresetPanel({ defs, servos, onApply }: any) {
   const [presets,   setPresets]   = useState<any[]>(() => {
     try { return JSON.parse(localStorage.getItem('sc_presets') || '[]'); }
     catch { return []; }
   });
   const [nameInput, setNameInput] = useState('');
 
-  const persist = next => {
+  const persist = (next: any) => {
     setPresets(next);
     localStorage.setItem('sc_presets', JSON.stringify(next));
   };
 
   const savePreset = () => {
     const name = nameInput.trim() || `Preset ${presets.length + 1}`;
-    const snapshot = defs.map(d => ({
+    const snapshot = defs.map((d: any) => ({
       id: d.id, angle: servos[d.id]?.currentAngle ?? 180,
     }));
     persist([...presets.filter(p => p.name !== name), { name, snapshot }]);
     setNameInput('');
   };
 
-  const deletePreset = name => persist(presets.filter(p => p.name !== name));
+  const deletePreset = (name: any) => persist(presets.filter(p => p.name !== name));
 
   const exportPresets = () => {
     const blob = new Blob([JSON.stringify(presets, null, 2)], { type: 'application/json' });
@@ -689,7 +689,7 @@ function PresetPanel({ defs, servos, onApply }) {
     a.click();
   };
 
-  const importPresets = e => {
+  const importPresets = (e: any) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
@@ -760,7 +760,7 @@ const LEVEL_COLORS = {
   offline:'#f97316',
 };
 
-function DebugLog({ log, onClear }) {
+function DebugLog({ log, onClear }: any) {
   const bottomRef = useRef<any>(null);
   useEffect(() => {
     const el = bottomRef.current?.parentElement;
@@ -789,13 +789,13 @@ function DebugLog({ log, onClear }) {
             no activity — connect to ESP32 and drag arm or press buttons
           </div>
         )}
-        {log.map((e, i) => (
+        {log.map((e: any, i: any) => (
           <div key={e.id ?? i} className="sc-log-entry">
             <span className="sc-log-time">{e.time}</span>
-            <span className="sc-log-src" style={{ color: SRC_COLORS[e.src] ?? 'var(--text-dim)' }}>
+            <span className="sc-log-src" style={{ color: SRC_COLORS[e.src as keyof typeof SRC_COLORS] ?? 'var(--text-dim)' }}>
               [{e.src ?? '?'}]
             </span>
-            <span style={{ color: LEVEL_COLORS[e.level ?? e.kind] ?? 'var(--text-dim)', flex: 1 }}>
+            <span style={{ color: LEVEL_COLORS[(e.level ?? e.kind) as keyof typeof LEVEL_COLORS] ?? 'var(--text-dim)', flex: 1 }}>
               {e.msg}
             </span>
           </div>
@@ -865,7 +865,7 @@ export default function ServoController() {
   useEffect(() => { connectedRef.current = connected; }, [connected]);
   useEffect(() => { espUrlRef.current    = espUrl;    }, [espUrl]);
 
-  const addLog = useCallback((msg, kind = 'cmd', src = 'USER') => {
+  const addLog = useCallback((msg: any, kind = 'cmd', src = 'USER') => {
     pushCtrlLog(kind, src, msg);
   }, [pushCtrlLog]);
 
@@ -891,7 +891,7 @@ export default function ServoController() {
 
         // Compute totalMA directly from raw response — NOT inside setServos, whose
         // updater runs lazily and would leave totalMA=0 when read immediately after.
-        const totalMA = (data.servos ?? []).reduce((sum, sv) => sum + (sv.currentmA ?? 0), 0);
+        const totalMA = (data.servos ?? []).reduce((sum: any, sv: any) => sum + (sv.currentmA ?? 0), 0);
 
         setServos(prev => {
           const next = { ...prev };
@@ -910,26 +910,26 @@ export default function ServoController() {
 
         const newAlerts = computeAlerts(
           defsRef.current,
-          Object.fromEntries((data.servos ?? []).map(sv => [sv.id, sv])),
+          Object.fromEntries((data.servos ?? []).map((sv: any) => [sv.id, sv])),
           totalMA
         ).filter(a => !dismissRef.current.has(a.id));
         setAlerts(newAlerts);
 
-        const onCnt = (data.servos ?? []).filter(s => s.connected).length;
+        const onCnt = (data.servos ?? []).filter((s: any) => s.connected).length;
         setServoOnlineCount(onCnt);
 
         // Push average voltage + total current for header indicators
-        const voltageSamples = (data.servos ?? []).filter(s => s.connected && s.voltageV != null);
+        const voltageSamples = (data.servos ?? []).filter((s: any) => s.connected && s.voltageV != null);
         if (voltageSamples.length > 0) {
-          const avg = voltageSamples.reduce((sum, s) => sum + s.voltageV, 0) / voltageSamples.length;
+          const avg = voltageSamples.reduce((sum: any, s: any) => sum + s.voltageV, 0) / voltageSamples.length;
           setAvgVoltage(avg);
         }
         if (onCnt > 0) setTotalCurrentMA(totalMA);
 
         // Track per-servo overcurrent (> 700 mA) for header warning
         const oc = (data.servos ?? [])
-          .filter(s => s.connected && s.currentmA != null && s.currentmA > 700)
-          .map(s => {
+          .filter((s: any) => s.connected && s.currentmA != null && s.currentmA > 700)
+          .map((s: any) => {
             const tn = typeNumRef.current[s.id] ?? { type: 'twist', num: s.id };
             return { id: s.id, label: s.label ?? `J${s.id}`, type: tn.type, typeNum: tn.num, currentmA: s.currentmA };
           });
@@ -937,7 +937,7 @@ export default function ServoController() {
 
         // Log poll summary every ~4s (every 16th poll at 250ms)
         if (Math.random() < 0.063) {
-          const hottest = (data.servos ?? []).reduce((m, s) => s.tempC > m ? s.tempC : m, 0);
+          const hottest = (data.servos ?? []).reduce((m: any, s: any) => s.tempC > m ? s.tempC : m, 0);
           pushCtrlLog('info', 'POLL', `${onCnt}/${defsRef.current.length} online · ${lat}ms · ${(totalMA/1000).toFixed(2)}A · ${hottest}°C`);
         }
       }
@@ -1005,7 +1005,7 @@ export default function ServoController() {
   }, [poll, probeNonce, pushCtrlLog]);
 
   // ── Commands ────────────────────────────────────────────────────────────────
-  const sendCmd = useCallback(async (servoId, cmd, extra: any = {}, src = 'USER') => {
+  const sendCmd = useCallback(async (servoId: any, cmd: any, extra: any = {}, src = 'USER') => {
     // Smooth ease-in/out for position commands >= 2°.
     // acc scales down with distance so the servo ramps up and down gradually.
     // Formula: acc = max(6, 40 / (1 + dist/15))
@@ -1097,12 +1097,12 @@ export default function ServoController() {
       });
   }, [pendingAngles]);
 
-  const applyPreset = useCallback((snapshot) => {
+  const applyPreset = useCallback((snapshot: any) => {
     pushCtrlLog('ok', 'USER', `Applying preset — ${snapshot.length} servos`);
     for (const s of snapshot) sendCmd(s.id, 'pos', { angle: s.angle, speed: 5, acc: 20 }, 'USER');
   }, [sendCmd, pushCtrlLog]);
 
-  const dismissAlert = useCallback(id => {
+  const dismissAlert = useCallback((id: any) => {
     dismissRef.current.add(id);
     setAlerts(prev => prev.filter(a => a.id !== id));
   }, []);

@@ -5,7 +5,7 @@
 
 const KEY = 'tetrobot:autosave:v1';
 
-export function saveAutosave(project) {
+export function saveAutosave(project: any) {
   try {
     localStorage.setItem(KEY, JSON.stringify(project));
   } catch {

@@ -19,7 +19,7 @@ const INTERVAL_MS = 50;
 
 // Map joint radian (-π…+π for twist, -100°…+100° for bend) to servo degrees.
 // Neutral (0 rad) → 180° center. Linear mapping clamped to 0–360°.
-function jointToServoDeg(rad) {
+function jointToServoDeg(rad: any) {
   return Math.max(0, Math.min(360, 180 + (rad * 180 / Math.PI)));
 }
 
@@ -71,9 +71,9 @@ export default function SimTransmitPanel() {
       // root are stored with a flipped sign in armStore, so we must un-flip them
       // before mapping to physical servo degrees.
       const rootIdx = ROD_IDS.indexOf(rootIdRef.current);
-      const sg = (i) => rootIdx > i ? -1 : 1;
+      const sg = (i: any) => rootIdx > i ? -1 : 1;
 
-      const mapped = {};
+      const mapped: Record<string, any> = {};
       anglesRef.current.forEach((rad, i) => {
         const servoId = i + 1;
         let deg = jointToServoDeg(rad * sg(i));
@@ -154,10 +154,10 @@ export default function SimTransmitPanel() {
         {recent.map(e => (
           <div key={e.id} className="stp-entry">
             <span className="stp-e-time">{e.time.slice(3)}</span>
-            <span className="stp-e-src" style={{ color: SRC_COLOR[e.src] ?? '#94a3b8' }}>
+            <span className="stp-e-src" style={{ color: SRC_COLOR[e.src as keyof typeof SRC_COLOR] ?? '#94a3b8' }}>
               {e.src}
             </span>
-            <span className="stp-e-msg" style={{ color: LEVEL_COLOR[e.level] ?? '#cbd5e1' }}>
+            <span className="stp-e-msg" style={{ color: LEVEL_COLOR[e.level as keyof typeof LEVEL_COLOR] ?? '#cbd5e1' }}>
               {e.msg}
             </span>
           </div>

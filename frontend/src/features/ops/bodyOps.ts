@@ -5,14 +5,14 @@
  */
 import { uid } from '@/core/model/index';
 
-function cloneBody(body, overrides = {}) {
+function cloneBody(body: any, overrides = {}) {
   const c = structuredClone(body);
   c.id = uid('body');
   return { ...c, ...overrides };
 }
 
 /** A copy at the EXACT same place (Blender-style "Duplicate" → grab to move). */
-export function duplicateInPlace(body) {
+export function duplicateInPlace(body: any) {
   return cloneBody(body, {
     name: `${body.name} copy`,
     transform: structuredClone(body.transform),
@@ -20,7 +20,7 @@ export function duplicateInPlace(body) {
 }
 
 /** A copy offset slightly so it's visible next to the original. */
-export function duplicate(body) {
+export function duplicate(body: any) {
   const p = body.transform.position;
   return cloneBody(body, {
     name: `${body.name} copy`,
@@ -29,7 +29,7 @@ export function duplicate(body) {
 }
 
 /** Mirror across the world plane perpendicular to axis (0=X,1=Y,2=Z). */
-export function mirror(body, axis) {
+export function mirror(body: any, axis: any) {
   const t = structuredClone(body.transform);
   t.position[axis] = -t.position[axis];
   t.scale[axis] = -t.scale[axis]; // negative scale flips the geometry
@@ -37,7 +37,7 @@ export function mirror(body, axis) {
 }
 
 /** N-1 additional copies stepped by `offset` (array modifier). Returns the copies. */
-export function array(body, count, offset) {
+export function array(body: any, count: any, offset: any) {
   const out: any[] = [];
   for (let i = 1; i < count; i++) {
     const t = structuredClone(body.transform);

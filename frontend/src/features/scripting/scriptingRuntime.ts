@@ -9,8 +9,8 @@ import {
 import { buildSerialArmEntities } from '@/features/ai/aiActions';
 import type { Document, RGBA } from '@/core/model/index';
 
-const num = (v, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
-const vec3 = (v, fallback) => Array.isArray(v) && v.length >= 3
+const num = (v: any, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
+const vec3 = (v: any, fallback: any) => Array.isArray(v) && v.length >= 3
   ? [num(v[0], fallback[0]), num(v[1], fallback[1]), num(v[2], fallback[2])]
   : fallback;
 const hexToColor = (hex: string): RGBA => {
@@ -54,7 +54,7 @@ export async function runScript(code: string, context: { doc: Document; dispatch
   const { doc, dispatch, select, bridge } = context;
   let liveDoc: Document = doc;
   const output: any[] = [];
-  const remember = (entities) => {
+  const remember = (entities: any) => {
     for (const entity of entities) {
       const collection = {
         body: 'bodies',
@@ -63,13 +63,13 @@ export async function runScript(code: string, context: { doc: Document; dispatch
         asset: 'assets',
         frame: 'frames',
         constraint: 'constraints',
-      }[entity.kind];
-      if (collection) liveDoc = { ...liveDoc, [collection]: { ...liveDoc[collection], [entity.id]: entity } };
+      }[entity.kind as keyof { body:1; joint:1; material:1; asset:1; frame:1; constraint:1 }];
+      if (collection) liveDoc = { ...liveDoc, [collection]: { ...(liveDoc as any)[collection], [entity.id]: entity } };
     }
   };
   const api = Object.freeze({
-    log: (...args) => output.push(args.map(String).join(' ')),
-    deg: (degrees) => num(degrees) * Math.PI / 180,
+    log: (...args: any[]) => output.push(args.map(String).join(' ')),
+    deg: (degrees: any) => num(degrees) * Math.PI / 180,
     doc: () => structuredClone(liveDoc),
     bodies: () => Object.values(liveDoc.bodies).map((b) => ({ id: b.id, name: b.name })),
     joints: () => Object.values(liveDoc.joints).map((j) => ({ id: j.id, name: j.name, value: j.state?.value ?? 0 })),
@@ -105,7 +105,7 @@ export async function runScript(code: string, context: { doc: Document; dispatch
       if (lastBody) select(lastBody.id, 'body');
       return entities.filter((e) => e.kind === 'joint').map((j) => j.id);
     },
-    setJoint: (key, valueRad) => {
+    setJoint: (key: any, valueRad: any) => {
       const joint = typeof key === 'number'
         ? Object.values(liveDoc.joints)[key - 1]
         : findEntity(liveDoc, 'joint', key);
@@ -116,7 +116,7 @@ export async function runScript(code: string, context: { doc: Document; dispatch
       select(joint.id, 'joint');
       return joint.id;
     },
-    moveBody: (key, position) => {
+    moveBody: (key: any, position: any) => {
       const body = findEntity(liveDoc, 'body', key);
       if (!body) throw new Error(`Body not found: ${key}`);
       const next = { ...body, transform: { ...body.transform, position: vec3(position, body.transform.position) } };
@@ -125,7 +125,7 @@ export async function runScript(code: string, context: { doc: Document; dispatch
       select(body.id, 'body');
       return body.id;
     },
-    colorBody: (key, color) => {
+    colorBody: (key: any, color: any) => {
       const body = findEntity(liveDoc, 'body', key);
       if (!body) throw new Error(`Body not found: ${key}`);
       const material = makeMaterial({ name: `${body.name} material`, color: hexToColor(color) });
@@ -135,13 +135,13 @@ export async function runScript(code: string, context: { doc: Document; dispatch
       select(body.id, 'body');
       return body.id;
     },
-    select: (kind, key) => {
+    select: (kind: any, key: any) => {
       const entity = findEntity(liveDoc, kind, key);
       if (!entity) throw new Error(`${kind} not found: ${key}`);
       select(entity.id, kind === 'joint' ? 'joint' : 'body');
       return entity.id;
     },
-    remove: (kind, key) => {
+    remove: (kind: any, key: any) => {
       const entity = findEntity(liveDoc, kind, key);
       if (!entity) throw new Error(`${kind} not found: ${key}`);
       dispatch(kind === 'joint' ? commands.removeJoint(entity.id) : commands.removeBody(entity.id));

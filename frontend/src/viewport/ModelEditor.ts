@@ -39,7 +39,7 @@ if (import.meta.hot) (import.meta.hot as any).decline();
 export class ModelEditor {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor({ scene, camera, controls, domElement }) {
+  constructor({ scene, camera, controls, domElement }: any) {
     this.controls = controls;
     this.bodyRenderer = new BodyRenderer(scene);
     this.jointRenderer = new JointRenderer(scene);
@@ -59,7 +59,7 @@ export class ModelEditor {
     this._attachedJointId = null;
 
     // Don't let orbit fight the gizmo while dragging a handle.
-    this.transform.addEventListener('dragging-changed', (e) => {
+    this.transform.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
     });
 
@@ -72,10 +72,10 @@ export class ModelEditor {
     this.camera = camera;
     this.domElement = domElement;
     this._downPos = null;
-    this._onPointerDown = (e) => { if (e.button === 0) this._downPos = { x: e.clientX, y: e.clientY }; };
-    this._onPointerUp = (e) => this._handlePick(e);
-    this._onPointerMove = (e) => this._handleHover(e);
-    this._onDblClick = (e) => this._handleDblClick(e);
+    this._onPointerDown = (e: any) => { if (e.button === 0) this._downPos = { x: e.clientX, y: e.clientY }; };
+    this._onPointerUp = (e: any) => this._handlePick(e);
+    this._onPointerMove = (e: any) => this._handleHover(e);
+    this._onDblClick = (e: any) => this._handleDblClick(e);
     domElement.addEventListener('pointerdown', this._onPointerDown);
     domElement.addEventListener('pointerup', this._onPointerUp);
     domElement.addEventListener('pointermove', this._onPointerMove);
@@ -127,7 +127,7 @@ export class ModelEditor {
     this._onSelection(useSelectionStore.getState());
   }
 
-  _syncModel(doc) {
+  _syncModel(doc: any) {
     this._doc = doc;
     this._fk = computeFK(doc);
     this.bodyRenderer.sync(doc, this._fk);
@@ -138,7 +138,7 @@ export class ModelEditor {
     if (this.editMode?.active) this.editMode.onModelSynced();
   }
 
-  _updateCOM(doc) {
+  _updateCOM(doc: any) {
     if (!this._showAnalysis || Object.keys(doc.bodies).length === 0) {
       if (this._comMarker) this._comMarker.visible = false;
       return;
@@ -157,7 +157,7 @@ export class ModelEditor {
   }
 
   // ── Physics (Phase 7) ──────────────────────────────────────────────────────
-  _handleSim(running) {
+  _handleSim(running: any) {
     if (running && !this._sim && !this._startingSim) this._startSim();
     else if (!running && (this._sim || this._startingSim)) this._stopSim();
   }
@@ -219,7 +219,7 @@ export class ModelEditor {
     return computeFK({ ...doc, joints });
   }
 
-  _applySnap(snap) {
+  _applySnap(snap: any) {
     const t = this.transform;
     if (snap?.enabled) {
       t.setTranslationSnap(snap.translate);
@@ -232,7 +232,7 @@ export class ModelEditor {
     }
   }
 
-  _handlePick(e) {
+  _handlePick(e: any) {
     if (this.editMode?.active) { this._downPos = null; return; } // Edit Mode owns picking
     if (e.button !== 0 || !this._downPos) return;
     const moved = Math.hypot(e.clientX - this._downPos.x, e.clientY - this._downPos.y);
@@ -273,7 +273,7 @@ export class ModelEditor {
 
   // Double-click a body/joint in the viewport → open Properties (single click only
   // selects). Mirrors the Outliner's click/double-click split.
-  _handleDblClick(e) {
+  _handleDblClick(e: any) {
     if (this.editMode?.active || this._sim || this._mateMode) return;
     const rect = this.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
@@ -291,7 +291,7 @@ export class ModelEditor {
   // Pick a face on the part to keep fixed, then a face on the part to move; the
   // second part snaps flush onto the first (faces coincident, normals opposed).
   // Hover during mate mode → show the feature snap indicator (when magnet is on).
-  _handleHover(e) {
+  _handleHover(e: any) {
     if (!this._mateMode || !useEditorStore.getState().snap?.enabled || this.editMode?.active) {
       this._snapIndicator?.hide();
       return;
@@ -305,7 +305,7 @@ export class ModelEditor {
     if (snap) this._snapIndicator.show(snap.point, snap.type); else this._snapIndicator.hide();
   }
 
-  _handleMatePick(ndc) {
+  _handleMatePick(ndc: any) {
     const face = this.bodyRenderer.pickFaceAt(ndc, this.camera);
     if (!face) return;
     // When snapping is on, refine the clicked point to the nearest vertex/edge.
@@ -324,7 +324,7 @@ export class ModelEditor {
     }
   }
 
-  _applyMate(a, b) {
+  _applyMate(a: any, b: any) {
     const doc = useModelStore.getState().doc;
     const body = doc.bodies[b.bodyId];
     if (!body || a.bodyId === b.bodyId) return;
@@ -345,7 +345,7 @@ export class ModelEditor {
     }));
   }
 
-  _addMateMarker(p) {
+  _addMateMarker(p: any) {
     const m = new THREE.Mesh(
       new THREE.SphereGeometry(0.04, 14, 10),
       new THREE.MeshBasicMaterial({ color: 0xffaa00, depthTest: false }),
@@ -364,7 +364,7 @@ export class ModelEditor {
     }
   }
 
-  _onSelection(s) {
+  _onSelection(s: any) {
     const bodyId = s.kind === 'body' ? s.selectedId : null;
     const jointId = s.kind === 'joint' ? s.selectedId : null;
     // Joints are shown only when relevant: the selected joint, or any joint that
@@ -393,7 +393,7 @@ export class ModelEditor {
   }
 
   /** Place the proxy at the joint's pivot world transform and attach the gizmo. */
-  _attachToJoint(jointId) {
+  _attachToJoint(jointId: any) {
     const doc: Document = this._doc ?? useModelStore.getState().doc;
     const joint = doc.joints[jointId];
     if (!joint || !joint.parentBodyId || !doc.bodies[joint.parentBodyId]) { this._attachTo(null); return; }
@@ -415,7 +415,7 @@ export class ModelEditor {
     this._attachedJointId = jointId;
   }
 
-  _attachTo(bodyId) {
+  _attachTo(bodyId: any) {
     this._attachedJointId = null;
     const mesh = bodyId ? this.bodyRenderer.getMesh(bodyId) : null;
     if (mesh) {

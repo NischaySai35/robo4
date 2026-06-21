@@ -23,11 +23,11 @@ const VERSION = 2;
 const _enc = new TextEncoder();
 const _dec = new TextDecoder();
 
-async function sha256(bytes) {
+async function sha256(bytes: any) {
   return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
 }
 
-function concatBytes(arrays) {
+function concatBytes(arrays: any) {
   let len = 0;
   for (const a of arrays) len += a.length;
   const out = new Uint8Array(len);
@@ -36,11 +36,11 @@ function concatBytes(arrays) {
   return out;
 }
 
-function u32be(n) {
+function u32be(n: any) {
   return new Uint8Array([(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255]);
 }
 
-async function keystream(key, length) {
+async function keystream(key: any, length: any) {
   const out = new Uint8Array(length);
   let off = 0, n = 0;
   while (off < length) {
@@ -52,14 +52,14 @@ async function keystream(key, length) {
   return out;
 }
 
-function xor(data, ks) {
+function xor(data: any, ks: any) {
   const out = new Uint8Array(data.length);
   for (let i = 0; i < data.length; i++) out[i] = data[i] ^ ks[i];
   return out;
 }
 
 /** Encode a project object → encrypted .nischay bytes (Uint8Array). */
-export async function encodeProject(obj) {
+export async function encodeProject(obj: any) {
   const json = _enc.encode(JSON.stringify(obj));
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const key  = await sha256(concatBytes([_enc.encode(PASS), salt]));
@@ -69,7 +69,7 @@ export async function encodeProject(obj) {
 }
 
 /** Decode .nischay bytes (ArrayBuffer/Uint8Array) → project object. */
-export async function decodeProject(buf) {
+export async function decodeProject(buf: any) {
   const u = new Uint8Array(buf);
   if (u.length === 0) throw new Error('Empty file.');
 

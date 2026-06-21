@@ -68,14 +68,14 @@ export const getJoint = (doc: Document, id: string) => doc.joints[id] ?? null;
 export function assemblies(doc: Document) {
   const ids = Object.keys(doc.bodies);
   const seen = new Set();
-  const comps = [];
+  const comps: Set<string>[] = [];
   for (const start of ids) {
     if (seen.has(start)) continue;
     const comp = new Set([start]);
     const queue = [start];
     seen.add(start);
     while (queue.length) {
-      const cur = queue.shift();
+      const cur = queue.shift()!;
       for (const nb of neighbors(doc, cur)) {
         if (!seen.has(nb)) { seen.add(nb); comp.add(nb); queue.push(nb); }
       }
@@ -91,15 +91,15 @@ export function pathBetween(doc: Document, aId: string, bId: string) {
   const prev = new Map<string, string | null>([[aId, null]]);
   const queue = [aId];
   while (queue.length) {
-    const cur = queue.shift();
+    const cur = queue.shift()!;
     if (cur === bId) break;
     for (const nb of neighbors(doc, cur)) {
       if (!prev.has(nb)) { prev.set(nb, cur); queue.push(nb); }
     }
   }
   if (!prev.has(bId)) return null;
-  const path = [];
-  for (let n = bId; n != null; n = prev.get(n)) path.unshift(n);
+  const path: string[] = [];
+  for (let n: string | null | undefined = bId; n != null; n = prev.get(n)) path.unshift(n);
   return path;
 }
 
@@ -107,8 +107,8 @@ export function pathBetween(doc: Document, aId: string, bId: string) {
 
 /** Structural validation. Returns { ok, errors:[], warnings:[] }. */
 export function validate(doc: Document) {
-  const errors = [];
-  const warnings = [];
+  const errors: string[] = [];
+  const warnings: string[] = [];
 
   if (!doc || doc.kind !== 'document') {
     return { ok: false, errors: ['Not a document'], warnings };

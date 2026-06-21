@@ -28,9 +28,9 @@ import { useModelStore } from '@/state/modelStore';
 import { useAnimationStore } from '@/state/animationStore';
 
 export default function SimCanvas() {
-  const canvasRef = useRef(null);
-  const sceneRef = useRef(null);
-  const modelEditorRef = useRef(null);
+  const canvasRef = useRef<any>(null);
+  const sceneRef = useRef<any>(null);
+  const modelEditorRef = useRef<any>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -77,7 +77,7 @@ export default function SimCanvas() {
     });
 
     // ── Render loop ───────────────────────────────────────────────────────────
-    let raf = null;
+    let raf: any = null;
     const loop = () => {
       raf = requestAnimationFrame(loop);
       modelEditor.tick();   // physics step / animation preview when active
@@ -126,16 +126,16 @@ export default function SimCanvas() {
     };
 
     // ── Undo / redo (full-project snapshots: model + animation) ──────────────────
-    const history = { undo: [], redo: [], last: null, suppressNext: false };
+    const history: { undo: string[]; redo: string[]; last: string | null; suppressNext: boolean } = { undo: [], redo: [], last: null, suppressNext: false };
     const applySnapshot = (snapJSON) => {
       const d = JSON.parse(snapJSON);
-      bridge.loadScene({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false });
+      bridge.loadScene!({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false });
     };
     bridge.undo = () => {
       if (!history.undo.length) return;
       if (history.last != null) history.redo.push(history.last);
       const prev = history.undo.pop();
-      history.last = prev;
+      history.last = prev ?? null;
       history.suppressNext = true;
       applySnapshot(prev);
       useHistoryStore.getState().setFlags(history.undo.length > 0, history.redo.length > 0);
@@ -144,14 +144,14 @@ export default function SimCanvas() {
       if (!history.redo.length) return;
       if (history.last != null) history.undo.push(history.last);
       const next = history.redo.pop();
-      history.last = next;
+      history.last = next ?? null;
       history.suppressNext = true;
       applySnapshot(next);
       useHistoryStore.getState().setFlags(history.undo.length > 0, history.redo.length > 0);
     };
 
     // ── Autosave + record undo history when the model/animation settles ──────────
-    let saveTimer = null;
+    let saveTimer: any = null;
     let persisting = false;
     const doSave = async () => {
       persisting = true;

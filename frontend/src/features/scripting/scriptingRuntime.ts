@@ -53,7 +53,7 @@ api.fitView();`;
 export async function runScript(code: string, context: { doc: Document; dispatch: any; select: any; bridge: any }) {
   const { doc, dispatch, select, bridge } = context;
   let liveDoc: Document = doc;
-  const output = [];
+  const output: any[] = [];
   const remember = (entities) => {
     for (const entity of entities) {
       const collection = {

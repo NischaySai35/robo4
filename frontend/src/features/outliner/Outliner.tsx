@@ -28,7 +28,7 @@ export default function Outliner() {
   const bodies = Object.values(doc.bodies);
   const joints = Object.values(doc.joints);
 
-  const [jointForm, setJointForm] = useState(null); // { parent, child, type } | null
+  const [jointForm, setJointForm] = useState<any>(null); // { parent, child, type } | null
   const openJointForm = () => {
     // Default the child to whatever body is selected (the part you're attaching),
     // and the parent to the first other body — tweak in the form before creating.

@@ -11,7 +11,7 @@ const san = (s: unknown) => String(s ?? 'x').replace(/[^A-Za-z0-9_]/g, '_');
 
 export function exportIDL(doc: Document, name = 'tetrobot') {
   const joints = Object.values(doc.joints).filter((j) => j.type !== 'fixed');
-  const L = [];
+  const L: string[] = [];
   L.push(`// TETROBOT IDL — command/state interface for "${name}"`);
   L.push('// Groundwork for hardware / ROS comms (Phase 11).');
   L.push('');

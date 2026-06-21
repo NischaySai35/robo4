@@ -35,11 +35,11 @@ const COLORS = ['#ff8800', '#3b82f6', '#22c55e', '#e11d48', '#a855f7', '#06b6d4'
 
 export default function LiveTelemetryChart() {
   const [metric, setMetric] = useState('position');
-  const hostRef = useRef(null);
-  const plotRef = useRef(null);
-  const dataRef = useRef(null);          // [xs, y0, y1, …]
+  const hostRef = useRef<any>(null);
+  const plotRef = useRef<any>(null);
+  const dataRef = useRef<any>(null);          // [xs, y0, y1, …]
   const t0Ref = useRef(performance.now());
-  const prevRef = useRef(null);          // { t, pos[], vel[] } for differencing
+  const prevRef = useRef<any>(null);          // { t, pos[], vel[] } for differencing
 
   // Generic joint list straight from the model — id + display name + angular?.
   const doc = useModelStore((s) => s.doc);

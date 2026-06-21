@@ -86,17 +86,18 @@ export function exportURDF(doc: Document, name = 'tetrobot') {
   if (bodies.length === 0) return `<?xml version="1.0"?>\n<robot name="${san(name)}"/>\n`;
 
   // First joint per child = its parent; the rest are loop closures.
-  const childParent = new Map();
-  const treeJoints = [];
-  const loopJoints = [];
+  const childParent = new Map<string, any>();
+  const treeJoints: any[] = [];
+  const loopJoints: any[] = [];
   for (const j of allJoints) {
-    if (!doc.bodies[j.parentBodyId] || !doc.bodies[j.childBodyId]) continue;
-    if (childParent.has(j.childBodyId)) loopJoints.push(j);
-    else { childParent.set(j.childBodyId, j); treeJoints.push(j); }
+    const pid = j.parentBodyId, cid = j.childBodyId;
+    if (!pid || !cid || !doc.bodies[pid] || !doc.bodies[cid]) continue;
+    if (childParent.has(cid)) loopJoints.push(j);
+    else { childParent.set(cid, j); treeJoints.push(j); }
   }
   const roots = bodies.filter((b) => !childParent.has(b.id));
 
-  const warns = [];
+  const warns: string[] = [];
   if (roots.length > 1) warns.push(`Multiple roots (${roots.length}) — URDF needs one; first is the base.`);
   if (loopJoints.length) warns.push(`${loopJoints.length} loop joint(s) dropped: ${loopJoints.map((j) => san(j.name)).join(', ')}.`);
 

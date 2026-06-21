@@ -21,8 +21,8 @@ export function addBody(body) {
 
 /** Remove a body and every joint touching it (captured for undo). */
 export function removeBody(bodyId) {
-  let removedBody = null;
-  let removedJoints = [];
+  let removedBody: any = null;
+  let removedJoints: any[] = [];
   return command(
     'Remove body',
     (doc) => {
@@ -43,7 +43,7 @@ export function removeBody(bodyId) {
 
 /** Shallow-merge a patch into a body (e.g. transform, name, material). */
 export function updateBody(bodyId, patch) {
-  let prev = null;
+  let prev: any = null;
   return command(
     'Update body',
     (doc) => {
@@ -59,7 +59,7 @@ export function updateBody(bodyId, patch) {
  *  Rebuilds the id→entity map in the new key order (Object key order = list order).
  */
 export function reorderCollection(collection, idsInOrder) {
-  let prevOrder = null;
+  let prevOrder: any = null;
   const rebuild = (doc, order) => {
     const src = doc[collection] ?? {};
     const next = {};
@@ -86,7 +86,7 @@ export function addJoint(joint) {
 }
 
 export function removeJoint(jointId) {
-  let prev = null;
+  let prev: any = null;
   return command(
     'Remove joint',
     (doc) => { prev = getJoint(doc, jointId); return removeFrom(doc, 'joints', jointId); },
@@ -95,7 +95,7 @@ export function removeJoint(jointId) {
 }
 
 export function updateJoint(jointId, patch) {
-  let prev = null;
+  let prev: any = null;
   return command(
     'Update joint',
     (doc) => {
@@ -127,7 +127,7 @@ export function setJointValues(values) {
 
 /** Set a joint's current articulation value (rad or m). */
 export function setJointValue(jointId, value) {
-  let prev = null;
+  let prev: any = null;
   return command(
     'Move joint',
     (doc) => {
@@ -163,7 +163,7 @@ export function addAsset(asset) {
 }
 
 export function updateMaterial(id, patch) {
-  let prev = null;
+  let prev: any = null;
   return command(
     'Edit material',
     (doc) => { prev = doc.materials[id]; return prev ? putEntity(doc, { ...prev, ...patch }) : doc; },
@@ -173,7 +173,7 @@ export function updateMaterial(id, patch) {
 
 /** Atomically add a material and assign it to a body (single undo step). */
 export function setBodyMaterial(bodyId, material) {
-  let prevBody = null;
+  let prevBody: any = null;
   return command(
     'Set material',
     (doc) => {

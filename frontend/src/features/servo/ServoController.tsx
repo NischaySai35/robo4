@@ -127,7 +127,7 @@ function onlineCount(defs, servos) {
 }
 
 function computeAlerts(defs, servos, totalMA) {
-  const out = [];
+  const out: any[] = [];
   for (const def of defs) {
     const sv = servos[def.id];
     if (!sv) continue;
@@ -203,7 +203,7 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
   const cy = 6 + R;              // circle centre near TOP of SVG → arc curves DOWNWARD (bowl ∪)
   const H  = cy + 12;    // just enough height for the bottom of the bowl
 
-  const svgRef   = useRef(null);
+  const svgRef   = useRef<any>(null);
   const dragging = useRef(false);
   const lastCmd  = useRef(0);
 
@@ -230,9 +230,9 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
 
   // Fill: CW (sweep=1) from left endpoint DOWNWARD to current.
   // Max span is 180° so large-arc is always 0.
-  let fillD = null;
+  let fillD: any = null;
   if (current != null && curClock != null && current > lo + 0.5) {
-    fillD = `M ${lx.toFixed(2)} ${ly.toFixed(2)} A ${R} ${R} 0 0 0 ${ex.toFixed(2)} ${ey.toFixed(2)}`;
+    fillD = `M ${lx.toFixed(2)} ${ly.toFixed(2)} A ${R} ${R} 0 0 0 ${ex!.toFixed(2)} ${ey!.toFixed(2)}`;
   }
 
   // Drag: pointer → servo degrees
@@ -307,7 +307,7 @@ function AngleGauge({ current, target, color, size = 100, lo = 0, hi = 360, onDr
 
       {/* target ring */}
       {tgtClock != null && (
-        <circle cx={tx.toFixed(2)} cy={ty.toFixed(2)} r={4}
+        <circle cx={tx!.toFixed(2)} cy={ty!.toFixed(2)} r={4}
           fill="rgba(255,255,255,0.9)" stroke={color} strokeWidth={2} />
       )}
 
@@ -549,7 +549,7 @@ function GroupControl({ defs, onCmd, onEstop }) {
 // ── SequenceRecorder ──────────────────────────────────────────────────────────
 
 function SequenceRecorder({ defs, servos, onCmd }) {
-  const [frames,   setFrames]   = useState([]);
+  const [frames,   setFrames]   = useState<any[]>([]);
   const [playing,  setPlaying]  = useState(false);
   const [playIdx,  setPlayIdx]  = useState(-1);
   const [playDelay, setPlayDelay] = useState(1500);
@@ -600,7 +600,7 @@ function SequenceRecorder({ defs, servos, onCmd }) {
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const data = JSON.parse(ev.target.result as string);
+        const data = JSON.parse((ev.target as any).result);
         if (Array.isArray(data)) setFrames(data);
       } catch {}
     };
@@ -659,7 +659,7 @@ function SequenceRecorder({ defs, servos, onCmd }) {
 // ── PresetPanel ───────────────────────────────────────────────────────────────
 
 function PresetPanel({ defs, servos, onApply }) {
-  const [presets,   setPresets]   = useState(() => {
+  const [presets,   setPresets]   = useState<any[]>(() => {
     try { return JSON.parse(localStorage.getItem('sc_presets') || '[]'); }
     catch { return []; }
   });
@@ -695,7 +695,7 @@ function PresetPanel({ defs, servos, onApply }) {
     const reader = new FileReader();
     reader.onload = ev => {
       try {
-        const data = JSON.parse(ev.target.result as string);
+        const data = JSON.parse((ev.target as any).result);
         if (Array.isArray(data)) persist([...presets, ...data.filter(p => p.name && p.snapshot)]);
       } catch {}
     };
@@ -761,7 +761,7 @@ const LEVEL_COLORS = {
 };
 
 function DebugLog({ log, onClear }) {
-  const bottomRef = useRef(null);
+  const bottomRef = useRef<any>(null);
   useEffect(() => {
     const el = bottomRef.current?.parentElement;
     if (el) el.scrollTop = el.scrollHeight;
@@ -845,13 +845,13 @@ export default function ServoController() {
   // 50ms polling) or 'stopped' (no requests at all until the user hits Connect).
   const [linkState,    setLinkState]    = useState('probing');
   const [probeNonce,   setProbeNonce]   = useState(0); // bump to restart probing
-  const [latencyMs,    setLatencyMs]    = useState(null);
+  const [latencyMs,    setLatencyMs]    = useState<any>(null);
   const [lastUpdateStr, setLastUpdateStr] = useState('—');
   const [servos,       setServos]       = useState(() => initServoState(defs));
-  const [wifiInfo,     setWifiInfo]     = useState(null);
-  const [alerts,       setAlerts]       = useState([]);
+  const [wifiInfo,     setWifiInfo]     = useState<any>(null);
+  const [alerts,       setAlerts]       = useState<any[]>([]);
 
-  const pollRef    = useRef(null);
+  const pollRef    = useRef<any>(null);
   const busyRef    = useRef(false);
   const dismissRef = useRef(new Set());
   const connectedRef = useRef(false);

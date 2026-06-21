@@ -54,7 +54,7 @@ export class WebSerialTransport {
   }
 
   async send(text) {
-    if (this._writer) await this._writer.write(this._enc.encode(text + '\n'));
+    if (this._writer) await this._writer.write(this._enc!.encode(text + '\n'));
   }
 
   async close() {

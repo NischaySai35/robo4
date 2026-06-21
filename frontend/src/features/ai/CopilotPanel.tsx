@@ -29,7 +29,7 @@ export default function CopilotPanel() {
   const [backend, setBackend] = useState(neuralEnabled() ? 'neural' : 'rules');
   const [neuralLoad, setNeuralLoad] = useState(neuralEnabled() ? 'ready' : 'idle'); // idle|loading|ready
   const [neuralPct, setNeuralPct] = useState(0);
-  const listRef = useRef(null);
+  const listRef = useRef<any>(null);
 
   // Detect a local Ollama model once (Electron only).
   useEffect(() => {

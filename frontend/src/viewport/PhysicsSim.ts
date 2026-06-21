@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import { GeometryType } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
 
-let _initPromise = null;
+let _initPromise: any = null;
 const ensureRapier = () => (_initPromise ??= RAPIER.init());
 
 const IDENT_Q = { x: 0, y: 0, z: 0, w: 1 };

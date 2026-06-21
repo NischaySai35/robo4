@@ -34,7 +34,7 @@ export function stripNegativeTranslate(control) {
   strip(g.picker?.translate);
 }
 
-let _circleTex = null;
+let _circleTex: any = null;
 
 /** A cached round-dot texture for vertex points (drawn once on a canvas). */
 export function circleSpriteTexture() {
@@ -42,7 +42,7 @@ export function circleSpriteTexture() {
   const s = 64;
   const cv = document.createElement('canvas');
   cv.width = cv.height = s;
-  const ctx = cv.getContext('2d');
+  const ctx = cv.getContext('2d')!;
   ctx.beginPath();
   ctx.arc(s / 2, s / 2, s / 2 - 2, 0, Math.PI * 2);
   ctx.fillStyle = '#ffffff';

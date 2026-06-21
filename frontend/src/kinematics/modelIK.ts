@@ -16,7 +16,7 @@ const MOVABLE = new Set(['revolute', 'continuous', 'prismatic']);
 /** Ordered movable joints from root → tip for the chain ending at tipId. */
 export function chainJoints(doc, tipId) {
   const childJoint = buildChildJointMap(doc);
-  const out = [];
+  const out: any[] = [];
   const seen = new Set();
   let cur = tipId;
   while (true) {

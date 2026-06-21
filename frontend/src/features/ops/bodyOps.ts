@@ -38,7 +38,7 @@ export function mirror(body, axis) {
 
 /** N-1 additional copies stepped by `offset` (array modifier). Returns the copies. */
 export function array(body, count, offset) {
-  const out = [];
+  const out: any[] = [];
   for (let i = 1; i < count; i++) {
     const t = structuredClone(body.transform);
     t.position = [

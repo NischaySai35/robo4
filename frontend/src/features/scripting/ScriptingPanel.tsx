@@ -27,7 +27,7 @@ export default function ScriptingPanel() {
   const select = useSelectionStore((s) => s.select);
   const [code, setCode] = useState(defaultScript);
   const [busy, setBusy] = useState(false);
-  const [output, setOutput] = useState([]);
+  const [output, setOutput] = useState<any[]>([]);
 
   const run = async () => {
     if (busy || !code.trim()) return;

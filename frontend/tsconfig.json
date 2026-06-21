@@ -1,17 +1,16 @@
 {
   // Transitional config: the whole codebase is TS and typecheck is green here.
-  // Full `strict` currently surfaces ~950 implicit-any errors in the dynamic
-  // viewport/AI/scripting glue — that's the next ratchet (noImplicitAny →
-  // strictNullChecks → strict), done incrementally, not a blocker.
+  // strict mode (incl. strictNullChecks) is ON and green. `noImplicitAny` is the
+  // last relaxation — turning it on flags ~600 un-annotated params in the dynamic
+  // viewport/AI/scripting glue (low-value `: any` busywork); enable when desired.
   "compilerOptions": {
     "target": "ESNext",
     "module": "ESNext",
     "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
-    "strict": false,
+    "strict": true,
     "noImplicitAny": false,
-    "strictNullChecks": false,
     "useUnknownInCatchVariables": false,
     "noEmit": true,
     "allowJs": true,

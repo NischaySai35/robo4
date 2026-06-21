@@ -48,7 +48,7 @@ export class JointRenderer {
     );
   }
 
-  sync(doc: Document, fk = null, loads = null) {
+  sync(doc: Document, fk: any = null, loads: any = null) {
     this._lastDoc = doc;
     this._lastFk = fk;
     this._lastLoads = loads;
@@ -59,6 +59,7 @@ export class JointRenderer {
       : 0;
 
     for (const j of Object.values(doc.joints)) {
+      if (!j.parentBodyId) continue;
       const parent = doc.bodies[j.parentBodyId];
       if (!parent) continue;
       // Only draw a joint when it (or one of its bodies) is selected.

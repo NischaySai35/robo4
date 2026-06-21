@@ -12,8 +12,8 @@ import { useThemeStore } from '@/state/themeStore';
 export default function CommandPalette({ open, onClose, page, setPage, onToggleConn }) {
   const [query, setQuery]   = useState('');
   const [active, setActive] = useState(0);
-  const inputRef = useRef(null);
-  const listRef  = useRef(null);
+  const inputRef = useRef<any>(null);
+  const listRef  = useRef<any>(null);
 
   const theme       = useThemeStore(s => s.theme);
   const toggleTheme = useThemeStore(s => s.toggleTheme);

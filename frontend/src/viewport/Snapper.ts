@@ -59,12 +59,12 @@ export function computeSnap(ndc, camera, dom, meshes) {
   const vc = new THREE.Vector3().fromBufferAttribute(pos, h.face.c).applyMatrix4(mw);
 
   // Vertex snap.
-  let bestV = null, bestVD = Infinity;
+  let bestV: any = null, bestVD = Infinity;
   for (const v of [va, vb, vc]) { const d = toPx(v).distanceTo(cursorPx); if (d < bestVD) { bestVD = d; bestV = v; } }
   if (bestVD <= SNAP_VTX_PX) return { point: bestV.clone(), type: 'vertex', normal };
 
   // Edge snap (closest point on the nearest triangle edge).
-  let bestE = null, bestED = Infinity;
+  let bestE: any = null, bestED = Infinity;
   for (const [a, b] of [[va, vb], [vb, vc], [vc, va]]) {
     const cp = closestPointOnSegment(h.point, a, b);
     const d = toPx(cp).distanceTo(cursorPx);

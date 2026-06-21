@@ -2,11 +2,11 @@ import './ConnectionWindow.css';
 import { useState, useRef, useCallback, useEffect } from 'react';
 
 export default function ConnectionWindow({ isOpen, onClose, children }) {
-  const [pos,     setPos]     = useState(null);          // null = CSS default (top-right)
+  const [pos,     setPos]     = useState<any>(null);          // null = CSS default (top-right)
   const [size,    setSize]    = useState({ w: 300, h: 430 });
   const [visible, setVisible] = useState(false);
 
-  const windowRef = useRef(null);
+  const windowRef = useRef<any>(null);
   const sizeRef   = useRef({ w: 300, h: 430 });
   useEffect(() => { sizeRef.current = size; }, [size]);
 

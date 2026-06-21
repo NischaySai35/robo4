@@ -32,7 +32,7 @@ function DocIndicator() {
 }
 
 function Dropdown({ items, onClose }) {
-  const [sub, setSub] = useState(null);
+  const [sub, setSub] = useState<any>(null);
   return (
     <div className="menu-dropdown">
       {items.map((it, i) => {
@@ -67,8 +67,8 @@ function Dropdown({ items, onClose }) {
 }
 
 export default function MenuBar({ onToggleConn }) {
-  const [open, setOpen] = useState(null);
-  const barRef = useRef(null);
+  const [open, setOpen] = useState<any>(null);
+  const barRef = useRef<any>(null);
 
   const canUndo        = useHistoryStore(s => s.canUndo);
   const canRedo        = useHistoryStore(s => s.canRedo);

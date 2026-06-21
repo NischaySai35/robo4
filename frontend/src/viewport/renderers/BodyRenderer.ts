@@ -47,7 +47,7 @@ export class BodyRenderer {
     this._selectedId = null;
   }
 
-  sync(doc: Document, fk = null) {
+  sync(doc: Document, fk: any = null) {
     const seen = new Set();
 
     for (const body of Object.values(doc.bodies)) {
@@ -91,7 +91,7 @@ export class BodyRenderer {
     for (const c of [...container.children]) { container.remove(c); this._disposeObject(c); }
 
     const g = body.visual?.geometry;
-    let child = null;
+    let child: any = null;
     // Edited mesh override (from Edit Mode) takes precedence — plain positions/indices.
     if (g?.editMesh?.positions?.length) {
       const geo = new THREE.BufferGeometry();
@@ -158,13 +158,13 @@ export class BodyRenderer {
 
   /** Raycast all model bodies; returns the hit bodyId or null (for canvas picking). */
   pickBodyAt(ndc, camera) {
-    const objs = [];
+    const objs: any[] = [];
     for (const { container } of this._entries.values()) objs.push(container);
     if (!objs.length) return null;
     _picker.setFromCamera(ndc, camera);
     const hits = _picker.intersectObjects(objs, true);
     for (const h of hits) {
-      let o = h.object;
+      let o: any = h.object;
       while (o) { if (o.userData?.bodyId) return o.userData.bodyId; o = o.parent; }
     }
     return null;
@@ -173,14 +173,14 @@ export class BodyRenderer {
   /** Raycast bodies and return the hit face as { bodyId, point, normal } in world
    *  space (for the mate tool), or null. */
   pickFaceAt(ndc, camera) {
-    const objs = [];
+    const objs: any[] = [];
     for (const { container } of this._entries.values()) objs.push(container);
     if (!objs.length) return null;
     _picker.setFromCamera(ndc, camera);
     const hits = _picker.intersectObjects(objs, true);
     for (const h of hits) {
       if (!h.face) continue;
-      let o = h.object, bodyId = null;
+      let o: any = h.object, bodyId: any = null;
       while (o) { if (o.userData?.bodyId) { bodyId = o.userData.bodyId; break; } o = o.parent; }
       if (!bodyId) continue;
       const normal = h.face.normal.clone()

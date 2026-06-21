@@ -82,7 +82,7 @@ function entityByName(doc: Document, kind: any, name: any) {
 }
 
 export function sanitizePlan(plan: any, doc: Document) {
-  const safe = [];
+  const safe: any[] = [];
   for (const action of plan?.actions ?? []) {
     if (!action || typeof action !== 'object') continue;
 
@@ -102,7 +102,7 @@ export function sanitizePlan(plan: any, doc: Document) {
         name: String(action.name || `${shape} body`).slice(0, 60),
         position: vec3(action.position, [Object.keys(doc.bodies).length * 1.1, 0.6, 3.5]),
         scale: vec3(action.scale, [1, 1, 1]),
-        color: colorFromHex(action.color) ? action.color : null,
+        color: colorFromHex(action.color) ? action.color : undefined,
       });
     } else if (action.type === 'set_joint') {
       const joint = findJoint(doc, action);
@@ -125,7 +125,7 @@ export function sanitizePlan(plan: any, doc: Document) {
           name: typeof action.name === 'string' ? action.name.slice(0, 60) : null,
           position: Array.isArray(action.position) ? vec3(action.position, body.transform.position) : null,
           scale: Array.isArray(action.scale) ? vec3(action.scale, body.transform.scale) : null,
-          color: colorFromHex(action.color) ? action.color : null,
+          color: colorFromHex(action.color) ? action.color : undefined,
         });
       }
     } else if (action.type === 'select_entity' || action.type === 'delete_entity') {
@@ -149,7 +149,7 @@ export function sanitizePlan(plan: any, doc: Document) {
 export function localPlan(input: any, doc: Document) {
   const text = input.trim();
   const lower = text.toLowerCase();
-  const actions = [];
+  const actions: any[] = [];
 
   if (/\b(fit|frame|zoom)\b.*\b(view|camera|scene)\b/.test(lower)) {
     return { reply: 'I can fit the camera to the model.', actions: [{ type: 'fit_view' }], source: 'local' };
@@ -280,8 +280,8 @@ export function buildSerialArmEntities(action) {
     density: 1200,
   });
 
-  const bodies = [];
-  const joints = [];
+  const bodies: any[] = [];
+  const joints: any[] = [];
   const base = makeBody({
     name: `${prefix} base`,
     visual: { geometry: makeGeometry(GeometryType.CYLINDER, { radius: 0.32, length: 0.22 }), materialId: material.id, origin: identityOrigin() },
@@ -319,7 +319,7 @@ export function buildSerialArmEntities(action) {
 }
 
 export function executeAiPlan(plan: any, { doc, dispatch, select, bridge }: { doc: Document; dispatch: any; select: any; bridge: any }) {
-  const results = [];
+  const results: any[] = [];
   const executable = sanitizePlan(plan, doc);
   for (const action of executable.actions ?? []) {
     if (action.type === 'build_serial_arm') {
@@ -331,7 +331,7 @@ export function executeAiPlan(plan: any, { doc, dispatch, select, bridge }: { do
     } else if (action.type === 'add_primitive') {
       const material = action.color ? makeMaterial({
         name: `${action.name || action.shape} material`,
-        color: colorFromHex(action.color),
+        color: colorFromHex(action.color) ?? undefined,
       }) : null;
       const body = makeBody({
         name: action.name || `${action.shape || 'Box'} body`,
@@ -364,7 +364,7 @@ export function executeAiPlan(plan: any, { doc, dispatch, select, bridge }: { do
       if (action.color) {
         dispatch(commands.setBodyMaterial(body.id, makeMaterial({
           name: `${body.name} material`,
-          color: colorFromHex(action.color),
+          color: colorFromHex(action.color) ?? undefined,
         })));
       }
       select(body.id, 'body');

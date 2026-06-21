@@ -164,7 +164,7 @@ export function from2D(pt2, node3d, mode) {
  * @param {{x,y}|null}    anchorDir incoming direction of the root rod,
  *                                  constrains the first joint from anchor.
  */
-function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir = null) {
+function fabrik2D(pts2: any, segLens: any, anchorIdx: any, targetIdx: any, target: any, limit: any, anchorDir: { x: number; y: number } | null = null) {
   const n = pts2.length;
   const pts = pts2.map(p => ({ ...p }));
   const limitHits = new Array(n).fill(false);
@@ -316,7 +316,7 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         else { dx = (pts[i].x - prev.x) / d; dy = (pts[i].y - prev.y) / d; }
 
         // Incoming direction for constraint
-        let inX = null, inY = null;
+        let inX: number | null = null, inY: number | null = null;
         if (i === anchorIdx + 1 && anchorDir) {
           inX = anchorDir.x; inY = anchorDir.y;
         } else if (i >= anchorIdx + 2) {
@@ -341,8 +341,8 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
           lastAngles[i] = clamped;
           if (hitLimit) limitHits[i - 1] = true;
           const cos = Math.cos(clamped), sin = Math.sin(clamped);
-          dx = inX * cos - inY * sin;
-          dy = inX * sin + inY * cos;
+          dx = (inX ?? 0) * cos - (inY ?? 0) * sin;
+          dy = (inX ?? 0) * sin + (inY ?? 0) * cos;
         }
 
         pts[i] = { x: prev.x + dx * segLen, y: prev.y + dy * segLen };
@@ -357,7 +357,7 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
         if (d < 1e-10) { dx = -1; dy = 0; }
         else { dx = (pts[i].x - prev.x) / d; dy = (pts[i].y - prev.y) / d; }
 
-        let inX = null, inY = null;
+        let inX: number | null = null, inY: number | null = null;
         if (i === anchorIdx - 1 && anchorDir) {
           inX = anchorDir.x; inY = anchorDir.y;
         } else if (i <= anchorIdx - 2) {
@@ -381,8 +381,8 @@ function fabrik2D(pts2, segLens, anchorIdx, targetIdx, target, limit, anchorDir 
           lastAngles[i] = clamped;
           if (hitLimit) limitHits[i + 1] = true;
           const cos = Math.cos(clamped), sin = Math.sin(clamped);
-          dx = inX * cos - inY * sin;
-          dy = inX * sin + inY * cos;
+          dx = (inX ?? 0) * cos - (inY ?? 0) * sin;
+          dy = (inX ?? 0) * sin + (inY ?? 0) * cos;
         }
 
         pts[i] = { x: prev.x + dx * segLen, y: prev.y + dy * segLen };
@@ -639,7 +639,7 @@ export function extractJointAngles(nodes3d, mode, cubeRollAngles) {
     }
   }
 
-  const angles = [];
+  const angles: number[] = [];
   angles.push(rollL);
 
   for (let j = 0; j < nodes3d.length - 2; j++) {

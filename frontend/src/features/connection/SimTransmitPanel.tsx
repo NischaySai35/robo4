@@ -49,7 +49,7 @@ export default function SimTransmitPanel() {
 
   const anglesRef  = useRef([0, 0, 0, 0, 0, 0]);
   const rootIdRef  = useRef('R1');
-  const logBodyRef = useRef(null);
+  const logBodyRef = useRef<any>(null);
 
   // Subscribe to armStore changes without causing a re-render
   useEffect(() => {

@@ -83,7 +83,7 @@ export default function RightDock() {
   // the Edit panel) rather than driven through an effect/the dock's `active` —
   // this guarantees the Edit panel appears the instant you enter, with no race.
   // `editPick` lets the user still switch panels (or collapse) during Edit Mode.
-  const [editPick, setEditPick] = useState('edit');
+  const [editPick, setEditPick] = useState<string | null>('edit');
   useEffect(() => { if (editActive) setEditPick('edit'); }, [editActive]);
   const shownId = editActive ? editPick : active;
   const [width, setWidth] = useState(() => {

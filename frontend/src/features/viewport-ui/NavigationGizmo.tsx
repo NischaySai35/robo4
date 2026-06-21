@@ -40,12 +40,12 @@ const PERSP_VIEW = { pos: { x: 0, y: 7, z: 9 }, lookAt: { x: 0, y: 0, z: 0 } };
 const _tmpV = new THREE.Vector3();
 
 export default function NavigationGizmo() {
-  const [projected, setProjected] = useState([]);
-  const [hovered, setHovered]     = useState(null);
-  const rafRef     = useRef(null);
+  const [projected, setProjected] = useState<any[]>([]);
+  const [hovered, setHovered]     = useState<string | null>(null);
+  const rafRef     = useRef<number | null>(null);
   const dragging   = useRef(false);
   const lastPos    = useRef({ x: 0, y: 0 });
-  const svgRef     = useRef(null);
+  const svgRef     = useRef<any>(null);
 
   useEffect(() => {
     const update = () => {
@@ -68,7 +68,7 @@ export default function NavigationGizmo() {
       rafRef.current = requestAnimationFrame(update);
     };
     rafRef.current = requestAnimationFrame(update);
-    return () => cancelAnimationFrame(rafRef.current);
+    return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); };
   }, []);
 
   const snap = useCallback((key) => {

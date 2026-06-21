@@ -22,9 +22,9 @@ const INTENTS = [
 
 const THRESHOLD = 0.45; // min cosine similarity to accept an intent
 
-let _extractor = null;
-let _loading = null;
-let _intentVecs = null; // [{ id, vecs: Float32Array[] }]
+let _extractor: any = null;
+let _loading: any = null;
+let _intentVecs: any = null; // [{ id, vecs: Float32Array[] }]
 
 /** Lazy-load the embedding pipeline and precompute the intent vectors. */
 export async function ensureLocalModel(onProgress) {
@@ -40,7 +40,7 @@ export async function ensureLocalModel(onProgress) {
       const embed = async (t) => (await extractor(t, { pooling: 'mean', normalize: true })).data;
       _intentVecs = [];
       for (const intent of INTENTS) {
-        const vecs = [];
+        const vecs: any[] = [];
         for (const p of intent.phrases) vecs.push(await embed(p));
         _intentVecs.push({ id: intent.id, vecs });
       }
@@ -57,7 +57,7 @@ const dot = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] 
 export async function classifyIntent(text) {
   if (!_extractor || !_intentVecs) return null;
   const v = (await _extractor(text, { pooling: 'mean', normalize: true })).data;
-  let best = null;
+  let best: any = null;
   for (const { id, vecs } of _intentVecs) {
     for (const iv of vecs) {
       const score = dot(v, iv); // vectors are normalised → cosine = dot

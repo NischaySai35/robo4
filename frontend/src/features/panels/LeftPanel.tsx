@@ -59,7 +59,7 @@ export default function LeftPanel({ style }) {
   const joints = Object.values(doc.joints);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [editing, setEditing] = useState(null); // { id, kind, text } | null
+  const [editing, setEditing] = useState<any>(null); // { id, kind, text } | null
 
   // ── Build actions ──────────────────────────────────────────────────────────
   const addPrimitive = (type, params) => {
@@ -78,6 +78,7 @@ export default function LeftPanel({ style }) {
     if (bodies.length < 2) { alert('Add at least 2 bodies first.'); return; }
     const b1 = (selectedId && doc.bodies[selectedId]) ? doc.bodies[selectedId] : bodies[bodies.length - 2];
     const b2 = bodies.find((b) => b.id !== b1.id);
+    if (!b2) return;
     const { origin, childRest } = jointFramesForBodies(b1, b2);
     const j = makeJoint({
       name: `Joint ${joints.length + 1}`, type: JointType.REVOLUTE,

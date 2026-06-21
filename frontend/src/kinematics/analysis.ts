@@ -41,7 +41,7 @@ function originMat(o) {
 export function geometryVolume(g: Partial<Geometry> = {}, s = [1, 1, 1]) {
   const [sx, sy, sz] = s.map((v) => Math.abs(v));
   switch (g.type) {
-    case 'box': { const [x, y, z] = g.size ?? [1, 1, 1]; return x * sx * y * sy * z * sz; }
+    case 'box': { const [x, y, z] = (g.size as [number, number, number]) ?? [1, 1, 1]; return x * sx * y * sy * z * sz; }
     case 'sphere': { const r = (g.radius ?? 0.5) * Math.max(sx, sy, sz); return (4 / 3) * Math.PI * r ** 3; }
     case 'cylinder':
     case 'capsule': { const r = g.radius ?? 0.5; const l = g.length ?? 1; return Math.PI * (r * sx) * (r * sy) * (l * sz); }
@@ -122,7 +122,7 @@ export function jointLoads(doc: Document, fk = computeFK(doc)) {
 
   const out = new Map();
   for (const j of Object.values(doc.joints)) {
-    const parent = doc.bodies[j.parentBodyId];
+    const parent = j.parentBodyId ? doc.bodies[j.parentBodyId] : null;
     if (!parent) { out.set(j.id, { torque: 0, current: estimateCurrent(0), overload: false }); continue; }
     const pMat = fk.get(j.parentBodyId)?.matrix?.clone() ?? mat(parent.transform);
     const jw = pMat.multiply(originMat(j.origin));

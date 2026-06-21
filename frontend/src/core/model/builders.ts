@@ -6,7 +6,8 @@
  * arm becomes one call to buildSerialChain, proving the generic model represents
  * the real robot without any bespoke kinematics class.
  */
-import { makeBody, makeJoint, makeGeometry, GeometryType, JointType } from './entities';
+import { makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin } from './entities';
+import type { Document } from './entities';
 import { putEntity } from './graph';
 
 /**
@@ -20,17 +21,17 @@ import { putEntity } from './graph';
  *                                joint i connects link i (parent) → link i+1 (child)
  * @returns {{ doc, bodyIds:string[], jointIds:string[] }}
  */
-export function buildSerialChain(doc, { name = 'Chain', links = [], joints = [] }) {
+export function buildSerialChain(doc: Document, { name = 'Chain', links = [], joints = [] }: { name?: string; links?: any[]; joints?: any[] }) {
   let d = doc;
-  const bodyIds = [];
-  const jointIds = [];
+  const bodyIds: string[] = [];
+  const jointIds: string[] = [];
 
   links.forEach((l, i) => {
     const body = makeBody({
       name: l.name ?? `${name} L${i + 1}`,
       transform: l.transform,
       visual: l.geometry
-        ? { geometry: l.geometry, materialId: l.materialId ?? null, origin: undefined }
+        ? { geometry: l.geometry, materialId: l.materialId ?? null, origin: identityOrigin() }
         : undefined,
     });
     // fall back to a default geometry/origin via factory if not provided

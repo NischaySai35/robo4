@@ -486,7 +486,7 @@ export class ModelEditor {
     const doc: Document = this._doc ?? useModelStore.getState().doc;
     const joint = doc.joints[this._attachedJointId];
     if (!joint) return;
-    const parentMat = this._fk?.get(joint.parentBodyId)?.matrix ?? mat(doc.bodies[joint.parentBodyId].transform);
+    const parentMat = this._fk?.get(joint.parentBodyId)?.matrix ?? mat(doc.bodies[joint.parentBodyId as string]?.transform);
     const world = new THREE.Matrix4().compose(
       this._jointProxy.position.clone(),
       this._jointProxy.quaternion.clone(),

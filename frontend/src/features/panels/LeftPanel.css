@@ -797,3 +797,15 @@
 .lp-mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .lp-mode-hint { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-top: 7px; }
 .lp-mode-hint strong { color: var(--text); }
+
+.lp-xform .lp-mode-btn { font-size: 12px; padding: 7px 3px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.lp-xform-key {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-app, rgba(127,127,127,0.15));
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.lp-mode-btn--on .lp-xform-key { color: var(--accent); border-color: var(--accent); }

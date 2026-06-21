@@ -1,0 +1,29 @@
+{
+  // Transitional config: the whole codebase is TS and typecheck is green here.
+  // Full `strict` currently surfaces ~950 implicit-any errors in the dynamic
+  // viewport/AI/scripting glue — that's the next ratchet (noImplicitAny →
+  // strictNullChecks → strict), done incrementally, not a blocker.
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "strict": false,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "useUnknownInCatchVariables": false,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "release"]
+}

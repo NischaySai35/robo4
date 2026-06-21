@@ -32,3 +32,32 @@
 .an-table tr.an-over td { color: var(--danger); font-weight: 700; }
 
 .an-foot { font-size: 10px; color: var(--text-dim); font-family: var(--font-mono); }
+
+.an-section {
+  margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border);
+  font-family: var(--font-mono); font-size: 11px; font-weight: 700;
+  letter-spacing: 2px; color: var(--text-dim);
+}
+
+.an-chart { display: flex; flex-direction: column; gap: 6px; }
+.an-chart-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+.an-chart-title { font-size: 12px; color: var(--text); }
+.an-chart-head select {
+  background: var(--bg); color: var(--text); border: 1px solid var(--border);
+  border-radius: 6px; font-size: 11px; padding: 2px 4px;
+}
+.an-chart-wrap { position: relative; width: 100%; }
+.an-chart-host { width: 100%; }
+.an-chart-idle {
+  font-size: 11px; color: var(--text-dim); line-height: 1.5; text-align: center;
+  padding: 10px;
+}
+.an-chart-overlay {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--bg-panel) 70%, transparent);
+  border-radius: 8px; pointer-events: none;
+}
+/* uPlot legend: compact + theme-aware */
+.an-chart .u-legend { font-size: 10px; }
+.an-chart .u-legend .u-marker { width: 10px; height: 10px; }

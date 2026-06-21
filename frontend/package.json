@@ -9,6 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "electron": "node electron/launch.cjs",
     "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:127.0.0.1:5173 && node electron/launch.cjs\"",
@@ -19,19 +20,24 @@
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
     "@huggingface/transformers": "^3.8.1",
-    "postprocessing": "^6.36.3",
+    "postprocessing": "6.36.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "three": "^0.164.1",
+    "uplot": "^1.6.32",
     "zustand": "^4.5.2"
   },
   "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^9.1.0",
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.35.1",
+    "typescript": "^6.0.3",
     "vite": "^5.3.4",
     "wait-on": "^8.0.1"
   },

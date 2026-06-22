@@ -2,7 +2,7 @@
   "name": "robo4-simulator",
   "version": "1.0.0",
   "private": true,
-  "description": "TETROBOT — GUI-first modular robotics modeling & simulation platform",
+  "description": "TETROBOT - GUI-first modular robotics modeling and simulation platform",
   "author": "Nischay Sai <nischaysai35@gmail.com>",
   "type": "module",
   "main": "electron/main.cjs",
@@ -14,12 +14,14 @@
     "electron": "node electron/launch.cjs",
     "electron:dev": "concurrently -k \"vite\" \"wait-on tcp:127.0.0.1:5173 && node electron/launch.cjs\"",
     "electron:build": "vite build && electron-builder",
+    "release": "vite build && electron-builder --publish always",
     "dist": "vite build && electron-builder --dir",
     "icons": "node scripts/make-icons.cjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
     "@huggingface/transformers": "^3.8.1",
+    "occt-import-js": "^0.0.23",
     "postprocessing": "6.36.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -51,6 +53,13 @@
     "directories": {
       "output": "release"
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "NischaySai35",
+        "repo": "robo4"
+      }
+    ],
     "win": {
       "target": "nsis",
       "icon": "electron/icon.ico"
@@ -60,7 +69,7 @@
       "perMachine": false,
       "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": false,
+      "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
       "menuCategory": "TETROBOT",
       "runAfterFinish": true,
@@ -70,8 +79,7 @@
       "uninstallerIcon": "electron/icon.ico",
       "installerHeaderIcon": "electron/icon.ico",
       "uninstallDisplayName": "TETROBOT-Demo-NischaySai",
-      "deleteAppDataOnUninstall": false,
-      "include": "electron/installer.nsh"
+      "deleteAppDataOnUninstall": false
     }
   }
 }

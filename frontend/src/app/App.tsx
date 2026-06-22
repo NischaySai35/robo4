@@ -323,6 +323,13 @@ export default function App() {
   // then register the motion stack (move_group action + planning service).
   useEffect(() => { initRuntimeBridge(); initMotionRuntime(); }, []);
 
+  // Quietly check for app updates a few seconds after launch (desktop only; only
+  // prompts if a newer version is actually available).
+  useEffect(() => {
+    const id = setTimeout(() => { import('@/features/update/checkForUpdates').then((m) => m.checkForUpdates(true)); }, 5000);
+    return () => clearTimeout(id);
+  }, []);
+
   // Apply the theme to <html> so CSS [data-theme="dark"] overrides take effect.
   const theme = useThemeStore(s => s.theme);
   useEffect(() => {

@@ -6,7 +6,8 @@ import { useDocStore } from '@/state/docStore';
 import { useDockStore } from '@/state/dockStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { newProject, newRobotArm, newHumanoid, openProject, saveProject, saveProjectAs, exportModel } from '@/core/serialization/projectActions';
-import { importMesh } from '@/features/import/importMesh';
+import { importMesh, importURDF } from '@/features/import/importMesh';
+import { checkForUpdates, getAppVersion } from '@/features/update/checkForUpdates';
 import { exportRobot } from '@/features/export/exportRobot';
 
 const SEP = { sep: true };
@@ -99,13 +100,14 @@ export default function MenuBar({ onToggleConn }: any) {
       { label: 'Save Project As…', onClick: saveProjectAs },
       SEP,
       { label: 'Import', submenu: [
-        { label: 'Mesh — STL…',        onClick: () => importMesh(['stl']) },
-        { label: 'Mesh — OBJ…',        onClick: () => importMesh(['obj']) },
-        { label: 'Any mesh (STL/OBJ)…', onClick: () => importMesh() },
+        { label: 'Mesh — STL…',          onClick: () => importMesh(['stl']) },
+        { label: 'Mesh — OBJ…',          onClick: () => importMesh(['obj']) },
+        { label: 'glTF / GLB…',          onClick: () => importMesh(['gltf', 'glb']) },
+        { label: 'USD / USDZ…',          onClick: () => importMesh(['usd', 'usdz', 'usda']) },
+        { label: 'STEP / STP…',          onClick: () => importMesh(['step', 'stp']) },
+        { label: 'Any mesh…',            onClick: () => importMesh() },
         SEP,
-        { label: 'glTF / GLB… (soon)',  disabled: true, onClick: () => {} },
-        { label: 'STEP / STP… (soon)',  disabled: true, onClick: () => {} },
-        { label: 'URDF Project… (soon)', disabled: true, onClick: () => {} },
+        { label: 'URDF Project…',        onClick: () => importURDF() },
       ] },
       { label: 'Export', submenu: [
         { label: 'OBJ',  onClick: () => exportModel('obj') },
@@ -139,9 +141,11 @@ export default function MenuBar({ onToggleConn }: any) {
         onClick: () => useThemeStore.getState().toggleTheme() },
     ],
     Help: [
+      { label: 'Check for Updates…', onClick: () => checkForUpdates(false) },
+      SEP,
       { label: 'Keyboard Shortcuts', onClick: () => alert(
         'Shortcuts\n────────────\nCtrl+Z              Undo\nCtrl+Y / Ctrl+Shift+Z   Redo\nCtrl+K              Command palette\n\nViewport\n────────────\nClick a part        Select · gizmo\nClick empty         Deselect\nScroll              Zoom\nRight-drag          Orbit\nMiddle / Shift-drag Pan') },
-      { label: 'About TETROBOT', onClick: () => alert('TETROBOT — Modular Robotics\nby Nischay Sai') },
+      { label: 'About TETROBOT', onClick: async () => alert(`TETROBOT — Modular Robotics\nby Nischay Sai${(await getAppVersion()) ? `\n\nVersion ${await getAppVersion()}` : ''}`) },
     ],
   };
 

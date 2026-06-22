@@ -28,4 +28,16 @@ contextBridge.exposeInMainWorld('tetrobot', {
   // Local offline AI via Ollama (no key, no internet). Falls back gracefully.
   askOllama: (opts) => ipcRenderer.invoke('ai:ollama', opts),
   ollamaStatus: () => ipcRenderer.invoke('ai:ollama-status'),
+
+  // ── Auto-update ──────────────────────────────────────────────────────────
+  appVersion: () => ipcRenderer.invoke('app:version'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
+  downloadUpdate: () => ipcRenderer.invoke('update:download'),
+  installUpdate: () => ipcRenderer.invoke('update:install'),
+  // Subscribe to update lifecycle events; returns an unsubscribe fn.
+  onUpdateStatus: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('update:status', h);
+    return () => ipcRenderer.removeListener('update:status', h);
+  },
 });

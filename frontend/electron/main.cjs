@@ -11,11 +11,42 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs/promises');
+const { autoUpdater } = require('electron-updater');
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
 const isDev = !app.isPackaged;
 
 let mainWindow = null;
+
+// ── Auto-update (electron-updater) ───────────────────────────────────────────
+// Reads the update feed from the GitHub release set in package.json "build.publish".
+// We don't auto-download silently — the user clicks "Check for Updates" (Help menu),
+// confirms the download, then confirms the restart-to-install. Update files are
+// applied by the NSIS updater, which closes the running app and swaps in the new one.
+autoUpdater.autoDownload = false;
+autoUpdater.autoInstallOnAppQuit = true;
+
+function pushUpdate(status, data = {}) {
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('update:status', { status, ...data });
+}
+autoUpdater.on('checking-for-update', () => pushUpdate('checking'));
+autoUpdater.on('update-available',     (i) => pushUpdate('available', { version: i.version }));
+autoUpdater.on('update-not-available', (i) => pushUpdate('none',      { version: i.version }));
+autoUpdater.on('download-progress',    (p) => pushUpdate('downloading', { percent: Math.round(p.percent) }));
+autoUpdater.on('update-downloaded',    (i) => pushUpdate('downloaded', { version: i.version }));
+autoUpdater.on('error',                (e) => pushUpdate('error',     { message: String(e?.message || e) }));
+
+ipcMain.handle('update:check', async () => {
+  if (isDev) return { ok: false, dev: true };
+  try { const r = await autoUpdater.checkForUpdates(); return { ok: true, version: r?.updateInfo?.version }; }
+  catch (e) { return { ok: false, error: String(e?.message || e) }; }
+});
+ipcMain.handle('update:download', async () => {
+  try { await autoUpdater.downloadUpdate(); return { ok: true }; }
+  catch (e) { return { ok: false, error: String(e?.message || e) }; }
+});
+ipcMain.handle('update:install', () => { autoUpdater.quitAndInstall(); });
+ipcMain.handle('app:version', () => app.getVersion());
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -59,6 +90,8 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow();
+  // (The renderer runs a quiet check shortly after launch via window.tetrobot —
+  // it only prompts if an update is actually available.)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });

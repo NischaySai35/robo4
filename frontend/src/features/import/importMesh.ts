@@ -12,7 +12,8 @@ import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useBusyStore } from '@/state/busyStore';
 import { commands } from '@/core/commands/index';
-import { getAssetObject } from '@/viewport/renderers/AssetCache';
+import { getAssetObject, preloadAsset } from '@/viewport/renderers/AssetCache';
+import { bridge } from '@/viewport/cameraBridge';
 import {
   makeAsset, makeBody, makeGeometry, GeometryType, identityOrigin,
 } from '@/core/model/index';
@@ -42,7 +43,7 @@ function importScale(asset: any) {
   return [f, f, f];
 }
 
-const SUPPORTED = ['stl', 'obj'];
+const SUPPORTED = ['stl', 'obj', 'gltf', 'glb', 'usd', 'usdz', 'usda', 'step', 'stp'];
 
 /** Import a mesh. Optionally restrict the picker to `exts` (e.g. ['stl']). */
 export async function importMesh(exts?: string[]) {
@@ -54,14 +55,18 @@ export async function importMesh(exts?: string[]) {
 
   const ext = (picked.name.split('.').pop() || '').toLowerCase();
   if (!SUPPORTED.includes(ext)) {
-    alert(`Unsupported format ".${ext}". Supported now: STL, OBJ (STEP & glTF coming soon).`);
+    alert(`Unsupported format ".${ext}". Supported: STL, OBJ, glTF/GLB, USD/USDZ, STEP/STP.`);
     return;
   }
 
-  // Parsing/tessellating a large CAD mesh can take a moment; show the bottom
-  // loading bar and yield a frame so it paints before the heavy work runs.
-  await useBusyStore.getState().run(`Importing ${picked.name}…`, () => {
+  // Parsing/tessellating a CAD/STEP mesh can take a moment (STEP/glTF parse async via
+  // WASM/loader); show the bottom loading bar and preload BEFORE adding the body so it
+  // renders the same frame it's added.
+  await useBusyStore.getState().run(`Importing ${picked.name}…`, async () => {
     const asset = makeAsset({ name: picked.name, format: ext, data: bytesToBase64(picked.bytes) });
+    const ok = await preloadAsset(asset);
+    if (!ok) { alert(`Could not parse "${picked.name}". The file may be malformed or an unsupported variant.`); return; }
+
     const doc = useModelStore.getState().doc;
     const n = Object.keys(doc.bodies).length;
     const scale = importScale(asset) as [number, number, number]; // bring huge mm-unit CAD exports into scene scale
@@ -76,6 +81,31 @@ export async function importMesh(exts?: string[]) {
     dispatch(commands.addAsset(asset));
     dispatch(commands.addBody(body));
     useSelectionStore.getState().select(body.id, 'body');
+    // Frame the imported part once the renderer has synced the new body.
+    setTimeout(() => bridge.fitCamera?.(), 80);
+  });
+}
+
+/** Import a URDF robot description (.urdf / .xml) as bodies + joints. */
+export async function importURDF() {
+  let picked: any;
+  try { picked = await pickFile(['urdf', 'xml']); }
+  catch (e) { alert(`Could not open file: ${e.message}`); return; }
+  if (!picked) return;
+
+  await useBusyStore.getState().run(`Importing ${picked.name}…`, async () => {
+    const { parseURDF } = await import('@/core/serialization/importers/urdf');
+    let result;
+    try { result = parseURDF(new TextDecoder().decode(picked.bytes)); }
+    catch (e: any) { alert(`URDF import failed: ${e.message}`); return; }
+    if (!result.entities.length) { alert('No links found in the URDF.'); return; }
+
+    useModelStore.getState().dispatch(commands.addEntities(result.entities, `Import URDF: ${result.robotName}`));
+    // select the first body (root) and frame the model
+    const firstBody = result.entities.find((e: any) => e.kind === 'body');
+    if (firstBody) useSelectionStore.getState().select(firstBody.id, 'body');
+    setTimeout(() => bridge.fitCamera?.(), 80);
+    if (result.warnings.length) console.warn('URDF import warnings:\n' + result.warnings.join('\n'));
   });
 }
 

@@ -20,6 +20,7 @@ import { EditModeController } from '@/viewport/EditModeController';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useDockStore } from '@/state/dockStore';
+import { usePageStore } from '@/state/pageStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
@@ -233,7 +234,16 @@ export class ModelEditor {
 
     const anim = useAnimationStore.getState();
     if (anim.preview) {
-      if (anim.playing) anim.advance(1 / 60);
+      if (anim.playing) {
+        // Advance by REAL elapsed time so a 4 s clip takes 4 s regardless of frame
+        // rate (was a fixed 1/60 step → slow on heavy scenes).
+        const now = performance.now();
+        const dt = this._lastAnimTime ? Math.min(0.1, (now - this._lastAnimTime) / 1000) : 1 / 60;
+        this._lastAnimTime = now;
+        anim.advance(dt);
+      } else {
+        this._lastAnimTime = 0;
+      }
       // Drive the pose from the clip ONLY while actually playing or when the
       // playhead just moved (scrub). When paused on a frame we leave the model
       // alone, so live edits (IK drag, gizmo) are visible and can be keyframed —
@@ -251,6 +261,7 @@ export class ModelEditor {
     } else if (this._animActive) {
       this._animActive = false;
       this._lastPlayhead = -1;
+      this._lastAnimTime = 0;
       this._syncModel(this._doc); // restore model pose
     }
   }
@@ -369,7 +380,13 @@ export class ModelEditor {
     // Inspector auto-opens to its editor).
     const jointHit = this.jointRenderer.pickJointAt(ndc, this.camera);
     if (jointHit) {
-      if (!(sel.kind === 'joint' && sel.selectedId === jointHit)) sel.select(jointHit, 'joint');
+      if (sel.kind === 'joint' && sel.selectedId === jointHit) {
+        // Clicking the already-selected joint reveals its move gizmo (first time),
+        // then deselects — so it's never "stuck" on.
+        if (!sel.showGizmo) sel.revealGizmo(); else sel.clear();
+      } else {
+        sel.select(jointHit, 'joint');
+      }
       return;
     }
 
@@ -396,10 +413,14 @@ export class ModelEditor {
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
     const sel = useSelectionStore.getState();
+    // Double-clicking a part jumps to the Editor page with its Properties open.
+    const toEditor = () => { usePageStore.getState().setPage('editor'); useDockStore.getState().open('inspector'); };
     const jointHit = this.jointRenderer.pickJointAt(ndc, this.camera);
-    if (jointHit) { sel.select(jointHit, 'joint'); useDockStore.getState().open('inspector'); return; }
+    if (jointHit) { sel.select(jointHit, 'joint'); toEditor(); return; }
     const hitId = this.bodyRenderer.pickBodyAt(ndc, this.camera);
-    if (hitId) { sel.select(hitId, 'body'); useDockStore.getState().open('inspector'); }
+    if (hitId) { sel.select(hitId, 'body'); toEditor(); return; }
+    // Double-click on empty 3D space → deselect everything (hides gizmo + joint arrows).
+    if (sel.selectedId) sel.clear();
   }
 
   // ── Mate tool ───────────────────────────────────────────────────────────────
@@ -498,8 +519,11 @@ export class ModelEditor {
       this._attachTo(null); // Edit Mode is on → no body/joint gizmo from this editor
     } else if (jointId) {
       // Joints support move + rotate of the pivot (scale is meaningless → translate).
+      // Like bodies, the gizmo only appears once revealed (Move/Rotate toggle), so a
+      // plain selection just shows the small axis arrow — not the move handles.
       this.transform.setMode(s.gizmoMode === 'rotate' ? 'rotate' : 'translate');
-      this._attachToJoint(jointId);
+      this._attachTo(null);
+      if (s.showGizmo) this._attachToJoint(jointId);
     } else {
       if (s.gizmoMode) this.transform.setMode(s.gizmoMode);
       // Body gizmo only appears once revealed (second click / Move-Rotate-Scale).

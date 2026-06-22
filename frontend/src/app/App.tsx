@@ -5,6 +5,7 @@ import SimCanvas from '@/features/canvas/SimCanvas';
 import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
 import ViewControls from '@/features/viewport-ui/ViewControls';
 import HomeButton from '@/features/viewport-ui/HomeButton';
+import IkIndicator from '@/features/viewport-ui/IkIndicator';
 import ServoController from '@/features/servo/ServoController';
 import SimTransmitPanel from '@/features/connection/SimTransmitPanel';
 import ConnectionWindow from '@/features/connection/ConnectionWindow';
@@ -16,6 +17,7 @@ import HumanoidActionBar from '@/features/humanoid/HumanoidActionBar';
 import LoadingBar from '@/features/common/LoadingBar';
 import CommandPalette from '@/features/command-palette/CommandPalette';
 import { useIntegrationStore } from '@/state/integrationStore';
+import { useHardwareStore } from '@/state/hardwareStore';
 import { useThemeStore } from '@/state/themeStore';
 import { useDocStore } from '@/state/docStore';
 import { useModelStore } from '@/state/modelStore';
@@ -27,6 +29,13 @@ import { duplicateInPlace } from '@/features/ops/bodyOps';
 import { useEditModeStore } from '@/state/editModeStore';
 import { editBridge } from '@/viewport/editBridge';
 import { bridge } from '@/viewport/cameraBridge';
+import { usePageStore } from '@/state/pageStore';
+import AnalysisPanel from '@/features/analysis/AnalysisPanel';
+import AnalysisBottomView from '@/features/analysis/AnalysisBottomView';
+import TrainingPanel from '@/features/training/TrainingPanel';
+import Timeline from '@/features/animation/Timeline';
+import HardwarePanel from '@/features/hardware/HardwarePanel';
+import ResizablePanel from '@/features/common/ResizablePanel';
 import { initRuntimeBridge } from '@/state/runtimeBridge';
 import { initMotionRuntime } from '@/control/motionRuntime';
 
@@ -47,6 +56,21 @@ function duplicateSelectedInPlace() {
 // inspection (e.g. `tetrobotModel.getState().doc`). The model is the platform's
 // source of truth going forward; it does not yet drive rendering (Phase 1).
 if (typeof window !== 'undefined') window.tetrobotModel = useModelStore;
+
+// Top-level workspace pages. The 3D scene is shared across editor/analysis/training/
+// animation; motor is the hardware page.
+const tabIcon = (d: string) => (
+  <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    {d.split('|').map((p, i) => <path key={i} d={p} />)}
+  </svg>
+);
+const NAV_TABS: { id: import('@/state/pageStore').Page; label: string; icon: any }[] = [
+  { id: 'editor',    label: 'Editor',        icon: tabIcon('M2 11l5-8 5 8M2 11h10') },
+  { id: 'analysis',  label: 'Analysis',      icon: tabIcon('M2 12V2M2 12h10M5 9l2.5-3L9.5 8 12 4') },
+  { id: 'training',  label: 'Training',      icon: tabIcon('M7 2v3M7 9v3M2 7h3M9 7h3|M5.2 5.2L4 4M8.8 5.2L10 4') },
+  { id: 'animation', label: 'Animation',     icon: tabIcon('M2 4h10M2 10h10M5 4v6M9 4v6') },
+  { id: 'motor',     label: 'Motor Control', icon: tabIcon('M7 4.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5zM7 1v2M7 11v2M1 7h2M11 7h2') },
+];
 
 function ThemeToggle() {
   const theme  = useThemeStore(s => s.theme);
@@ -196,6 +220,8 @@ function OvercurrentWarning() {
 function AppHeader({ page, setPage }: any) {
   const connected        = useIntegrationStore(s => s.connected);
   const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
+  const boardName        = useHardwareStore(s => s.boardName);
+  const hwSignal         = useHardwareStore(s => s.signal)();
 
   let dotColor, statusText;
   if (!connected) {
@@ -215,7 +241,7 @@ function AppHeader({ page, setPage }: any) {
   return (
     <header className="app-header">
       <div className="app-header-brand">
-        <span className="app-logo">TETROBOT</span>
+        <span className="app-logo">TETROBOT<span className="app-logo-demo">(demo)</span></span>
         <span className="app-logo-tagline">
           <span className="app-logo-sub">modular robotics</span>
           <span className="app-logo-byline">by nischay sai</span>
@@ -225,27 +251,16 @@ function AppHeader({ page, setPage }: any) {
       <div className="app-header-sep" />
 
       <nav className="app-nav">
-        <button
-          className={`app-nav-tab ${page === 'sim' ? 'active' : ''}`}
-          onClick={() => setPage('sim')}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <path d="M7 1L13 4.5V9.5L7 13L1 9.5V4.5L7 1Z" stroke="currentColor" strokeWidth="1.4" fill="none"/>
-            <circle cx="7" cy="7" r="1.5" fill="currentColor"/>
-          </svg>
-          Simulator
-        </button>
-        <button
-          className={`app-nav-tab ${page === 'servo' ? 'active' : ''}`}
-          onClick={() => setPage('servo')}
-        >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="3" stroke="currentColor" strokeWidth="1.4" fill="none"/>
-            <circle cx="7" cy="7" r="1" fill="currentColor"/>
-            <path d="M7 1V3M7 11V13M1 7H3M11 7H13M2.5 2.5L4 4M10 10L11.5 11.5M11.5 2.5L10 4M4 10L2.5 11.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
-          </svg>
-          Servo Control
-        </button>
+        {NAV_TABS.map((t) => (
+          <button
+            key={t.id}
+            className={`app-nav-tab ${page === t.id ? 'active' : ''}`}
+            onClick={() => setPage(t.id)}
+          >
+            {t.icon}
+            {t.label}
+          </button>
+        ))}
       </nav>
 
       <HumanoidActionBar />
@@ -256,17 +271,20 @@ function AppHeader({ page, setPage }: any) {
         <OvercurrentWarning />
         <BatteryChip />
         <CurrentChip />
-        <div className="app-status-chip" title={`ESP32-C3: ${statusText}`}>
+        <div className="app-status-chip" title={`${boardName}: ${statusText}${hwSignal != null ? ` · signal ${hwSignal}%` : ''}`}>
           <span style={{
             width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0,
             background: dotColor,
             boxShadow: `0 0 7px ${dotColor}`,
             transition: 'background 0.4s, box-shadow 0.4s',
           }} />
-          <span>ESP32-C3</span>
+          <span>{boardName}</span>
           <span style={{ fontSize: 12, color: dotColor, marginLeft: 2, fontWeight: 700, transition: 'color 0.4s' }}>
             · {statusText}
           </span>
+          {hwSignal != null && (
+            <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 4 }}>{hwSignal}%</span>
+          )}
         </div>
         <ServoCountChip />
         <ThemeToggle />
@@ -293,7 +311,8 @@ const MIN_PANEL_W = 200;
 const DEFAULT_PANEL_W = 250;
 
 export default function App() {
-  const [page,       setPage]       = useState('sim');
+  const page    = usePageStore(s => s.page);
+  const setPage = usePageStore(s => s.setPage);
   const [connOpen,   setConnOpen]   = useState(false);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_W);
   const [showIntro,  setShowIntro]  = useState(true);
@@ -362,7 +381,7 @@ export default function App() {
         return;
       }
 
-      if (typing || page !== 'sim') return;
+      if (typing || page === 'motor') return; // editing shortcuts work on all 3D pages
       const k = e.key.toLowerCase();
       const { selectedId, kind } = useSelectionStore.getState();
       const edit = useEditModeStore.getState();
@@ -416,40 +435,57 @@ export default function App() {
       <AppHeader page={page} setPage={setPage} />
 
       <main className="app-main">
-        {/* Page 1: 3D Simulator — always mounted, hidden when servo page active */}
+        {/* Shared 3D workspace — Editor / Analysis / Training / Animation. Always
+            mounted (keeps the Three scene alive); hidden only on the Motor page. */}
         <div
           className="app-root"
-          style={page !== 'sim' ? {
+          style={page === 'motor' ? {
             visibility: 'hidden',
             pointerEvents: 'none',
             position: 'absolute',
             inset: 0,
           } : {}}
         >
-          <LeftPanel style={{ width: panelWidth }} />
+          {/* Left panel + resize handle only on the Editor page. */}
+          {page === 'editor' && (
+            <>
+              <LeftPanel style={{ width: panelWidth }} />
+              <div className="panel-resize-handle" onMouseDown={startPanelResize} />
+            </>
+          )}
 
-          {/* Drag handle between panel and canvas */}
-          <div className="panel-resize-handle" onMouseDown={startPanelResize} />
-
-          <div className="canvas-wrapper">
-            <SimCanvas />
-            <HomeButton />
-            <div className="top-right-cluster">
-              <NavigationGizmo />
-              <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />
+          <div className={`canvas-wrapper ${page === 'analysis' ? 'canvas-split' : ''}`}>
+            <div className="canvas-top">
+              {page === 'analysis' && <span className="an-top-label">Stress / load overlay</span>}
+              <SimCanvas />
+              <div className="top-center-cluster">
+                <HomeButton />
+                <IkIndicator />
+              </div>
+              <div className="top-right-cluster">
+                <NavigationGizmo />
+                <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />
+              </div>
             </div>
+            {page === 'analysis' && <AnalysisBottomView />}
           </div>
 
-          {/* Blender-style right dock: icon rail + one resizable panel at a time. */}
-          <RightDock />
+          {/* Right side is page-specific. Editor keeps the full Blender-style dock;
+              the other pages show a single dedicated panel (no left panel). */}
+          {page === 'editor'    && <RightDock />}
+          {page === 'analysis'  && <ResizablePanel storageKey="tetrobot:panel:analysis" defaultW={400}><AnalysisPanel /></ResizablePanel>}
+          {page === 'training'  && <ResizablePanel storageKey="tetrobot:panel:training" defaultW={400}><TrainingPanel /></ResizablePanel>}
+          {page === 'animation' && <ResizablePanel storageKey="tetrobot:panel:animation" defaultW={480}><Timeline /></ResizablePanel>}
         </div>
 
-        {/* Page 2: Servo Controller — hidden with display:none (keeps polling alive) */}
+        {/* Motor Control — servo/motor view + hardware config panel on the right.
+            Hidden with display:none (keeps polling alive) when not active. */}
         <div
           className="app-servo-wrap"
-          style={page !== 'servo' ? { display: 'none' } : {}}
+          style={page !== 'motor' ? { display: 'none' } : {}}
         >
-          <ServoController />
+          <div className="motor-main"><ServoController /></div>
+          <ResizablePanel storageKey="tetrobot:panel:motor" defaultW={380}><HardwarePanel /></ResizablePanel>
         </div>
       </main>
 

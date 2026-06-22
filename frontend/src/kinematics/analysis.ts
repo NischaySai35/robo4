@@ -156,59 +156,82 @@ export function stressColor(t: number): [number, number, number] {
 }
 
 /**
- * Per-body stress field for surface colouring. For each body returns the world
- * anchors of the load path through it (proximal support → distal joint) and the
- * normalised load (0..1 of peak) at each end. A vertex's colour is then the ramp
- * of the load interpolated along that segment — high where the member is most
- * loaded (near a heavily-torqued joint), fading toward lightly loaded ends.
+ * Per-body stress field for surface colouring — the BENDING MOMENT each member
+ * transmits under gravity, the way CAD/FEA tools plot structural load.
  *
- * This is a fast load-transmission proxy (not a true FEA solve), but it produces
- * the familiar continuous blue→red gradient over the actual geometry.
+ * For each link we compute the internal bending moment magnitude |Σ r × (m·g)| of all
+ * the mass it carries, taken about its PROXIMAL support (where it's effectively fixed)
+ * and about its DISTAL end. This is pose-correct and axis-independent: a horizontally
+ * EXTENDED arm has large horizontal lever arms → high moment → red near the supports;
+ * a vertical arm has tiny lever arms → low moment → blue. (The old version used the
+ * torque about each joint's ROTATION axis, which is ~0 for a vertical/yaw joint even
+ * when the member is heavily bent — hence the "extended link shows blue" bug.)
+ *
+ * Returns the world load-path anchors (P→D) + the normalised moment (0..1 of the peak
+ * member) at each end; BodyRenderer ramps the colour along P→D. A fast structural
+ * proxy, not a full FEA solve, but physically consistent.
  */
-export function bodyStressField(doc: Document, fk = computeFK(doc), loads = jointLoads(doc, fk)) {
+export function bodyStressField(doc: Document, fk = computeFK(doc), _loads = jointLoads(doc, fk)) {
   const childJoint = buildChildJointMap(doc);
+  const childrenOf = new Map<any, any[]>();
   const parentJoints = new Map<any, any[]>();
   for (const j of Object.values(doc.joints)) {
+    if (!childrenOf.has(j.parentBodyId)) childrenOf.set(j.parentBodyId, []);
+    childrenOf.get(j.parentBodyId)!.push(j.childBodyId);
     if (!parentJoints.has(j.parentBodyId)) parentJoints.set(j.parentBodyId, []);
     parentJoints.get(j.parentBodyId)!.push(j);
   }
-  const tor = (j: any) => Math.abs(loads.get(j.id)?.torque ?? 0);
-  let maxT = 1e-6;
-  for (const j of Object.values(doc.joints)) maxT = Math.max(maxT, tor(j));
 
+  const massOf = (id: string) => bodyMass(doc.bodies[id], doc);
+  const posOf = (id: string) => new THREE.Vector3(...(fk.get(id)?.position ?? [0, 0, 0]));
   const pivotWorld = (j: any) => {
     const pm = fk.get(j.parentBodyId)?.matrix?.clone() ?? mat(doc.bodies[j.parentBodyId]?.transform);
     return new THREE.Vector3().setFromMatrixPosition(pm.multiply(originMat(j.origin)));
   };
+  // |Σ (com_i − anchor) × (m_i · g)| over a set of bodies = bending moment magnitude.
+  const bendAbout = (anchor: THREE.Vector3, ids: Iterable<string>) => {
+    const M = new THREE.Vector3();
+    for (const id of ids) M.add(posOf(id).clone().sub(anchor).cross(G.clone().multiplyScalar(massOf(id))));
+    return M.length();
+  };
 
-  const out = new Map<string, { P: number[]; D: number[]; tP: number; tD: number; maxTorque: number }>();
+  const recs: { id: string; P: THREE.Vector3; D: THREE.Vector3; Mp: number; Md: number }[] = [];
   for (const body of Object.values(doc.bodies)) {
-    const center = new THREE.Vector3(...(fk.get(body.id)?.position ?? [0, 0, 0]));
+    const center = posOf(body.id);
 
-    // Walk up through welds to the first movable joint that supports this body.
-    let Mprox = maxT, Panchor = center.clone(), cur: any = body.id, guard = 0;
+    // Proximal support: walk up welds to the first movable joint (else this is a root).
+    let Panchor = center.clone(), cur: any = body.id, guard = 0;
     while (guard++ < 64) {
       const j = childJoint.get(cur);
-      if (!j) { Mprox = maxT; Panchor = center.clone(); break; }       // root → carries all
-      if (MOVABLE.has(j.type)) { Mprox = tor(j); Panchor = pivotWorld(j); break; }
+      if (!j) { Panchor = center.clone(); break; }
+      if (MOVABLE.has(j.type)) { Panchor = pivotWorld(j); break; }
       cur = j.parentBodyId;
-      if (!cur) { Mprox = maxT; break; }
+      if (!cur) break;
     }
 
-    // Distal end: the strongest movable joint hanging off this body (else a free tip).
-    let Mdist = 0, Danchor = center.clone().multiplyScalar(2).sub(Panchor);
+    const subtree = subtreeBodies(childrenOf, body.id);             // this body + all downstream
+    const downstream = [...subtree].filter((id) => id !== body.id);
+    const Mp = bendAbout(Panchor, subtree);                          // moment at the fixed end
+
+    // Distal end: a movable joint hanging off this body, else the far end of the body.
+    let Danchor = center.clone().multiplyScalar(2).sub(Panchor);
     const dj = (parentJoints.get(body.id) ?? []).filter((j) => MOVABLE.has(j.type));
-    if (dj.length) {
-      const main = dj.reduce((a, b) => (tor(b) > tor(a) ? b : a));
-      Mdist = tor(main); Danchor = pivotWorld(main);
-    }
+    if (dj.length) Danchor = pivotWorld(dj[0]);
+    const Md = downstream.length ? bendAbout(Danchor, downstream) : 0; // lighter further out
 
-    out.set(body.id, {
-      P: [Panchor.x, Panchor.y, Panchor.z],
-      D: [Danchor.x, Danchor.y, Danchor.z],
-      tP: Math.min(Mprox / maxT, 1),
-      tD: Math.min(Mdist / maxT, 1),
-      maxTorque: maxT,
+    recs.push({ id: body.id, P: Panchor, D: Danchor, Mp, Md });
+  }
+
+  // Normalise to the most-loaded member (FEA convention: colour = fraction of peak).
+  const maxM = Math.max(1e-6, ...recs.map((r) => r.Mp));
+  const out = new Map<string, { P: number[]; D: number[]; tP: number; tD: number; maxTorque: number }>();
+  for (const r of recs) {
+    out.set(r.id, {
+      P: [r.P.x, r.P.y, r.P.z],
+      D: [r.D.x, r.D.y, r.D.z],
+      tP: Math.min(r.Mp / maxM, 1),
+      tD: Math.min(r.Md / maxM, 1),
+      maxTorque: maxM,
     });
   }
   return out;

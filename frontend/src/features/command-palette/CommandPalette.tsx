@@ -20,8 +20,11 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
 
   interface Cmd { id: string; title: string; hint: string; keys: string; run: () => void; when?: boolean; danger?: boolean }
   const commands = useMemo<Cmd[]>(() => [
-    { id: 'sim',        title: 'Go to Simulator',        hint: 'View',    keys: '',          run: () => setPage('sim'),               when: page !== 'sim' },
-    { id: 'servo',      title: 'Go to Servo Control',    hint: 'View',    keys: '',          run: () => setPage('servo'),             when: page !== 'servo' },
+    { id: 'editor',     title: 'Go to Editor',           hint: 'View',    keys: '',          run: () => setPage('editor'),            when: page !== 'editor' },
+    { id: 'analysis',   title: 'Go to Analysis',         hint: 'View',    keys: '',          run: () => setPage('analysis'),          when: page !== 'analysis' },
+    { id: 'training',   title: 'Go to Training',         hint: 'View',    keys: '',          run: () => setPage('training'),          when: page !== 'training' },
+    { id: 'animation',  title: 'Go to Animation',        hint: 'View',    keys: '',          run: () => setPage('animation'),         when: page !== 'animation' },
+    { id: 'motor',      title: 'Go to Motor Control',    hint: 'View',    keys: '',          run: () => setPage('motor'),             when: page !== 'motor' },
     { id: 'fit',        title: 'Fit view to scene',      hint: 'View',    keys: 'F',         run: () => bridge.fitCamera?.() },
     { id: 'undo',       title: 'Undo',                   hint: 'Edit',    keys: 'Ctrl+Z',    run: () => (bridge as { undo?: () => void }).undo?.() },
     { id: 'redo',       title: 'Redo',                   hint: 'Edit',    keys: 'Ctrl+Y',    run: () => (bridge as { redo?: () => void }).redo?.() },

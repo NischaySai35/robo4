@@ -78,3 +78,23 @@
   background: var(--bg-card); color: var(--text); font-family: var(--font-mono); font-size: 12px; text-align: center;
 }
 .hw-map-id:focus { outline: none; border-color: var(--accent); }
+
+/* host / signal / peripherals (Motor Control page) */
+.hw-host { font-size: 11px; }
+.hw-online { color: #22c55e; }
+.hw-offline { color: #ef4444; }
+.hw-signal { display: inline-flex; align-items: flex-end; gap: 2px; margin-left: 6px; }
+.hw-signal-bar { width: 3px; background: currentColor; border-radius: 1px; }
+
+.hw-periph { display: flex; flex-direction: column; gap: 5px; margin-top: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.hw-periph-row { display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px; font-size: 12px; }
+.hw-periph-tag { font-size: 9px; font-weight: 700; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; }
+.hw-periph-tag.hw-sensor { background: #3b82f622; color: #3b82f6; }
+.hw-periph-tag.hw-driver { background: #f59e0b22; color: #f59e0b; }
+.hw-periph-name { color: var(--text-bright); font-weight: 600; }
+.hw-periph-type { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
+.hw-periph-row > button { width: 20px; height: 20px; padding: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); cursor: pointer; }
+.hw-periph-row > button:hover { color: var(--danger); border-color: var(--danger); }
+.hw-periph-add { display: flex; gap: 5px; }
+.hw-periph-add select, .hw-periph-add input { flex: 1; min-width: 0; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; font-size: 11px; }
+.hw-periph-add button { width: 28px; background: var(--accent); color: #fff; border: none; border-radius: 5px; cursor: pointer; }

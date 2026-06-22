@@ -100,6 +100,7 @@ export class SceneManager {
 
     // Register with bridge so React components can access camera + controls
     bridge.camera = this.camera;
+    bridge.scene = this.scene; // exposed for the Analysis split's secondary view
     bridge.animateTo = (pos, lookAt, ms) => this.animateCameraTo(pos, lookAt, ms);
     bridge.fitCamera = () => this.fitCamera();
 

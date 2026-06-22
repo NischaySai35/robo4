@@ -43,7 +43,7 @@
   },
   "build": {
     "appId": "com.nischaysai.tetrobot",
-    "productName": "TETROBOT",
+    "productName": "TETROBOT-Demo-NischaySai",
     "files": [
       "dist/**/*",
       "electron/**/*"
@@ -58,14 +58,20 @@
     "nsis": {
       "oneClick": false,
       "perMachine": false,
+      "allowElevation": true,
       "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
+      "createDesktopShortcut": false,
       "createStartMenuShortcut": true,
-      "shortcutName": "TETROBOT",
+      "menuCategory": "TETROBOT",
+      "runAfterFinish": true,
+      "shortcutName": "TETROBOT-Demo-NischaySai",
+      "artifactName": "TETROBOT-Demo-NischaySai-Setup-${version}.${ext}",
       "installerIcon": "electron/icon.ico",
       "uninstallerIcon": "electron/icon.ico",
       "installerHeaderIcon": "electron/icon.ico",
-      "uninstallDisplayName": "TETROBOT"
+      "uninstallDisplayName": "TETROBOT-Demo-NischaySai",
+      "deleteAppDataOnUninstall": false,
+      "include": "electron/installer.nsh"
     }
   }
 }

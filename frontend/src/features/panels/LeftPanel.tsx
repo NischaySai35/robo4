@@ -1,5 +1,5 @@
 import './LeftPanel.css';
-import { useState } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useEditorStore } from '@/state/editorStore';
@@ -149,6 +149,36 @@ export default function LeftPanel({ style }: any) {
     );
   };
 
+  // Resizable Project Explorer height (drag the divider above CONTROLS).
+  const [pxHeight, setPxHeight] = useState(() => {
+    const v = parseInt(localStorage.getItem('tetrobot:px:height') || '', 10);
+    return Number.isFinite(v) ? Math.max(80, v) : 240;
+  });
+  const pxRef = useRef(pxHeight);
+  pxRef.current = pxHeight;
+  const startPxResize = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const startY = e.clientY;
+    const startH = pxRef.current;
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: MouseEvent) => {
+      const next = Math.max(80, Math.min(700, startH + (ev.clientY - startY)));
+      pxRef.current = next;
+      setPxHeight(next);
+      localStorage.setItem('tetrobot:px:height', String(next));
+    };
+    const onUp = () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, []);
+
   return (
     <aside className="left-panel fade-in" style={style}>
       {/* ── Mode (Object ↔ Edit, Blender-style) ── */}
@@ -247,7 +277,7 @@ export default function LeftPanel({ style }: any) {
       <div className="section px-section">
         <div className="section-title">PROJECT EXPLORER</div>
 
-        <div className="px-scroll">
+        <div className="px-scroll" style={{ height: pxHeight }}>
           <div className="px-group">Bodies ({bodies.length})</div>
           {bodies.length === 0 && <div className="px-empty">No bodies yet — use + to add one.</div>}
           {bodies.map((b, i) => renderRow(b, 'body', bodyIds, i, 'bodies', null))}
@@ -258,13 +288,16 @@ export default function LeftPanel({ style }: any) {
             <span className="px-type">{j.type}</span>))}
         </div>
       </div>
+      {/* Drag to resize the explorer vs. the controls below. */}
+      <div className="lp-vdivider" onMouseDown={startPxResize} title="Drag to resize" />
       </>}
 
       {/* ── Controls hint ── */}
       <div className="instructions">
         <div className="section-title">CONTROLS</div>
         <ul>
-          <li><kbd>Click</kbd> a part → select · click again → move</li>
+          <li><kbd>Click</kbd> a part → select · again → move · empty → deselect</li>
+          <li><kbd>Dbl-click</kbd> empty 3D space → deselect everything</li>
           <li><kbd>M</kbd>/<kbd>R</kbd>/<kbd>S</kbd> move · rotate · scale</li>
           <li><kbd>Dbl-click</kbd> in explorer → open editor</li>
           <li><kbd>Del</kbd> / <kbd>X</kbd> delete selected</li>

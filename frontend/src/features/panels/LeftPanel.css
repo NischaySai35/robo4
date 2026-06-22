@@ -687,11 +687,34 @@
   display: flex;
   flex-direction: column;
   gap: 1px;
-  max-height: 42vh;
+  /* height is set inline (resizable via the divider below); falls back to 240px */
+  height: 240px;
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--border) transparent;
 }
+
+/* Draggable divider between the Project Explorer and the Controls. */
+.lp-vdivider {
+  height: 8px;
+  margin: 2px 0;
+  cursor: row-resize;
+  border-radius: 3px;
+  background: transparent;
+  position: relative;
+  flex-shrink: 0;
+}
+.lp-vdivider::before {
+  content: '';
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px; height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.lp-vdivider:hover::before { background: var(--accent); }
 .px-group {
   font-family: var(--font-mono);
   font-size: 10px;

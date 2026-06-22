@@ -115,12 +115,21 @@ export function buildRobotArm() {
   const toolK      = cyl('Tool hub',    0.026, 0.04, [0, 0.565, 0], Q_UP, servo);
 
   // ── 6 revolute DOF ────────────────────────────────────────────────────────
-  revolute('J1 · Waist (yaw)',      base,    waist,    [0, 1, 0], [0, 0.06, 0],  -180, 180);
-  revolute('J2 · Shoulder (pitch)', waist,   bicep,    [1, 0, 0], [0, 0.13, 0],  -100, 100);
-  revolute('J3 · Elbow (pitch)',    bicep,   forearm,  [1, 0, 0], [0, 0.32, 0],  -150, 150);
+  const j1 = revolute('J1 · Waist (yaw)',      base,    waist,    [0, 1, 0], [0, 0.06, 0],  -180, 180);
+  const j2 = revolute('J2 · Shoulder (pitch)', waist,   bicep,    [1, 0, 0], [0, 0.13, 0],  -100, 100);
+  const j3 = revolute('J3 · Elbow (pitch)',    bicep,   forearm,  [1, 0, 0], [0, 0.32, 0],  -150, 150);
   revolute('J4 · Forearm (roll)',   forearm, wrist,    [0, 1, 0], [0, 0.485, 0], -180, 180);
-  revolute('J5 · Wrist (pitch)',    wrist,   flange,   [1, 0, 0], [0, 0.53, 0],  -115, 115);
+  const j5 = revolute('J5 · Wrist (pitch)',    wrist,   flange,   [1, 0, 0], [0, 0.53, 0],  -115, 115);
   revolute('J6 · Tool (roll)',      flange,  gripBase, [0, 1, 0], [0, 0.565, 0], -180, 180);
+
+  // Pleasant DEFAULT (initial) pose — a natural industrial bend so the sample looks
+  // like a real arm on load. This is just the starting joint state; "Home" still
+  // zeroes every joint back to the straight, vertical pose.
+  const setStart = (j: Joint, deg: number) => { j.state = { ...j.state, value: D(deg) }; };
+  setStart(j1, -35);   // waist turned
+  setStart(j2, -42);   // shoulder leans the upper arm out
+  setStart(j3, 78);    // elbow bent
+  setStart(j5, 30);    // wrist pitched
 
   // ── Welds: knuckles onto the link they ride with, fingers onto the gripper ──
   weld('Base ⨯ drum',     base,     baseDrum);

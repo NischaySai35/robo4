@@ -3,12 +3,61 @@
  * (Phase 11). Works with any device: an MCU (ESP32) over USB serial, or a
  * networked device (Raspberry Pi / ROS bridge / sidecar) over WebSocket.
  */
+import { useState } from 'react';
 import './HardwarePanel.css';
-import { useHardwareStore } from '@/state/hardwareStore';
+import { useHardwareStore, BOARDS, type BoardKind } from '@/state/hardwareStore';
 import { hardwareBridge } from '@/hardware/HardwareBridge';
 import { useModelStore } from '@/state/modelStore';
 import { commands } from '@/core/commands/index';
 import { jointServoDegrees } from '@/hardware/protocol';
+
+// Small Wi-Fi/signal bars (0–100%).
+function SignalBars({ pct }: { pct: number }) {
+  const bars = [25, 50, 75, 100];
+  return (
+    <span className="hw-signal" title={`Signal ${pct}%`}>
+      {bars.map((b, i) => (
+        <span key={i} className="hw-signal-bar" style={{ height: 4 + i * 3, opacity: pct >= b - 12 ? 1 : 0.25 }} />
+      ))}
+    </span>
+  );
+}
+
+// Sensors & drivers attached to the board.
+function Peripherals() {
+  const peripherals = useHardwareStore((s) => s.peripherals);
+  const add = useHardwareStore((s) => s.addPeripheral);
+  const remove = useHardwareStore((s) => s.removePeripheral);
+  const [draft, setDraft] = useState<{ name: string; kind: 'sensor' | 'driver'; type: string; pin: string }>(
+    { name: '', kind: 'sensor', type: 'IMU', pin: '' },
+  );
+  const SENSORS = ['IMU', 'LiDAR', 'Camera', 'Encoder', 'Force', 'Ultrasonic', 'GPS', 'Temperature'];
+  const DRIVERS = ['ST3215 bus', 'PWM', 'Stepper', 'DC motor', 'Servo', 'Relay'];
+  const opts = draft.kind === 'sensor' ? SENSORS : DRIVERS;
+  return (
+    <div className="hw-periph">
+      <div className="hw-title">SENSORS & DRIVERS</div>
+      {peripherals.map((p) => (
+        <div key={p.id} className="hw-periph-row">
+          <span className={`hw-periph-tag hw-${p.kind}`}>{p.kind}</span>
+          <span className="hw-periph-name">{p.name || p.type}</span>
+          <span className="hw-periph-type">{p.type}{p.pin ? ` · ${p.pin}` : ''}</span>
+          <button onClick={() => remove(p.id)} title="Remove">✕</button>
+        </div>
+      ))}
+      <div className="hw-periph-add">
+        <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as any, type: (e.target.value === 'sensor' ? SENSORS : DRIVERS)[0] })}>
+          <option value="sensor">Sensor</option><option value="driver">Driver</option>
+        </select>
+        <select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
+          {opts.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <input placeholder="pin/addr" value={draft.pin} onChange={(e) => setDraft({ ...draft, pin: e.target.value })} />
+        <button onClick={() => { add({ name: draft.type, kind: draft.kind, type: draft.type, pin: draft.pin || undefined }); setDraft({ ...draft, pin: '' }); }}>＋</button>
+      </div>
+    </div>
+  );
+}
 
 // Joint → servo map: every movable joint gets a servo ID (its physical ST3215).
 // Editing here writes to the joint's model meta, so it's saved with the project and
@@ -54,12 +103,16 @@ function ServoMap() {
 
 export default function HardwarePanel() {
   const status = useHardwareStore((s) => s.status);
+  const board = useHardwareStore((s) => s.board);
   const type = useHardwareStore((s) => s.type);
   const baud = useHardwareStore((s) => s.baud);
   const url = useHardwareStore((s) => s.url);
+  const pollHz = useHardwareStore((s) => s.pollHz);
   const streaming = useHardwareStore((s) => s.streaming);
   const telemetry = useHardwareStore((s) => s.telemetry);
   const log = useHardwareStore((s) => s.log);
+  const signal = useHardwareStore((s) => s.signal)();
+  const online = typeof navigator !== 'undefined' ? navigator.onLine : true;
   const hw = useHardwareStore.getState();
 
   const connected = status === 'connected';
@@ -75,14 +128,28 @@ export default function HardwarePanel() {
   return (
     <div className="hw-panel">
       <div className="hw-head">
-        <span className="hw-title">HARDWARE</span>
-        <span className={`hw-status hw-${status}`}>● {status}</span>
+        <span className="hw-title">HARDWARE · {hw.boardName}</span>
+        <span className={`hw-status hw-${status}`}>
+          ● {status}{connected && signal != null && <SignalBars pct={signal} />}
+        </span>
+      </div>
+
+      {/* Laptop link + board */}
+      <div className="hw-host">
+        <span className={online ? 'hw-online' : 'hw-offline'}>● This device {online ? 'online' : 'offline'}</span>
+      </div>
+
+      <div className="hw-row">
+        <select className="hw-select" value={board} disabled={connected || busy}
+          onChange={(e) => hw.setBoard(e.target.value as BoardKind)} title="Controller board">
+          {(Object.keys(BOARDS) as BoardKind[]).map((b) => <option key={b} value={b}>{BOARDS[b].name}</option>)}
+        </select>
       </div>
 
       <div className="hw-row">
         <select className="hw-select" value={type} disabled={connected || busy}
           onChange={(e) => hw.setType(e.target.value as 'serial' | 'websocket')}>
-          <option value="serial">USB Serial (MCU / ESP32)</option>
+          <option value="serial">USB Serial (MCU / ESP32 / Arduino)</option>
           <option value="websocket">WebSocket (Pi / ROS / network)</option>
         </select>
       </div>
@@ -105,6 +172,11 @@ export default function HardwarePanel() {
           : <button className="hw-disconnect" onClick={disconnect}>Disconnect</button>}
       </div>
 
+      <label className="hw-field">Poll rate (Hz)
+        <input type="number" min={1} max={200} value={pollHz}
+          onChange={(e) => hw.setPollHz(parseInt(e.target.value, 10) || 20)} />
+      </label>
+
       {connected && (
         <div className="hw-stream">
           <label className="hw-check">
@@ -115,6 +187,8 @@ export default function HardwarePanel() {
           <button className="hw-send" onClick={() => hardwareBridge.sendJoints()}>Send once</button>
         </div>
       )}
+
+      <Peripherals />
 
       {telemetry && typeof telemetry === 'object' && (
         <div className="hw-telemetry">

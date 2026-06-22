@@ -234,6 +234,32 @@ void refreshFast(ServoState& sv) {
   updateMotionFlag(sv);
 }
 
+// Fast tick (SYNC READ): ask EVERY servo for its present position in ONE bus
+// transaction (Sync Read 0x82) and receive all replies back-to-back — the read-side
+// counterpart of SyncWritePosEx. Same data as refreshFast, but one round-trip for the
+// whole arm instead of polling each servo in sequence. Falls back to per-servo reads
+// for any servo that doesn't reply this cycle.
+void refreshAllFastSync() {
+  uint8_t ids[NUM_SERVOS];
+  for (uint8_t i = 0; i < NUM_SERVOS; i++) ids[i] = servos[i].id;
+
+  st.syncReadBegin(NUM_SERVOS, 2);                                   // 2 bytes (position word) per servo
+  st.syncReadPacketTx(ids, NUM_SERVOS, SMS_STS_PRESENT_POSITION_L, 2);
+  uint8_t rx[2];
+  for (uint8_t i = 0; i < NUM_SERVOS; i++) {
+    if (st.syncReadPacketRx(ids[i], rx)) {                          // 1 = this servo replied
+      int pos = st.syncReadRxPacketToWord(15);                      // present-position word
+      if (pos >= 0 && pos <= 4095) servos[i].rawPos = pos;
+    } else {
+      int pos = readRetry(ids[i], [](uint8_t id){ return st.ReadPos(id); },
+                                  [](int v){ return v >= 0 && v <= 4095; }, 1);
+      if (pos >= 0) servos[i].rawPos = pos;
+    }
+    updateMotionFlag(servos[i]);
+  }
+  st.syncReadEnd();
+}
+
 // Slow tick: everything else (speed, load, current, voltage, temp)
 void refreshSlow(ServoState& sv) {
   int spd  = readRetry(sv.id, [](uint8_t id){ return st.ReadSpeed(id);   }, [](int v){ return v != -1; });
@@ -549,13 +575,11 @@ void loop() {
   ensureWiFi();
   delay(1);   // yield to FreeRTOS — lets power-management hooks run between iterations
 
-  // Fast tick: read position for ALL servos in one shot (~60ms budget)
-  // Every servo gets a fresh position every 60ms instead of 480ms before.
+  // Fast tick: read position for ALL servos in one shot (~60ms budget).
+  // Sync Read pulls every servo's position in a single bus transaction.
   if (millis() - lastFast >= FAST_MS) {
     lastFast = millis();
-    for (uint8_t i = 0; i < NUM_SERVOS; i++) {
-      refreshFast(servos[i]);
-    }
+    refreshAllFastSync();
     server.handleClient();   // keep web server responsive after bulk read
   }
 

@@ -6,9 +6,11 @@
  * uPlot strip chart streams per-joint angle/velocity/acceleration over time.
  */
 import './AnalysisPanel.css';
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import { useModelStore } from '@/state/modelStore';
 import { useEditorStore } from '@/state/editorStore';
+import { usePageStore } from '@/state/pageStore';
+import { bridge } from '@/viewport/cameraBridge';
 import { computeFK } from '@/kinematics/modelFK';
 import { jointLoads, centerOfMass, ST3215 } from '@/kinematics/analysis';
 import LiveTelemetryChart from './LiveTelemetryChart';
@@ -17,6 +19,20 @@ export default function AnalysisPanel() {
   const doc = useModelStore((s) => s.doc);
   const show = useEditorStore((s) => s.showAnalysis);
   const toggle = useEditorStore((s) => s.toggleAnalysis);
+  const onAnalysisPage = usePageStore((s) => s.page === 'analysis');
+
+  // On the Analysis page, turn the stress overlay ON automatically and frame the model
+  // (the colours/COM are the whole point of this page). Restore the prior state on leave.
+  useEffect(() => {
+    if (!onAnalysisPage) return;
+    const prev = useEditorStore.getState().showAnalysis;
+    if (!prev) useEditorStore.getState().toggleAnalysis();
+    const t = setTimeout(() => bridge.fitCamera?.(), 80);
+    return () => {
+      clearTimeout(t);
+      if (!prev && useEditorStore.getState().showAnalysis) useEditorStore.getState().toggleAnalysis();
+    };
+  }, [onAnalysisPage]);
 
   const { mass, com, loads } = useMemo(() => {
     const fk = computeFK(doc);
@@ -28,48 +44,53 @@ export default function AnalysisPanel() {
 
   return (
     <div className="an-panel">
-      <div className="an-head">
-        <span className="an-title">ANALYSIS</span>
-        <label className="an-toggle">
-          <input type="checkbox" checked={show} onChange={toggle} />
-          <span>Overlay</span>
-        </label>
+      {/* Sticky chart on top — stays put while the readout below scrolls. */}
+      <div className="an-chart-sticky">
+        <div className="an-section">LIVE TELEMETRY</div>
+        <LiveTelemetryChart />
       </div>
 
-      <div className="an-stats">
-        <div><span>Total mass</span><strong>{mass.toFixed(2)} kg</strong></div>
-        <div><span>Center of mass</span><strong>{com.map((v) => v.toFixed(2)).join(', ')}</strong></div>
-      </div>
-
-      {show && (
-        <div className="an-legend">
-          <div className="an-legend-bar" />
-          <div className="an-legend-labels"><span>low load</span><span>high load</span></div>
+      <div className="an-scroll">
+        <div className="an-head">
+          <span className="an-title">ANALYSIS</span>
+          <label className="an-toggle">
+            <input type="checkbox" checked={show} onChange={toggle} />
+            <span>Stress overlay</span>
+          </label>
         </div>
-      )}
 
-      {joints.length === 0 && <div className="an-empty">Add joints to see holding torque & current.</div>}
-      {joints.length > 0 && (
-        <table className="an-table">
-          <thead><tr><th>Joint</th><th>τ (N·m)</th><th>I (A)</th></tr></thead>
-          <tbody>
-            {joints.map((j) => {
-              const l = loads.get(j.id) ?? { torque: 0, current: 0, overload: false };
-              return (
-                <tr key={j.id} className={l.overload ? 'an-over' : ''}>
-                  <td>{j.name}</td>
-                  <td>{l.torque.toFixed(2)}</td>
-                  <td>{l.current.toFixed(2)}{l.overload ? ' ⚠' : ''}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-      <div className="an-foot">Model: ST3215 · stall {ST3215.stallTorque} N·m / {ST3215.stallCurrent} A</div>
+        <div className="an-stats">
+          <div><span>Total mass</span><strong>{mass.toFixed(2)} kg</strong></div>
+          <div><span>Center of mass</span><strong>{com.map((v) => v.toFixed(2)).join(', ')}</strong></div>
+        </div>
 
-      <div className="an-section">LIVE TELEMETRY</div>
-      <LiveTelemetryChart />
+        {show && (
+          <div className="an-legend">
+            <div className="an-legend-bar" />
+            <div className="an-legend-labels"><span>low load</span><span>high load</span></div>
+          </div>
+        )}
+
+        {joints.length === 0 && <div className="an-empty">Add joints to see holding torque & current.</div>}
+        {joints.length > 0 && (
+          <table className="an-table">
+            <thead><tr><th>Joint</th><th>τ (N·m)</th><th>I (A)</th></tr></thead>
+            <tbody>
+              {joints.map((j) => {
+                const l = loads.get(j.id) ?? { torque: 0, current: 0, overload: false };
+                return (
+                  <tr key={j.id} className={l.overload ? 'an-over' : ''}>
+                    <td>{j.name}</td>
+                    <td>{l.torque.toFixed(2)}</td>
+                    <td>{l.current.toFixed(2)}{l.overload ? ' ⚠' : ''}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div className="an-foot">Model: ST3215 · stall {ST3215.stallTorque} N·m / {ST3215.stallCurrent} A</div>
+      </div>
     </div>
   );
 }

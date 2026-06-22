@@ -16,9 +16,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useModelStore } from '@/state/modelStore';
-import { useEditorStore } from '@/state/editorStore';
 import { useHardwareStore } from '@/state/hardwareStore';
-import { useAnimationStore } from '@/state/animationStore';
+import { useIntegrationStore } from '@/state/integrationStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { computeFK } from '@/kinematics/modelFK';
 import { jointLoads, ST3215 } from '@/kinematics/analysis';
@@ -60,10 +59,12 @@ export default function LiveTelemetryChart() {
   const selName = selJoint ? doc.joints[selJoint]?.name : null;
   const sig = `${jointList.map((j) => j.id).join('|')}#${selJoint ?? ''}`;
 
-  const simRunning = useEditorStore((s) => s.simRunning);
   const connected = useHardwareStore((s) => s.status === 'connected');
-  const playing = useAnimationStore((s) => s.playing);
-  const hasSource = simRunning || connected || playing;
+  const totalCurrentMA = useIntegrationStore((s) => s.totalCurrentMA);
+  // 'virtual' = data computed from the model (always live — reflects whatever you drag
+  // on the left); 'real' = measured data from connected hardware (servo current, etc.).
+  const [mode, setMode] = useState<'virtual' | 'real'>('virtual');
+  const streamOn = mode === 'virtual' ? true : connected;
 
   // Build uPlot once per joint set. Series visibility is toggled live (no rebuild).
   useEffect(() => {
@@ -111,7 +112,7 @@ export default function LiveTelemetryChart() {
 
   // Sampling loop — reads joints + computes all metrics, normalises for drawing.
   useEffect(() => {
-    if (!hasSource || !jointList.length) return undefined;
+    if (!streamOn || !jointList.length) return undefined;
     const id = setInterval(() => {
       const data = dataRef.current, real = realRef.current, plot = plotRef.current;
       if (!data || !real || !plot) return;
@@ -139,10 +140,18 @@ export default function LiveTelemetryChart() {
       const acc = prev ? (vel - prev.vel) / dt : 0;
       prevRef.current = { t: now, pos, vel };
 
-      const tor = torArr.reduce((a, b) => a + b, 0);                       // total torque
-      const cur = set.reduce((a, j) => a + (loads.get(j.id)?.current ?? 0), 0); // total current
+      let tor = torArr.reduce((a, b) => a + b, 0);                       // total torque
+      let cur = set.reduce((a, j) => a + (loads.get(j.id)?.current ?? 0), 0); // total current
       const stress = Math.min(1, Math.max(0, ...torArr.map(Math.abs)) / ST3215.stallTorque) * 100;
-      const vals = [vel, acc, tor, cur, stress];
+      // REAL mode: replace the estimated current/torque with MEASURED servo current
+      // (and torque inferred from it). Velocity/accel/stress stay model-derived since
+      // basic servos don't report them.
+      if (mode === 'real') {
+        cur = (useIntegrationStore.getState().totalCurrentMA ?? 0) / 1000;
+        tor = cur * (ST3215.stallTorque / ST3215.stallCurrent);
+      }
+      // Magnitudes only — direction doesn't matter for these readouts (no negatives).
+      const vals = [Math.abs(vel), Math.abs(acc), Math.abs(tor), Math.abs(cur), stress];
 
       real[0].push(t);
       for (let i = 0; i < SERIES.length; i++) real[i + 1].push(vals[i]);
@@ -159,7 +168,7 @@ export default function LiveTelemetryChart() {
       plot.setData(data);
     }, SAMPLE_MS);
     return () => clearInterval(id);
-  }, [hasSource, sig, selJoint]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [streamOn, sig, selJoint, mode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggle = (key: string) => {
     const next = !enabled[key];
@@ -176,13 +185,18 @@ export default function LiveTelemetryChart() {
     <div className="an-chart">
       <div className="an-chart-head">
         <span className="an-chart-title">{selName ? `${selName} · normalised` : 'All joints · total (normalised)'}</span>
+        <select className="an-chart-mode" value={mode} onChange={(e) => setMode(e.target.value as 'virtual' | 'real')}
+          title="Virtual = computed from the model as you pose it · Real = measured from connected hardware">
+          <option value="virtual">Virtual</option>
+          <option value="real">Real{connected ? '' : ' (offline)'}</option>
+        </select>
       </div>
       <div className="an-chart-wrap">
         <div className="an-chart-host" ref={hostRef} />
-        {!hasSource && (
+        {!streamOn && (
           <div className="an-chart-idle an-chart-overlay">
-            Idle — no live source.<br />
-            Start physics, connect hardware, or play an animation.
+            Real mode needs hardware.<br />
+            Connect a board (Motor Control) or switch to Virtual.
           </div>
         )}
       </div>

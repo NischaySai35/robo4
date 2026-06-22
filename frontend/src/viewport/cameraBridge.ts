@@ -9,6 +9,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export interface CameraBridge {
   camera: any;
+  scene?: any;
   animateTo: ((pos: any, lookAt: any, ms?: number) => void) | null;
   fitCamera: (() => void) | null;
   orbitDelta: ((dx: number, dy: number) => void) | null;

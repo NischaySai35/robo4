@@ -86,14 +86,13 @@ export class JointRenderer {
       world.decompose(pos, quat, new THREE.Vector3());
       const dir = new THREE.Vector3(...(j.axis ?? [0, 0, 1])).normalize().applyQuaternion(quat);
 
-      // Size the arrow + marker to THIS joint's own bodies, not the whole scene, so
-      // far-away obstacles never inflate it.
+      // Size the axis arrow to the joint's OWN (moving) body — small, just a hint of
+      // which way the axis points. Never the whole scene, never the giant base.
       const child = j.childBodyId ? doc.bodies[j.childBodyId] : null;
-      const bSize = Math.max(this._bodySize(parent), child ? this._bodySize(child) : 0, 0.02);
-      const aLen = Math.min(Math.max(bSize * 0.9, 0.03), 0.6);
-      const aHead = aLen * 0.28;
+      const ref = child ? this._bodySize(child) : this._bodySize(parent);
+      const aLen = Math.min(Math.max(ref * 0.5, 0.04), 0.16);
+      const aHead = aLen * 0.32;
       const aWidth = aLen * 0.16;
-      const sphR = aLen * 0.1;
 
       let color;
       if (j.id === this._selectedId) color = SEL;
@@ -103,16 +102,10 @@ export class JointRenderer {
       node.position.copy(pos);
       node.userData = { jointId: j.id };
 
-      const arrow = new THREE.ArrowHelper(dir, new THREE.Vector3(), aLen, color, aHead, aWidth);
+      // A short double-headed axis line (no marker sphere) centered on the pivot.
+      const arrow = new THREE.ArrowHelper(dir, dir.clone().multiplyScalar(-aLen / 2), aLen, color, aHead, aWidth);
       arrow.traverse((o: any) => { if (o.material) { o.material.depthTest = false; } o.renderOrder = 999; });
       node.add(arrow);
-
-      const sph = new THREE.Mesh(
-        new THREE.SphereGeometry(sphR, 12, 10),
-        new THREE.MeshBasicMaterial({ color, depthTest: false }),
-      );
-      sph.renderOrder = 999;
-      node.add(sph);
 
       this.group.add(node);
     }

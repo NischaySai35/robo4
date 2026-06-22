@@ -27,6 +27,7 @@ import { useHistoryStore } from '@/state/historyStore';
 import { useModelStore } from '@/state/modelStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { useAutonomyStore } from '@/state/autonomyStore';
+import { useTrainingStore } from '@/state/trainingStore';
 import { scan2D } from '@/robotics/sensors/lidar';
 import { computeFK } from '@/kinematics/modelFK';
 import { robotBaseXZ } from '@/robotics/nav/worldModel';
@@ -109,6 +110,49 @@ export default function SimCanvas() {
     };
     const unsubAuto = useAutonomyStore.subscribe(drawAuto);
     drawAuto();
+
+    // ── RL reach-target overlay: a marker at the point you want the arm to reach ──
+    const reachGroup = new THREE.Group();
+    reachGroup.name = 'reach-target';
+    sceneMgr.scene.add(reachGroup);
+    const drawReach = () => {
+      for (const c of [...reachGroup.children]) { reachGroup.remove(c); (c as any).geometry?.dispose?.(); (c as any).material?.dispose?.(); }
+      const t = useTrainingStore.getState().target;
+      if (!t) return;
+      const m = new THREE.Mesh(
+        new THREE.SphereGeometry(0.03, 16, 12),
+        new THREE.MeshBasicMaterial({ color: 0xff3399, depthTest: false, transparent: true, opacity: 0.9 }),
+      );
+      m.position.set(t[0], t[1], t[2]);
+      m.renderOrder = 1002;
+      reachGroup.add(m);
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(0.06, 0.008, 8, 24),
+        new THREE.MeshBasicMaterial({ color: 0xff3399, depthTest: false }),
+      );
+      ring.position.copy(m.position);
+      ring.lookAt(sceneMgr.camera.position);
+      ring.renderOrder = 1002;
+      reachGroup.add(ring);
+    };
+    const unsubReach = useTrainingStore.subscribe(drawReach);
+    drawReach();
+
+    // Click-to-place the reach target on any mesh while "pick target" mode is on.
+    const reachRay = new THREE.Raycaster();
+    const onReachPick = (e: any) => {
+      if (!useTrainingStore.getState().picking) return;
+      const rect = canvas.getBoundingClientRect();
+      const ndc = new THREE.Vector2(((e.clientX - rect.left) / rect.width) * 2 - 1, -((e.clientY - rect.top) / rect.height) * 2 + 1);
+      reachRay.setFromCamera(ndc, sceneMgr.camera);
+      const hits = reachRay.intersectObjects([modelEditor.bodyRenderer.group], true);
+      if (hits.length) {
+        const p = hits[0].point;
+        useTrainingStore.getState().setTarget([p.x, p.y, p.z]);
+        useTrainingStore.getState().setPicking(false);
+      }
+    };
+    canvas.addEventListener('pointerdown', onReachPick);
 
     // LiDAR scan against obstacle meshes (from the robot base, or a given origin).
     const lidarRay = new THREE.Raycaster();
@@ -288,7 +332,9 @@ export default function SimCanvas() {
       unsubModelSave();
       unsubAnimSave();
       unsubAuto();
+      unsubReach();
       canvas.removeEventListener('pointerdown', onGoalClick);
+      canvas.removeEventListener('pointerdown', onReachPick);
       clearAuto();
       sceneMgr.scene.remove(autoGroup);
       bridge.scanLidar = undefined;

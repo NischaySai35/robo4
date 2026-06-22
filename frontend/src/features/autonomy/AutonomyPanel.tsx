@@ -24,6 +24,8 @@ import { ReachEnv } from '@/robotics/rl/gymEnv';
 import { ESTrainer } from '@/robotics/rl/es';
 import { Sequence, Repeat, Action, runTree, type Blackboard } from '@/robotics/behavior/behaviorTree';
 import { bridge } from '@/viewport/cameraBridge';
+import { actions } from '@/runtime/actions';
+import type { Planner } from '@/control/motionRuntime';
 
 const fmt = (n: number, d = 2) => (Number.isFinite(n) ? n.toFixed(d) : '—');
 const MAX_RANGE = 8;
@@ -62,8 +64,13 @@ export default function AutonomyPanel() {
   const lidar = useAutonomyStore((s) => s.lidar);
   const showLidar = useAutonomyStore((s) => s.showLidar);
   const map = useAutonomyStore((s) => s.map);
+  const avoidance = useAutonomyStore((s) => s.avoidance);
+  const poseEstimate = useAutonomyStore((s) => s.poseEstimate);
 
   const [log, setLog] = useState('');
+  const [planner, setPlanner] = useState<Planner>('rrtstar');
+  const [motion, setMotion] = useState<{ phase: string; progress: number } | null>(null);
+  const motionGoal = useRef<any>(null);
   const [train, setTrain] = useState<{ gen: number; ret: number; best: number } | null>(null);
   const [btRunning, setBtRunning] = useState(false);
   const timer = useRef<any>(null);
@@ -174,6 +181,24 @@ export default function AutonomyPanel() {
     }, 16);
   };
 
+  // ── Motion planning via the runtime /move_group action (RRT*/PRM + timed traj) ─
+  const planExecute = () => {
+    const sel = useSelectionStore.getState();
+    const tipId = sel.kind === 'body' ? sel.selectedId : null;
+    if (!tipId) { setLog('Select the tip body (e.g. a hand), then retry.'); return; }
+    if (motionGoal.current) { motionGoal.current.cancel(); motionGoal.current = null; setMotion(null); return; }
+    setMotion({ phase: 'planning', progress: 0 });
+    const h = actions.send<{ tipId: string; planner: Planner }, { phase: string; progress: number }, { ok: boolean; states: number; cost: number }>(
+      '/move_group', { tipId, planner },
+    );
+    motionGoal.current = h;
+    h.onFeedback((fb) => setMotion(fb));
+    h.result
+      .then((r) => setLog(`${planner.toUpperCase()}: ${r.states} states · cost ${fmt(r.cost)} rad · executed.`))
+      .catch((e) => setLog(`Motion: ${e.message}`))
+      .finally(() => { motionGoal.current = null; setMotion(null); });
+  };
+
   // ── Reinforcement learning (Evolution Strategies) ────────────────────────────
   const trainES = () => {
     const sel = useSelectionStore.getState();
@@ -246,16 +271,37 @@ export default function AutonomyPanel() {
         <button className={settingGoal ? 'on' : ''} onClick={() => useAutonomyStore.getState().setSettingGoal(!settingGoal)}>{settingGoal ? 'Click ground…' : 'Pick goal'}</button>
         <button onClick={plan}>Plan A*</button>
       </div>
-      <div className="auto-btns">{!navigating ? <button className="primary" onClick={go}>Navigate ▶</button> : <button onClick={stop}>Stop ■</button>}</div>
+      <div className="auto-btns">
+        <button className={avoidance ? 'on' : ''} onClick={() => useAutonomyStore.getState().toggleAvoidance()}
+          title="Obstacle-aware local planning (DWB on an inflated costmap) vs plain pure-pursuit">
+          {avoidance ? 'DWB avoidance ✓' : 'DWB avoidance'}
+        </button>
+        {!navigating ? <button className="primary" onClick={go}>Navigate ▶</button> : <button onClick={stop}>Stop ■</button>}
+      </div>
+      {navigating && poseEstimate && (
+        <div className="auto-row"><span>AMCL est</span><strong>{fmt(poseEstimate[0])}, {fmt(poseEstimate[1])}</strong></div>
+      )}
 
       <div className="auto-sec">PERCEPTION &amp; MAPPING</div>
       <div className="auto-btns"><button onClick={scan}>LiDAR scan</button><button onClick={buildMap}>Build map</button><button className={showLidar ? 'on' : ''} onClick={() => useAutonomyStore.getState().toggleLidar()}>Rays</button></div>
       <div className="auto-row"><span>LiDAR min</span><strong>{lidar ? `${fmt(Math.min(...lidar.ranges))} m` : '—'}</strong></div>
       <div className="auto-row"><span>Map cells</span><strong>{mapCells || '—'}</strong></div>
 
-      <div className="auto-sec">MOTION PLANNING (RRT)</div>
-      <div className="auto-hint">Select a tip body (e.g. a hand) → plan a collision-checked joint-space trajectory.</div>
-      <div className="auto-btns"><button onClick={planArm}>Plan &amp; execute</button></div>
+      <div className="auto-sec">MOTION PLANNING</div>
+      <div className="auto-hint">Select a tip body (e.g. a hand) → plan a collision-checked, time-parameterized trajectory (runs through the runtime /move_group action).</div>
+      <div className="auto-btns">
+        <select value={planner} onChange={(e) => setPlanner(e.target.value as Planner)} title="Planner algorithm">
+          <option value="rrtstar">RRT* (optimal)</option>
+          <option value="rrt">RRT</option>
+          <option value="prm">PRM</option>
+          <option value="cartesian">Cartesian (line +X)</option>
+        </select>
+        <button className={motion ? 'on' : 'primary'} onClick={planExecute}>
+          {motion ? `${motion.phase} ${Math.round(motion.progress * 100)}% ■` : 'Plan + Execute ▶'}
+        </button>
+      </div>
+      {motion && <div className="auto-bar"><div className="auto-bar-fill" style={{ width: `${motion.progress * 100}%` }} /></div>}
+      <div className="auto-btns"><button onClick={planArm}>Legacy RRT (untimed)</button></div>
 
       <div className="auto-sec">REINFORCEMENT LEARNING</div>
       <div className="auto-hint">Evolution-Strategies trainer on a reach task (select a manipulator body).</div>

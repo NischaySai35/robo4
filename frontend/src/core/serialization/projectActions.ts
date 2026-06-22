@@ -5,6 +5,7 @@
 
 import { serializeProject } from './project';
 import { saveProjectToFile, openProjectFromFile, writeProjectToHandle } from './fileIO';
+import { putProject, getProjectData } from './projectLibrary';
 import { useDocStore } from '@/state/docStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { buildRobotArmProject } from '@/core/factory/robotArm';
@@ -48,6 +49,7 @@ export async function saveProject() {
       useDocStore.getState().setStatus('saving');
       await writeProjectToHandle(handle, serializeProject());
       useDocStore.getState().setDoc(name, handle);
+      saveCurrentToLibrary(name ?? undefined);
       return;
     } catch (e) {
       if (e?.name !== 'AbortError') console.warn('Save failed, falling back to Save As:', e);
@@ -59,7 +61,7 @@ export async function saveProject() {
 /** Always prompt for a new file location. */
 export async function saveProjectAs() {
   const res = await saveProjectToFile(serializeProject(), 'tetrobot.nischay');
-  if (res) useDocStore.getState().setDoc(res.name, res.handle);
+  if (res) { useDocStore.getState().setDoc(res.name, res.handle); saveCurrentToLibrary(res.name); }
 }
 
 export async function openProject() {
@@ -73,6 +75,29 @@ export async function openProject() {
   } catch (e) {
     alert(`Could not open file: ${e.message}`);
   }
+}
+
+/** Save a snapshot of the current project into the local library (with a thumbnail),
+ *  so it appears as a card in the startup picker. Overwrites this project's existing
+ *  card when it already has one. */
+export function saveCurrentToLibrary(nameOverride?: string): string | null {
+  const { name, libraryId } = useDocStore.getState();
+  const projName = nameOverride || name || 'Untitled';
+  const thumb = bridge.captureThumbnail?.(256) ?? '';
+  const id = putProject(projName, serializeProject(), thumb, libraryId ?? undefined);
+  if (id) useDocStore.getState().setLibraryId(id);
+  return id;
+}
+
+/** Load a project from the local library into the scene. */
+export function openFromLibrary(id: string, name: string): boolean {
+  const data = getProjectData(id);
+  if (!data) { alert('That project could not be loaded from the library.'); return false; }
+  const r = bridge.loadScene?.(data);
+  if (r && !r.ok) { alert(`Could not open project: ${r.error}`); return false; }
+  useDocStore.getState().setDoc(name, null);
+  useDocStore.getState().setLibraryId(id);
+  return true;
 }
 
 export function exportModel(fmt: any) {

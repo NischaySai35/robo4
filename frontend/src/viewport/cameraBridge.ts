@@ -22,6 +22,7 @@ export interface CameraBridge {
     minDistance: number; maxDistance: number; distance: number;
   }>) => void;
   captureImage?: (mime?: string, quality?: number) => string;
+  captureThumbnail?: (maxDim?: number) => string;
   // Snap to an axis view while preserving the current orbit target (pan-aware).
   snapToAxis?: (dir: number[], ms?: number) => void;
   // Autonomy: cast a LiDAR scan from a world point (default: robot base) against

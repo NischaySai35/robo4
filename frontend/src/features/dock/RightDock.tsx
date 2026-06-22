@@ -13,6 +13,8 @@ import AnalysisPanel from '@/features/analysis/AnalysisPanel';
 import CameraPanel from '@/features/camera/CameraPanel';
 import AutonomyPanel from '@/features/autonomy/AutonomyPanel';
 import HardwarePanel from '@/features/hardware/HardwarePanel';
+import RuntimePanel from '@/features/runtime/RuntimePanel';
+import TrainingPanel from '@/features/training/TrainingPanel';
 
 /**
  * RightDock — Blender-style dock. A slim icon rail pins to the right edge; each
@@ -54,6 +56,14 @@ const PANELS = [
     icon: <Icon><path d="M6 6h8v8H6zM8 2v3M12 2v3M8 15v3M12 15v3M2 8h3M2 12h3M15 8h3M15 12h3" /></Icon>,
   },
   {
+    id: 'runtime', title: 'Runtime', Component: RuntimePanel,
+    icon: <Icon><circle cx="10" cy="10" r="2" /><circle cx="4" cy="4" r="1.6" /><circle cx="16" cy="4" r="1.6" /><circle cx="4" cy="16" r="1.6" /><path d="M5.4 5.4l3.2 3.2M14.6 5.4l-3.2 3.2M5.4 14.6l3.2-3.2" /></Icon>,
+  },
+  {
+    id: 'training', title: 'Training (RL)', Component: TrainingPanel,
+    icon: <Icon><path d="M10 3v4M10 13v4M3 10h4M13 10h4" /><circle cx="10" cy="10" r="2.5" /><circle cx="10" cy="3" r="1.3" /><circle cx="10" cy="17" r="1.3" /><circle cx="3" cy="10" r="1.3" /><circle cx="17" cy="10" r="1.3" /></Icon>,
+  },
+  {
     id: 'autonomy', title: 'Autonomy', Component: AutonomyPanel,
     icon: <Icon><circle cx="10" cy="10" r="2" /><path d="M10 2v3M10 15v3M2 10h3M15 10h3M10 10l5-3" /></Icon>,
   },
@@ -78,9 +88,9 @@ const EDIT_PANEL = {
 };
 
 const MIN_W = 240;
-const MAX_W = 560;
-const DEFAULT_W = 300;
-const WIDTH_KEY = 'tetrobot:dock:width';
+const MAX_W = 600;
+const DEFAULT_W = 400;
+const WIDTH_KEY = 'tetrobot:dock:width:v2';
 
 export default function RightDock() {
   const active = useDockStore((s) => s.active);

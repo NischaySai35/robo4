@@ -1,0 +1,24 @@
+.canvas-home-btn {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 16px;
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text-bright);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
+  transition: border-color 0.15s, color 0.15s, transform 0.05s;
+}
+.canvas-home-btn:hover { border-color: var(--accent); color: var(--accent); }
+.canvas-home-btn:active { transform: translateX(-50%) scale(0.96); }

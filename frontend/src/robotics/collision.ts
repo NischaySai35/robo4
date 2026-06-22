@@ -47,7 +47,7 @@ export class CollisionModel {
   private disabled = new Set<string>();
   private groundY: number;
 
-  constructor(doc: Document, groundY = 0) {
+  constructor(doc: Document, groundY = 0, options: { allowedPairs?: [string, string][] } = {}) {
     this.doc = doc;
     this.groundY = groundY;
     this.ids = Object.keys(doc.bodies);
@@ -56,6 +56,9 @@ export class CollisionModel {
     for (const j of Object.values(doc.joints)) {
       if (j.parentBodyId && j.childBodyId) this.disabled.add(this.key(j.parentBodyId, j.childBodyId));
     }
+    // SRDF-style allowed-collision matrix: caller-supplied pairs that should never
+    // be treated as colliding (e.g. adjacent links that always touch).
+    for (const [a, b] of options.allowedPairs ?? []) this.disabled.add(this.key(a, b));
     // Rest-pose overlaps are "designed to touch".
     const fk = computeFK(doc);
     const boxes = new Map(this.ids.map((id) => [id, worldAabb(this.half.get(id)!, fk.get(id)?.matrix ?? new THREE.Matrix4())]));

@@ -48,6 +48,20 @@ export class JointRenderer {
     );
   }
 
+  /** Characteristic size of a body from its own geometry (NOT the whole scene), so
+   *  joint visuals scale to the parts they connect — never to far-away obstacles. */
+  _bodySize(body: any): number {
+    const g = body?.visual?.geometry ?? {};
+    const s = body?.transform?.scale ?? [1, 1, 1];
+    const a = Math.abs(s[0]), b = Math.abs(s[1]), c = Math.abs(s[2]);
+    switch (g.type) {
+      case 'sphere': return (g.radius ?? 0.5) * 2 * Math.max(a, b, c);
+      case 'box': { const sz = g.size ?? [1, 1, 1]; return Math.hypot(sz[0] * a, sz[1] * b, sz[2] * c); }
+      case 'cylinder': case 'capsule': { const r = g.radius ?? 0.5, l = g.length ?? 1; return Math.hypot(2 * r * Math.max(a, b), l * c); }
+      default: return 0.4 * Math.max(a, b, c);
+    }
+  }
+
   sync(doc: Document, fk: any = null, loads: any = null) {
     this._lastDoc = doc;
     this._lastFk = fk;
@@ -57,18 +71,6 @@ export class JointRenderer {
     const maxTorque = loads
       ? Math.max(1e-6, ...[...loads.values()].map((l) => Math.abs(l.torque)))
       : 0;
-
-    // Scale the axis arrow + marker to the model so they read well on a small
-    // desktop arm and a large rig alike (the old fixed 0.9 m arrow dwarfed small
-    // models — that giant stray arrow sticking out of the part).
-    const pts: any[] = [];
-    if (fk?.values) for (const w of fk.values()) if (w?.position) pts.push(new THREE.Vector3(...w.position));
-    let L = 1;
-    if (pts.length) L = new THREE.Box3().setFromPoints(pts).getSize(new THREE.Vector3()).length() || 1;
-    const aLen = Math.min(Math.max(L * 0.14, 0.04), 1.2);
-    const aHead = aLen * 0.28;
-    const aWidth = aLen * 0.16;
-    const sphR = aLen * 0.09;
 
     for (const j of Object.values(doc.joints)) {
       if (!j.parentBodyId) continue;
@@ -83,6 +85,15 @@ export class JointRenderer {
       const quat = new THREE.Quaternion();
       world.decompose(pos, quat, new THREE.Vector3());
       const dir = new THREE.Vector3(...(j.axis ?? [0, 0, 1])).normalize().applyQuaternion(quat);
+
+      // Size the arrow + marker to THIS joint's own bodies, not the whole scene, so
+      // far-away obstacles never inflate it.
+      const child = j.childBodyId ? doc.bodies[j.childBodyId] : null;
+      const bSize = Math.max(this._bodySize(parent), child ? this._bodySize(child) : 0, 0.02);
+      const aLen = Math.min(Math.max(bSize * 0.9, 0.03), 0.6);
+      const aHead = aLen * 0.28;
+      const aWidth = aLen * 0.16;
+      const sphR = aLen * 0.1;
 
       let color;
       if (j.id === this._selectedId) color = SEL;

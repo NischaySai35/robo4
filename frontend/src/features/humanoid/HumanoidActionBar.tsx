@@ -13,6 +13,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
 import { useAutonomyStore } from '@/state/autonomyStore';
 import { follow } from '@/robotics/nav/pathFollower';
+import { inflateCostmap, type CostGrid } from '@/robotics/nav/costmap';
+import { planDWB, DEFAULT_DWB } from '@/robotics/nav/dwb';
+import { ParticleFilter } from '@/robotics/nav/amcl';
+import { buildGrid, type Grid } from '@/robotics/nav/occupancyGrid';
+import { obstacleFootprints, worldBounds } from '@/robotics/nav/worldModel';
+import { computeFK } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
 
 const PI = Math.PI;
@@ -169,11 +175,33 @@ export default function HumanoidActionBar() {
     const restY = b0.transform.position[1];
     let ryaw = quatYaw(b0.transform.quaternion);
     const SPEED = 0.5, TURN = 1.8;
+
+    // Obstacle-aware local planning: build an inflated costmap of the world once, so
+    // DWB can steer the gait around obstacles the global A* path didn't foresee.
+    const avoidance = useAutonomyStore.getState().avoidance;
+    let costmap: CostGrid | null = null;
+    if (avoidance) {
+      const d = useModelStore.getState().doc;
+      const fk = computeFK(d);
+      const fps = obstacleFootprints(d, fk);
+      if (fps.length) {
+        const grid: Grid = buildGrid(fps, worldBounds(fps, [[rx, rz]]), 0.12, 0);
+        costmap = inflateCostmap(grid, 0.55, 3.0);
+      }
+    }
+
+    // AMCL: a particle filter shadows the gait (odometry + a noisy position fix) and
+    // publishes its pose estimate, demonstrating native Monte-Carlo localization.
+    const pf = new ParticleFilter(250);
+    pf.init({ x: rx, y: rz, theta: ryaw }, { xy: 0.3, theta: 0.2 });
+
+    let lastV = 0, lastDwbW = 0;
     const t0 = performance.now();
     let last = t0, raf = 0;
     const stopNav = (st: any) => {
       useAutonomyStore.getState().setNavigating(false);
       useAutonomyStore.getState().setStatus(st);
+      useAutonomyStore.getState().setPoseEstimate(null);
     };
     const loop = () => {
       const now = performance.now();
@@ -189,10 +217,34 @@ export default function HumanoidActionBar() {
         stopNav('arrived');
         return;
       }
-      ryaw += Math.max(-TURN * dt, Math.min(TURN * dt, cmd.headingErr));
-      const v = SPEED * cmd.forward;
+
+      // Pure-pursuit baseline — ALWAYS keeps the robot walking toward the goal. This
+      // is the proven path; DWB only *refines* the steering, it never replaces it, so
+      // the gait can never freeze in place.
+      let turn = Math.max(-TURN * dt, Math.min(TURN * dt, cmd.headingErr));
+      let v = SPEED * cmd.forward;
+      if (costmap) {
+        // DWB toward the lookahead target, avoiding inflated cost. Frame map:
+        // world (x,z) → DWB (x,y); heading θ = π/2 − yaw so forward = (sin yaw, cos yaw).
+        // vMin keeps a positive forward speed in the sample set so it won't choose to stop.
+        const theta = PI / 2 - ryaw;
+        const res = planDWB(
+          { x: rx, y: rz, theta }, { v: lastV, w: lastDwbW }, { x: cmd.target[0], y: cmd.target[1] },
+          costmap, { ...DEFAULT_DWB, vMax: SPEED, vMin: SPEED * 0.4, dt: Math.max(0.05, dt), horizon: 0.9 },
+        );
+        if (res && res.v > 0.02) { v = res.v; turn = -res.w * dt; lastV = res.v; lastDwbW = res.w; }
+        // else: fall back to the pure-pursuit baseline above (never freeze)
+      }
+      ryaw += turn;
       rx += Math.sin(ryaw) * v * dt;
       rz += Math.cos(ryaw) * v * dt;
+
+      // AMCL: predict from commanded motion, correct with a noisy GPS-like fix.
+      pf.predict({ dx: v * dt, dy: 0, dtheta: 0 }, { xy: 0.03, theta: 0.02 });
+      const mx = rx + (Math.random() - 0.5) * 0.2, mz = rz + (Math.random() - 0.5) * 0.2;
+      pf.update((p) => Math.exp(-(((p.x - mx) ** 2 + (p.y - mz) ** 2)) / 0.2));
+      const est = pf.estimate();
+      useAutonomyStore.getState().setPoseEstimate([est.x, est.y, ryaw]);
       const pose = ACTIONS.walk(t).pose;
       const idVals: Record<string, number> = {};
       for (const id of allMovable) idVals[id] = 0;
@@ -207,17 +259,6 @@ export default function HumanoidActionBar() {
 
   if (!isHumanoid) return null;
 
-  const home = () => {
-    setActive(null);
-    const d = useModelStore.getState().doc;
-    const cur = (rootId ? d.bodies[rootId]?.transform.position : null) ?? [0, 0.95, 0];
-    const restY = restRef.current?.[1] ?? cur[1];
-    const rootPos = [cur[0], restY, cur[2]]; // keep ground spot, reset height & pose
-    const idVals: Record<string, number> = {};
-    for (const id of allMovable) idVals[id] = 0;
-    useModelStore.getState().applyTransient((doc) => applyPose(doc, idVals, rootId, rootPos));
-  };
-
   return (
     <div className="haction-bar" title="Humanoid actions (kinematic preview)">
       {BUTTONS.map((b) => (
@@ -229,12 +270,6 @@ export default function HumanoidActionBar() {
           {b.label}
         </button>
       ))}
-      <button className="haction-btn haction-home" onClick={home} title="Reset to neutral stance">
-        <svg width="13" height="13" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round">
-          <path d="M2 6.5L7 2l5 4.5M3.5 5.5V12h7V5.5" />
-        </svg>
-        Home
-      </button>
     </div>
   );
 }

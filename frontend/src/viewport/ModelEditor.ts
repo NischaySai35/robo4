@@ -13,6 +13,7 @@
 import type { Document } from '@/core/model/index';
 import * as THREE from 'three';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
+import { physicsBridge } from '@/viewport/physicsBridge';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer';
 import { JointRenderer } from '@/viewport/renderers/JointRenderer';
 import { EditModeController } from '@/viewport/EditModeController';
@@ -63,10 +64,14 @@ export class ModelEditor {
     // a gizmo interaction just happened, so the click that ends it is not mistaken
     // for a click on empty space (which would otherwise deselect).
     this._gizmoActive = false;
+    this._gizmoChanged = false; // did this gizmo interaction actually move anything?
     this.transform.addEventListener('dragging-changed', (e: any) => {
       controls.enabled = !e.value;
-      if (e.value) this._gizmoActive = true;
+      if (e.value) { this._gizmoActive = true; this._gizmoChanged = false; }
     });
+    // Mark a real edit so a no-op gizmo touch (a click that merely grazed an
+    // invisible gizmo plane) doesn't block click-to-deselect on empty space.
+    this.transform.addEventListener('objectChange', () => { this._gizmoChanged = true; });
 
     // Commit the gizmo's result to the model as an undoable command on release.
     this.transform.addEventListener('mouseUp', () => this._commitTransform());
@@ -198,6 +203,7 @@ export class ModelEditor {
       .then((sim) => {
         if (!this._startingSim) { sim.dispose(); return; } // stopped before ready
         this._sim = sim;
+        physicsBridge.sim = sim; // expose for live motor-target commands
         this._startingSim = false;
       })
       .catch((err) => { console.warn('PhysicsSim failed:', err); this._startingSim = false; });
@@ -205,6 +211,7 @@ export class ModelEditor {
 
   _stopSim() {
     this._startingSim = false;
+    physicsBridge.sim = null;
     if (this._sim) { this._sim.dispose(); this._sim = null; }
     this._syncModel(this._doc); // restore FK pose
     this._onSelection(useSelectionStore.getState());
@@ -336,7 +343,17 @@ export class ModelEditor {
     // this pick so it doesn't deselect. Note: we deliberately do NOT bail merely
     // because `transform.axis` is set, since the translate gizmo's invisible pick
     // planes are huge and would block click-to-deselect on genuinely empty space.
-    if (this.transform.dragging || this._gizmoActive) { this._gizmoActive = false; return; }
+    // A gizmo DRAG that actually moved the part just ended — skip this pick so it
+    // doesn't deselect. But a gizmo touch that changed nothing (a click that merely
+    // grazed an invisible gizmo plane) falls through, so clicking empty space always
+    // deselects instead of silently being swallowed.
+    if (this.transform.dragging) { this._gizmoActive = false; this._gizmoChanged = false; return; }
+    if (this._gizmoActive) {
+      const realDrag = this._gizmoChanged;
+      this._gizmoActive = false; this._gizmoChanged = false;
+      if (realDrag) return;
+      // no-op gizmo touch → continue to normal pick (deselect on empty space)
+    }
     if (this._sim) return;                          // don't reselect mid-simulation
 
     const rect = this.domElement.getBoundingClientRect();

@@ -10,7 +10,8 @@ import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useDockStore } from '@/state/dockStore';
 import { commands } from '@/core/commands/index';
-import { makeJoint, JointType } from '@/core/model/index';
+import { makeJoint, JointType, makeDocument } from '@/core/model/index';
+import { armMacro, expandChain } from '@/core/model/macros';
 import { importMesh } from '@/features/import/importMesh';
 import { exportRobot } from '@/features/export/exportRobot';
 import { jointFramesForBodies } from '@/kinematics/modelFK';
@@ -27,6 +28,17 @@ export default function Outliner() {
 
   const bodies = Object.values(doc.bodies);
   const joints = Object.values(doc.joints);
+
+  const [macroForm, setMacroForm] = useState<any>(null); // { segments, length } | null
+  const spawnMacro = () => {
+    const segments = Math.max(1, Math.min(12, Math.round(macroForm?.segments ?? 3)));
+    const length = Math.max(0.05, macroForm?.length ?? 0.6);
+    // Expand into a throwaway doc, then add the created entities as ONE undoable op.
+    const { doc: tmp, bodyIds, jointIds } = expandChain(makeDocument({ name: 'tmp' }), armMacro({ segments, length, name: 'Arm' }));
+    const entities = [...bodyIds.map((id) => tmp.bodies[id]), ...jointIds.map((id) => tmp.joints[id])];
+    dispatch(commands.addEntities(entities, `Spawn macro: ${segments}-DOF arm`));
+    setMacroForm(null);
+  };
 
   const [jointForm, setJointForm] = useState<any>(null); // { parent, child, type } | null
   const openJointForm = () => {
@@ -62,6 +74,25 @@ export default function Outliner() {
   return (
     <div className="ol-panel">
       <button className="ol-import" onClick={() => importMesh()}>⬇ Import Mesh (STL / OBJ)</button>
+
+      {!macroForm
+        ? <button className="ol-import" onClick={() => setMacroForm({ segments: 3, length: 0.6 })}>⚙ Spawn Macro (parametric arm)</button>
+        : (
+          <div className="ol-jointform">
+            <label>Segments
+              <input type="number" min={1} max={12} value={macroForm.segments}
+                onChange={(e) => setMacroForm({ ...macroForm, segments: +e.target.value })} />
+            </label>
+            <label>Link length (m)
+              <input type="number" min={0.05} step={0.05} value={macroForm.length}
+                onChange={(e) => setMacroForm({ ...macroForm, length: +e.target.value })} />
+            </label>
+            <div className="ol-jointform-actions">
+              <button className="ol-jf-create" onClick={spawnMacro}>Spawn</button>
+              <button className="ol-jf-cancel" onClick={() => setMacroForm(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
 
       {bodies.length >= 2 && !jointForm && (
         <button className="ol-import" onClick={openJointForm}>＋ Joint (connect 2 bodies)</button>
@@ -129,6 +160,8 @@ export default function Outliner() {
       {bodies.length > 0 && (
         <div className="ol-export">
           <button onClick={() => exportRobot('urdf')} title="Export URDF (ROS/Gazebo)">⬆ URDF</button>
+          <button onClick={() => exportRobot('sdf')} title="Export SDF (Gazebo/Ignition)">⬆ SDF</button>
+          <button onClick={() => exportRobot('mjcf')} title="Export MJCF (MuJoCo)">⬆ MJCF</button>
           <button onClick={() => exportRobot('idl')} title="Export comms interface">⬆ IDL</button>
         </div>
       )}

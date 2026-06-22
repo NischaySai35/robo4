@@ -3,6 +3,8 @@
  * Electron native save dialog when available, else a browser download.
  */
 import { exportURDF } from '@/core/serialization/exporters/urdf';
+import { exportSDF } from '@/core/serialization/exporters/sdf';
+import { exportMJCF } from '@/core/serialization/exporters/mjcf';
 import { exportIDL } from '@/core/serialization/exporters/idl';
 import { downloadBlob } from '@/core/serialization/fileIO';
 import { useModelStore } from '@/state/modelStore';
@@ -32,5 +34,7 @@ export async function exportRobot(fmt: any) {
   }
   const name = robotName();
   if (fmt === 'urdf') await save(exportURDF(doc, name), `${name}.urdf`, 'urdf');
+  else if (fmt === 'sdf') await save(exportSDF(doc, name), `${name}.sdf`, 'sdf');
+  else if (fmt === 'mjcf') await save(exportMJCF(doc, name), `${name}.xml`, 'xml');
   else if (fmt === 'idl') await save(exportIDL(doc, name), `${name}.idl`, 'idl');
 }

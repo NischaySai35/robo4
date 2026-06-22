@@ -41,6 +41,10 @@ export class PhysicsSim {
     // rigid and holds its pose — it doesn't flop to the floor.
     this._motorStiffness = 500;
     this._motorDamping = 40;
+    // jointId -> { joint, type } so a controller can command motor targets LIVE
+    // (closed-loop trajectory execution: the physical arm tracks setpoints under
+    // gravity/contacts instead of teleporting). See setJointTargets().
+    this.joints = new Map();
 
     // Ground
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, groundY, 0));
@@ -147,6 +151,9 @@ export class PhysicsSim {
       }
 
       const joint = this.world.createImpulseJoint(data, parent, child, true);
+      if (j.type === 'revolute' || j.type === 'continuous' || j.type === 'prismatic') {
+        this.joints.set(j.id, { joint, type: j.type });
+      }
       if (j.type === 'revolute' || j.type === 'continuous') {
         // Hold the commanded angle rigidly (servo). Acceleration-based so stiffness
         // is mass-independent and stable.
@@ -229,6 +236,20 @@ export class PhysicsSim {
     this.world.gravity = new RAPIER.Vector3(0, -g, 0);
     // Wake every body so a gravity change takes effect even when settled.
     for (const rb of this.bodies.values()) rb.wakeUp?.();
+  }
+
+  /**
+   * Command joint motor targets live (closed-loop). For revolute/prismatic joints the
+   * acceleration-based motor drives the joint toward `value` under physics — so a
+   * trajectory controller can make the SIMULATED arm track a setpoint while gravity
+   * and contacts act on it. Unknown ids are ignored.
+   */
+  setJointTargets(values: Record<string, number>) {
+    for (const [id, v] of Object.entries(values)) {
+      const entry = this.joints.get(id);
+      if (!entry) continue;
+      entry.joint.configureMotorPosition?.(v, this._motorStiffness, this._motorDamping);
+    }
   }
 
   step() { this.world.step(this._events, this._hooks); }

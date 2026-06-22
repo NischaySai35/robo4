@@ -18,6 +18,8 @@ interface AutonomyState {
   lidar: LidarScan | null;
   showLidar: boolean;
   map: Grid | null;                  // occupancy map built from LiDAR
+  avoidance: boolean;                // obstacle-aware local planning (DWB) vs pure-pursuit
+  poseEstimate: [number, number, number] | null; // AMCL [x,z,yaw] estimate, when localizing
   setGoal: (g: [number, number] | null) => void;
   setPath: (p: number[][] | null) => void;
   setStatus: (s: NavStatus) => void;
@@ -26,6 +28,8 @@ interface AutonomyState {
   setLidar: (s: LidarScan | null) => void;
   toggleLidar: () => void;
   setMap: (g: Grid | null) => void;
+  toggleAvoidance: () => void;
+  setPoseEstimate: (p: [number, number, number] | null) => void;
 }
 
 export const useAutonomyStore = create<AutonomyState>((set) => ({
@@ -37,6 +41,8 @@ export const useAutonomyStore = create<AutonomyState>((set) => ({
   lidar: null,
   showLidar: true,
   map: null,
+  avoidance: false,
+  poseEstimate: null,
   setGoal: (goal) => set({ goal }),
   setPath: (path) => set({ path }),
   setStatus: (status) => set({ status }),
@@ -45,4 +51,6 @@ export const useAutonomyStore = create<AutonomyState>((set) => ({
   setLidar: (lidar) => set({ lidar }),
   toggleLidar: () => set((s) => ({ showLidar: !s.showLidar })),
   setMap: (map) => set({ map }),
+  toggleAvoidance: () => set((s) => ({ avoidance: !s.avoidance })),
+  setPoseEstimate: (poseEstimate) => set({ poseEstimate }),
 }));

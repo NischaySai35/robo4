@@ -4,10 +4,12 @@ import LeftPanel from '@/features/panels/LeftPanel';
 import SimCanvas from '@/features/canvas/SimCanvas';
 import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
 import ViewControls from '@/features/viewport-ui/ViewControls';
+import HomeButton from '@/features/viewport-ui/HomeButton';
 import ServoController from '@/features/servo/ServoController';
 import SimTransmitPanel from '@/features/connection/SimTransmitPanel';
 import ConnectionWindow from '@/features/connection/ConnectionWindow';
 import IntroOverlay from '@/features/intro/IntroOverlay';
+import StartupProjects from '@/features/startup/StartupProjects';
 import MenuBar from '@/features/menu/MenuBar';
 import RightDock from '@/features/dock/RightDock';
 import HumanoidActionBar from '@/features/humanoid/HumanoidActionBar';
@@ -25,6 +27,8 @@ import { duplicateInPlace } from '@/features/ops/bodyOps';
 import { useEditModeStore } from '@/state/editModeStore';
 import { editBridge } from '@/viewport/editBridge';
 import { bridge } from '@/viewport/cameraBridge';
+import { initRuntimeBridge } from '@/state/runtimeBridge';
+import { initMotionRuntime } from '@/control/motionRuntime';
 
 /** Duplicate the selected body in place, select the copy, and enter move mode. */
 function duplicateSelectedInPlace() {
@@ -286,14 +290,19 @@ function AppFooter() {
 }
 
 const MIN_PANEL_W = 200;
-const DEFAULT_PANEL_W = 340;
+const DEFAULT_PANEL_W = 250;
 
 export default function App() {
   const [page,       setPage]       = useState('sim');
   const [connOpen,   setConnOpen]   = useState(false);
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_W);
   const [showIntro,  setShowIntro]  = useState(true);
+  const [showPicker, setShowPicker] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Start the native runtime substrate (pub/sub bus, TF, params, diagnostics) once,
+  // then register the motion stack (move_group action + planning service).
+  useEffect(() => { initRuntimeBridge(); initMotionRuntime(); }, []);
 
   // Apply the theme to <html> so CSS [data-theme="dark"] overrides take effect.
   const theme = useThemeStore(s => s.theme);
@@ -358,6 +367,14 @@ export default function App() {
       const { selectedId, kind } = useSelectionStore.getState();
       const edit = useEditModeStore.getState();
 
+      // Esc clears the current selection (hides the gizmo + joint arrows) — a reliable
+      // escape hatch in case an empty-space click is ever missed.
+      if (e.key === 'Escape') {
+        if (edit.active) { edit.exit(); }
+        else if (selectedId) { useSelectionStore.getState().clear(); }
+        return;
+      }
+
       // Tab toggles mesh Edit Mode (enter needs a selected body).
       if (e.key === 'Tab') {
         if (edit.active) { e.preventDefault(); edit.exit(); }
@@ -393,7 +410,8 @@ export default function App() {
 
   return (
     <div className="app-shell">
-      {showIntro && <IntroOverlay onDone={() => setShowIntro(false)} />}
+      {showIntro && <IntroOverlay onDone={() => { setShowIntro(false); setShowPicker(true); }} />}
+      {showPicker && <StartupProjects onClose={() => setShowPicker(false)} />}
       <MenuBar onToggleConn={toggleConn} />
       <AppHeader page={page} setPage={setPage} />
 
@@ -415,6 +433,7 @@ export default function App() {
 
           <div className="canvas-wrapper">
             <SimCanvas />
+            <HomeButton />
             <div className="top-right-cluster">
               <NavigationGizmo />
               <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />

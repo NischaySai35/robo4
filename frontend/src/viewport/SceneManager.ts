@@ -154,6 +154,21 @@ export class SceneManager {
       return this.renderer.domElement.toDataURL(mime, quality);
     };
 
+    // Small downscaled JPEG of the current frame, for project-card thumbnails.
+    bridge.captureThumbnail = (maxDim = 256) => {
+      this.composer.render();
+      const src = this.renderer.domElement;
+      const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
+      const w = Math.max(1, Math.round(src.width * scale));
+      const h = Math.max(1, Math.round(src.height * scale));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      if (!ctx) return '';
+      ctx.drawImage(src, 0, 0, w, h);
+      return c.toDataURL('image/jpeg', 0.55);
+    };
+
     // Gizmo drag: orbit camera without OrbitControls event interference
     bridge.orbitDelta = (dx, dy) => {
       const target = this.controls.target.clone();
@@ -351,11 +366,20 @@ export class SceneManager {
     const box = bridge.getFitBox ? bridge.getFitBox() : null;
     if (!box || box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
-    const maxDist = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.5);
+    // Bounding-sphere radius of the content (no hard floor → tiny parts frame closely).
+    const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.05);
 
-    // Distance so the arm bounding sphere fills ~70% of the viewport
+    // Distance so the content fills ~70% of the viewport, scaled purely by its size.
     const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
-    const fitDist  = Math.max((maxDist * 1.45) / Math.tan(halfFov), 4);
+    const fitDist  = (radius * 1.45) / Math.tan(halfFov);
+
+    // Dynamically size the depth range + zoom limits to the object so nothing clips
+    // and you can zoom in/out proportionally to how big the model is.
+    this.camera.near = Math.max(0.005, radius * 0.02);
+    this.camera.far  = Math.max(fitDist * 6, radius * 50);
+    this.camera.updateProjectionMatrix();
+    this.controls.minDistance = Math.max(radius * 0.3, 0.05);
+    this.controls.maxDistance = fitDist * 8;
 
     // Preserve azimuth (horizontal angle), set elevation to a clean ~25°
     const offset = this.camera.position.clone().sub(this.controls.target);

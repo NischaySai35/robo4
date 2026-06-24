@@ -15,9 +15,12 @@ import { commands } from '@/core/commands/index';
 import { makeBody, makeGeometry, identityOrigin, GeometryType } from '@/core/model/index';
 import { computeFK } from '@/kinematics/modelFK';
 import { chainJoints } from '@/kinematics/modelIK';
-import { buildGrid, emptyGrid, integrateScan } from '@/robotics/nav/occupancyGrid';
+import { buildGrid, emptyGrid, integrateScan, integrateScanTraced } from '@/robotics/nav/occupancyGrid';
 import { planPath } from '@/robotics/nav/astar';
+import { nextExplorationGoal, frontierGoals } from '@/robotics/nav/frontier';
+import { serializeMapJSON, deserializeMap } from '@/robotics/nav/mapIO';
 import { obstacleFootprints, robotBaseXZ, worldBounds } from '@/robotics/nav/worldModel';
+import { downloadBlob } from '@/core/serialization/fileIO';
 import { planRRT } from '@/robotics/planning/rrt';
 import { CollisionModel } from '@/robotics/collision';
 import { ReachEnv } from '@/robotics/rl/gymEnv';
@@ -73,9 +76,11 @@ export default function AutonomyPanel() {
   const motionGoal = useRef<any>(null);
   const [train, setTrain] = useState<{ gen: number; ret: number; best: number } | null>(null);
   const [btRunning, setBtRunning] = useState(false);
+  const [exploring, setExploring] = useState(false);
   const timer = useRef<any>(null);
   const btStop = useRef<any>(null);
-  useEffect(() => () => { if (timer.current) clearInterval(timer.current); if (btStop.current) btStop.current(); }, []);
+  const exploreTimer = useRef<any>(null);
+  useEffect(() => () => { if (timer.current) clearInterval(timer.current); if (btStop.current) btStop.current(); if (exploreTimer.current) clearInterval(exploreTimer.current); }, []);
 
   const doc = useModelStore((s) => s.doc);
   const movable = Object.values(doc.joints).filter((j) => j.type !== 'fixed').length;
@@ -139,6 +144,80 @@ export default function AutonomyPanel() {
     integrateScan(grid, s.points, s.ranges, MAX_RANGE, 0.25);
     useAutonomyStore.getState().setMap({ ...grid, data: grid.data.slice() }); // new ref → re-render
     setLog(`Map updated from LiDAR · ${grid.data.reduce((a, v) => a + v, 0)} occupied cells.`);
+  };
+
+  // ── Autonomous exploration (frontier-based: explore → map → repeat) ───────────
+  const reachable = (x: number, z: number) => !!planTo([x, z]);
+
+  const exploreTick = () => {
+    const store = useAutonomyStore.getState();
+    const d = useModelStore.getState().doc;
+    const base = robotBaseXZ(d, computeFK(d));
+
+    // Ensure an exploration map exists (with the known/observed layer).
+    let grid = store.map;
+    if (!grid) {
+      grid = emptyGrid(worldBounds([], [base, [base[0] + 10, base[1] + 10], [base[0] - 10, base[1] - 10]]), 0.15);
+    }
+    // Fuse the latest LiDAR scan with ray tracing (free + occupied + known).
+    const s = bridge.scanLidar?.();
+    if (s) integrateScanTraced(grid, base[0], base[1], s.points, s.ranges, MAX_RANGE, 0.25);
+    store.setMap({ ...grid, data: grid.data.slice(), known: grid.known ? grid.known.slice() : undefined });
+
+    // Keep driving until we reach the current frontier.
+    if (store.navigating && store.status !== 'arrived' && store.status !== 'failed') return;
+
+    // Choose the next frontier to reveal more of the map.
+    const goal = nextExplorationGoal(grid, base[0], base[1], reachable, 3);
+    if (!goal) {
+      stopExplore();
+      setLog(`Exploration complete · ${grid.data.reduce((a, v) => a + v, 0)} occupied cells mapped. Save the map to keep it.`);
+      return;
+    }
+    store.setGoal(goal);
+    const p = planTo(goal);
+    store.setPath(p);
+    store.setNavigating(!!p);
+    store.setStatus(p ? 'navigating' : 'failed');
+    setLog(`Exploring → frontier ${fmt(goal[0])}, ${fmt(goal[1])} (${frontierGoals(grid, 3).length} frontiers left)`);
+  };
+
+  const startExplore = () => {
+    setExploring(true);
+    setLog('Autonomous exploration started — driving to frontiers and mapping…');
+    exploreTick();
+    exploreTimer.current = setInterval(exploreTick, 700);
+  };
+  const stopExplore = () => {
+    if (exploreTimer.current) { clearInterval(exploreTimer.current); exploreTimer.current = null; }
+    setExploring(false);
+    useAutonomyStore.getState().setNavigating(false);
+    useAutonomyStore.getState().setStatus('idle');
+  };
+  const toggleExplore = () => (exploring ? stopExplore() : startExplore());
+
+  // ── Map persistence (the robot's memory of the space) ─────────────────────────
+  const saveMap = () => {
+    const m = useAutonomyStore.getState().map;
+    if (!m) { setLog('No map yet — explore or build a map first.'); return; }
+    downloadBlob(new Blob([serializeMapJSON(m)], { type: 'application/json' }),
+      `map-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.ntmap`);
+    setLog('Map saved (.ntmap). The robot can reload this space next time.');
+  };
+  const loadMap = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = '.ntmap,.json';
+    inp.onchange = async () => {
+      const f = inp.files?.[0];
+      if (!f) return;
+      try {
+        const g = deserializeMap(await f.text());
+        useAutonomyStore.getState().setMap(g);
+        setLog(`Map loaded · ${g.data.reduce((a, v) => a + v, 0)} occupied cells. Plan/navigate uses it now.`);
+      } catch { setLog('Not a valid .ntmap file.'); }
+    };
+    inp.click();
   };
 
   // ── Motion planning (RRT + real collision) ──────────────────────────────────
@@ -286,6 +365,16 @@ export default function AutonomyPanel() {
       <div className="auto-btns"><button onClick={scan}>LiDAR scan</button><button onClick={buildMap}>Build map</button><button className={showLidar ? 'on' : ''} onClick={() => useAutonomyStore.getState().toggleLidar()}>Rays</button></div>
       <div className="auto-row"><span>LiDAR min</span><strong>{lidar ? `${fmt(Math.min(...lidar.ranges))} m` : '—'}</strong></div>
       <div className="auto-row"><span>Map cells</span><strong>{mapCells || '—'}</strong></div>
+
+      <div className="auto-sec">AUTONOMOUS EXPLORATION</div>
+      <div className="auto-hint">Robot drives itself to map boundaries (frontiers), building the map until the space is fully explored. Then save it — that's the robot's memory of the place.</div>
+      <div className="auto-btns">
+        <button className={exploring ? 'on' : 'primary'} onClick={toggleExplore}>{exploring ? 'Stop explore ■' : 'Explore ▶'}</button>
+      </div>
+      <div className="auto-btns">
+        <button onClick={saveMap}>Save map</button>
+        <button onClick={loadMap}>Load map</button>
+      </div>
 
       <div className="auto-sec">MOTION PLANNING</div>
       <div className="auto-hint">Select a tip body (e.g. a hand) → plan a collision-checked, time-parameterized trajectory (runs through the runtime /move_group action).</div>

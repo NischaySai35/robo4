@@ -11,6 +11,10 @@ export interface Grid {
   cols: number;
   rows: number;
   data: Uint8Array;     // row-major, 1 = occupied
+  /** Optional exploration layer: 1 = cell has been observed (known), 0 = unknown.
+   *  When present, a cell is FREE if data=0 & known=1, OCCUPIED if data=1, else UNKNOWN.
+   *  Used by frontier exploration; ignored by plain planning (which treats data only). */
+  known?: Uint8Array;
 }
 
 export interface GridBounds { minX: number; maxX: number; minZ: number; maxZ: number; }
@@ -54,6 +58,59 @@ export function integrateScan(g: Grid, points: number[][], ranges: number[], max
   for (let i = 0; i < points.length; i++) {
     if (ranges[i] >= maxRange - 1e-3) continue; // no return → unknown, not occupied
     markOccupied(g, points[i][0], points[i][2], inflate);
+  }
+}
+
+/** Ensure (and return) the exploration "known" layer. */
+export function ensureKnown(g: Grid): Uint8Array {
+  if (!g.known || g.known.length !== g.cols * g.rows) g.known = new Uint8Array(g.cols * g.rows);
+  return g.known;
+}
+
+export function isKnown(g: Grid, c: number, r: number): boolean {
+  return inBounds(g, c, r) && !!g.known && g.known[r * g.cols + c] === 1;
+}
+
+/** Walk integer cells from (c0,r0) to (c1,r1) (Bresenham), calling cb on each; `last` true at endpoint. */
+function traceCells(c0: number, r0: number, c1: number, r1: number, cb: (c: number, r: number, last: boolean) => void) {
+  let x = c0, y = r0;
+  const dx = Math.abs(c1 - c0), dy = Math.abs(r1 - r0);
+  const sx = c0 < c1 ? 1 : -1, sy = r0 < r1 ? 1 : -1;
+  let err = dx - dy;
+  for (;;) {
+    const last = x === c1 && y === r1;
+    cb(x, y, last);
+    if (last) break;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dx; y += sy; }
+  }
+}
+
+/**
+ * Fuse a LiDAR scan with RAY TRACING: every cell the beam passes through becomes
+ * known-free; the hit cell becomes known-occupied (inflated). This is what lets the
+ * map distinguish FREE from UNKNOWN — the basis of frontier exploration. `(ox,oz)` is
+ * the sensor's world position.
+ */
+export function integrateScanTraced(
+  g: Grid, ox: number, oz: number, points: number[][], ranges: number[], maxRange: number, inflate = 0.2,
+) {
+  const known = ensureKnown(g);
+  const [oc, or] = worldToCell(g, ox, oz);
+  for (let i = 0; i < points.length; i++) {
+    const hit = ranges[i] < maxRange - 1e-3;
+    const [ec, er] = worldToCell(g, points[i][0], points[i][2]);
+    traceCells(oc, or, ec, er, (c, r, last) => {
+      if (!inBounds(g, c, r)) return;
+      const idx = r * g.cols + c;
+      if (last && hit) {
+        markOccupied(g, points[i][0], points[i][2], inflate);
+        known[idx] = 1;
+      } else if (g.data[idx] === 0) {
+        known[idx] = 1; // traversed empty space → observed free
+      }
+    });
   }
 }
 

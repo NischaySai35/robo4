@@ -10,10 +10,11 @@
  * ground) — keeps arbitrary modular assemblies from exploding on contact while still
  * giving them ground to push against. Node-importable (Rapier ships its own WASM).
  */
-import RAPIER from '@dimforge/rapier3d-compat';
+import RAPIER from '@/viewport/physicsEngine';
 import * as THREE from 'three';
-import { GeometryType } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
+import { applyDeterministicParams } from '@/viewport/physicsConfig';
+import { makeColliderDesc } from '@/viewport/colliderFactory';
 
 let _init: Promise<void> | null = null;
 export const initPhysics = () => (_init ??= RAPIER.init().then(() => undefined));
@@ -35,6 +36,8 @@ export class RLPhysicsWorld {
 
   constructor(doc: Document, fk: any, { groundY = 0, gravity = 9.81 } = {}) {
     this.world = new RAPIER.World(new RAPIER.Vector3(0, -gravity, 0));
+    // Reproducible episodes: pin timestep + solver iterations (see physicsConfig).
+    applyDeterministicParams(this.world);
     const ground = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, groundY - 0.05, 0));
     const gc = this.world.createCollider(RAPIER.ColliderDesc.cuboid(100, 0.05, 100), ground);
     gc.setCollisionGroups(GROUP_GROUND);
@@ -50,9 +53,11 @@ export class RLPhysicsWorld {
       const q = w ? w.quaternion : body.transform.quaternion;
       const rb = this.world.createRigidBody(RAPIER.RigidBodyDesc.dynamic().setTranslation(p[0], p[1], p[2]).setRotation({ x: q[0], y: q[1], z: q[2], w: q[3] }));
       const col = this._collider(body);
-      col.setDensity(this._density(body, doc));
-      const c = this.world.createCollider(col, rb);
-      c.setCollisionGroups(GROUP_ROBOT);
+      if (col) {
+        col.setDensity(this._density(body, doc));
+        const c = this.world.createCollider(col, rb);
+        c.setCollisionGroups(GROUP_ROBOT);
+      }
       this.bodies.set(body.id, rb);
       this.initial.push({ id: body.id, p: [p[0], p[1], p[2]], q: [q[0], q[1], q[2], q[3]] });
     }
@@ -160,13 +165,7 @@ export class RLPhysicsWorld {
     return m?.density ?? 1000;
   }
   private _collider(body: any) {
-    const g = body.visual?.geometry ?? {};
-    const s = body.transform?.scale ?? [1, 1, 1];
-    switch (g.type) {
-      case GeometryType.SPHERE: return RAPIER.ColliderDesc.ball((g.radius ?? 0.5) * Math.max(Math.abs(s[0]), Math.abs(s[1]), Math.abs(s[2])));
-      case GeometryType.BOX: { const sz = g.size ?? [1, 1, 1]; return RAPIER.ColliderDesc.cuboid(Math.abs(sz[0] * s[0]) / 2, Math.abs(sz[1] * s[1]) / 2, Math.abs(sz[2] * s[2]) / 2); }
-      case GeometryType.CYLINDER: case GeometryType.CAPSULE: { const r = g.radius ?? 0.5, l = g.length ?? 1; return RAPIER.ColliderDesc.cuboid(Math.abs(r * s[0]), Math.abs(r * s[1]), Math.abs(l * s[2]) / 2); }
-      default: return RAPIER.ColliderDesc.cuboid(0.4 * Math.abs(s[0]), 0.4 * Math.abs(s[1]), 0.4 * Math.abs(s[2]));
-    }
+    // True cylinder/capsule/cone colliders (Z-aligned to the visual mesh); see colliderFactory.
+    return makeColliderDesc(body);
   }
 }

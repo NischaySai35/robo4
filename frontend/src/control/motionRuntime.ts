@@ -19,7 +19,7 @@ import { computeFK } from '@/kinematics/modelFK';
 import { CollisionModel } from '@/robotics/collision';
 import { planRRT } from '@/robotics/planning/rrt';
 import { planRRTStar, planPRM } from '@/robotics/planning/rrtstar';
-import { timeParameterize, type TimedTrajectory } from '@/robotics/planning/trajectory';
+import { timeParameterize, blendCorners, type TimedTrajectory } from '@/robotics/planning/trajectory';
 import { planCartesian } from '@/robotics/planning/cartesian';
 import { physicsBridge } from '@/viewport/physicsBridge';
 import type { Document } from '@/core/model/index';
@@ -33,6 +33,7 @@ export interface ChainContext {
   start: number[];
   vMax: number[];
   aMax: number[];
+  jMax: number[];
   collisionFree: (q: number[]) => boolean;
 }
 
@@ -51,10 +52,12 @@ export function chainContext(doc: Document, tipId: string): ChainContext | null 
   if (!chain.length) return null;
   const vDefault = params.getOr('/motion/default_vmax', 1.5);
   const accelScale = params.getOr('/motion/accel_scale', 2.0);
+  const jerkScale = params.getOr('/motion/jerk_scale', 10.0);
   const start = chain.map((j: any) => j.state?.value ?? 0);
   const bounds = chain.map((j: any) => [j.limit?.lower ?? -Math.PI, j.limit?.upper ?? Math.PI] as [number, number]);
   const vMax = chain.map((j: any) => (j.limit?.velocity && j.limit.velocity > 0 ? j.limit.velocity : vDefault));
   const aMax = vMax.map((v) => v * accelScale);
+  const jMax = aMax.map((a) => a * jerkScale);
   const cm = new CollisionModel(doc, 0);
   const ids = chain.map((j: any) => j.id);
   const collisionFree = (q: number[]) => {
@@ -62,7 +65,7 @@ export function chainContext(doc: Document, tipId: string): ChainContext | null 
     ids.forEach((id, i) => { vals[id] = q[i]; });
     return cm.collisionFree(vals);
   };
-  return { chain, ids, bounds, start, vMax, aMax, collisionFree };
+  return { chain, ids, bounds, start, vMax, aMax, jMax, collisionFree };
 }
 
 /** Sample a collision-free goal config (used when none is supplied). */
@@ -100,7 +103,13 @@ export function planTrajectory(doc: Document, tipId: string, goal: number[] | nu
     path = planPath(ctx, g, planner);
   }
   if (!path) return null;
-  const traj = timeParameterize(path, { vMax: ctx.vMax, aMax: ctx.aMax });
+  // Smooth the path before timing it: round sharp corners (bounded joint acceleration)
+  // and run a jerk-limited S-curve profile (drive-friendly). Both are parameterized so
+  // they can be disabled (blend radius 0 / jerk scale 0) for the original behavior.
+  const blendR = params.getOr('/motion/blend_radius', 0.1);
+  const smooth = blendR > 0 ? blendCorners(path, blendR) : path;
+  const jMax = ctx.jMax.some((j) => j > 0) ? ctx.jMax : undefined;
+  const traj = timeParameterize(smooth, { vMax: ctx.vMax, aMax: ctx.aMax, jMax });
   return { ctx, traj };
 }
 
@@ -114,6 +123,10 @@ export function initMotionRuntime(): void {
     description: 'Default joint velocity limit (rad/s) when a joint has none' });
   params.declare({ name: '/motion/accel_scale', type: 'number', value: 2.0, min: 0.2, max: 10, step: 0.1,
     description: 'Acceleration limit = velocity × this' });
+  params.declare({ name: '/motion/jerk_scale', type: 'number', value: 10.0, min: 0, max: 50, step: 0.5,
+    description: 'Jerk limit = acceleration × this (0 = trapezoidal, no jerk limit)' });
+  params.declare({ name: '/motion/blend_radius', type: 'number', value: 0.1, min: 0, max: 1, step: 0.01,
+    description: 'Corner-blend radius in joint space (0 = sharp corners)' });
 
   // service: plan only (returns waypoints)
   // Cartesian move service: tip follows a straight world-space line to targetPos.

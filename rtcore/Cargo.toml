@@ -1,0 +1,19 @@
+# RT Core — the native, real-time control + middleware daemon that replaces ROS for
+# TETROBOT's industrial path. The TypeScript "Studio" (frontend/) designs/sims/plans;
+# THIS process runs the deterministic, hard-real-time control loop on the actual robot.
+#
+# Why native (not the TS app): a browser/Electron/GC'd runtime cannot hold a 1 kHz loop
+# with sub-millisecond jitter or talk a fieldbus. This is that loop.
+#
+# Crates:
+#   rt-bus      — deterministic in-process pub/sub bus (ROS topics, without DDS/middleware)
+#   rt-control  — fixed-rate cyclic executor + PID + hardware-interface abstraction
+#   rtcored     — the daemon binary that wires a hardware backend to the control loop
+[workspace]
+resolver = "2"
+members = ["crates/rt-bus", "crates/rt-control", "crates/ros-bridge", "crates/traj-io", "crates/rt-telemetry", "crates/fieldbus", "crates/rt-ethercat", "crates/rtcored"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Proprietary"

@@ -38,8 +38,13 @@ function geometryFrom(geoEl: Element | null): { geometry: any; isMesh: boolean }
   if (box) return { geometry: makeGeometry(GeometryType.BOX, { size: vec3(box.getAttribute('size'), [0.1, 0.1, 0.1]) }), isMesh: false };
   if (cyl) return { geometry: makeGeometry(GeometryType.CYLINDER, { radius: num(cyl.getAttribute('radius'), 0.05), length: num(cyl.getAttribute('length'), 0.1) }), isMesh: false };
   if (sph) return { geometry: makeGeometry(GeometryType.SPHERE, { radius: num(sph.getAttribute('radius'), 0.05) }), isMesh: false };
-  // mesh ref (or nothing): a small placeholder box — the external mesh isn't in the .urdf
-  return { geometry: makeGeometry(GeometryType.BOX, { size: mesh ? [0.12, 0.12, 0.12] : [0.08, 0.08, 0.08] }), isMesh: !!mesh };
+  // mesh ref (or nothing): a placeholder box scaled by the mesh's scale — the external
+  // mesh file isn't carried in a .urdf, but we preserve its scale so size is plausible.
+  if (mesh) {
+    const ms = vec3(mesh.getAttribute('scale'), [1, 1, 1]);
+    return { geometry: makeGeometry(GeometryType.BOX, { size: [0.12 * ms[0], 0.12 * ms[1], 0.12 * ms[2]] }), isMesh: true };
+  }
+  return { geometry: makeGeometry(GeometryType.BOX, { size: [0.08, 0.08, 0.08] }), isMesh: false };
 }
 
 export interface URDFImport { robotName: string; entities: any[]; warnings: string[] }

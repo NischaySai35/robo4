@@ -40,6 +40,7 @@ test('chainContext extracts the real chain (bounds, vMax, ids) from a Document',
   assert.deepEqual(ctx!.bounds, [[-1.5, 1.5], [-1.5, 1.5], [-1.5, 1.5]]);
   assert.deepEqual(ctx!.vMax, [1.2, 1.2, 1.2], 'vMax from joint limit.velocity');
   assert.ok(ctx!.aMax.every((a) => a > 0), 'aMax derived from vMax × accel_scale');
+  assert.ok(ctx!.jMax.every((j) => j > 0), 'jMax derived from aMax × jerk_scale (jerk-limited motion)');
   assert.ok(ctx!.collisionFree(ctx!.start), 'rest config is collision-free');
 });
 

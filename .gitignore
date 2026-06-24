@@ -87,3 +87,6 @@ esp32/build/
 /test_*.mjs
 /screenshot_*.png
 /home_*.png
+
+# Rust RT Core build artifacts
+rtcore/target/

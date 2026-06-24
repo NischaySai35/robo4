@@ -25,18 +25,37 @@ function rpy(quat: any) {
 }
 const xyz = (p: any) => `${n(p[0])} ${n(p[1])} ${n(p[2])}`;
 
-function geometryXML(g: any) {
+/**
+ * Geometry XML with the body's transform scale baked into the dimensions — URDF
+ * primitives have no scale field, so a scaled body would otherwise lose its size on
+ * round-trip. URDF has no capsule/cone primitive, so those degrade to a cylinder
+ * (the caller records a warning).
+ */
+function geometryXML(g: any, scale: number[] = [1, 1, 1]) {
+  const [sx, sy, sz] = [Math.abs(scale[0] ?? 1), Math.abs(scale[1] ?? 1), Math.abs(scale[2] ?? 1)];
+  const r = g?.radius ?? 0.5, len = g?.length ?? 1;
   switch (g?.type) {
-    case 'box': return `<box size="${xyz(g.size ?? [1, 1, 1])}"/>`;
-    case 'sphere': return `<sphere radius="${n(g.radius ?? 0.5)}"/>`;
-    case 'cylinder': case 'capsule': return `<cylinder radius="${n(g.radius ?? 0.5)}" length="${n(g.length ?? 1)}"/>`;
-    case 'mesh': return `<mesh filename="meshes/${san(g.assetId ?? 'mesh')}.stl"/>`;
+    case 'box': { const s = g.size ?? [1, 1, 1]; return `<box size="${xyz([s[0] * sx, s[1] * sy, s[2] * sz])}"/>`; }
+    case 'sphere': return `<sphere radius="${n(r * Math.max(sx, sy, sz))}"/>`;
+    // our cylinder/capsule/cone run along local Z (matches URDF's cylinder Z axis).
+    case 'cylinder': case 'capsule': case 'cone':
+      return `<cylinder radius="${n(r * sx)}" length="${n(len * sz)}"/>`;
+    case 'mesh': return `<mesh filename="meshes/${san(g.assetId ?? 'mesh')}.stl" scale="${xyz([sx, sy, sz])}"/>`;
     default: return `<box size="0.1 0.1 0.1"/>`;
   }
 }
 
+/** A URDF <origin> from a model origin ({position, quaternion}); identity if absent. */
+function originXML(o: any) {
+  const p = o?.position ?? [0, 0, 0];
+  const q = o?.quaternion ?? [0, 0, 0, 1];
+  return `<origin xyz="${xyz(p)}" rpy="${rpy(q)}"/>`;
+}
+
 function linkXML(body: any, doc: any) {
   const g = body.visual?.geometry ?? {};
+  const scale = body.transform?.scale ?? [1, 1, 1];
+  const vOrigin = originXML(body.visual?.origin);
   const mat = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
   const m = bodyMass(body, doc);
   const it = body.inertial && !body.inertial.auto ? body.inertial.inertia
@@ -47,12 +66,12 @@ function linkXML(body: any, doc: any) {
     : '';
   return `  <link name="${san(body.name)}">
     <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>${geometryXML(g)}</geometry>${matXML}
+      ${vOrigin}
+      <geometry>${geometryXML(g, scale)}</geometry>${matXML}
     </visual>
     <collision>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>${geometryXML(g)}</geometry>
+      ${vOrigin}
+      <geometry>${geometryXML(g, scale)}</geometry>
     </collision>
     <inertial>
       <origin xyz="${xyz(com)}" rpy="0 0 0"/>
@@ -100,6 +119,11 @@ export function exportURDF(doc: Document, name = 'tetrobot') {
   const warns: string[] = [];
   if (roots.length > 1) warns.push(`Multiple roots (${roots.length}) — URDF needs one; first is the base.`);
   if (loopJoints.length) warns.push(`${loopJoints.length} loop joint(s) dropped: ${loopJoints.map((j) => san(j.name)).join(', ')}.`);
+  // URDF has no capsule/cone primitive — they degrade to a cylinder of the same radius/length.
+  const degraded = bodies.filter((b) => ['capsule', 'cone'].includes(b.visual?.geometry?.type)).map((b) => san(b.name));
+  if (degraded.length) warns.push(`${degraded.length} capsule/cone link(s) exported as cylinder: ${degraded.join(', ')}.`);
+  const meshes = bodies.filter((b) => b.visual?.geometry?.type === 'mesh').map((b) => san(b.name));
+  if (meshes.length) warns.push(`${meshes.length} mesh link(s) reference external .stl (not embedded): ${meshes.join(', ')}.`);
 
   const header = warns.length ? `  <!-- WARNINGS: ${warns.join(' ')} -->\n` : '';
   const links = bodies.map((b) => linkXML(b, doc)).join('\n');

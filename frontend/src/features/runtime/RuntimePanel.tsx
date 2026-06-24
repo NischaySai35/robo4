@@ -18,8 +18,9 @@ import { Topics } from '@/runtime/messageBus';
 import { downloadBlob } from '@/core/serialization/fileIO';
 import type { DiagnosticsMsg } from '@/state/runtimeBridge';
 import type { Bag } from '@/runtime/recorder';
+import RtCoreReadout from '@/features/runtime/RtCoreReadout';
 
-type Tab = 'topics' | 'tf' | 'nodes' | 'health' | 'record';
+type Tab = 'topics' | 'tf' | 'nodes' | 'health' | 'record' | 'rtcore';
 
 // ── numeric leaf flattening (for plotting any topic's message) ────────────────
 function flattenNumeric(obj: unknown, prefix = '', out: Record<string, number> = {}, depth = 0): Record<string, number> {
@@ -300,6 +301,7 @@ export default function RuntimePanel() {
         <button className={tab === 'nodes' ? 'active' : ''} onClick={() => setTab('nodes')}>Nodes</button>
         <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>Health</button>
         <button className={tab === 'record' ? 'active' : ''} onClick={() => setTab('record')}>Record</button>
+        <button className={tab === 'rtcore' ? 'active' : ''} onClick={() => setTab('rtcore')}>RT Core</button>
       </div>
       <div className="rt-body">
         {tab === 'topics' && <TopicsTab />}
@@ -307,6 +309,7 @@ export default function RuntimePanel() {
         {tab === 'nodes' && <NodesTab />}
         {tab === 'health' && <HealthTab />}
         {tab === 'record' && <RecordTab />}
+        {tab === 'rtcore' && <RtCoreReadout />}
       </div>
     </div>
   );

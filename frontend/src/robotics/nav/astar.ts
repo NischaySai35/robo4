@@ -1,11 +1,84 @@
 /**
  * astar — 8-connected A* global planner over an occupancy grid (Nav2's global
- * planner role). Returns a list of world-space [x, z] waypoints, simplified by
- * dropping collinear points. Falls back to the nearest free cell for start/goal.
+ * planner role). Returns a list of world-space [x, z] waypoints. Falls back to the
+ * nearest free cell for start/goal.
+ *
+ * Upgrades (matching Nav2's planner quality): a BINARY-HEAP open set (O(log n) instead
+ * of an O(n) min-scan — fast on large maps) and LINE-OF-SIGHT path smoothing (string
+ * pulling) so the result is near-straight instead of a 45° zig-zag.
  */
 import { cellToWorld, inBounds, isFree, worldToCell, type Grid } from './occupancyGrid';
 
 interface Node { c: number; r: number; g: number; f: number; key: number; }
+
+/** Minimal binary min-heap keyed on Node.f. */
+class MinHeap {
+  private a: Node[] = [];
+  get size() { return this.a.length; }
+  push(n: Node) {
+    const a = this.a;
+    a.push(n);
+    let i = a.length - 1;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (a[p].f <= a[i].f) break;
+      [a[p], a[i]] = [a[i], a[p]];
+      i = p;
+    }
+  }
+  pop(): Node | undefined {
+    const a = this.a;
+    if (a.length === 0) return undefined;
+    const top = a[0];
+    const last = a.pop()!;
+    if (a.length) {
+      a[0] = last;
+      let i = 0;
+      for (;;) {
+        const l = 2 * i + 1, r = 2 * i + 2;
+        let s = i;
+        if (l < a.length && a[l].f < a[s].f) s = l;
+        if (r < a.length && a[r].f < a[s].f) s = r;
+        if (s === i) break;
+        [a[s], a[i]] = [a[i], a[s]];
+        i = s;
+      }
+    }
+    return top;
+  }
+}
+
+/** True if a straight grid line from cell (c0,r0) to (c1,r1) crosses only free cells. */
+export function lineOfSight(grid: Grid, c0: number, r0: number, c1: number, r1: number): boolean {
+  let x = c0, y = r0;
+  const dx = Math.abs(c1 - c0), dy = Math.abs(r1 - r0);
+  const sx = c0 < c1 ? 1 : -1, sy = r0 < r1 ? 1 : -1;
+  let err = dx - dy;
+  for (;;) {
+    if (!isFree(grid, x, y)) return false;
+    if (x === c1 && y === r1) return true;
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; x += sx; }
+    if (e2 < dx) { err += dx; y += sy; }
+  }
+}
+
+/** String-pulling: drop waypoints the robot can reach in a straight (collision-free) line. */
+function smoothPath(grid: Grid, cells: number[][]): number[][] {
+  if (cells.length <= 2) return cells.map(([c, r]) => cellToWorld(grid, c, r));
+  const out: number[][] = [cells[0]];
+  let anchor = 0;
+  for (let i = 2; i < cells.length; i++) {
+    const [ac, ar] = cells[anchor];
+    const [tc, tr] = cells[i];
+    if (!lineOfSight(grid, ac, ar, tc, tr)) {
+      out.push(cells[i - 1]); // last visible point becomes the new anchor
+      anchor = i - 1;
+    }
+  }
+  out.push(cells[cells.length - 1]);
+  return out.map(([c, r]) => cellToWorld(grid, c, r));
+}
 
 function nearestFree(grid: Grid, c: number, r: number): [number, number] | null {
   if (isFree(grid, c, r)) return [c, r];
@@ -27,23 +100,21 @@ export function planPath(grid: Grid, sx: number, sz: number, gx: number, gz: num
   const goalKey = key(g[0], g[1]);
   const h = (c: number, r: number) => Math.hypot(c - g[0], r - g[1]);
 
-  const open = new Map<number, Node>();
+  const open = new MinHeap();
   const came = new Map<number, number>();
   const gScore = new Map<number, number>();
   const start: Node = { c: s[0], r: s[1], g: 0, f: h(s[0], s[1]), key: key(s[0], s[1]) };
-  open.set(start.key, start);
+  open.push(start);
   gScore.set(start.key, 0);
   const closed = new Set<number>();
 
   const NB = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
   while (open.size) {
-    // pop lowest f
-    let cur: Node | null = null;
-    for (const n of open.values()) if (!cur || n.f < cur.f) cur = n;
+    const cur = open.pop();
     if (!cur) break;
+    if (closed.has(cur.key)) continue; // stale heap entry
     if (cur.key === goalKey) return reconstruct(grid, came, cur.key);
-    open.delete(cur.key);
     closed.add(cur.key);
 
     for (const [dc, dr] of NB) {
@@ -57,7 +128,7 @@ export function planPath(grid: Grid, sx: number, sz: number, gx: number, gz: num
       if (tentative < (gScore.get(nk) ?? Infinity)) {
         came.set(nk, cur.key);
         gScore.set(nk, tentative);
-        open.set(nk, { c: nc, r: nr, g: tentative, f: tentative + h(nc, nr), key: nk });
+        open.push({ c: nc, r: nr, g: tentative, f: tentative + h(nc, nr), key: nk });
       }
     }
   }
@@ -73,14 +144,6 @@ function reconstruct(grid: Grid, came: Map<number, number>, endKey: number): num
     k = came.get(k);
   }
   cells.reverse();
-  // Drop collinear points → fewer, cleaner waypoints.
-  const out: number[][] = [];
-  for (let i = 0; i < cells.length; i++) {
-    if (i > 0 && i < cells.length - 1) {
-      const [pc, pr] = cells[i - 1], [cc, cr] = cells[i], [ncx, ncr] = cells[i + 1];
-      if ((cc - pc) * (ncr - cr) === (cr - pr) * (ncx - cc)) continue; // same direction
-    }
-    out.push(cellToWorld(grid, cells[i][0], cells[i][1]));
-  }
-  return out;
+  // Line-of-sight string-pulling → near-straight path (no 45° zig-zag), still collision-free.
+  return smoothPath(grid, cells);
 }

@@ -11,10 +11,12 @@
  * joint anchors come from the joint origin. Good enough to feel gravity, contacts,
  * and articulation; refined later.
  */
-import RAPIER from '@dimforge/rapier3d-compat';
+import RAPIER from './physicsEngine';
 import * as THREE from 'three';
 import { GeometryType } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
+import { applyDeterministicParams, FIXED_DT } from './physicsConfig';
+import { makeColliderDesc } from './colliderFactory';
 
 let _initPromise: any = null;
 const ensureRapier = () => (_initPromise ??= RAPIER.init());
@@ -32,8 +34,14 @@ export class PhysicsSim {
     return new PhysicsSim(doc, fk, opts);
   }
 
-  constructor(doc: Document, fk: any, { groundY = -3.2, gravity = 9.81 } = {}) {
+  constructor(doc: Document, fk: any, { groundY = -3.2, gravity = 9.81, hullPoints = null } = {} as any) {
+    // Optional provider of mesh convex-hull vertices (bodyId → flat [x,y,z,…]), supplied
+    // by the viewport which has the parsed mesh geometry. Falls back to bbox when absent.
+    this._hullPoints = hullPoints as null | ((id: string) => Float32Array | null);
     this.world = new RAPIER.World(new RAPIER.Vector3(0, -gravity, 0));
+    // Pin timestep + solver iterations so the sim is reproducible (sim-to-real trust).
+    applyDeterministicParams(this.world);
+    this._accumulator = 0; // for framerate-independent fixed stepping (stepFor)
     this.bodies = new Map(); // bodyId -> RigidBody
     // Powered robot: each revolute joint is held to its commanded angle by a stiff
     // acceleration-based motor (stable regardless of link inertia). So gravity
@@ -211,23 +219,10 @@ export class PhysicsSim {
   }
 
   _colliderDesc(body: any, _doc?: any) {
-    const g = body.visual?.geometry ?? {};
-    const s = body.transform.scale ?? [1, 1, 1];
-    switch (g.type) {
-      case GeometryType.SPHERE:
-        return RAPIER.ColliderDesc.ball((g.radius ?? 0.5) * Math.max(Math.abs(s[0]), Math.abs(s[1]), Math.abs(s[2])));
-      case GeometryType.BOX: {
-        const sz = g.size ?? [1, 1, 1];
-        return RAPIER.ColliderDesc.cuboid(Math.abs(sz[0] * s[0]) / 2, Math.abs(sz[1] * s[1]) / 2, Math.abs(sz[2] * s[2]) / 2);
-      }
-      case GeometryType.CYLINDER:
-      case GeometryType.CAPSULE: {
-        const r = g.radius ?? 0.5, l = g.length ?? 1;
-        return RAPIER.ColliderDesc.cuboid(Math.abs(r * s[0]), Math.abs(r * s[1]), Math.abs(l * s[2]) / 2);
-      }
-      default: // mesh: bbox approximation
-        return RAPIER.ColliderDesc.cuboid(0.4 * Math.abs(s[0]), 0.4 * Math.abs(s[1]), 0.4 * Math.abs(s[2]));
-    }
+    // True cylinder/capsule/cone colliders (Z-aligned to the visual mesh) + convex-hull
+    // mesh colliders when hull vertices are available; see colliderFactory.
+    const hp = this._hullPoints?.(body.id) ?? null;
+    return makeColliderDesc(body, { hullPoints: hp });
   }
 
   /** Live-update gravity (m/s², downward) without rebuilding the world. */
@@ -252,7 +247,25 @@ export class PhysicsSim {
     }
   }
 
+  /** Advance exactly one fixed timestep (deterministic). */
   step() { this.world.step(this._events, this._hooks); }
+
+  /**
+   * Advance by real elapsed seconds using a FIXED-timestep accumulator, so the
+   * trajectory is identical regardless of frame rate (and reproducible). Returns the
+   * number of fixed steps taken. Clamps the catch-up burst to avoid a spiral of death.
+   */
+  stepFor(elapsedSeconds: number): number {
+    const dt = Number.isFinite(elapsedSeconds) ? Math.max(0, elapsedSeconds) : 0;
+    this._accumulator += Math.min(dt, 0.25); // cap runaway catch-up (~60 steps max)
+    let n = 0;
+    while (this._accumulator >= FIXED_DT) {
+      this.world.step(this._events, this._hooks);
+      this._accumulator -= FIXED_DT;
+      n++;
+    }
+    return n;
+  }
 
   poses() {
     const out = new Map();

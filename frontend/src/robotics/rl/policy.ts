@@ -60,7 +60,7 @@ export class MLPPolicy implements Policy {
   private params: number[];
   private offsets: { w: number; b: number; inp: number; out: number }[] = [];
 
-  constructor(obsDim: number, actionDim: number, hidden: number[] = [32, 32], params?: number[]) {
+  constructor(obsDim: number, actionDim: number, hidden: number[] = [32, 32], params?: number[], rng: () => number = Math.random) {
     this.obsDim = obsDim; this.actionDim = actionDim;
     this.sizes = [obsDim, ...hidden, actionDim];
     let n = 0;
@@ -70,14 +70,15 @@ export class MLPPolicy implements Policy {
       n += inp * out + out;
     }
     this.nParams = n;
-    this.params = params ? [...params] : this._initHe();
+    this.params = params ? [...params] : this._initHe(rng);
     this._hidden = hidden;
   }
   private _hidden: number[];
-  private _initHe(): number[] {
-    // small random init so untrained nets aren't degenerate
+  // Small random init so untrained nets aren't degenerate. Pass a seeded rng for
+  // reproducible training runs (industrial trust + non-flaky tests).
+  private _initHe(rng: () => number = Math.random): number[] {
     const p = new Array(this.nParams);
-    for (let i = 0; i < this.nParams; i++) p[i] = (Math.random() * 2 - 1) * 0.2;
+    for (let i = 0; i < this.nParams; i++) p[i] = (rng() * 2 - 1) * 0.2;
     return p;
   }
   forward(obs: number[]): number[] {

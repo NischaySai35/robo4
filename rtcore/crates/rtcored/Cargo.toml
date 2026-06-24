@@ -1,0 +1,17 @@
+[package]
+name = "rtcored"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "rtcored"
+path = "src/main.rs"
+
+[dependencies]
+rt-bus = { path = "../rt-bus" }
+rt-control = { path = "../rt-control" }
+ros-bridge = { path = "../ros-bridge" }
+traj-io = { path = "../traj-io" }
+rt-telemetry = { path = "../rt-telemetry" }
+rt-ethercat = { path = "../rt-ethercat" }

@@ -11,7 +11,10 @@
  * own handles are the only viewport pointer surface it owns.
  */
 import type { Document } from '@/core/model/index';
+import { GeometryType } from '@/core/model/index';
 import * as THREE from 'three';
+import { getAssetObject } from '@/viewport/renderers/AssetCache';
+import { convexHullPoints } from '@/viewport/colliderFactory';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { physicsBridge } from '@/viewport/physicsBridge';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer';
@@ -194,13 +197,46 @@ export class ModelEditor {
     else if (!running && (this._sim || this._startingSim)) this._stopSim();
   }
 
+  /**
+   * Convex-hull vertices for a mesh body, from its edited mesh or parsed asset geometry,
+   * so the physics sim uses a tight hull collider instead of a bounding box. Cached per
+   * sim start. Returns null for non-mesh bodies (they use their primitive collider).
+   */
+  _meshHullPoints(id: string): Float32Array | null {
+    const body: any = this._doc.bodies[id];
+    const g = body?.visual?.geometry;
+    if (!g || g.type !== GeometryType.MESH) return null;
+    this._hullCache ??= new Map<string, Float32Array | null>();
+    if (this._hullCache.has(id)) return this._hullCache.get(id)!;
+
+    let positions: ArrayLike<number> | null = g.editMesh?.positions?.length ? g.editMesh.positions : null;
+    if (!positions) {
+      const assetId = g.assetId ?? body.assetId;
+      const asset = assetId ? this._doc.assets?.[assetId] : null;
+      const obj = asset ? getAssetObject(asset) : null;
+      const pts: number[] = [];
+      obj?.traverse?.((o: any) => {
+        const p = o.isMesh && o.geometry?.attributes?.position;
+        if (p) for (let i = 0; i < p.count; i++) pts.push(p.getX(i), p.getY(i), p.getZ(i));
+      });
+      positions = pts.length ? pts : null;
+    }
+    const hull = positions ? convexHullPoints(positions) : null;
+    this._hullCache.set(id, hull);
+    return hull;
+  }
+
   _startSim() {
+    this._hullCache = null; // recompute hulls per run (geometry may have changed)
     this._startingSim = true;
     this._attachTo(null); // can't edit while simulating
     const e = useEditorStore.getState();
     import('@/viewport/PhysicsSim')
       .then(({ PhysicsSim }) =>
-        PhysicsSim.create(this._doc, this._fk, { gravity: e.gravityEnabled ? e.gravity : 0 }))
+        PhysicsSim.create(this._doc, this._fk, {
+          gravity: e.gravityEnabled ? e.gravity : 0,
+          hullPoints: (id: string) => this._meshHullPoints(id),
+        }))
       .then((sim) => {
         if (!this._startingSim) { sim.dispose(); return; } // stopped before ready
         this._sim = sim;
@@ -212,6 +248,7 @@ export class ModelEditor {
 
   _stopSim() {
     this._startingSim = false;
+    this._lastSimTime = 0;
     physicsBridge.sim = null;
     if (this._sim) { this._sim.dispose(); this._sim = null; }
     this._syncModel(this._doc); // restore FK pose
@@ -224,7 +261,12 @@ export class ModelEditor {
     // any lingering overlay (defensive against a missed enter/leave transition).
     this.editMode?.syncTransform();
     if (this._sim) {
-      this._sim.step();
+      // Advance by real elapsed time at a FIXED internal timestep, so the simulation
+      // runs at the same speed and produces the same trajectory on any frame rate.
+      const now = performance.now();
+      const dt = this._lastSimTime ? (now - this._lastSimTime) / 1000 : 1 / 60;
+      this._lastSimTime = now;
+      this._sim.stepFor(dt);
       const poses = this._sim.poses();
       this.bodyRenderer.sync(this._doc, poses);
       this.jointRenderer.sync(this._doc, poses);

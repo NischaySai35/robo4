@@ -2,10 +2,15 @@
  * modelIK — inverse kinematics over the model graph (damped least squares).
  *
  * Given a tip body and a world-space target, solve the joint values along the
- * chain from the tip up to its root so the tip's FK position reaches the target.
+ * chain from the tip up to its root so the tip's FK pose reaches the target.
  * Uses a numerical Jacobian (perturb each movable joint, measure tip motion) and
  * DLS (J^T (J J^T + λ²I)^-1 e), which is robust near singularities. Reuses the
  * same computeFK as forward kinematics, so it works for any imported robot.
+ *
+ * Two modes:
+ *  - position-only (3-DOF error) — the default, used by drag-from-tip IK;
+ *  - full pose (6-DOF: position + orientation) — pass `targetQuaternion`, used for
+ *    industrial manipulation where the tool frame matters (welding, dispensing, grasp).
  */
 import * as THREE from 'three';
 import { computeFK, buildChildJointMap } from './modelFK';
@@ -29,28 +34,55 @@ export function chainJoints(doc: any, tipId: any) {
   return out.filter((j) => MOVABLE.has(j.type));
 }
 
-function tipPosition(doc: Document, tipId: string, values: Record<string, number>) {
+/** FK tip pose (position + orientation) for a candidate set of joint values. */
+function tipPose(doc: Document, tipId: string, values: Record<string, number>) {
   const joints: Record<string, unknown> = {};
   for (const [id, j] of Object.entries(doc.joints)) {
     joints[id] = id in values ? { ...j, state: { ...j.state, value: values[id] } } : j;
   }
   const fk = computeFK({ ...doc, joints });
   const t = fk.get(tipId);
-  return new THREE.Vector3(...(t ? t.position : [0, 0, 0]));
+  return {
+    pos: new THREE.Vector3(...(t ? t.position : [0, 0, 0])),
+    quat: new THREE.Quaternion(...(t ? t.quaternion : [0, 0, 0, 1])),
+  };
 }
 
-// Invert a symmetric 3x3 (returns null if singular).
-function inv3(m: any) {
-  const [a, b, c, d, e, f, g, h, i] = m;
-  const A = e * i - f * h, B = -(d * i - f * g), C = d * h - e * g;
-  const det = a * A + b * B + c * C;
-  if (Math.abs(det) < 1e-12) return null;
-  const id = 1 / det;
-  return [
-    A * id, (c * h - b * i) * id, (b * f - c * e) * id,
-    B * id, (a * i - c * g) * id, (c * d - a * f) * id,
-    C * id, (b * g - a * h) * id, (a * e - b * d) * id,
-  ];
+/**
+ * The rotation vector (axis × angle) of a quaternion — the so(3) error used as the
+ * orientation part of the IK error. Takes the shortest path (q and -q are equal).
+ */
+function rotVec(q: THREE.Quaternion): THREE.Vector3 {
+  const w = Math.min(1, Math.max(-1, q.w));
+  const s = Math.sqrt(Math.max(0, 1 - w * w));
+  if (s < 1e-8) return new THREE.Vector3(0, 0, 0); // ~no rotation
+  const angle = 2 * Math.acos(Math.abs(w));
+  const sign = w < 0 ? -1 : 1; // shortest-path: flip if scalar part negative
+  return new THREE.Vector3(q.x, q.y, q.z).multiplyScalar((sign * angle) / s);
+}
+
+/**
+ * Solve A·x = b for a small symmetric positive-definite m×m system via Gaussian
+ * elimination with partial pivoting. Returns null if singular. Used for the DLS
+ * normal equations (J Jᵀ + λ²I)·y = e at both m=3 (position) and m=6 (full pose).
+ */
+function solveLinear(A: number[][], b: number[]): number[] | null {
+  const m = b.length;
+  const M = A.map((row, i) => [...row, b[i]]); // augmented
+  for (let col = 0; col < m; col++) {
+    let piv = col;
+    for (let r = col + 1; r < m; r++) if (Math.abs(M[r][col]) > Math.abs(M[piv][col])) piv = r;
+    if (Math.abs(M[piv][col]) < 1e-12) return null;
+    [M[col], M[piv]] = [M[piv], M[col]];
+    const d = M[col][col];
+    for (let c = col; c <= m; c++) M[col][c] /= d;
+    for (let r = 0; r < m; r++) {
+      if (r === col) continue;
+      const f = M[r][col];
+      for (let c = col; c <= m; c++) M[r][c] -= f * M[col][c];
+    }
+  }
+  return M.map((row) => row[m]);
 }
 
 const clampLimit = (j: any, v: any) => {
@@ -59,54 +91,85 @@ const clampLimit = (j: any, v: any) => {
   return Math.max(lo, Math.min(hi, v));
 };
 
+interface IKOptions {
+  iterations?: number;
+  lambda?: number;
+  eps?: number;
+  tol?: number;
+  /** Target orientation [x,y,z,w]; when set, IK also matches the tip's orientation (6-DOF). */
+  targetQuaternion?: [number, number, number, number] | number[];
+  /** Weight on the orientation error (rad) relative to position (m). Default 1. */
+  oriWeight?: number;
+  /** Max |Δq| per joint per iteration (rad/m), for stability. Default 0.5. */
+  maxStep?: number;
+}
+
 /**
  * Solve IK. Returns { jointId: newValue } for the chain joints (or null if no chain).
+ * Position-only by default; pass `targetQuaternion` for full 6-DOF pose IK.
  */
-export function solveModelIK(doc: any, tipId: any, target: any, { iterations = 24, lambda = 0.6, eps = 1e-4, tol = 1e-3 } = {}) {
+export function solveModelIK(doc: any, tipId: any, target: any, opts: IKOptions = {}) {
+  const { iterations = 24, lambda = 0.6, eps = 1e-4, tol = 1e-3, oriWeight = 1 } = opts;
   const chain = chainJoints(doc, tipId);
   if (chain.length === 0) return null;
 
+  const usePose = opts.targetQuaternion != null;
+  // Step clamp stabilizes 6-DOF; position-only keeps its original uncapped behavior.
+  const maxStep = opts.maxStep ?? (usePose ? 0.5 : Infinity);
+  const m = usePose ? 6 : 3;
   const values: Record<string, any> = {};
   for (const j of chain) values[j.id] = j.state?.value ?? 0;
-  const tgt = new THREE.Vector3(target[0], target[1], target[2]);
+  const tgtPos = new THREE.Vector3(target[0], target[1], target[2]);
+  const tgtQuat = usePose
+    ? new THREE.Quaternion(...(opts.targetQuaternion as number[])).normalize()
+    : null;
+
+  /** Build the m-length error vector for the current values. */
+  const errorVec = (pose: { pos: THREE.Vector3; quat: THREE.Quaternion }): number[] => {
+    const ep = tgtPos.clone().sub(pose.pos);
+    if (!usePose) return [ep.x, ep.y, ep.z];
+    // orientation error as a world-frame rotation vector: qErr = qTarget * qCur⁻¹
+    const qErr = tgtQuat!.clone().multiply(pose.quat.clone().invert());
+    const er = rotVec(qErr).multiplyScalar(oriWeight);
+    return [ep.x, ep.y, ep.z, er.x, er.y, er.z];
+  };
 
   for (let iter = 0; iter < iterations; iter++) {
-    const tip = tipPosition(doc, tipId, values);
-    const e = tgt.clone().sub(tip);
-    if (e.length() < tol) break;
+    const base = tipPose(doc, tipId, values);
+    const e = errorVec(base);
+    let enorm = 0; for (const v of e) enorm += v * v;
+    if (Math.sqrt(enorm) < tol) break;
 
-    // Numerical Jacobian: columns = d(tip)/d(qk)
-    const cols = chain.map((j) => {
+    // Numerical Jacobian columns: d(tip pose)/d(qk), each an m-vector.
+    const cols: number[][] = chain.map((j) => {
       const v0 = values[j.id];
       values[j.id] = v0 + eps;
-      const tp = tipPosition(doc, tipId, values);
+      const p = tipPose(doc, tipId, values);
       values[j.id] = v0;
-      return tp.sub(tip).divideScalar(eps); // Vector3
+      const dp = p.pos.clone().sub(base.pos).divideScalar(eps);
+      if (!usePose) return [dp.x, dp.y, dp.z];
+      // d(orientation): rotation vector of (qPerturbed · qBase⁻¹) per unit q
+      const dq = rotVec(p.quat.clone().multiply(base.quat.clone().invert()))
+        .divideScalar(eps).multiplyScalar(oriWeight);
+      return [dp.x, dp.y, dp.z, dq.x, dq.y, dq.z];
     });
 
-    // JJt (3x3) + λ²I
+    // (J Jᵀ + λ²I) y = e   → y (m-vector)
     const l2 = lambda * lambda;
-    const jjt = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (const c of cols) {
-      jjt[0] += c.x * c.x; jjt[1] += c.x * c.y; jjt[2] += c.x * c.z;
-      jjt[3] += c.y * c.x; jjt[4] += c.y * c.y; jjt[5] += c.y * c.z;
-      jjt[6] += c.z * c.x; jjt[7] += c.z * c.y; jjt[8] += c.z * c.z;
-    }
-    jjt[0] += l2; jjt[4] += l2; jjt[8] += l2;
-    const inv = inv3(jjt);
-    if (!inv) break;
+    const A: number[][] = Array.from({ length: m }, (_, r) =>
+      Array.from({ length: m }, (_, c) => {
+        let s = 0;
+        for (const col of cols) s += col[r] * col[c];
+        return r === c ? s + l2 : s;
+      }));
+    const y = solveLinear(A, e);
+    if (!y) break;
 
-    // y = inv * e   (3-vector)
-    const y = [
-      inv[0] * e.x + inv[1] * e.y + inv[2] * e.z,
-      inv[3] * e.x + inv[4] * e.y + inv[5] * e.z,
-      inv[6] * e.x + inv[7] * e.y + inv[8] * e.z,
-    ];
-
-    // dq_k = col_k · y ; apply clamped
+    // dq_k = col_k · y ; clamp the step then the joint limit
     chain.forEach((j, k) => {
-      const c = cols[k];
-      const dq = c.x * y[0] + c.y * y[1] + c.z * y[2];
+      const col = cols[k];
+      let dq = 0; for (let r = 0; r < m; r++) dq += col[r] * y[r];
+      if (dq > maxStep) dq = maxStep; else if (dq < -maxStep) dq = -maxStep;
       values[j.id] = clampLimit(j, values[j.id] + dq);
     });
   }

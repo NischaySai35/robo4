@@ -8,7 +8,7 @@ import { makeDocument, makeGeometry, GeometryType } from '@/core/model/index';
 import { buildSerialChain } from '@/core/model/builders';
 import { ModelReachTask } from '@/robotics/rl/modelTask';
 import { MLPPolicy } from '@/robotics/rl/policy';
-import { VectorESTrainer } from '@/robotics/rl/vectorTrainer';
+import { VectorESTrainer, makeRng } from '@/robotics/rl/vectorTrainer';
 
 function buildArm() {
   const box = makeGeometry(GeometryType.BOX, { size: [0.3, 0.3, 0.3] });
@@ -34,11 +34,14 @@ test('ModelReachTask exposes the right obs/action spaces for a real arm', () => 
 test('training a real arm produces finite, improving returns', () => {
   const { doc, tipId } = buildArm();
   const probe = new ModelReachTask(doc, tipId);
-  const policy = new MLPPolicy(probe.obsDim, probe.actionDim, [16]);
+  // Seed BOTH the policy init and the trainer so the whole run is reproducible — the
+  // eval return is otherwise noisy (randomized target per generation) and the test flaky.
+  const policy = new MLPPolicy(probe.obsDim, probe.actionDim, [16], undefined, makeRng(7));
   const trainer = new VectorESTrainer(() => new ModelReachTask(doc, tipId), policy, { pop: 24, sigma: 0.12, alpha: 0.08, seed: 5 });
   const first = trainer.generation().evalReturn;
   let last = first;
   for (let g = 0; g < 20; g++) last = trainer.generation().evalReturn;
   assert.ok(Number.isFinite(first) && Number.isFinite(last), 'returns finite');
-  assert.ok(last >= first - 1e-6, `return should not collapse: first=${first.toFixed(2)} last=${last.toFixed(2)}`);
+  // Deterministic run (seeded init + ES): training must measurably improve the return.
+  assert.ok(last > first, `training did not improve: first=${first.toFixed(2)} last=${last.toFixed(2)}`);
 });

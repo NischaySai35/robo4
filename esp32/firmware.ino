@@ -1,12 +1,12 @@
 /*
-   ROBO4 — ESP32-C3 + 6 × ST3215 Smart Servo
+   ROBO4 — ESP32-C3 + 7 × ST3215 Smart Servo
    JSON API only (no embedded HTML).
 
    React web app connects from http://localhost:5173 (or wherever it's hosted)
    and talks to this firmware via:
-     GET /api/telemetry          → full JSON for all 6 servos
+     GET /api/telemetry          → full JSON for all 7 servos
      GET /api/command?servo=N&cmd=X[&angle=Y&speed=Z&acc=W]
-     GET /api/batch?1=180&2=90&3=150&4=180&5=120&6=180[&speed=5&acc=20]
+     GET /api/batch?1=180&2=90&3=150&4=180&5=120&6=180&7=180[&speed=5&acc=20]
      GET /                       → quick health JSON
 
    All responses carry CORS headers so the browser allows cross-origin fetches.
@@ -17,7 +17,8 @@
      ID 3 = J3  (JOINT 2    — bend)
      ID 4 = J4  (WRIST      — twist)
      ID 5 = J5  (JOINT 3    — bend)
-     ID 6 = J6  (CUBE RIGHT — twist)
+     ID 6 = J6  (JOINT 4    — bend)
+     ID 7 = J7  (CUBE RIGHT — twist)
 */
 
 #include <Arduino.h>
@@ -59,7 +60,8 @@ const ServoDef SERVO_DEFS[] = {
   {3, "J3", "JOINT 2",   "bend"},
   {4, "J4", "WRIST",     "twist"},
   {5, "J5", "JOINT 3",   "bend"},
-  {6, "J6", "CUBE RIGHT", "twist"},
+  {6, "J6", "JOINT 4",   "bend"},
+  {7, "J7", "CUBE RIGHT", "twist"},
 };
 constexpr uint8_t NUM_SERVOS = sizeof(SERVO_DEFS) / sizeof(SERVO_DEFS[0]);
 
@@ -92,6 +94,7 @@ ServoState servos[NUM_SERVOS] = {
   {4,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
   {5,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
   {6,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
+  {7,255,true,0,180.0f,2047,10,3400,20,-1,-1,-1,-1,-1,-1,-1,false,0},
 };
 
 // ── Timing ────────────────────────────────────────────────────────────────────
@@ -177,8 +180,8 @@ void cmdPos(ServoState& sv, float deg, int speedScale, uint8_t acc) {
   sv.mode = POS_MODE;
   setHwMode(sv, POS_MODE);
   ensureTorque(sv);
-  // Safety limits: bend joints (J2 J3 J5, IDs 2 3 5) → 80–280°; twist (J1 J4 J6) → 0–360°
-  const bool isBend = (sv.id == 2 || sv.id == 3 || sv.id == 5);
+  // Safety limits: bend joints (J2 J3 J5 J6, IDs 2 3 5 6) → 80–280°; twist (J1 J4 J7) → 0–360°
+  const bool isBend = (sv.id == 2 || sv.id == 3 || sv.id == 5 || sv.id == 6);
   sv.targetDeg  = clampF(deg, isBend ? 80.0f : 0.0f, isBend ? 280.0f : 360.0f);
   sv.targetRaw  = angleToRaw(sv.targetDeg);
   sv.speedScale = constrain(speedScale, 1, 10);
@@ -428,7 +431,7 @@ void handleBatch() {
     sv->mode = POS_MODE;
     setHwMode(*sv, POS_MODE);
     ensureTorque(*sv);
-    const bool isBend = (sv->id == 2 || sv->id == 3 || sv->id == 5);
+    const bool isBend = (sv->id == 2 || sv->id == 3 || sv->id == 5 || sv->id == 6);
     sv->targetDeg     = clampF(server.arg(key).toFloat(), isBend ? 80.0f : 0.0f, isBend ? 280.0f : 360.0f);
     sv->targetRaw     = angleToRaw(sv->targetDeg);
     sv->speedScale    = constrain(spd, 1, 10);
@@ -537,11 +540,11 @@ void setup() {
   server.begin();
 
   Serial.println(F("================================="));
-  Serial.println(F("ROBO4 — 6-Servo API controller"));
+  Serial.println(F("ROBO4 — 7-Servo API controller"));
   Serial.print(F("SSID: ")); Serial.println(WIFI_SSID);
   Serial.println(F("  GET /api/telemetry"));
   Serial.println(F("  GET /api/command?servo=N&cmd=X"));
-  Serial.println(F("  GET /api/batch?1=180&2=90…&6=180"));
+  Serial.println(F("  GET /api/batch?1=180&2=90…&7=180"));
   Serial.println(F("================================="));
 
   // Boot: move all servos to home (180°) in one sync transaction

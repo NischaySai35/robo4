@@ -84,6 +84,12 @@ export class EditModeController {
     editBridge.inset = () => this._inset();
     editBridge.shrinkFatten = () => this._shrinkFatten();
     editBridge.smooth = () => this._smooth();
+    editBridge.fill = () => this._fill();
+    editBridge.connect = () => this._connectVertices();
+    editBridge.bevel = () => this._bevel();
+    editBridge.loopCut = () => this._loopCut();
+    editBridge.selectLinked = () => this._selectLinked();
+    editBridge.selectSimilar = () => this._selectSimilar();
 
     let prev = useEditModeStore.getState();
     this._unsub = useEditModeStore.subscribe((s) => {
@@ -743,6 +749,435 @@ export class EditModeController {
     next.forEach((p, v) => { P[v * 3] = p.x; P[v * 3 + 1] = p.y; P[v * 3 + 2] = p.z; });
     this._refreshGeometryAttributes();
     this._commit();
+  }
+
+  // ── Fill (F) — create face from selected vertices or close an edge loop ──────
+  _fill() {
+    const { selectMode, selection } = useEditModeStore.getState();
+    if (!selection.length) return;
+
+    if (selectMode === 'vertex') {
+      if (selection.length < 3) return;
+      const verts = [...new Set<number>(selection as number[])];
+
+      // Sort by angle around centroid on the best-fit plane so the fan is convex.
+      const c = this._centroidOf(verts);
+      const n = this._planeNormalOf(verts);
+      const ref = this._v(verts[0]).clone().sub(c).normalize();
+      const up = new THREE.Vector3().crossVectors(n, ref).normalize();
+      const sorted = verts.slice().sort((a: number, b: number) => {
+        const pa = this._v(a).clone().sub(c).normalize();
+        const pb = this._v(b).clone().sub(c).normalize();
+        return Math.atan2(up.dot(pa), ref.dot(pa)) - Math.atan2(up.dot(pb), ref.dot(pb));
+      });
+
+      const base = this.work.indices.length / 3;
+      const newTris: number[] = [];
+      for (let i = 1; i < sorted.length - 1; i++) {
+        this.work.indices.push(sorted[0], sorted[i], sorted[i + 1]);
+        newTris.push(base + i - 1);
+      }
+      this._setSelection(newTris);
+    } else if (selectMode === 'edge') {
+      this._fillEdgeLoop(selection as Array<[number, number]>);
+    }
+
+    this._rebuildOverlayGeometry();
+    this._commit();
+  }
+
+  _planeNormalOf(verts: number[]) {
+    const c = this._centroidOf(verts);
+    const n = new THREE.Vector3();
+    for (let i = 0; i < verts.length; i++) {
+      const a = this._v(verts[i]).sub(c);
+      const b = this._v(verts[(i + 1) % verts.length]).sub(c);
+      n.add(new THREE.Vector3().crossVectors(a, b));
+    }
+    if (n.lengthSq() < 1e-10) n.set(0, 1, 0);
+    return n.normalize();
+  }
+
+  _fillEdgeLoop(edges: Array<[number, number]>) {
+    // Build adjacency from selected edges; find closed loops.
+    const adj = new Map<number, number[]>();
+    for (const [a, b] of edges) {
+      if (!adj.has(a)) adj.set(a, []);
+      if (!adj.has(b)) adj.set(b, []);
+      adj.get(a)!.push(b);
+      adj.get(b)!.push(a);
+    }
+    const visited = new Set<number>();
+    const loops: number[][] = [];
+    for (const [start] of adj) {
+      if (visited.has(start)) continue;
+      const loop: number[] = [];
+      let cur = start, prev = -1;
+      let limit = 0;
+      while (!visited.has(cur) && limit++ < 10000) {
+        visited.add(cur);
+        loop.push(cur);
+        const nbs = (adj.get(cur) ?? []).filter((v) => v !== prev);
+        if (!nbs.length) break;
+        prev = cur; cur = nbs[0];
+      }
+      if (loop.length >= 3) loops.push(loop);
+    }
+    const base = this.work.indices.length / 3;
+    const newTris: number[] = [];
+    for (const loop of loops) {
+      for (let i = 1; i < loop.length - 1; i++) {
+        this.work.indices.push(loop[0], loop[i], loop[i + 1]);
+        newTris.push(base + newTris.length);
+      }
+    }
+    this._setSelection(newTris);
+  }
+
+  // ── Connect (J) — flip diagonal / connect two vertices with an edge ─────────
+  _connectVertices() {
+    const { selectMode, selection } = useEditModeStore.getState();
+    if (selectMode !== 'vertex' || selection.length !== 2) return;
+    const [a, b] = selection as [number, number];
+    const I = this.work.indices;
+    const ek = (p: number, q: number) => `${Math.min(p, q)}_${Math.max(p, q)}`;
+
+    // Build face lists for each vertex
+    const facesWithA: number[] = [], facesWithB: number[] = [];
+    for (let t = 0; t < I.length / 3; t++) {
+      const i = t * 3;
+      const hasA = I[i] === a || I[i+1] === a || I[i+2] === a;
+      const hasB = I[i] === b || I[i+1] === b || I[i+2] === b;
+      if (hasA && hasB) {
+        // Already share a face — check if already an edge
+        const hasEdge = (
+          (I[i] === a && I[i+1] === b) || (I[i] === b && I[i+1] === a) ||
+          (I[i+1] === a && I[i+2] === b) || (I[i+1] === b && I[i+2] === a) ||
+          (I[i+2] === a && I[i] === b) || (I[i+2] === b && I[i] === a)
+        );
+        if (hasEdge) return; // already directly connected
+      }
+      if (hasA) facesWithA.push(t);
+      if (hasB) facesWithB.push(t);
+    }
+
+    // Find two adjacent triangles where one has A and the other has B,
+    // sharing an edge c-d.  Replace them with new diagonal A-B.
+    const edgeFaces = new Map<string, number[]>();
+    const allFaces = [...new Set([...facesWithA, ...facesWithB])];
+    for (const t of allFaces) {
+      const i = t * 3;
+      const addE = (p: number, q: number) => {
+        const k = ek(p, q);
+        if (!edgeFaces.has(k)) edgeFaces.set(k, []);
+        edgeFaces.get(k)!.push(t);
+      };
+      addE(I[i], I[i+1]); addE(I[i+1], I[i+2]); addE(I[i+2], I[i]);
+    }
+
+    for (const [key, fcs] of edgeFaces) {
+      if (fcs.length !== 2) continue;
+      const [t1, t2] = fcs;
+      const aInT1 = facesWithA.includes(t1), aInT2 = facesWithA.includes(t2);
+      const bInT1 = facesWithB.includes(t1), bInT2 = facesWithB.includes(t2);
+      if (!(aInT1 !== aInT2 && bInT1 !== bInT2)) continue;
+      const [c, d] = key.split('_').map(Number);
+      // Flip the shared diagonal to A-B.
+      const ia = (aInT1 ? t1 : t2) * 3;
+      const ib = (aInT1 ? t2 : t1) * 3;
+      // Triangles become: (a, c, b) and (a, b, d) — preserving general winding.
+      I[ia] = a; I[ia+1] = c; I[ia+2] = b;
+      I[ib] = a; I[ib+1] = b; I[ib+2] = d;
+      this._rebuildOverlayGeometry();
+      this._commit();
+      return;
+    }
+
+    // Fallback: no adjacent pair found — just add an edge by creating a new face strip.
+    // Insert a degenerate (zero-area) triangle to register the new edge topologically.
+    const base = this.work.indices.length / 3;
+    this.work.indices.push(a, b, a); // collapsed — forces the edge into the wireframe
+    this._setSelection([base]);
+    this._rebuildOverlayGeometry();
+    this._commit();
+  }
+
+  // ── Bevel (B) — chamfer selected edges ──────────────────────────────────────
+  _bevel() {
+    const { selectMode, selection } = useEditModeStore.getState();
+    if (selectMode !== 'edge' || !selection.length) return;
+    const amount = Math.max(0.001, useEditModeStore.getState().opAmount ?? 0.05);
+    const I = this.work.indices;
+
+    // edge → [face indices]
+    const ek = (a: number, b: number) => `${Math.min(a,b)}_${Math.max(a,b)}`;
+    const edgeFaces = new Map<string, number[]>();
+    for (let t = 0; t < I.length / 3; t++) {
+      const i = t * 3;
+      const add = (p: number, q: number) => {
+        const k = ek(p, q);
+        if (!edgeFaces.has(k)) edgeFaces.set(k, []);
+        edgeFaces.get(k)!.push(t);
+      };
+      add(I[i], I[i+1]); add(I[i+1], I[i+2]); add(I[i+2], I[i]);
+    }
+
+    const selKeys = new Set((selection as Array<[number, number]>).map(([a,b]) => ek(a,b)));
+
+    // For each selected edge: create 2 offset verts per adjacent face and
+    // replace the edge verts in those faces.  Then add a bevel quad.
+    const processed = new Set<string>();
+
+    for (const [ea, eb] of selection as Array<[number, number]>) {
+      const k = ek(ea, eb);
+      if (processed.has(k)) continue;
+      processed.add(k);
+
+      const faces = edgeFaces.get(k) ?? [];
+      const pA = this._v(ea), pB = this._v(eb);
+
+      const offsets: Array<{t: number; a1: number; b1: number}> = [];
+      for (const t of faces) {
+        const i = t * 3;
+        const verts = [I[i], I[i+1], I[i+2]];
+        const other = verts.find((v) => v !== ea && v !== eb);
+        if (other === undefined) continue;
+        // Inward direction from edge toward the third vertex.
+        const mid = pA.clone().add(pB).multiplyScalar(0.5);
+        const inward = this._v(other).clone().sub(mid).normalize();
+        const a1 = this._pushVertex(pA.x + inward.x * amount, pA.y + inward.y * amount, pA.z + inward.z * amount);
+        const b1 = this._pushVertex(pB.x + inward.x * amount, pB.y + inward.y * amount, pB.z + inward.z * amount);
+        // Repoint ea/eb in this triangle to the offset copies.
+        for (let j = 0; j < 3; j++) {
+          if (I[i+j] === ea) I[i+j] = a1;
+          else if (I[i+j] === eb) I[i+j] = b1;
+        }
+        offsets.push({ t, a1, b1 });
+      }
+
+      // Add bevel face between offset verts.
+      if (offsets.length === 2) {
+        const { a1, b1 } = offsets[0];
+        const { a1: a2, b1: b2 } = offsets[1];
+        // Quad → 2 triangles
+        this.work.indices.push(a1, b1, b2, a1, b2, a2);
+      } else if (offsets.length === 1) {
+        const { a1, b1 } = offsets[0];
+        this.work.indices.push(ea, eb, b1, ea, b1, a1);
+      }
+    }
+    void selKeys; // suppress lint
+    this._setSelection([]);
+    this._rebuildOverlayGeometry();
+    this._commit();
+  }
+
+  // ── Loop Cut (Ctrl+R) — insert perpendicular edge ring ──────────────────────
+  _loopCut() {
+    const { selectMode, selection } = useEditModeStore.getState();
+    let startEdge: [number, number] | null = null;
+    if (selectMode === 'edge' && selection.length > 0) startEdge = (selection as Array<[number, number]>)[0];
+    if (!startEdge) return;
+
+    const ring = this._findEdgeRing(startEdge);
+    if (!ring.length) return;
+
+    const I = this.work.indices;
+    const ek = (a: number, b: number) => `${Math.min(a,b)}_${Math.max(a,b)}`;
+
+    // Build edge→faces once
+    const edgeFaces = new Map<string, number[]>();
+    for (let t = 0; t < I.length / 3; t++) {
+      const i = t * 3;
+      const add = (p: number, q: number) => {
+        const k = ek(p, q);
+        if (!edgeFaces.has(k)) edgeFaces.set(k, []);
+        edgeFaces.get(k)!.push(t);
+      };
+      add(I[i], I[i+1]); add(I[i+1], I[i+2]); add(I[i+2], I[i]);
+    }
+
+    // Insert midpoint for each ring edge
+    const midpts = new Map<string, number>();
+    for (const [a, b] of ring) {
+      const k = ek(a, b);
+      if (midpts.has(k)) continue;
+      const m = this._v(a).clone().add(this._v(b)).multiplyScalar(0.5);
+      midpts.set(k, this._pushVertex(m.x, m.y, m.z));
+    }
+
+    const ringKeys = new Set(ring.map(([a,b]) => ek(a,b)));
+    const toRemove = new Set<number>();
+    const toAdd: number[] = [];
+
+    for (let t = 0; t < I.length / 3; t++) {
+      const i = t * 3;
+      const va = I[i], vb = I[i+1], vc = I[i+2];
+      const edges: Array<[number,number,number]> = [[va,vb,vc],[vb,vc,va],[vc,va,vb]]; // [a,b,opp]
+      let found = false;
+      for (const [a, b, opp] of edges) {
+        const k = ek(a, b);
+        if (!ringKeys.has(k)) continue;
+        const mid = midpts.get(k)!;
+        // Split (a,b,opp) → (a,mid,opp) and (mid,b,opp)
+        toRemove.add(t);
+        toAdd.push(a, mid, opp, mid, b, opp);
+        found = true;
+        break;
+      }
+      void found;
+    }
+
+    const next: number[] = [];
+    for (let t = 0; t < I.length / 3; t++) {
+      if (toRemove.has(t)) continue;
+      const i = t * 3;
+      next.push(I[i], I[i+1], I[i+2]);
+    }
+    this.work.indices = [...next, ...toAdd];
+
+    // Select the new edge ring (midpoint-to-midpoint edges)
+    this._setSelection([]);
+    this._rebuildOverlayGeometry();
+    this._commit();
+  }
+
+  _findEdgeRing(startEdge: [number, number]): Array<[number, number]> {
+    const I = this.work.indices;
+    const numTris = I.length / 3;
+    const ek = (a: number, b: number) => `${Math.min(a,b)}_${Math.max(a,b)}`;
+
+    // Build edge→faces
+    const edgeFaces = new Map<string, number[]>();
+    for (let t = 0; t < numTris; t++) {
+      const i = t * 3;
+      const add = (a: number, b: number) => {
+        const k = ek(a, b);
+        if (!edgeFaces.has(k)) edgeFaces.set(k, []);
+        edgeFaces.get(k)!.push(t);
+      };
+      add(I[i], I[i+1]); add(I[i+1], I[i+2]); add(I[i+2], I[i]);
+    }
+
+    // Given a face and the entry edge, return the "exit edge" — the one most
+    // perpendicular to the entry direction (for traversing across quad-pairs).
+    const getExit = (faceIdx: number, entryA: number, entryB: number): [number,number] | null => {
+      const i = faceIdx * 3;
+      const verts = [I[i], I[i+1], I[i+2]];
+      const c = verts.find((v) => v !== entryA && v !== entryB);
+      if (c === undefined) return null;
+      const entryDir = this._v(entryB).clone().sub(this._v(entryA)).normalize();
+      const cands: Array<[number,number]> = [[entryA, c], [entryB, c]];
+      let best: [number,number] | null = null, bestPerp = -1;
+      for (const [p,q] of cands) {
+        const d = this._v(q).clone().sub(this._v(p)).normalize();
+        const perp = 1 - Math.abs(d.dot(entryDir));
+        if (perp > bestPerp) { bestPerp = perp; best = [p,q]; }
+      }
+      return bestPerp > 0.25 ? best : null;
+    };
+
+    const [sa, sb] = startEdge;
+    const startKey = ek(sa, sb);
+    const visited = new Set<string>([startKey]);
+    const ring: Array<[number,number]> = [[sa, sb]];
+
+    const traverse = (startFaceIdx: number, initA: number, initB: number) => {
+      let prevA = initA, prevB = initB, curFace = startFaceIdx;
+      for (let step = 0; step < 500; step++) {
+        const exit = getExit(curFace, prevA, prevB);
+        if (!exit) break;
+        const [ea, eb] = exit;
+        const eKey = ek(ea, eb);
+        if (visited.has(eKey)) break;
+        visited.add(eKey);
+        ring.push([ea, eb]);
+        const next = (edgeFaces.get(eKey) ?? []).filter((f) => f !== curFace);
+        if (!next.length) break;
+        curFace = next[0];
+        prevA = ea; prevB = eb;
+      }
+    };
+
+    const faces = edgeFaces.get(startKey) ?? [];
+    for (const f of faces) traverse(f, sa, sb);
+    return ring;
+  }
+
+  // ── Select Linked (L) — flood-fill select connected geometry ─────────────────
+  _selectLinked() {
+    const { selectMode } = useEditModeStore.getState();
+    const seeds = new Set(this._selectedVertexSet());
+    if (!seeds.size) {
+      // If nothing selected, select everything
+      this._selectAll(); return;
+    }
+    const adj = this._adjacency();
+    const visited = new Set<number>(seeds);
+    const queue = [...seeds];
+    while (queue.length) {
+      const v = queue.shift()!;
+      adj.get(v)?.forEach((n: number) => { if (!visited.has(n)) { visited.add(n); queue.push(n); } });
+    }
+    const I = this.work.indices;
+    if (selectMode === 'vertex') {
+      this._setSelection([...visited]);
+    } else if (selectMode === 'face') {
+      const sel: number[] = [];
+      for (let t = 0; t < I.length / 3; t++) {
+        const i = t * 3;
+        if (visited.has(I[i]) && visited.has(I[i+1]) && visited.has(I[i+2])) sel.push(t);
+      }
+      this._setSelection(sel);
+    } else {
+      const pairs = this._edgePairs();
+      this._setSelection(pairs.filter(([a, b]: [number, number]) => visited.has(a) && visited.has(b)));
+    }
+    this._showGizmo = true;
+    this._updateGizmo();
+  }
+
+  // ── Select Similar (Shift+G) — select by shared criteria ────────────────────
+  _selectSimilar() {
+    const { selectMode, selection } = useEditModeStore.getState();
+    if (!selection.length) return;
+    const I = this.work.indices;
+
+    if (selectMode === 'face') {
+      // Similar = same approximate normal direction (within 30°).
+      const seedNormals: THREE.Vector3[] = (selection as number[]).map((t) => {
+        const i = t * 3;
+        const a = this._v(I[i]), b = this._v(I[i+1]), c = this._v(I[i+2]);
+        return new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize();
+      });
+      const similar: number[] = [...(selection as number[])];
+      for (let t = 0; t < I.length / 3; t++) {
+        if ((selection as number[]).includes(t)) continue;
+        const i = t * 3;
+        const a = this._v(I[i]), b = this._v(I[i+1]), c = this._v(I[i+2]);
+        const n = new THREE.Vector3().crossVectors(b.clone().sub(a), c.clone().sub(a)).normalize();
+        if (seedNormals.some((sn) => Math.abs(sn.dot(n)) > 0.87)) similar.push(t); // cos(30°)
+      }
+      this._setSelection(similar);
+    } else if (selectMode === 'edge') {
+      // Similar = same approximate edge length (±20%).
+      const selEdges = selection as Array<[number,number]>;
+      const seedLen = selEdges.reduce((s, [a,b]) => s + this._v(a).distanceTo(this._v(b)), 0) / selEdges.length;
+      const all = this._edgePairs();
+      const similar = all.filter(([a, b]: [number,number]) => {
+        const l = this._v(a).distanceTo(this._v(b));
+        return Math.abs(l - seedLen) < seedLen * 0.2;
+      });
+      this._setSelection(similar);
+    } else {
+      // Vertex: similar = same approximate Y (height), i.e. same horizontal ring.
+      const seedY = (selection as number[]).reduce((s, v) => s + this._v(v).y, 0) / selection.length;
+      const all = [...Array(this.work.positions.length / 3).keys()];
+      const tolerance = Math.max(0.01, Math.abs(seedY) * 0.05 + 0.005);
+      this._setSelection(all.filter((v) => Math.abs(this._v(v).y - seedY) < tolerance));
+    }
+    this._showGizmo = true;
+    this._updateGizmo();
   }
 
   _vertexNormals() {

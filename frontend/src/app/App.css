@@ -242,6 +242,34 @@
 
 .app-nav-tab.active svg { opacity: 1; }
 
+.app-nav-tab--locked {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.app-nav-tab--locked:hover {
+  background: transparent;
+  color: var(--text-dim);
+  border-color: transparent;
+}
+
+.app-nav-editlock {
+  align-self: center;
+  font-size: 10px;
+  color: var(--accent);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  padding: 3px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  background: var(--accent-glow);
+  margin-left: 4px;
+  transition: box-shadow 0.15s;
+}
+.app-nav-editlock.flash {
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
 .app-header-space { flex: 1; }
 
 .app-header-right {

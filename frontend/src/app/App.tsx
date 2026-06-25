@@ -29,6 +29,7 @@ import { duplicateInPlace } from '@/features/ops/bodyOps';
 import { useEditModeStore } from '@/state/editModeStore';
 import { editBridge } from '@/viewport/editBridge';
 import { bridge } from '@/viewport/cameraBridge';
+import { useTransformHudStore } from '@/state/transformHudStore';
 import { usePageStore } from '@/state/pageStore';
 import AnalysisPanel from '@/features/analysis/AnalysisPanel';
 import AnalysisBottomView from '@/features/analysis/AnalysisBottomView';
@@ -39,17 +40,29 @@ import ResizablePanel from '@/features/common/ResizablePanel';
 import { initRuntimeBridge } from '@/state/runtimeBridge';
 import { initMotionRuntime } from '@/control/motionRuntime';
 
-/** Duplicate the selected body in place, select the copy, and enter move mode. */
+/** Duplicate the selected body/bodies in place, select the copies, and enter move mode. */
 function duplicateSelectedInPlace() {
-  const { selectedId, kind } = useSelectionStore.getState();
-  if (!selectedId || kind !== 'body') return;
+  const { selectedId, ids, kind } = useSelectionStore.getState();
+  if (kind !== 'body') return;
+  const targets = ids && ids.length ? ids : (selectedId ? [selectedId] : []);
   const { doc, dispatch } = useModelStore.getState();
-  const body = doc.bodies[selectedId];
-  if (!body) return;
-  const copy = duplicateInPlace(body);
-  dispatch(commands.addBody(copy));
-  useSelectionStore.getState().select(copy.id, 'body');
+  const copies: string[] = [];
+  for (const id of targets) {
+    const body = doc.bodies[id];
+    if (!body) continue;
+    const copy = duplicateInPlace(body);
+    dispatch(commands.addBody(copy));
+    copies.push(copy.id);
+  }
+  if (!copies.length) return;
+  useSelectionStore.getState().selectMany(copies, 'body');
   useSelectionStore.getState().setGizmoMode('translate');
+}
+
+/** Select every body in the document (Ctrl+A in the editor). */
+function selectAllBodies() {
+  const ids = Object.keys(useModelStore.getState().doc.bodies);
+  if (ids.length) useSelectionStore.getState().selectMany(ids, 'body');
 }
 
 // Phase 0 foundation: expose the core model + command bus for devtools/scripting
@@ -218,6 +231,18 @@ function OvercurrentWarning() {
 }
 
 function AppHeader({ page, setPage }: any) {
+  const editActive       = useEditModeStore(s => s.active);
+
+  const handleNavClick = (id: string) => {
+    if (editActive && id !== 'editor') {
+      // Flash a subtle alert — don't navigate while geometry is being edited.
+      const msg = document.getElementById('edit-mode-nav-block');
+      if (msg) { msg.classList.add('flash'); setTimeout(() => msg.classList.remove('flash'), 600); }
+      return;
+    }
+    setPage(id);
+  };
+
   const connected        = useIntegrationStore(s => s.connected);
   const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
   const boardName        = useHardwareStore(s => s.boardName);
@@ -251,16 +276,25 @@ function AppHeader({ page, setPage }: any) {
       <div className="app-header-sep" />
 
       <nav className="app-nav">
-        {NAV_TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`app-nav-tab ${page === t.id ? 'active' : ''}`}
-            onClick={() => setPage(t.id)}
-          >
-            {t.icon}
-            {t.label}
-          </button>
-        ))}
+        {NAV_TABS.map((t) => {
+          const locked = editActive && t.id !== 'editor';
+          return (
+            <button
+              key={t.id}
+              className={`app-nav-tab ${page === t.id ? 'active' : ''} ${locked ? 'app-nav-tab--locked' : ''}`}
+              onClick={() => handleNavClick(t.id)}
+              title={locked ? 'Exit Edit Mode (Tab) to switch pages' : t.label}
+            >
+              {t.icon}
+              {t.label}
+            </button>
+          );
+        })}
+        {editActive && (
+          <span id="edit-mode-nav-block" className="app-nav-editlock">
+            Exit Edit Mode (Tab) to switch pages
+          </span>
+        )}
       </nav>
 
       <HumanoidActionBar />
@@ -382,6 +416,13 @@ export default function App() {
         const k = e.key.toLowerCase();
         if (k === 'k' || k === 'p') { e.preventDefault(); setPaletteOpen(v => !v); return; }
         if (typing) return;
+        // Ctrl/Cmd+A in the editor selects all bodies (not browser text). On the
+        // other 3D pages it still just prevents the text-selection highlight.
+        if (k === 'a' && page !== 'motor' && !useEditModeStore.getState().active) {
+          e.preventDefault();
+          if (page === 'editor') selectAllBodies();
+          return;
+        }
         if (k === 's') { e.preventDefault(); saveProject(); return; }
         if (k === 'z' && !e.shiftKey)      { e.preventDefault(); bridge.undo?.(); }
         else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); bridge.redo?.(); }
@@ -396,6 +437,7 @@ export default function App() {
       // Esc clears the current selection (hides the gizmo + joint arrows) — a reliable
       // escape hatch in case an empty-space click is ever missed.
       if (e.key === 'Escape') {
+        if (bridge.cancelAxisModal) { bridge.cancelAxisModal(); return; }
         if (edit.active) { edit.exit(); }
         else if (selectedId) { useSelectionStore.getState().clear(); }
         return;
@@ -410,10 +452,18 @@ export default function App() {
 
       // In Edit Mode: mesh-op shortcuts (faces/verts), not object-level ones.
       if (edit.active) {
+        const ctrl = e.ctrlKey || e.metaKey;
         if (e.key === 'Delete' || e.key === 'Backspace' || k === 'x') { e.preventDefault(); editBridge.deleteSelection(); }
         else if (k === 'e') { e.preventDefault(); editBridge.extrude(); }
+        else if (k === 'g' && e.shiftKey) { e.preventDefault(); editBridge.selectSimilar(); }
         else if (k === 'g') { e.preventDefault(); editBridge.startTwoPointMove(); }
+        else if (k === 'r' && ctrl) { e.preventDefault(); editBridge.loopCut(); }
         else if (k === 'a') { e.preventDefault(); editBridge.selectAll(); }
+        else if (k === 'f') { e.preventDefault(); editBridge.fill(); }
+        else if (k === 'j') { e.preventDefault(); editBridge.connect(); }
+        else if (k === 'b') { e.preventDefault(); editBridge.bevel(); }
+        else if (k === 'l') { e.preventDefault(); editBridge.selectLinked(); }
+        else if (k === 'i') { e.preventDefault(); editBridge.inset(); }
         return;
       }
 
@@ -424,10 +474,46 @@ export default function App() {
       }
       // Blender-style transform mode keys (only meaningful for a selected body).
       if (kind === 'body' && selectedId) {
+        const sel = useSelectionStore.getState();
         if (k === 'd') { e.preventDefault(); duplicateSelectedInPlace(); return; }
-        if (k === 'm') { e.preventDefault(); useSelectionStore.getState().setGizmoMode('translate'); return; }
-        if (k === 'r') { e.preventDefault(); useSelectionStore.getState().setGizmoMode('rotate'); return; }
-        if (k === 's') { e.preventDefault(); useSelectionStore.getState().setGizmoMode('scale'); return; }
+        // M/R/S toggle: pressing the same mode again hides the gizmo.
+        if (k === 'm') {
+          e.preventDefault();
+          if (sel.gizmoMode === 'translate' && sel.showGizmo) sel.hideGizmo();
+          else { sel.setGizmoMode('translate'); if (!sel.showGizmo) sel.revealGizmo(); }
+          return;
+        }
+        if (k === 'r' && !(e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          if (sel.gizmoMode === 'rotate' && sel.showGizmo) sel.hideGizmo();
+          else { sel.setGizmoMode('rotate'); if (!sel.showGizmo) sel.revealGizmo(); }
+          return;
+        }
+        if (k === 's' && !(e.ctrlKey || e.metaKey)) {
+          e.preventDefault();
+          if (sel.gizmoMode === 'scale' && sel.showGizmo) sel.hideGizmo();
+          else { sel.setGizmoMode('scale'); if (!sel.showGizmo) sel.revealGizmo(); }
+          return;
+        }
+        // X/Y/Z — axis-constrained modal grab (only when gizmo is in translate mode).
+        if (k === 'x' && !(e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('x'); return; }
+        if (k === 'y' && !(e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('y'); return; }
+        if (k === 'z' && !(e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('z'); return; }
+      }
+
+      // Typed numeric input while axis modal is active.
+      const hudState = useTransformHudStore.getState();
+      if (hudState.visible && hudState.axis) {
+        if (/^[0-9.]$/.test(k) || (k === '-' && !hudState.buffer)) {
+          e.preventDefault(); hudState.appendChar(k); return;
+        }
+        if (e.key === 'Backspace') { e.preventDefault(); hudState.backspace(); return; }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const v = parseFloat(hudState.buffer);
+          bridge.commitAxisModal?.(isNaN(v) ? undefined : v * 0.001);
+          return;
+        }
       }
     };
     window.addEventListener('keydown', onKey);

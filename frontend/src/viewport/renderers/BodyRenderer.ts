@@ -45,7 +45,9 @@ export class BodyRenderer {
     this.group.name = 'model-bodies';
     scene.add(this.group);
     this._entries = new Map(); // bodyId -> { container, sig }
-    this._selectedId = null;
+    this._selectedId = null;   // active (primary) selection — brighter highlight
+    this._selectedIds = new Set(); // all selected bodies
+    this._hoveredId = null;    // body under cursor (object-mode hover)
   }
 
   sync(doc: Document, fk: any = null) {
@@ -203,15 +205,33 @@ export class BodyRenderer {
     }
   }
 
-  setSelected(bodyId: any) { this._selectedId = bodyId; this._refreshHighlight(); }
+  setSelected(bodyId: any) {
+    this._selectedId = bodyId;
+    this._selectedIds = new Set(bodyId ? [bodyId] : []);
+    this._refreshHighlight();
+  }
+
+  /** Highlight a set of bodies; `activeId` (last clicked) gets a stronger glow. */
+  setSelectedIds(ids: any, activeId: any = null) {
+    this._selectedIds = new Set(ids ?? []);
+    this._selectedId = activeId ?? (ids && ids.length ? ids[ids.length - 1] : null);
+    this._refreshHighlight();
+  }
+
+  setHovered(id: string | null) {
+    this._hoveredId = id;
+    this._refreshHighlight();
+  }
 
   _refreshHighlight() {
     for (const [id, { container }] of this._entries) {
-      const on = id === this._selectedId;
+      const sel = this._selectedIds.has(id);
+      const active = id === this._selectedId;
+      const hovered = id === this._hoveredId;
       this._forEachMesh(container, (mesh: any) => {
         if (!mesh.material || Array.isArray(mesh.material)) return;
-        mesh.material.emissive = on ? HILITE : BLACK;
-        mesh.material.emissiveIntensity = on ? 0.5 : 0;
+        mesh.material.emissive = (sel || hovered) ? HILITE : BLACK;
+        mesh.material.emissiveIntensity = sel ? (active ? 0.55 : 0.32) : (hovered ? 0.12 : 0);
       });
     }
   }

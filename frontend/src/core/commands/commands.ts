@@ -55,6 +55,31 @@ export function updateBody(bodyId: any, patch: any) {
   );
 }
 
+/** Apply a transform/patch to many bodies as ONE undoable step.
+ *  `patches` = [[bodyId, patch], …]. Used by multi-body gizmo drags. */
+export function updateBodies(patches: any) {
+  let prev: any[] = [];
+  return command(
+    'Update bodies',
+    (doc: any) => {
+      prev = [];
+      let d = doc;
+      for (const [id, patch] of patches) {
+        const b = getBody(d, id);
+        if (!b) continue;
+        prev.push(b);
+        d = putEntity(d, { ...b, ...patch });
+      }
+      return d;
+    },
+    (doc: any) => {
+      let d = doc;
+      for (const b of prev) d = putEntity(d, b);
+      return d;
+    },
+  );
+}
+
 /** Reorder a collection ('bodies' | 'joints') to match the given id order.
  *  Rebuilds the id→entity map in the new key order (Object key order = list order).
  */

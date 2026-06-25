@@ -98,5 +98,47 @@
 .tl-snap { flex-direction: row !important; align-items: center; gap: 6px !important; cursor: pointer; }
 .tl-row2 { display: flex; justify-content: space-between; font-size: 12px; width: 100%; }
 .tl-row2 strong { font-family: var(--font-mono); color: var(--text); }
-.tl-render { padding: 8px; font-size: 13px; font-weight: 700; background: var(--accent); color: #fff; border: none; border-radius: 7px; cursor: pointer; }
+.tl-render { flex: 1; padding: 8px; font-size: 13px; font-weight: 700; background: var(--accent); color: #fff; border: none; border-radius: 7px; cursor: pointer; }
 .tl-render:disabled { opacity: 0.5; cursor: default; }
+
+/* Render tab extras */
+.tl-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-dim); width: 100%; }
+.tl-input {
+  width: 100%; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 12px;
+  box-sizing: border-box;
+}
+.tl-input:focus { outline: none; border-color: var(--accent); }
+.tl-field-row { display: flex; gap: 8px; }
+.tl-field-row .tl-field { flex: 1; }
+
+.tl-toggle2, .tl-toggle3 {
+  display: flex; gap: 4px;
+}
+.tl-toggle2 button, .tl-toggle3 button {
+  flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 600;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg-card); color: var(--text-dim); cursor: pointer;
+  transition: all 0.13s;
+}
+.tl-toggle2 button.on, .tl-toggle3 button.on {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+.tl-toggle2 button:hover:not(.on), .tl-toggle3 button:hover:not(.on) {
+  border-color: var(--accent); color: var(--accent);
+}
+
+.tl-render-row { display: flex; gap: 6px; align-items: stretch; }
+.tl-cancel {
+  padding: 8px 12px; font-size: 14px; font-weight: 700;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border: 1px solid var(--danger); border-radius: 7px;
+  color: var(--danger); cursor: pointer;
+}
+.tl-cancel:hover { background: var(--danger); color: #fff; }
+
+.tl-progress {
+  font-family: var(--font-mono); font-size: 11px; color: var(--accent);
+  padding: 4px 7px; background: var(--accent-glow); border-radius: 5px;
+}
+.tl-warn { font-size: 11px; color: var(--danger); }

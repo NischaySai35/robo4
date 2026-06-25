@@ -35,6 +35,13 @@ export interface CameraBridge {
   exportModel?: (fmt: any) => { ok: boolean; error?: string } | void;
   undo?: () => void;
   redo?: () => void;
+  // Axis-modal transform (press X/Y/Z while gizmo is visible)
+  startAxisModal?: (axis: 'x'|'y'|'z') => void;
+  commitAxisModal?: (exactMeters?: number) => void;
+  cancelAxisModal?: () => void;
+  // Render utilities
+  captureStream?: () => MediaStream | null;
+  setRenderScale?: (scale: number) => void;
 }
 
 export const bridge: CameraBridge = {

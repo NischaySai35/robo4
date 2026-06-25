@@ -8,7 +8,8 @@
  * export live here. The legacy rod/cube arm has been removed — everything is the
  * model graph now.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, Fragment } from 'react';
+import TransformHUD from '@/features/common/TransformHUD';
 import * as THREE from 'three';
 import { SceneManager } from '@/viewport/SceneManager';
 import { ModelEditor } from '@/viewport/ModelEditor';
@@ -55,6 +56,17 @@ export default function SimCanvas() {
       domElement: sceneMgr.renderer.domElement,
     });
     modelEditorRef.current = modelEditor;
+
+    // Render utilities: canvas stream capture + resolution scaling.
+    bridge.captureStream = () => {
+      try { return (sceneMgr.renderer.domElement as any).captureStream(); }
+      catch { return null; }
+    };
+    bridge.setRenderScale = (scale: number) => {
+      const dpr = Math.max(0.5, Math.min(8, scale)) * (window.devicePixelRatio || 1);
+      sceneMgr.renderer.setPixelRatio(dpr);
+      sceneMgr.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+    };
 
     // FIT bounding box over the model bodies.
     bridge.getFitBox = () => {
@@ -347,6 +359,9 @@ export default function SimCanvas() {
   }, []);
 
   return (
-    <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
+    <Fragment>
+      <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
+      <TransformHUD />
+    </Fragment>
   );
 }

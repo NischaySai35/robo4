@@ -2,44 +2,86 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: var(--footer-h, 30px);
   z-index: 4000;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 4px 12px;
-  pointer-events: none; /* keep the UI usable while busy */
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.18), transparent);
+  gap: 8px;
+  padding: 5px 10px;
+  background: var(--bg-panel, #1a1f2e);
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+  box-shadow: 0 -2px 12px rgba(0,0,0,0.35);
 }
 
+/* ── Animated track ─────────────────────────────────────────── */
 .loadbar-track {
   position: relative;
   flex: 1;
-  height: 3px;
-  border-radius: 3px;
+  height: 4px;
+  border-radius: 4px;
   overflow: hidden;
-  background: rgba(127, 127, 127, 0.25);
+  background: rgba(255,255,255,0.08);
 }
 
+/* Bouncing fill — indeterminate style */
 .loadbar-fill {
   position: absolute;
+  top: 0;
   height: 100%;
-  width: 35%;
-  border-radius: 3px;
-  background: var(--accent, #2f7dff);
-  box-shadow: 0 0 8px var(--accent, #2f7dff);
-  animation: loadbar-slide 1.1s ease-in-out infinite;
+  width: 40%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, transparent, var(--accent, #2f7dff), transparent);
+  animation: lb-bounce 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* Overlay sheen pulse */
+.loadbar-sheen {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgba(255,255,255,0.18) 50%,
+    transparent 100%
+  );
+  animation: lb-sheen 1.9s ease-in-out infinite;
+}
+
+@keyframes lb-bounce {
+  0%   { left: -45%; }
+  100% { left: 105%; }
+}
+
+@keyframes lb-sheen {
+  0%, 100% { opacity: 0; transform: translateX(-100%); }
+  50%       { opacity: 1; transform: translateX(100%); }
+}
+
+/* ── Label ──────────────────────────────────────────────────── */
 .loadbar-label {
   flex-shrink: 0;
   font-size: 11px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-dim, #8aa0be);
   white-space: nowrap;
+  letter-spacing: 0.02em;
 }
 
-@keyframes loadbar-slide {
-  0%   { left: -35%; }
-  100% { left: 100%; }
+/* ── Cancel button ──────────────────────────────────────────── */
+.loadbar-cancel {
+  flex-shrink: 0;
+  padding: 1px 7px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-dim, #8aa0be);
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 3px;
+  cursor: pointer;
+  line-height: 16px;
+  transition: background 0.15s, color 0.15s;
+}
+.loadbar-cancel:hover {
+  background: rgba(220, 60, 60, 0.22);
+  border-color: rgba(220, 60, 60, 0.4);
+  color: #ff7070;
 }

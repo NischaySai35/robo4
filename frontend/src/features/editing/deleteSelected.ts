@@ -8,10 +8,13 @@ import { useModelStore } from '@/state/modelStore';
 import { commands } from '@/core/commands/index';
 
 export function deleteSelectedEntity() {
-  const { selectedId } = useSelectionStore.getState();
-  if (!selectedId) return;
+  const { selectedId, ids } = useSelectionStore.getState();
+  const targets = ids && ids.length ? ids : (selectedId ? [selectedId] : []);
+  if (!targets.length) return;
   const { doc, dispatch } = useModelStore.getState();
-  if (doc.bodies[selectedId]) dispatch(commands.removeBody(selectedId));
-  else if (doc.joints[selectedId]) dispatch(commands.removeJoint(selectedId));
+  for (const id of targets) {
+    if (doc.bodies[id]) dispatch(commands.removeBody(id));
+    else if (doc.joints[id]) dispatch(commands.removeJoint(id));
+  }
   useSelectionStore.getState().clear();
 }

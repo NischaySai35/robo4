@@ -22,6 +22,30 @@ const _gltf = new GLTFLoader();
 const _usdz = new USDZLoader();
 const _cache = new Map(); // assetId -> THREE.Object3D (template; callers clone)
 
+/** Repair missing or black materials that come out of the USDZ/USD loader. */
+function fixUSDMaterials(obj: THREE.Object3D) {
+  obj.traverse((o: any) => {
+    if (!o.isMesh) return;
+    o.castShadow = true;
+    o.receiveShadow = true;
+    if (!o.material) {
+      o.material = new THREE.MeshStandardMaterial({ color: 0xa0a8b8, metalness: 0.4, roughness: 0.5 });
+      return;
+    }
+    const mats: THREE.MeshStandardMaterial[] = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if ((m as any).opacity !== undefined && (m as any).opacity < 0.05) (m as any).opacity = 1;
+      (m as any).transparent = ((m as any).opacity ?? 1) < 0.95;
+      // Replace truly-black colours (likely unparsed USD material) with a steel grey.
+      if ((m as any).color) {
+        const { r, g, b } = (m as any).color;
+        if (r + g + b < 0.05) (m as any).color.setHex(0xa0a8b8);
+      }
+      (m as any).needsUpdate = true;
+    }
+  });
+}
+
 function center(obj: THREE.Object3D) {
   const c = new THREE.Box3().setFromObject(obj).getCenter(new THREE.Vector3());
   obj.position.sub(c);
@@ -44,7 +68,9 @@ function parseSync(asset: any): THREE.Object3D | null {
   }
   if (fmt === 'usd' || fmt === 'usdz' || fmt === 'usda') {
     // USDZLoader handles zipped .usdz and raw .usd/.usda; parse is synchronous.
-    return center(_usdz.parse(bytes.buffer.slice(0)) as unknown as THREE.Object3D);
+    const obj = _usdz.parse(bytes.buffer.slice(0)) as unknown as THREE.Object3D;
+    fixUSDMaterials(obj);
+    return center(obj);
   }
   return null;
 }
@@ -67,7 +93,10 @@ async function parseStep(bytes: Uint8Array): Promise<THREE.Object3D | null> {
     if (m.index) geo.setIndex(Array.from(m.index.array as ArrayLike<number>));
     if (!m.attributes.normal) geo.computeVertexNormals();
     const col = m.color ? new THREE.Color(m.color[0], m.color[1], m.color[2]) : new THREE.Color(0.78, 0.80, 0.86);
-    group.add(new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, metalness: 0.4, roughness: 0.5 })));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, metalness: 0.4, roughness: 0.5 }));
+    // Preserve OCCT component/product name so decomposeScene can name the body.
+    if (m.name) mesh.name = m.name;
+    group.add(mesh);
   }
   return center(group);
 }

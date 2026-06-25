@@ -46,6 +46,37 @@
 }
 .in-empty { font-size: 13.5px; color: var(--text-dim); line-height: 1.4; }
 
+/* Multi-selection banner + pivot-point picker (Blender-style). */
+.in-multi {
+  margin: 0 12px 4px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: var(--accent-glow);
+  border-radius: 8px;
+}
+.in-multi-title { font-size: 13px; font-weight: 800; color: var(--accent); }
+.in-multi-sub {
+  margin-top: 8px;
+  font-size: 10px; font-weight: 700; letter-spacing: 0.5px;
+  text-transform: uppercase; color: var(--text-dim);
+}
+.in-pivot-row { display: flex; gap: 5px; margin-top: 5px; }
+.in-pivot-btn {
+  flex: 1;
+  padding: 6px 4px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+.in-pivot-btn:hover { border-color: var(--accent); color: var(--accent); }
+.in-pivot-btn--on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.in-multi-hint { margin-top: 8px; font-size: 11.5px; line-height: 1.4; color: var(--text-dim); }
+
 .in-group {
   font-family: var(--font-mono);
   font-size: 11.5px;

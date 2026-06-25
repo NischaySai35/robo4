@@ -1,10 +1,19 @@
 /**
- * importMesh — open a mesh file and add it to the model as an Asset + Body.
+ * importMesh — unified entry point for all mesh/scene imports.
  *
- * Uses the Electron native file dialog (window.tetrobot, built in the desktop
- * shell) when available, else the browser <input type=file> fallback. The mesh
- * bytes are embedded (base64) in the model so .nischay stays self-contained.
- * STL/OBJ now (the Fusion 360 export paths); glTF/STEP next.
+ * Format → behavior:
+ *   glTF / GLB   → scene decomposed into N bodies (one per component/mesh node).
+ *   USD / USDZ   → same decomposition; Three.js USDZLoader is used.
+ *   STL / OBJ    → one body (these formats carry no component hierarchy).
+ *   STEP / STP   → N bodies via OpenCascade WASM (one per solid/component).
+ *   URDF         → importURDF() — separate entry point, always.
+ *
+ * Fusion 360 workflow:
+ *   Export as GLB (File › Export › Format: glTF 2.0, *.glb).
+ *   Each Fusion component becomes a separate body with the correct relative
+ *   position and material colour.
+ *   Joints: use File › Import › URDF Project after installing the
+ *   "Fusion 360 URDF Exporter" add-in.
  */
 import * as THREE from 'three';
 import { bytesToBase64 } from '@/core/serialization/binary';
@@ -17,63 +26,118 @@ import { bridge } from '@/viewport/cameraBridge';
 import {
   makeAsset, makeBody, makeGeometry, GeometryType, identityOrigin,
 } from '@/core/model/index';
+import { decomposeScene } from './importScene';
 
-// Scene base unit is metres; CAD/STL exports (Fusion 360 etc.) are almost always
-// in millimetres, so a raw import is ~1000× too big. Default assumption: the file
-// is in mm → scale by 0.001 so REAL dimensions are preserved (a 50 mm part becomes
-// 0.05 m, shown as 50 mm). If that still leaves an absurd size (the file wasn't mm
-// after all), fall back to auto-fitting the longest side to ~1 m so it's editable.
+// ── Scale helpers (for single-body import) ────────────────────────────────────
 const MM_TO_M = 0.001;
-const FIT_TARGET_M = 1.0;
-const SANE_MIN_M = 0.01;   // 10 mm
-const SANE_MAX_M = 20.0;   // 20 m
+const SANE_MIN_M = 0.003;
+const SANE_MAX_M = 30.0;
 
-function importScale(asset: any) {
+function singleBodyScale(asset: any): [number, number, number] {
   const obj = getAssetObject(asset);
   if (!obj) return [MM_TO_M, MM_TO_M, MM_TO_M];
-  const size = new THREE.Box3().setFromObject(obj).getSize(new THREE.Vector3());
-  const maxDim = Math.max(size.x, size.y, size.z);
-  if (!Number.isFinite(maxDim) || maxDim <= 0) return [1, 1, 1];
-
-  const mmLongest = maxDim * MM_TO_M; // longest side if we treat the file as mm
-  if (mmLongest >= SANE_MIN_M && mmLongest <= SANE_MAX_M) {
-    return [MM_TO_M, MM_TO_M, MM_TO_M]; // mm assumption gives a sensible size
-  }
-  const f = Math.round((FIT_TARGET_M / maxDim) * 1e6) / 1e6; // else normalise to ~1 m
-  return [f, f, f];
+  const box = new THREE.Box3().setFromObject(obj);
+  const size = box.getSize(new THREE.Vector3());
+  const L = Math.max(size.x, size.y, size.z);
+  if (!Number.isFinite(L) || L <= 0) return [1, 1, 1];
+  if (L >= SANE_MIN_M && L <= SANE_MAX_M) return [1, 1, 1];
+  return [MM_TO_M, MM_TO_M, MM_TO_M];
 }
 
+// Formats that carry a component scene tree → decompose into N bodies.
+// STEP: OCCT returns one mesh per solid, so same decomposition path works.
+const SCENE_FORMATS = new Set(['gltf', 'glb', 'usd', 'usdz', 'usda', 'step', 'stp']);
+
+// All supported formats shown in the file picker.
 const SUPPORTED = ['stl', 'obj', 'gltf', 'glb', 'usd', 'usdz', 'usda', 'step', 'stp'];
 
-/** Import a mesh. Optionally restrict the picker to `exts` (e.g. ['stl']). */
+// ── Main entry point ──────────────────────────────────────────────────────────
+
+/** Open a file picker, import the chosen mesh. No choices about "how" — format decides. */
 export async function importMesh(exts?: string[]) {
   const filter = Array.isArray(exts) && exts.length ? exts : SUPPORTED;
   let picked: any;
   try { picked = await pickFile(filter); }
-  catch (e) { alert(`Could not open file: ${e.message}`); return; }
+  catch (e: any) { alert(`Could not open file: ${e.message}`); return; }
   if (!picked) return;
 
   const ext = (picked.name.split('.').pop() || '').toLowerCase();
   if (!SUPPORTED.includes(ext)) {
-    alert(`Unsupported format ".${ext}". Supported: STL, OBJ, glTF/GLB, USD/USDZ, STEP/STP.`);
+    alert(`Unsupported format ".${ext}". Supported: GLB, glTF, USD, USDZ, STL, OBJ, STEP.`);
     return;
   }
 
-  // Parsing/tessellating a CAD/STEP mesh can take a moment (STEP/glTF parse async via
-  // WASM/loader); show the bottom loading bar and preload BEFORE adding the body so it
-  // renders the same frame it's added.
-  await useBusyStore.getState().run(`Importing ${picked.name}…`, async () => {
-    const asset = makeAsset({ name: picked.name, format: ext, data: bytesToBase64(picked.bytes) });
+  if (SCENE_FORMATS.has(ext)) {
+    await _importScene(picked, ext);
+  } else {
+    await _importSingleBody(picked, ext);
+  }
+}
+
+// ── Scene import (glTF / GLB / USD / USDZ) → N bodies ───────────────────────
+
+async function _importScene(picked: { name: string; bytes: Uint8Array }, ext: string) {
+  await useBusyStore.getState().run(`Importing ${picked.name}…`, async (sig) => {
+    const asset = makeAsset({ name: picked.name, format: ext as any, data: bytesToBase64(picked.bytes) });
     const ok = await preloadAsset(asset);
-    if (!ok) { alert(`Could not parse "${picked.name}". The file may be malformed or an unsupported variant.`); return; }
+    if (sig.aborted) return;
+    if (!ok) {
+      alert(
+        `Could not parse "${picked.name}".\n\n` +
+        `From Fusion 360, export using File › Export › Format: glTF 2.0 (*.glb). ` +
+        `Make sure all components are visible before exporting.`,
+      );
+      return;
+    }
+
+    const root = getAssetObject(asset);
+    if (!root || sig.aborted) { if (!root) alert('Could not read scene from this file.'); return; }
+
+    const { entities, count } = decomposeScene(root, picked.name);
+    if (sig.aborted) return;
+
+    if (count === 0) {
+      alert(
+        `No mesh geometry found in "${picked.name}".\n\n` +
+        `In Fusion 360: make sure you exported with "Visual Mesh" or "All Bodies" checked, ` +
+        `and that at least one component is visible.`,
+      );
+      return;
+    }
+
+    const label = `Import ${count} ${count === 1 ? 'body' : 'components'} from ${picked.name}`;
+    useModelStore.getState().dispatch(commands.addEntities(entities, label));
+
+    const firstBody = entities.find((e: any) => e.kind === 'body');
+    if (firstBody) useSelectionStore.getState().select(firstBody.id, 'body');
+    setTimeout(() => bridge.fitCamera?.(), 80);
+  });
+}
+
+// ── Single-body import (STL / OBJ / STEP) ────────────────────────────────────
+
+async function _importSingleBody(picked: { name: string; bytes: Uint8Array }, ext: string) {
+  await useBusyStore.getState().run(`Importing ${picked.name}…`, async (sig) => {
+    const asset = makeAsset({ name: picked.name, format: ext as any, data: bytesToBase64(picked.bytes) });
+    const ok = await preloadAsset(asset);
+    if (sig.aborted) return;
+    if (!ok) {
+      alert(`Could not parse "${picked.name}". The file may be malformed or an unsupported variant.`);
+      return;
+    }
 
     const doc = useModelStore.getState().doc;
     const n = Object.keys(doc.bodies).length;
-    const scale = importScale(asset) as [number, number, number]; // bring huge mm-unit CAD exports into scene scale
+    const scale = singleBodyScale(asset) as [number, number, number];
+
     const body = makeBody({
       name: picked.name.replace(/\.[^.]+$/, ''),
       assetId: asset.id,
-      visual: { geometry: makeGeometry(GeometryType.MESH, { assetId: asset.id }), materialId: null, origin: identityOrigin() },
+      visual: {
+        geometry: makeGeometry(GeometryType.MESH, { assetId: asset.id }),
+        materialId: null,
+        origin: identityOrigin(),
+      },
       transform: { position: [n * 1.3, 0.6, 3.5], quaternion: [0, 0, 0, 1], scale },
     });
 
@@ -81,16 +145,16 @@ export async function importMesh(exts?: string[]) {
     dispatch(commands.addAsset(asset));
     dispatch(commands.addBody(body));
     useSelectionStore.getState().select(body.id, 'body');
-    // Frame the imported part once the renderer has synced the new body.
     setTimeout(() => bridge.fitCamera?.(), 80);
   });
 }
 
-/** Import a URDF robot description (.urdf / .xml) as bodies + joints. */
+// ── URDF import ───────────────────────────────────────────────────────────────
+
 export async function importURDF() {
   let picked: any;
   try { picked = await pickFile(['urdf', 'xml']); }
-  catch (e) { alert(`Could not open file: ${e.message}`); return; }
+  catch (e: any) { alert(`Could not open file: ${e.message}`); return; }
   if (!picked) return;
 
   await useBusyStore.getState().run(`Importing ${picked.name}…`, async () => {
@@ -101,7 +165,6 @@ export async function importURDF() {
     if (!result.entities.length) { alert('No links found in the URDF.'); return; }
 
     useModelStore.getState().dispatch(commands.addEntities(result.entities, `Import URDF: ${result.robotName}`));
-    // select the first body (root) and frame the model
     const firstBody = result.entities.find((e: any) => e.kind === 'body');
     if (firstBody) useSelectionStore.getState().select(firstBody.id, 'body');
     setTimeout(() => bridge.fitCamera?.(), 80);
@@ -109,16 +172,17 @@ export async function importURDF() {
   });
 }
 
-async function pickFile(filter = SUPPORTED) {
-  if (window.tetrobot?.isDesktop) {
-    const res = await window.tetrobot.openFile({
-      filters: [{ name: 'Meshes', extensions: filter }, { name: 'All Files', extensions: ['*'] }],
+// ── File picker ───────────────────────────────────────────────────────────────
+
+async function pickFile(filter: string[]): Promise<{ name: string; bytes: Uint8Array } | null> {
+  if ((window as any).tetrobot?.isDesktop) {
+    const res = await (window as any).tetrobot.openFile({
+      filters: [{ name: 'Mesh / Scene', extensions: filter }, { name: 'All Files', extensions: ['*'] }],
       binary: true,
     });
     if (!res) return null;
     return { name: res.name, bytes: new Uint8Array(res.data) };
   }
-  // Browser fallback
   return new Promise((resolve, reject) => {
     const inp = document.createElement('input');
     inp.type = 'file';

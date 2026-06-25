@@ -78,7 +78,7 @@ function sampleTrack(keys: Keyframe[] | undefined, t: number): number | undefine
   return keys[keys.length - 1].value;
 }
 
-const newClip = (name: string, duration = 60): ClipData => ({ id: uid(), name, duration, tracks: {} });
+const newClip = (name: string, duration = 30): ClipData => ({ id: uid(), name, duration, tracks: {} });
 
 export const useAnimationStore = create<AnimationState>((set, get) => {
   const first = newClip('ani1');
@@ -92,7 +92,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
     fps: 30,
     snap: true,
     sequence: false,
-    duration: 60,
+    duration: 30,
     playhead: 0,
     playing: false,
     preview: false,

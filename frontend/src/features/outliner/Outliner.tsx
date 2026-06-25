@@ -21,10 +21,16 @@ export default function Outliner() {
   const dispatch = useModelStore((s) => s.dispatch);
 
   const selectedId = useSelectionStore((s) => s.selectedId);
+  const selIds = useSelectionStore((s) => s.ids);
   const select = useSelectionStore((s) => s.select);
   const clear = useSelectionStore((s) => s.clear);
   // Single click selects; double click opens the Inspector (Properties).
   const openInspector = (id: any, kind: any) => { select(id, kind); useDockStore.getState().open('inspector'); };
+  // Ctrl/⌘-click toggles a body in/out of the multi-selection; plain click replaces it.
+  const onRowClick = (e: any, id: any, kind: any) => {
+    if (e.ctrlKey || e.metaKey) useSelectionStore.getState().toggle(id, kind);
+    else select(id, kind);
+  };
 
   const bodies = Object.values(doc.bodies);
   const joints = Object.values(doc.joints);
@@ -65,15 +71,18 @@ export default function Outliner() {
   };
 
   const deleteSelected = () => {
-    if (!selectedId) return;
-    if (doc.bodies[selectedId]) dispatch(commands.removeBody(selectedId));
-    else if (doc.joints[selectedId]) dispatch(commands.removeJoint(selectedId));
+    const targets = selIds.length ? selIds : (selectedId ? [selectedId] : []);
+    if (!targets.length) return;
+    for (const id of targets) {
+      if (doc.bodies[id]) dispatch(commands.removeBody(id));
+      else if (doc.joints[id]) dispatch(commands.removeJoint(id));
+    }
     clear();
   };
 
   return (
     <div className="ol-panel">
-      <button className="ol-import" onClick={() => importMesh()}>⬇ Import Mesh (STL / OBJ)</button>
+      <button className="ol-import" onClick={() => importMesh()}>⬇ Import Mesh / Scene</button>
 
       {!macroForm
         ? <button className="ol-import" onClick={() => setMacroForm({ segments: 3, length: 0.6 })}>⚙ Spawn Macro (parametric arm)</button>
@@ -127,10 +136,10 @@ export default function Outliner() {
         {bodies.map((b) => (
           <button
             key={b.id}
-            className={`ol-row ${selectedId === b.id ? 'ol-row--sel' : ''}`}
-            onClick={() => select(b.id, 'body')}
+            className={`ol-row ${selIds.includes(b.id) ? 'ol-row--sel' : ''}`}
+            onClick={(e) => onRowClick(e, b.id, 'body')}
             onDoubleClick={() => openInspector(b.id, 'body')}
-            title="Click to select · double-click for Properties"
+            title="Click to select · Ctrl-click for multi · double-click for Properties"
           >
             <span className="ol-dot ol-dot--body" />
             <span className="ol-name">{b.name}</span>
@@ -141,8 +150,8 @@ export default function Outliner() {
         {joints.map((j) => (
           <button
             key={j.id}
-            className={`ol-row ${selectedId === j.id ? 'ol-row--sel' : ''}`}
-            onClick={() => select(j.id, 'joint')}
+            className={`ol-row ${selIds.includes(j.id) ? 'ol-row--sel' : ''}`}
+            onClick={(e) => onRowClick(e, j.id, 'joint')}
             onDoubleClick={() => openInspector(j.id, 'joint')}
             title="Click to select · double-click for Properties"
           >

@@ -90,3 +90,18 @@
   font-family: var(--font-mono); font-size: 12.5px;
 }
 .ed-amount input:focus { outline: none; border-color: var(--accent); }
+
+.ed-btn:disabled { opacity: 0.4; cursor: not-allowed; pointer-events: none; }
+.ed-btn kbd { font-family: var(--font-mono); font-size: 10px; opacity: 0.65; margin-left: 3px; }
+
+.ed-shortcuts-hdr { margin-top: 14px; }
+.ed-shortcuts {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 3px 6px; margin-top: 2px;
+}
+.ed-shortcuts span { font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 4px; }
+.ed-shortcuts kbd {
+  display: inline-block; padding: 1px 4px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 3px;
+  font-family: var(--font-mono); font-size: 10px; color: var(--text);
+  white-space: nowrap;
+}

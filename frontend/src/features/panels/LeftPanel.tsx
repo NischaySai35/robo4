@@ -39,7 +39,10 @@ export default function LeftPanel({ style }: any) {
   const dispatch = useModelStore((s) => s.dispatch);
   const select = useSelectionStore((s) => s.select);
   const selectedId = useSelectionStore((s) => s.selectedId);
+  const selIds = useSelectionStore((s) => s.ids);
   const selKind = useSelectionStore((s) => s.kind);
+  const pivotMode = useSelectionStore((s) => s.pivotMode);
+  const setPivotMode = useSelectionStore((s) => s.setPivotMode);
   const gizmoMode = useSelectionStore((s) => s.gizmoMode);
   const showGizmo = useSelectionStore((s) => s.showGizmo);
   const setGizmoMode = useSelectionStore((s) => s.setGizmoMode);
@@ -103,22 +106,61 @@ export default function LeftPanel({ style }: any) {
     setEditing(null);
   };
 
-  const move = (collection: any, ids: any, idx: any, dir: any) => {
-    const arr = [...ids];
-    const j = idx + dir;
-    if (j < 0 || j >= arr.length) return;
-    [arr[idx], arr[j]] = [arr[j], arr[idx]];
-    dispatch(commands.reorderCollection(collection, arr));
-  };
-
   const bodyIds = bodies.map((b) => b.id);
   const jointIds = joints.map((j) => j.id);
 
+  // Anchor row for shift-range selection (per kind).
+  const anchorRef = useRef<{ kind: any; idx: number } | null>(null);
+
+  // Click on a row: plain = single select; ctrl/⌘ = toggle; shift = range from anchor.
+  const onRowClick = (e: React.MouseEvent, entity: any, kind: any, ids: any[], idx: number) => {
+    const sel = useSelectionStore.getState();
+    if (e.shiftKey && anchorRef.current && anchorRef.current.kind === kind) {
+      const a = anchorRef.current.idx;
+      const [lo, hi] = a < idx ? [a, idx] : [idx, a];
+      sel.selectMany(ids.slice(lo, hi + 1), kind);
+    } else if (e.ctrlKey || e.metaKey) {
+      sel.toggle(entity.id, kind);
+      anchorRef.current = { kind, idx };
+    } else {
+      select(entity.id, kind);
+      anchorRef.current = { kind, idx };
+    }
+  };
+
+  // Drag-and-drop reordering inside a collection (replaces the up/down arrows).
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const reorder = (collection: any, ids: any[], fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx || fromIdx < 0 || toIdx < 0) return;
+    const arr = [...ids];
+    const [moved] = arr.splice(fromIdx, 1);
+    arr.splice(toIdx, 0, moved);
+    dispatch(commands.reorderCollection(collection, arr));
+  };
+
   const renderRow = (entity: any, kind: any, ids: any, idx: any, collection: any, extra: any) => {
-    const isSel = selectedId === entity.id;
+    const isSel = selIds.includes(entity.id);
+    const isActive = selectedId === entity.id;
     const isEditing = editing && editing.id === entity.id;
+    const isDropTarget = dropTarget === entity.id && dragKey !== entity.id;
     return (
-      <div key={entity.id} className={`px-row ${isSel ? 'px-row--sel' : ''}`}>
+      <div
+        key={entity.id}
+        className={`px-row ${isSel ? 'px-row--sel' : ''} ${isActive ? 'px-row--active' : ''} ${isDropTarget ? 'px-row--drop' : ''}`}
+        draggable={!isEditing}
+        onDragStart={(e) => { setDragKey(entity.id); e.dataTransfer.effectAllowed = 'move'; }}
+        onDragOver={(e) => { if (dragKey && ids.includes(dragKey)) { e.preventDefault(); setDropTarget(entity.id); } }}
+        onDragLeave={() => setDropTarget((t) => (t === entity.id ? null : t))}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (dragKey && ids.includes(dragKey)) reorder(collection, ids, ids.indexOf(dragKey), idx);
+          setDragKey(null); setDropTarget(null);
+        }}
+        onDragEnd={() => { setDragKey(null); setDropTarget(null); }}
+        title="Drag to reorder"
+      >
+        <span className="px-grip" title="Drag to reorder">⋮⋮</span>
         <span className={`px-dot px-dot--${kind}`} />
         {isEditing ? (
           <input
@@ -132,8 +174,8 @@ export default function LeftPanel({ style }: any) {
         ) : (
           <button
             className="px-name"
-            title="Click to select · double-click to open editor"
-            onClick={() => select(entity.id, kind)}
+            title="Click to select · Ctrl/Shift-click for multi · double-click to open editor"
+            onClick={(e) => onRowClick(e, entity, kind, ids, idx)}
             onDoubleClick={() => openInspectorFor(entity.id, kind)}
           >
             {entity.name}
@@ -141,9 +183,7 @@ export default function LeftPanel({ style }: any) {
         )}
         {extra}
         <span className="px-row-actions">
-          <button className="px-mini" title="Move up"   disabled={idx === 0}            onClick={() => move(collection, ids, idx, -1)}>▲</button>
-          <button className="px-mini" title="Move down" disabled={idx === ids.length-1} onClick={() => move(collection, ids, idx, +1)}>▼</button>
-          <button className="px-mini" title="Rename"    onClick={() => startRename(entity.id, kind, entity.name)}>✎</button>
+          <button className="px-mini" title="Rename" onClick={() => startRename(entity.id, kind, entity.name)}>✎</button>
         </span>
       </div>
     );
@@ -152,7 +192,7 @@ export default function LeftPanel({ style }: any) {
   // Resizable Project Explorer height (drag the divider above CONTROLS).
   const [pxHeight, setPxHeight] = useState(() => {
     const v = parseInt(localStorage.getItem('tetrobot:px:height') || '', 10);
-    return Number.isFinite(v) ? Math.max(80, v) : 240;
+    return Number.isFinite(v) ? Math.max(80, v) : 340;
   });
   const pxRef = useRef(pxHeight);
   pxRef.current = pxHeight;
@@ -233,6 +273,28 @@ export default function LeftPanel({ style }: any) {
           {!showGizmo && (
             <p className="lp-mode-hint">Click the body again — or press M / R / S — to show the move gizmo.</p>
           )}
+          {selIds.length > 1 && (
+            <>
+              <div className="lp-pivot-label">{selIds.length} bodies · pivot point</div>
+              <div className="lp-mode-toggle lp-xform">
+                {[
+                  { id: 'median', label: 'Median' },
+                  { id: 'individual', label: 'Individual' },
+                  { id: 'active', label: 'Active' },
+                ].map((p) => (
+                  <button key={p.id}
+                    className={`lp-mode-btn ${pivotMode === p.id ? 'lp-mode-btn--on' : ''}`}
+                    onClick={() => setPivotMode(p.id as any)}
+                    title={
+                      p.id === 'median' ? 'Transform around the group centre'
+                      : p.id === 'individual' ? 'Each body rotates/scales around its own origin'
+                      : 'Transform around the active (last-clicked) body'}>
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
 
@@ -295,15 +357,14 @@ export default function LeftPanel({ style }: any) {
       {/* ── Controls hint ── */}
       <div className="instructions">
         <div className="section-title">CONTROLS</div>
-        <ul>
-          <li><kbd>Click</kbd> a part → select · again → move · empty → deselect</li>
-          <li><kbd>Dbl-click</kbd> empty 3D space → deselect everything</li>
-          <li><kbd>M</kbd>/<kbd>R</kbd>/<kbd>S</kbd> move · rotate · scale</li>
-          <li><kbd>Dbl-click</kbd> in explorer → open editor</li>
-          <li><kbd>Del</kbd> / <kbd>X</kbd> delete selected</li>
-          <li><kbd>Scroll</kbd> zoom · <kbd>RMB</kbd> orbit</li>
-          <li><kbd>Ctrl+Z</kbd> undo · <kbd>Ctrl+K</kbd> commands</li>
-        </ul>
+        <div className="ctrl-grid">
+          <kbd>Click</kbd>        <span>select · again → gizmo</span>
+          <kbd>Ctrl/Shift</kbd>   <span>multi-select · <kbd>A</kbd> all</span>
+          <kbd>M · R · S</kbd>    <span>move · rotate · scale</span>
+          <kbd>Del / X</kbd>      <span>delete selected</span>
+          <kbd>Scroll</kbd>       <span>zoom · <kbd>RMB</kbd> orbit</span>
+          <kbd>Ctrl+Z</kbd>       <span>undo · <kbd>Ctrl+K</kbd> cmds</span>
+        </div>
       </div>
     </aside>
   );

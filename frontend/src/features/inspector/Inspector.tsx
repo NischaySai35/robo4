@@ -381,12 +381,16 @@ export default function Inspector() {
   const gizmoMode = useSelectionStore((s) => s.gizmoMode);
   const setGizmoMode = useSelectionStore((s) => s.setGizmoMode);
   const selectedId = useSelectionStore((s) => s.selectedId);
+  const ids = useSelectionStore((s) => s.ids);
   const kind = useSelectionStore((s) => s.kind);
   const select = useSelectionStore((s) => s.select);
+  const pivotMode = useSelectionStore((s) => s.pivotMode);
+  const setPivotMode = useSelectionStore((s) => s.setPivotMode);
 
   const entity = selectedId
     ? (kind === 'body' ? doc.bodies[selectedId] : doc.joints[selectedId])
     : null;
+  const multi = kind === 'body' && ids.length > 1;
 
   return (
     <div className="in-panel">
@@ -403,6 +407,30 @@ export default function Inspector() {
           </div>
         )}
       </div>
+
+      {multi && (
+        <div className="in-multi">
+          <div className="in-multi-title">{ids.length} bodies selected</div>
+          <div className="in-multi-sub">Transform pivot</div>
+          <div className="in-pivot-row">
+            {[
+              { id: 'median', label: 'Median', hint: 'Around the group centre' },
+              { id: 'individual', label: 'Individual', hint: 'Each around its own origin' },
+              { id: 'active', label: 'Active', hint: 'Around the last-clicked body' },
+            ].map((p) => (
+              <button key={p.id} title={p.hint}
+                className={`in-pivot-btn ${pivotMode === p.id ? 'in-pivot-btn--on' : ''}`}
+                onClick={() => setPivotMode(p.id as any)}>
+                {p.label}
+              </button>
+            ))}
+          </div>
+          <div className="in-multi-hint">
+            Editing the fields below changes the <strong>active</strong> body. Use M / R / S in
+            the viewport to transform the whole group around the chosen pivot.
+          </div>
+        </div>
+      )}
 
       <div className="in-body">
         {!entity && <div className="in-empty">Select a body or joint in the Model panel.</div>}

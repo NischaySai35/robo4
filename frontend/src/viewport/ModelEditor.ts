@@ -27,6 +27,7 @@ import { usePageStore } from '@/state/pageStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { useAnimSceneStore } from '@/state/animSceneStore';
 import { commands } from '@/core/commands/index';
 import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild } from '@/kinematics/modelFK';
 import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
@@ -129,7 +130,12 @@ export class ModelEditor {
     this._onPointerDown = (e: any) => {
       if (e.button !== 0) return;
       this._downPos = { x: e.clientX, y: e.clientY };
-      if (this._ikDrag && !this.editMode?.active && !this._sim && !this._mateMode) this._tryStartIK(e);
+      if (this._ikDrag && !this.editMode?.active && !this._sim && !this._mateMode) {
+        this._tryStartIK(e);
+      } else if (this._shouldAnimIK() && !this.editMode?.active && !this._sim) {
+        // Animation-page IK: gravity + rigid mode ON → drag active bodies through IK chain
+        this._tryStartAnimIK(e);
+      }
     };
     this._onPointerUp = (e: any) => { if (this._ikActive) { this._endIK(); return; } this._handlePick(e); };
     this._onPointerMove = (e: any) => { if (this._ikActive) { this._dragIK(e); return; } this._handleHover(e); };
@@ -149,6 +155,8 @@ export class ModelEditor {
     this._startingSim = false;
     this._lastPlayhead = -1; // last animation playhead we wrote into the doc
     this._showAnalysis = useEditorStore.getState().showAnalysis;
+    this._showCollision = useEditorStore.getState().showCollision;
+    this.bodyRenderer.setShowCollision(this._showCollision);
     this._mateMode = useEditorStore.getState().mateMode;
     this._matePicks = [];
     this._mateMarkers = new THREE.Group();
@@ -172,6 +180,11 @@ export class ModelEditor {
         if (!s.showAnalysis && this._doc) this.bodyRenderer.clearStress(this._doc);
         if (this._doc) this._syncModel(this._doc);
       }
+      if (s.showCollision !== this._showCollision) {
+        this._showCollision = s.showCollision;
+        this.bodyRenderer.setShowCollision(s.showCollision);
+        if (this._doc) this._syncModel(this._doc);
+      }
     });
 
     // Mesh Edit Mode (Blender-style) — owns its own gizmo/overlay; this editor
@@ -183,6 +196,17 @@ export class ModelEditor {
     // Re-run selection logic when Edit Mode toggles so the body gizmo detaches on
     // enter and re-attaches on exit.
     this._unsubEdit = useEditModeStore.subscribe(() => this._onSelection(useSelectionStore.getState()));
+
+    // Animation-page scene state (gravity CoM + IK drag).
+    this._animGravityOn   = false;
+    this._animRigidMode   = false;
+    this._animActiveBodyIds = new Set<string>();
+    this._unsubAnimScene = useAnimSceneStore.subscribe((s) => {
+      this._animGravityOn    = s.gravityOn;
+      this._animRigidMode    = s.rigidMode;
+      this._animActiveBodyIds = s.activeBodyIds;
+      if (this._doc) this._updateCOM(this._doc);
+    });
 
     // Initial paint.
     this._syncModel(useModelStore.getState().doc);
@@ -202,8 +226,10 @@ export class ModelEditor {
   }
 
   _updateCOM(doc: any) {
-    if (!this._showAnalysis || Object.keys(doc.bodies).length === 0) {
+    const showCom = this._showAnalysis || this._animGravityOn;
+    if (!showCom || Object.keys(doc.bodies).length === 0) {
       if (this._comMarker) this._comMarker.visible = false;
+      if (this._gravArrow) this._gravArrow.visible = false;
       return;
     }
     if (!this._comMarker) {
@@ -214,6 +240,20 @@ export class ModelEditor {
       this._comMarker.renderOrder = 1001;
       this.bodyRenderer.scene.add(this._comMarker);
     }
+    // Gravity down-arrow — shown only when gravityOn is active.
+    if (!this._gravArrow) {
+      const arrowMat = new THREE.MeshBasicMaterial({ color: 0xffcc00, depthTest: false, transparent: true, opacity: 0.8 });
+      const shaft   = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 1, 8), arrowMat);
+      const head    = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.18, 8), arrowMat);
+      shaft.position.y = -0.5;
+      head.position.y  = -1.09;
+      head.rotation.z  = Math.PI; // point downward
+      const group = new THREE.Group();
+      group.add(shaft); group.add(head);
+      group.renderOrder = 1001;
+      this._gravArrow = group;
+      this.bodyRenderer.scene.add(this._gravArrow);
+    }
     // Size the marker to the model so it doesn't dwarf a small desktop arm.
     const pts: any[] = [];
     for (const w of this._fk.values()) if (w?.position) pts.push(new THREE.Vector3(...w.position));
@@ -223,6 +263,11 @@ export class ModelEditor {
     this._comMarker.scale.setScalar(r);
     this._comMarker.position.set(com[0], com[1], com[2]);
     this._comMarker.visible = true;
+    // Arrow: scaled so it's always visible but not huge
+    const arrowScale = r * 3.5;
+    this._gravArrow.position.set(com[0], com[1], com[2]);
+    this._gravArrow.scale.setScalar(arrowScale);
+    this._gravArrow.visible = this._animGravityOn;
   }
 
   // ── Physics (Phase 7) ──────────────────────────────────────────────────────
@@ -418,6 +463,32 @@ export class ModelEditor {
     this._ikTip = null;
     this._downPos = null;
     this.controls.enabled = true;
+  }
+
+  // ── Animation-page IK drag ────────────────────────────────────────────────
+  // When on the animation page with Gravity ON + Rigid Mode ON, clicking an
+  // active body and dragging solves IK through its joint chain. The resulting
+  // joint values can then be keyframed with the ◆ KEY button as usual.
+  _shouldAnimIK() {
+    return this._animGravityOn && this._animRigidMode && usePageStore.getState().page === 'animation';
+  }
+
+  _tryStartAnimIK(e: any) {
+    if (this.transform.dragging) return;
+    const hitId = this.bodyRenderer.pickBodyAt(this._ndc(e), this.camera);
+    if (!hitId || !this._doc) return;
+    // Only allow IK on bodies the user has explicitly activated in rigid mode.
+    if (!this._animActiveBodyIds.has(hitId)) return;
+    if (chainJoints(this._doc, hitId).length === 0) return; // not articulated
+    const w = this._fk?.get(hitId);
+    const p = new THREE.Vector3(...(w?.position ?? [0, 0, 0]));
+    const n = new THREE.Vector3();
+    this.camera.getWorldDirection(n);
+    this._ikPlane.setFromNormalAndCoplanarPoint(n, p);
+    this._ikTip = hitId;
+    this._ikActive = true;
+    this.controls.enabled = false;
+    this._attachTo(null);
   }
 
   _handlePick(e: any) {
@@ -1020,6 +1091,7 @@ export class ModelEditor {
     this._unsubModel?.();
     this._unsubSel?.();
     this._unsubEditor?.();
+    this._unsubAnimScene?.();
     this.domElement?.removeEventListener('pointerdown', this._onPointerDown);
     this.domElement?.removeEventListener('pointerup', this._onPointerUp);
     this.domElement?.removeEventListener('pointermove', this._onPointerMove);
@@ -1036,5 +1108,6 @@ export class ModelEditor {
     this.bodyRenderer.dispose();
     this.jointRenderer.dispose();
     if (this._comMarker) { this._comMarker.geometry.dispose(); this._comMarker.material.dispose(); this._comMarker.parent?.remove(this._comMarker); }
+    if (this._gravArrow) { this._gravArrow.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); }); this._gravArrow.parent?.remove(this._gravArrow); }
   }
 }

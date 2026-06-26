@@ -8,6 +8,7 @@
  */
 import { putEntity, removeFrom, getBody, getJoint, jointsOfBody } from '../model/graph';
 import { command } from './commandBus';
+import type { Component } from '../model/entities';
 
 // ── bodies ──────────────────────────────────────────────────────────────────────
 
@@ -220,6 +221,118 @@ export function addBodies(bodies: any) {
     `Add ${bodies.length} bodies`,
     (doc: any) => bodies.reduce((d: any, b: any) => putEntity(d, b), doc),
     (doc: any) => bodies.reduce((d: any, b: any) => removeFrom(d, 'bodies', b.id), doc),
+  );
+}
+
+// ── components ─────────────────────────────────────────────────────────────────
+
+export function addComponent(component: Component) {
+  return command(
+    `Add ${component.name}`,
+    (doc: any) => putEntity(doc, component),
+    (doc: any) => removeFrom(doc, 'components', component.id),
+  );
+}
+
+export function removeComponent(componentId: string) {
+  let prev: any = null;
+  let unassignedBodies: any[] = [];
+  let unassignedJoints: any[] = [];
+  return command(
+    'Remove component',
+    (doc: any) => {
+      prev = (doc.components ?? {})[componentId];
+      // Unassign all bodies/joints that belong to this component
+      unassignedBodies = Object.values(doc.bodies).filter((b: any) => b.componentId === componentId);
+      unassignedJoints = Object.values(doc.joints).filter((j: any) => j.componentId === componentId);
+      let d = doc;
+      for (const b of unassignedBodies) d = putEntity(d, { ...b, componentId: null });
+      for (const j of unassignedJoints) d = putEntity(d, { ...j, componentId: null });
+      return removeFrom(d, 'components', componentId);
+    },
+    (doc: any) => {
+      let d = prev ? putEntity(doc, prev) : doc;
+      for (const b of unassignedBodies) d = putEntity(d, b);
+      for (const j of unassignedJoints) d = putEntity(d, j);
+      return d;
+    },
+  );
+}
+
+export function renameComponent(componentId: string, name: string) {
+  let prev: any = null;
+  return command(
+    'Rename component',
+    (doc: any) => {
+      prev = (doc.components ?? {})[componentId];
+      if (!prev) return doc;
+      return putEntity(doc, { ...prev, name });
+    },
+    (doc: any) => (prev ? putEntity(doc, prev) : doc),
+  );
+}
+
+export function toggleComponentCollapsed(componentId: string) {
+  return command(
+    'Toggle component',
+    (doc: any) => {
+      const c = (doc.components ?? {})[componentId];
+      if (!c) return doc;
+      return putEntity(doc, { ...c, collapsed: !c.collapsed });
+    },
+    (doc: any) => {
+      const c = (doc.components ?? {})[componentId];
+      if (!c) return doc;
+      return putEntity(doc, { ...c, collapsed: !c.collapsed });
+    },
+  );
+}
+
+export function moveBodyToComponent(bodyId: string, componentId: string | null) {
+  let prev: any = null;
+  return command(
+    'Move to component',
+    (doc: any) => {
+      prev = getBody(doc, bodyId);
+      if (!prev) return doc;
+      return putEntity(doc, { ...prev, componentId });
+    },
+    (doc: any) => (prev ? putEntity(doc, prev) : doc),
+  );
+}
+
+export function moveJointToComponent(jointId: string, componentId: string | null) {
+  let prev: any = null;
+  return command(
+    'Move joint to component',
+    (doc: any) => {
+      prev = getJoint(doc, jointId);
+      if (!prev) return doc;
+      return putEntity(doc, { ...prev, componentId });
+    },
+    (doc: any) => (prev ? putEntity(doc, prev) : doc),
+  );
+}
+
+// ── Assembly Mates ──────────────────────────────────────────────────────────────
+
+export function addAssemblyMate(mate: any) {
+  return command(
+    'Add assembly mate',
+    (doc: any) => ({ ...doc, mates: [...(doc.mates ?? []), mate] }),
+    (doc: any) => ({ ...doc, mates: (doc.mates ?? []).filter((m: any) => m.id !== mate.id) }),
+  );
+}
+
+export function removeAssemblyMate(mateId: string) {
+  let prev: any = null;
+  return command(
+    'Remove assembly mate',
+    (doc: any) => {
+      prev = (doc.mates ?? []).find((m: any) => m.id === mateId) ?? null;
+      return { ...doc, mates: (doc.mates ?? []).filter((m: any) => m.id !== mateId) };
+    },
+    (doc: any) => (prev ? { ...doc, mates: [...(doc.mates ?? []), prev] } : doc),
   );
 }
 

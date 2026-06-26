@@ -84,6 +84,117 @@
 .tl-clip-ops button:disabled { opacity: 0.3; cursor: default; }
 .tl-addclip { padding: 6px; font-size: 12px; background: var(--bg); border: 1px dashed var(--border); border-radius: 7px; color: var(--text-dim); cursor: pointer; }
 .tl-addclip:hover { color: var(--accent); border-color: var(--accent); }
+.tl-addclip--inline { padding: 2px 8px; font-size: 11px; margin-left: auto; }
+
+/* ── Clip Groups ──────────────────────────────────────────────────────────────── */
+.tl-groups-wrap { display: flex; flex-direction: column; gap: 2px; }
+.tl-groups-hdr {
+  display: flex;
+  align-items: center;
+  margin-top: 4px;
+}
+.tl-groups-empty {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  padding: 4px 2px;
+}
+
+.tl-group {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.tl-group--playing {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-glow);
+}
+
+.tl-group-hdr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  background: var(--bg-card);
+  cursor: default;
+}
+.tl-group-chevron {
+  background: none; border: none; padding: 0;
+  font-size: 9px; color: var(--text-dim); cursor: pointer; width: 14px;
+}
+.tl-group-name {
+  flex: 1; font-size: 13px; font-weight: 700; color: var(--text-bright); cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tl-group-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
+.tl-group-ops { display: flex; gap: 3px; flex-shrink: 0; }
+.tl-group-ops button {
+  width: 22px; height: 22px; padding: 0; font-size: 11px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text-dim); cursor: pointer;
+}
+.tl-group-ops button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.tl-group-ops button:disabled { opacity: 0.35; cursor: default; }
+.tl-group-playing-btn { color: var(--accent) !important; border-color: var(--accent) !important; }
+
+.tl-group-dropzone {
+  padding: 0 8px;
+  transition: background 0.12s;
+}
+.tl-group-dropzone--collapsed {
+  min-height: 22px;
+  display: flex;
+  align-items: center;
+}
+.tl-group-dropzone:empty { min-height: 0; }
+
+.tl-group-drop-hint {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+.tl-group-drop-hint--padded { padding: 6px 0; }
+
+.tl-group-entries { display: flex; flex-direction: column; gap: 2px; padding: 4px 6px; }
+
+.tl-entry {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  background: var(--bg);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: grab;
+  transition: background 0.1s;
+}
+.tl-entry:hover { background: var(--bg-card); border-color: var(--border); }
+.tl-entry--dragging { opacity: 0.4; }
+
+.tl-entry-grip { font-size: 9px; color: var(--text-dim); letter-spacing: -2px; opacity: 0; transition: opacity 0.12s; flex-shrink: 0; }
+.tl-entry:hover .tl-entry-grip { opacity: 0.6; }
+
+.tl-entry-name { flex: 1; font-size: 12.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.tl-entry-delay {
+  display: flex; align-items: center; gap: 3px;
+  font-size: 10.5px; color: var(--text-dim); flex-shrink: 0;
+}
+.tl-entry-delay input {
+  width: 44px; padding: 2px 5px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;
+  color: var(--text); font-family: var(--font-mono); font-size: 11px; text-align: right;
+}
+.tl-entry-delay input:focus { outline: none; border-color: var(--accent); }
+
+.tl-entry-remove {
+  width: 18px; height: 18px; padding: 0; font-size: 10px;
+  background: none; border: 1px solid transparent; border-radius: 3px;
+  color: var(--text-dim); cursor: pointer; flex-shrink: 0;
+}
+.tl-entry-remove:hover { color: var(--danger); border-color: var(--danger); }
+
+.tl-entry-drop-line { height: 2px; background: var(--accent); border-radius: 2px; margin: 1px 0; }
 
 /* keyframe ruler */
 .tl-ruler { position: relative; height: 22px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }

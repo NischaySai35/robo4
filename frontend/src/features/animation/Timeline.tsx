@@ -6,10 +6,151 @@
  */
 import { useState, useRef } from 'react';
 import './Timeline.css';
-import { useAnimationStore } from '@/state/animationStore';
+import { useAnimationStore, type ClipGroup } from '@/state/animationStore';
 import { useModelStore } from '@/state/modelStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
+
+// ── Clip Groups Panel ──────────────────────────────────────────────────────────
+function GroupsPanel({ clips, groups, playingGroupId }: {
+  clips: any[];
+  groups: ClipGroup[];
+  playingGroupId: string | null;
+}) {
+  const store = useAnimationStore.getState;
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [dragging, setDragging] = useState<{ groupId: string; from: number } | null>(null);
+  const [dropOver,  setDropOver]  = useState<{ groupId: string; to: number } | null>(null);
+
+  const toggle = (gid: string) => setExpanded((s) => {
+    const n = new Set(s); n.has(gid) ? n.delete(gid) : n.add(gid); return n;
+  });
+
+  const renameGroup = (g: ClipGroup) => {
+    const name = window.prompt('Group name', g.name);
+    if (name) store().renameGroup(g.id, name.trim());
+  };
+
+  const clipName = (clipId: string) => clips.find((c) => c.id === clipId)?.name ?? clipId;
+
+  return (
+    <div className="tl-groups-wrap">
+      <div className="tl-section tl-groups-hdr">
+        GROUPS
+        <button className="tl-addclip tl-addclip--inline" onClick={() => { store().addGroup(); }}>＋ New</button>
+      </div>
+
+      {groups.length === 0 && (
+        <div className="tl-groups-empty">No groups yet. Create one and drag clips into it to sequence them with delays.</div>
+      )}
+
+      {groups.map((g) => {
+        const isExpanded = expanded.has(g.id);
+        const isPlaying  = playingGroupId === g.id;
+
+        return (
+          <div key={g.id} className={`tl-group${isPlaying ? ' tl-group--playing' : ''}`}>
+            {/* Group header */}
+            <div className="tl-group-hdr">
+              <button className="tl-group-chevron" onClick={() => toggle(g.id)}>
+                {isExpanded ? '▼' : '▶'}
+              </button>
+              <span className="tl-group-name" onDoubleClick={() => renameGroup(g)} title="Double-click to rename">
+                {g.name}
+              </span>
+              <span className="tl-group-meta">{g.entries.length} clip{g.entries.length !== 1 ? 's' : ''}</span>
+              <div className="tl-group-ops">
+                <button
+                  title={isPlaying ? 'Playing…' : 'Play this group'}
+                  className={isPlaying ? 'tl-group-playing-btn' : ''}
+                  onClick={() => store().playGroup(g.id)}
+                  disabled={g.entries.length === 0}
+                >
+                  {isPlaying ? '⏸' : '▶'}
+                </button>
+                <button title="Delete group" onClick={() => store().deleteGroup(g.id)}>✕</button>
+              </div>
+            </div>
+
+            {/* Clip drop zone (even when collapsed, allow dropping) */}
+            <div
+              className={`tl-group-dropzone${!isExpanded ? ' tl-group-dropzone--collapsed' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); if (!dragging) setDropOver({ groupId: g.id, to: g.entries.length }); }}
+              onDragLeave={() => setDropOver(null)}
+              onDrop={(e) => {
+                e.preventDefault();
+                const clipId = e.dataTransfer.getData('clipId');
+                if (clipId) store().addClipToGroup(g.id, clipId);
+                setDropOver(null);
+              }}
+            >
+              {!isExpanded && g.entries.length === 0 && (
+                <span className="tl-group-drop-hint">drop clips here</span>
+              )}
+            </div>
+
+            {/* Entries */}
+            {isExpanded && (
+              <div className="tl-group-entries">
+                {g.entries.length === 0 && (
+                  <div className="tl-group-drop-hint tl-group-drop-hint--padded">
+                    Drag clips from the CLIPS list above into this group.
+                  </div>
+                )}
+                {g.entries.map((entry, idx) => {
+                  const isOver = dropOver?.groupId === g.id && dropOver?.to === idx;
+                  return (
+                    <div key={idx}>
+                      {isOver && <div className="tl-entry-drop-line" />}
+                      <div
+                        className={`tl-entry${dragging?.groupId === g.id && dragging?.from === idx ? ' tl-entry--dragging' : ''}`}
+                        draggable
+                        onDragStart={(e) => {
+                          setDragging({ groupId: g.id, from: idx });
+                          e.dataTransfer.effectAllowed = 'move';
+                        }}
+                        onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setDropOver({ groupId: g.id, to: idx }); }}
+                        onDragLeave={() => setDropOver(null)}
+                        onDrop={(e) => {
+                          e.preventDefault(); e.stopPropagation();
+                          if (dragging && dragging.groupId === g.id) {
+                            store().reorderGroupEntry(g.id, dragging.from, idx);
+                          }
+                          setDragging(null); setDropOver(null);
+                        }}
+                        onDragEnd={() => { setDragging(null); setDropOver(null); }}
+                      >
+                        <span className="tl-entry-grip">⋮⋮</span>
+                        <span className="tl-entry-name">{clipName(entry.clipId)}</span>
+                        <label className="tl-entry-delay" title="Delay before this clip starts (seconds)">
+                          delay
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={entry.delayBefore}
+                            onChange={(e) => store().setGroupEntryDelay(g.id, idx, parseFloat(e.target.value) || 0)}
+                            onClick={(e) => e.stopPropagation()}
+                          />
+                          s
+                        </label>
+                        <button
+                          className="tl-entry-remove"
+                          title="Remove from group"
+                          onClick={() => store().removeClipFromGroup(g.id, idx)}
+                        >✕</button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 function AnimationTab() {
   const a = useAnimationStore();
@@ -33,7 +174,12 @@ function AnimationTab() {
       <div className="tl-section">CLIPS · played top → bottom in sequence</div>
       <div className="tl-clips">
         {a.clips.map((c, i) => (
-          <div key={c.id} className={`tl-clip ${c.id === a.activeClipId ? 'active' : ''}`} onClick={() => a.selectClip(c.id)}>
+          <div key={c.id} className={`tl-clip ${c.id === a.activeClipId ? 'active' : ''}`}
+            draggable
+            onDragStart={(e) => { e.dataTransfer.setData('clipId', c.id); e.dataTransfer.effectAllowed = 'copy'; }}
+            onClick={() => a.selectClip(c.id)}
+            title="Click to select · drag onto a group to add"
+          >
             <span className="tl-clip-idx">{i + 1}</span>
             <span className="tl-clip-name" onDoubleClick={() => rename(c.id, c.name)} title="Double-click to rename">{c.name}</span>
             <span className="tl-clip-meta">{Object.keys(c.tracks).length ? `${new Set(Object.values(c.tracks).flatMap((k) => k.map((x) => x.t))).size}k · ${c.duration}s` : 'empty'}</span>
@@ -46,6 +192,9 @@ function AnimationTab() {
         ))}
         <button className="tl-addclip" onClick={() => a.addClip()}>＋ Add clip</button>
       </div>
+
+      {/* Groups */}
+      <GroupsPanel clips={a.clips} groups={a.groups} playingGroupId={a.playingGroupId} />
 
       {/* Transport */}
       <div className="tl-section">TRANSPORT</div>

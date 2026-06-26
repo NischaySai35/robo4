@@ -36,6 +36,11 @@ function primitiveGeometry(g: any) {
 // What changes force a rebuild of a body's visual child.
 const visualSignature = (body: any) => JSON.stringify({ g: body.visual?.geometry ?? {}, a: body.visual?.geometry?.assetId ?? body.assetId ?? null });
 
+const COLL_MAT = new THREE.MeshBasicMaterial({
+  color: 0x00aaff, opacity: 0.22, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+});
+const COLL_EDGE_MAT = new THREE.LineBasicMaterial({ color: 0x00ccff, opacity: 0.55, transparent: true });
+
 export class BodyRenderer {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
@@ -48,6 +53,7 @@ export class BodyRenderer {
     this._selectedId = null;   // active (primary) selection — brighter highlight
     this._selectedIds = new Set(); // all selected bodies
     this._hoveredId = null;    // body under cursor (object-mode hover)
+    this._showCollision = false;
   }
 
   sync(doc: Document, fk: any = null) {
@@ -62,7 +68,7 @@ export class BodyRenderer {
         const container = new THREE.Group();
         container.userData = { bodyId: body.id, isModelBody: true };
         this.group.add(container);
-        entry = { container, sig: null };
+        entry = { container, sig: null, conSig: null };
         this._entries.set(body.id, entry);
       }
       if (entry.sig !== sig) {
@@ -70,6 +76,12 @@ export class BodyRenderer {
         entry.sig = sig;
       }
       this._applyMaterial(entry.container, body, doc);
+      // Update connector visuals when the connector list changes
+      const conSig = JSON.stringify(body.meta?.connectors ?? []);
+      if (entry.conSig !== conSig) { this._syncConnectors(entry.container, body); entry.conSig = conSig; }
+      // Collision overlay
+      const collSig = this._showCollision ? JSON.stringify(body.collision?.geometry ?? body.visual?.geometry ?? {}) : '';
+      if (entry.collSig !== collSig) { this._syncCollisionOverlay(entry.container, body); entry.collSig = collSig; }
       // Use FK world (pos+rot) when available; child's own scale always.
       const w = fk?.get(body.id);
       this._applyTransform(entry.container, {
@@ -282,6 +294,88 @@ export class BodyRenderer {
     if (o.isMesh) { o.geometry?.dispose(); o.material?.dispose?.(); }
   }
   _disposeContainer(container: any) { for (const c of container.children) this._disposeObject(c); }
+
+  // ── Connector visuals ─────────────────────────────────────────────────────────
+  // Each connector is a small disc + normal arrow rendered as a child of the body
+  // container, so they move with the body automatically.
+  _syncConnectors(container: any, body: any) {
+    // Remove old connector markers
+    const old = container.children.filter((c: any) => c.userData?.isConnector);
+    for (const o of old) { container.remove(o); this._disposeObject(o); }
+
+    const connectors: any[] = (body.meta?.connectors as any[] | undefined) ?? [];
+    if (connectors.length === 0) return;
+
+    const discMat = new THREE.MeshStandardMaterial({ color: 0x00e0ff, emissive: 0x00e0ff, emissiveIntensity: 0.5, metalness: 0, roughness: 0.4, side: THREE.DoubleSide });
+    const arrowMat = new THREE.MeshStandardMaterial({ color: 0x00e0ff, emissive: 0x00e0ff, emissiveIntensity: 0.5, metalness: 0, roughness: 0.4 });
+
+    for (const con of connectors) {
+      const group = new THREE.Group();
+      group.userData = { isConnector: true, connectorId: con.id };
+
+      // Disc
+      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.06, 16), discMat);
+      disc.castShadow = false;
+      group.add(disc);
+
+      // Arrow cone (pointing along +Z then we rotate to normal)
+      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.08, 8), arrowMat);
+      cone.position.set(0, 0, 0.06);
+      cone.rotation.x = -Math.PI / 2; // cone axis → +Z
+      group.add(cone);
+
+      // Position and orient to connector's position + normal
+      const [px, py, pz] = con.position ?? [0, 0, 0];
+      group.position.set(px, py, pz);
+
+      const normal = new THREE.Vector3(...(con.normal ?? [0, 0, 1])).normalize();
+      if (normal.length() > 0.001) {
+        const defaultDir = new THREE.Vector3(0, 0, 1);
+        group.quaternion.setFromUnitVectors(defaultDir, normal);
+      }
+
+      container.add(group);
+    }
+  }
+
+  // ── Collision shape overlay ───────────────────────────────────────────────────
+  // When enabled, each body shows its collision geometry as a translucent blue
+  // wireframe. If body.collision is unset, the visual geometry is used (which is
+  // what physics engines assume by default).
+  setShowCollision(on: boolean) {
+    this._showCollision = on;
+    for (const [, entry] of this._entries) {
+      if (!on) {
+        const old = entry.container.children.filter((c: any) => c.userData?.isCollision);
+        for (const o of old) { entry.container.remove(o); this._disposeObject(o); }
+        entry.collSig = '';
+      } else {
+        entry.collSig = null; // force rebuild next sync
+      }
+    }
+  }
+
+  _syncCollisionOverlay(container: any, body: any) {
+    // Remove old
+    const old = container.children.filter((c: any) => c.userData?.isCollision);
+    for (const o of old) { container.remove(o); this._disposeObject(o); }
+    if (!this._showCollision) return;
+
+    // Use collision geometry if defined, else fall back to visual geometry
+    const g = body.collision?.geometry ?? body.visual?.geometry;
+    let geo: THREE.BufferGeometry | null = null;
+    try { geo = primitiveGeometry(g); } catch { return; }
+    if (!geo) return;
+
+    const solid = new THREE.Mesh(geo, COLL_MAT);
+    solid.userData = { isCollision: true };
+    solid.raycast = () => {}; // not pickable
+    container.add(solid);
+
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), COLL_EDGE_MAT);
+    edges.userData = { isCollision: true };
+    container.add(edges);
+  }
 
   dispose() {
     for (const { container } of this._entries.values()) this._disposeContainer(container);

@@ -5,14 +5,17 @@ import { useDockStore } from '@/state/dockStore';
 import { usePageStore } from '@/state/pageStore';
 import { useBusyStore } from '@/state/busyStore';
 import { useEditModeStore } from '@/state/editModeStore';
+import { useEditorStore } from '@/state/editorStore';
 
-export default function ViewControls({ isConnOpen, onConnToggle }: any) {
+export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: any) {
   const fitCamera = useCallback(() => {
     if (bridge.fitCamera) bridge.fitCamera();
   }, []);
 
   const camActive = useDockStore((s) => s.active === 'camera');
   const page = usePageStore((s) => s.page);
+  const showCollision = useEditorStore((s) => s.showCollision);
+  const toggleCollision = useEditorStore((s) => s.toggleCollision);
 
   const toggleCam = useCallback(() => {
     const currentPage = usePageStore.getState().page;
@@ -60,6 +63,33 @@ export default function ViewControls({ isConnOpen, onConnToggle }: any) {
             stroke="currentColor" strokeWidth="1.4" fill="none"/>
         </svg>
         FIT
+      </button>
+
+      <button
+        className={`view-btn${showCollision ? ' view-btn--active' : ''}`}
+        onClick={toggleCollision}
+        title="Toggle collision shape overlay (blue wireframe)"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="2" y="2" width="10" height="10" rx="1.5"
+            stroke="currentColor" strokeWidth="1.3" strokeDasharray="2.5 1.5" fill="none"/>
+          <rect x="4" y="4" width="6" height="6" rx="1"
+            stroke="currentColor" strokeWidth="1" fill="none" opacity="0.55"/>
+        </svg>
+        COL
+      </button>
+
+      <button
+        className="view-btn"
+        onClick={onHelpOpen}
+        title="Keyboard shortcuts (? or /)"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.3"/>
+          <path d="M5.3 5.4c0-.95.76-1.7 1.7-1.7s1.7.75 1.7 1.7c0 .7-.4 1.25-1 1.55-.38.2-.7.55-.7 1v.45" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+          <circle cx="7" cy="9.8" r="0.7" fill="currentColor"/>
+        </svg>
+        ?
       </button>
 
       <button

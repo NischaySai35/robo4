@@ -837,6 +837,177 @@
 .px-mini:hover:not(:disabled) { background: var(--bg-card-hover); border-color: var(--border); color: var(--accent); }
 .px-mini:disabled { opacity: 0.3; cursor: default; }
 
+/* ── Context menu (shared by LeftPanel + AnimLeftPanel) ── */
+.px-ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+}
+.px-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 160px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.px-ctx-menu button {
+  width: 100%;
+  text-align: left;
+  padding: 7px 11px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.px-ctx-menu button:hover { background: var(--bg-card); color: var(--accent); }
+.px-ctx-sep { height: 1px; background: var(--border); margin: 3px 4px; }
+
+/* ── Project Explorer — Component tree ───────────────────────────────────────── */
+
+.px-explorer-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+.px-comp-add-btn {
+  padding: 3px 9px;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.px-comp-add-btn:hover { background: var(--accent); color: #fff; }
+
+/* Search filter */
+.px-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.px-search {
+  flex: 1;
+  padding: 5px 28px 5px 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+.px-search:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.px-search::placeholder { color: var(--text-dim); }
+.px-search-clear {
+  position: absolute;
+  right: 6px;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: 10px; padding: 2px 3px;
+  border-radius: 3px; line-height: 1;
+}
+.px-search-clear:hover { color: var(--text); background: var(--bg-card); }
+
+.px-target-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  padding: 2px 4px;
+}
+.px-target-hint strong { color: var(--accent); }
+
+/* Component accordion */
+.px-comp {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  margin-bottom: 2px;
+  transition: border-color 0.12s;
+}
+.px-comp--drop {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+.px-comp--target > .px-comp-hdr { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+.px-comp-hdr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s;
+  user-select: none;
+}
+.px-comp-hdr:hover { background: var(--bg-card); }
+.px-comp-hdr--unassigned { cursor: default; }
+.px-comp-hdr--unassigned:hover { background: transparent; }
+
+.px-comp-chevron {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--text-dim);
+  transition: transform 0.18s;
+  display: inline-block;
+  width: 10px;
+}
+.px-comp-chevron--open { transform: rotate(90deg); }
+
+.px-comp-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.px-comp-count {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.px-comp-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.px-comp-hdr:hover .px-comp-actions { opacity: 1; }
+
+.px-mini--danger:hover { color: var(--danger) !important; border-color: var(--danger) !important; }
+
+.px-comp-children {
+  padding-left: 2px;
+}
+
+/* Indented rows (children of component) */
+.px-indent {
+  padding-left: 20px;
+}
+
 /* ── Mode toggle (Object / Edit) ──────────────────────────────────────────────── */
 .lp-mode-toggle { display: flex; gap: 6px; }
 .lp-mode-btn {

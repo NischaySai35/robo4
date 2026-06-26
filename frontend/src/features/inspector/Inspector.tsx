@@ -7,17 +7,18 @@
  * the joint side into the full tag set (dynamics, mimic, effort, etc.).
  */
 import './Inspector.css';
-import type { Document } from '@/core/model/index';
+import type { Document, Connector } from '@/core/model/index';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { commands } from '@/core/commands/index';
-import { JointType, GeometryType, makeMaterial } from '@/core/model/index';
+import { JointType, GeometryType, makeMaterial, uid } from '@/core/model/index';
 import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation';
 import { duplicate, mirror, array } from '@/features/ops/bodyOps';
 import * as THREE from 'three';
 import { computeFK, movePivotKeepingChild } from '@/kinematics/modelFK';
 import { solveModelIK, chainJoints } from '@/kinematics/modelIK';
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { getAllDrivers, saveCustomDriver, type DriverDef } from '@/features/driver/DriverRegistry';
 
 const r3 = (v: any) => Math.round((v ?? 0) * 1000) / 1000;
 const clamp01 = (v: any) => Math.max(0, Math.min(1, v));
@@ -73,6 +74,171 @@ function IkSection({ body, doc, dispatch }: any) {
         <button onClick={solve}>Solve IK</button>
         <button onClick={() => setTarget(null)}>Reset target</button>
       </div>
+    </>
+  );
+}
+
+// ── Physics Section ────────────────────────────────────────────────────────────
+function PhysicsSection({ body, up }: { body: any; up: (patch: any) => void }) {
+  const meta = body.meta ?? {};
+  const upMeta = (patch: any) => up({ meta: { ...meta, ...patch } });
+  const mass = body.inertial?.mass ?? 0.05;
+
+  return (
+    <>
+      <div className="in-group">PHYSICS</div>
+      <Num label="Mass (kg)" value={mass} step={0.001}
+        onChange={(v: any) => up({ inertial: { ...body.inertial, mass: Math.max(0, v) } })} />
+      <div className="in-row2">
+        <Num label="I-min (mA)" value={meta.currentLimitMin ?? 6} step={1}
+          onChange={(v: any) => upMeta({ currentLimitMin: Math.max(0, v) })} />
+        <Num label="I-max (mA)" value={meta.currentLimitMax ?? 1000} step={10}
+          onChange={(v: any) => upMeta({ currentLimitMax: Math.max(0, v) })} />
+      </div>
+      <Num label="Torque limit (N·m)" value={meta.torqueLimit ?? 2.5} step={0.1}
+        onChange={(v: any) => upMeta({ torqueLimit: Math.max(0, v) })} />
+    </>
+  );
+}
+
+// ── Driver Section ─────────────────────────────────────────────────────────────
+function DriverSection({ body, up }: { body: any; up: (patch: any) => void }) {
+  const meta = body.meta ?? {};
+  const upMeta = (patch: any) => up({ meta: { ...meta, ...patch } });
+
+  const [allDrivers, setAllDrivers] = useState(() => getAllDrivers());
+  const [customName, setCustomName] = useState('');
+
+  const driverType: string = meta.driverType ?? 'normal';
+  const driverProps: Record<string, any> = meta.driverProps ?? {};
+  const def: DriverDef | undefined = allDrivers[driverType];
+
+  const applyDefaults = () => {
+    if (!def) return;
+    const d = def.defaults;
+    up({
+      inertial: { ...body.inertial, mass: d.mass },
+      meta: { ...meta, driverType, currentLimitMin: d.currentLimitMin, currentLimitMax: d.currentLimitMax, torqueLimit: d.torqueLimit },
+    });
+  };
+
+  const addCustomDriver = useCallback(() => {
+    const id = customName.trim().toLowerCase().replace(/\s+/g, '_');
+    if (!id || allDrivers[id]) return;
+    const newDef: DriverDef = {
+      label: customName.trim(), icon: '◆',
+      defaults: { mass: 0.05, currentLimitMin: 6, currentLimitMax: 1000, torqueLimit: 2.5 },
+      props: [],
+    };
+    saveCustomDriver(id, newDef);
+    setAllDrivers(getAllDrivers());
+    setCustomName('');
+    upMeta({ driverType: id });
+  }, [customName, allDrivers, upMeta]);
+
+  return (
+    <>
+      <div className="in-group">DRIVER TYPE</div>
+      <div className="in-driver-row">
+        <select className="in-text" value={driverType}
+          onChange={(e) => upMeta({ driverType: e.target.value })}>
+          {Object.entries(allDrivers).map(([k, d]) => (
+            <option key={k} value={k}>{d.icon} {d.label}</option>
+          ))}
+        </select>
+        <button className="in-btn-sm" onClick={applyDefaults} title="Apply this driver's default physics values">
+          Apply defaults
+        </button>
+      </div>
+
+      {def && def.props.length > 0 && (
+        <div className="in-driver-props">
+          {def.props.map((p) => (
+            p.type === 'number' ? (
+              <Num key={p.key}
+                label={`${p.label}${p.unit ? ` (${p.unit})` : ''}`}
+                value={driverProps[p.key] ?? p.default}
+                onChange={(v: any) => upMeta({ driverProps: { ...driverProps, [p.key]: v } })} />
+            ) : p.type === 'boolean' ? (
+              <label key={p.key} className="in-check">
+                <input type="checkbox"
+                  checked={!!(driverProps[p.key] ?? p.default)}
+                  onChange={(e) => upMeta({ driverProps: { ...driverProps, [p.key]: e.target.checked } })} />
+                <span>{p.label}</span>
+              </label>
+            ) : (
+              <label key={p.key} className="in-field">
+                <span>{p.label}{p.unit ? ` (${p.unit})` : ''}</span>
+                <input className="in-text" type="text"
+                  value={String(driverProps[p.key] ?? p.default)}
+                  onChange={(e) => upMeta({ driverProps: { ...driverProps, [p.key]: e.target.value } })} />
+              </label>
+            )
+          ))}
+        </div>
+      )}
+
+      <div className="in-custom-driver">
+        <input className="in-text" placeholder="New driver name…" value={customName}
+          onChange={(e) => setCustomName(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') addCustomDriver(); }} />
+        <button className="in-btn-sm" onClick={addCustomDriver} disabled={!customName.trim()}>
+          + Add
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ── Connectors Section ─────────────────────────────────────────────────────────
+function ConnectorsSection({ body, up }: { body: any; up: (patch: any) => void }) {
+  const meta = body.meta ?? {};
+  const connectors: Connector[] = (meta.connectors as Connector[] | undefined) ?? [];
+
+  const setConnectors = (next: Connector[]) => up({ meta: { ...meta, connectors: next } });
+
+  const addConnector = () => {
+    const c: Connector = {
+      id: uid('con'),
+      name: `Connector ${connectors.length + 1}`,
+      position: [0, 0, 0],
+      normal: [0, 0, 1],
+    };
+    setConnectors([...connectors, c]);
+  };
+
+  const updateConnector = (idx: number, patch: Partial<Connector>) => {
+    setConnectors(connectors.map((c, i) => i === idx ? { ...c, ...patch } : c));
+  };
+
+  const removeConnector = (idx: number) => {
+    setConnectors(connectors.filter((_, i) => i !== idx));
+  };
+
+  return (
+    <>
+      <div className="in-group in-group--row">
+        CONNECTORS
+        <button className="in-btn-xs" onClick={addConnector} title="Add connector point">＋</button>
+      </div>
+
+      {connectors.length === 0 && (
+        <div className="in-hint">No connectors. Add one to enable component assembly alignment.</div>
+      )}
+
+      {connectors.map((c, idx) => (
+        <div key={c.id} className="in-connector">
+          <div className="in-connector-hdr">
+            <input className="in-text in-connector-name" value={c.name}
+              onChange={(e) => updateConnector(idx, { name: e.target.value })} />
+            <button className="in-btn-xs in-btn-danger" onClick={() => removeConnector(idx)} title="Remove connector">✕</button>
+          </div>
+          <Vec3 label="Position" value={c.position}
+            onChange={(v: any) => updateConnector(idx, { position: v })} step={0.05} />
+          <Vec3 label="Normal" value={c.normal}
+            onChange={(v: any) => updateConnector(idx, { normal: v })} step={0.1} />
+        </div>
+      ))}
     </>
   );
 }
@@ -173,9 +339,9 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
         </div>
       </div>
 
-      <div className="in-group">INERTIAL</div>
-      <Num label="Mass (kg)" value={body.inertial?.mass} onChange={(v: any) =>
-        up({ inertial: { ...body.inertial, mass: v } })} step={0.1} />
+      <PhysicsSection body={body} up={up} />
+      <DriverSection body={body} up={up} />
+      <ConnectorsSection body={body} up={up} />
 
       <div className="in-group">OPERATIONS</div>
       <div className="in-ops">

@@ -18,6 +18,11 @@ export type Tracks = Record<string, Keyframe[]>;
 export interface ClipData { id: string; name: string; duration: number; tracks: Tracks }
 export interface Clip { duration: number; tracks: Tracks } // legacy single-clip shape
 
+// ── Clip Groups ──────────────────────────────────────────────────────────────
+// A group is an ordered sequence of clips with per-entry delays.
+export interface ClipGroupEntry { clipId: string; delayBefore: number; }
+export interface ClipGroup { id: string; name: string; entries: ClipGroupEntry[]; }
+
 interface AnimationState {
   clips: ClipData[];
   activeClipId: string;
@@ -30,6 +35,12 @@ interface AnimationState {
   playing: boolean;
   preview: boolean;
   tracks: Tracks;
+
+  // clip groups
+  groups: ClipGroup[];
+  playingGroupId: string | null;
+  playingGroupEntryIdx: number;
+  groupDelayCountdown: number; // seconds remaining in inter-clip delay
 
   // clip management
   addClip: () => void;
@@ -56,6 +67,16 @@ interface AnimationState {
   advance: (dt: number) => void;
   sample: (t: number) => Record<string, number>;
 
+  // group management
+  addGroup: () => void;
+  deleteGroup: (id: string) => void;
+  renameGroup: (id: string, name: string) => void;
+  addClipToGroup: (groupId: string, clipId: string) => void;
+  removeClipFromGroup: (groupId: string, entryIdx: number) => void;
+  setGroupEntryDelay: (groupId: string, entryIdx: number, delay: number) => void;
+  reorderGroupEntry: (groupId: string, from: number, to: number) => void;
+  playGroup: (groupId: string) => void;
+
   // persistence
   exportClip: () => any;
   loadClip: (data: any) => void;
@@ -78,7 +99,8 @@ function sampleTrack(keys: Keyframe[] | undefined, t: number): number | undefine
   return keys[keys.length - 1].value;
 }
 
-const newClip = (name: string, duration = 30): ClipData => ({ id: uid(), name, duration, tracks: {} });
+const newClip  = (name: string, duration = 30): ClipData => ({ id: uid(), name, duration, tracks: {} });
+const newGroup = (name: string): ClipGroup => ({ id: uid(), name, entries: [] });
 
 export const useAnimationStore = create<AnimationState>((set, get) => {
   const first = newClip('ani1');
@@ -97,6 +119,10 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
     playing: false,
     preview: false,
     tracks: {},
+    groups: [],
+    playingGroupId: null,
+    playingGroupEntryIdx: 0,
+    groupDelayCountdown: 0,
 
     addClip: () => set((s) => {
       const clips = syncActive(s);
@@ -177,6 +203,42 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
 
     advance: (dt) => set((s) => {
       if (!s.playing) return {};
+
+      // ── Group playback with inter-clip delays ─────────────────────────────
+      if (s.playingGroupId) {
+        // Consume delay countdown first
+        if (s.groupDelayCountdown > 0) {
+          const rem = s.groupDelayCountdown - dt;
+          if (rem > 0) return { groupDelayCountdown: rem };
+          dt = -rem; // overflow dt into clip playback
+        }
+
+        let t = s.playhead + dt;
+        if (t <= s.duration) return { playhead: t, groupDelayCountdown: 0 };
+
+        // Current clip finished — advance to next group entry
+        const clips = syncActive(s);
+        const group = s.groups.find((g) => g.id === s.playingGroupId);
+        if (!group) return { playing: false, playingGroupId: null };
+        const nextIdx = s.playingGroupEntryIdx + 1;
+        if (nextIdx >= group.entries.length) {
+          return { playing: false, playingGroupId: null, groupDelayCountdown: 0 };
+        }
+        const nextEntry = group.entries[nextIdx];
+        const nextClip  = clips.find((c) => c.id === nextEntry.clipId);
+        if (!nextClip) return { playing: false, playingGroupId: null };
+        return {
+          clips,
+          activeClipId: nextClip.id,
+          tracks: nextClip.tracks,
+          duration: nextClip.duration,
+          playhead: Math.max(0, t - s.duration),
+          playingGroupEntryIdx: nextIdx,
+          groupDelayCountdown: nextEntry.delayBefore,
+        };
+      }
+
+      // ── Normal / sequence playback ────────────────────────────────────────
       let t = s.playhead + dt;
       if (t <= s.duration) return { playhead: t };
       if (!s.sequence) { t -= s.duration; return { playhead: t }; } // single clip loops
@@ -197,21 +259,102 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
       return out;
     },
 
+    // ── group management ───────────────────────────────────────────────────────
+    addGroup: () => set((s) => {
+      const g = newGroup(`Group ${s.groups.length + 1}`);
+      return { groups: [...s.groups, g] };
+    }),
+
+    deleteGroup: (id) => set((s) => ({
+      groups: s.groups.filter((g) => g.id !== id),
+      playingGroupId: s.playingGroupId === id ? null : s.playingGroupId,
+    })),
+
+    renameGroup: (id, name) => set((s) => ({
+      groups: s.groups.map((g) => (g.id === id ? { ...g, name } : g)),
+    })),
+
+    addClipToGroup: (groupId, clipId) => set((s) => ({
+      groups: s.groups.map((g) =>
+        g.id === groupId
+          ? { ...g, entries: [...g.entries, { clipId, delayBefore: 0 }] }
+          : g,
+      ),
+    })),
+
+    removeClipFromGroup: (groupId, entryIdx) => set((s) => ({
+      groups: s.groups.map((g) =>
+        g.id === groupId
+          ? { ...g, entries: g.entries.filter((_, i) => i !== entryIdx) }
+          : g,
+      ),
+    })),
+
+    setGroupEntryDelay: (groupId, entryIdx, delay) => set((s) => ({
+      groups: s.groups.map((g) =>
+        g.id === groupId
+          ? { ...g, entries: g.entries.map((e, i) => i === entryIdx ? { ...e, delayBefore: Math.max(0, delay) } : e) }
+          : g,
+      ),
+    })),
+
+    reorderGroupEntry: (groupId, from, to) => set((s) => ({
+      groups: s.groups.map((g) => {
+        if (g.id !== groupId) return g;
+        const entries = [...g.entries];
+        const [moved] = entries.splice(from, 1);
+        entries.splice(to, 0, moved);
+        return { ...g, entries };
+      }),
+    })),
+
+    playGroup: (groupId) => set((s) => {
+      const group = s.groups.find((g) => g.id === groupId);
+      if (!group || group.entries.length === 0) return {};
+      const clips = syncActive(s);
+      const firstEntry = group.entries[0];
+      const firstClip  = clips.find((c) => c.id === firstEntry.clipId);
+      if (!firstClip) return {};
+      return {
+        clips,
+        playing: true,
+        preview: true,
+        playhead: 0,
+        sequence: false,
+        playingGroupId: groupId,
+        playingGroupEntryIdx: 0,
+        groupDelayCountdown: firstEntry.delayBefore,
+        activeClipId: firstClip.id,
+        tracks: firstClip.tracks,
+        duration: firstClip.duration,
+      };
+    }),
+
     exportClip: () => {
       const s = get();
-      return { version: 2, fps: s.fps, activeClipId: s.activeClipId, clips: syncActive(s) };
+      return { version: 3, fps: s.fps, activeClipId: s.activeClipId, clips: syncActive(s), groups: s.groups };
     },
     loadClip: (data) => set(() => {
-      // new multi-clip format
+      // v3 multi-clip + groups format
       if (data && Array.isArray(data.clips) && data.clips.length) {
         const clips: ClipData[] = data.clips;
-        const active = clips.find((c) => c.id === data.activeClipId) ?? clips[0];
-        return { clips, activeClipId: active.id, fps: data.fps ?? 30, tracks: active.tracks, duration: active.duration, playhead: 0, playing: false, preview: false, sequence: false };
+        const active = clips.find((c: ClipData) => c.id === data.activeClipId) ?? clips[0];
+        return {
+          clips, activeClipId: active.id, fps: data.fps ?? 30,
+          tracks: active.tracks, duration: active.duration,
+          playhead: 0, playing: false, preview: false, sequence: false,
+          groups: Array.isArray(data.groups) ? data.groups : [],
+          playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
+        };
       }
       // legacy single-clip { duration, tracks }
       const c = newClip('ani1', data?.duration ?? 60);
       c.tracks = data?.tracks ?? {};
-      return { clips: [c], activeClipId: c.id, fps: 30, tracks: c.tracks, duration: c.duration, playhead: 0, playing: false, preview: false, sequence: false };
+      return {
+        clips: [c], activeClipId: c.id, fps: 30, tracks: c.tracks, duration: c.duration,
+        playhead: 0, playing: false, preview: false, sequence: false,
+        groups: [], playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
+      };
     }),
   };
 });

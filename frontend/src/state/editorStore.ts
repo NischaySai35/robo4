@@ -34,6 +34,8 @@ interface EditorState {
   setGravity: (g: number) => void;
   showAnalysis: boolean;
   toggleAnalysis: () => void;
+  showCollision: boolean;
+  toggleCollision: () => void;
   ikDrag: boolean;
   toggleIkDrag: () => void;
 }
@@ -76,6 +78,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   showAnalysis: false, // load heatmap + center-of-mass overlay
   toggleAnalysis: () => set((s) => ({ showAnalysis: !s.showAnalysis })),
+
+  showCollision: false,
+  toggleCollision: () => set((s) => ({ showCollision: !s.showCollision })),
 
   // Drag-from-tip inverse kinematics. When on, dragging any body in the viewport
   // pulls it toward the cursor by solving the joint chain from that body up to its

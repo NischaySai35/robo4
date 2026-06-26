@@ -16,6 +16,7 @@ import type { Document } from './entities';
 const COLLECTIONS = {
   body: 'bodies', joint: 'joints', material: 'materials',
   asset: 'assets', frame: 'frames', constraint: 'constraints',
+  component: 'components',
 };
 
 function collectionFor(entity: any) {
@@ -27,7 +28,7 @@ function collectionFor(entity: any) {
 /** Insert or replace an entity by its kind. Returns a new document. */
 export function putEntity(doc: any, entity: any) {
   const c = collectionFor(entity);
-  return { ...doc, [c]: { ...doc[c], [entity.id]: entity } };
+  return { ...doc, [c]: { ...(doc[c] ?? {}), [entity.id]: entity } };
 }
 
 /** Remove an entity from a named collection by id. Returns a new document. */

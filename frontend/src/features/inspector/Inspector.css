@@ -170,3 +170,95 @@
   color: var(--text-dim);
   margin-top: 4px;
 }
+
+/* ── Physics / Driver / Connectors additions ─────────────────────────────────── */
+
+.in-hint {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin-bottom: 4px;
+}
+
+.in-group--row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.in-btn-sm {
+  padding: 3px 9px;
+  font-size: 11.5px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.13s;
+}
+.in-btn-sm:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.in-btn-sm:disabled { opacity: 0.4; cursor: default; }
+
+.in-btn-xs {
+  width: 22px; height: 22px;
+  padding: 0;
+  font-size: 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.13s;
+}
+.in-btn-xs:hover { border-color: var(--accent); color: var(--accent); }
+.in-btn-danger:hover { border-color: var(--danger, #ef4444) !important; color: var(--danger, #ef4444) !important; }
+
+/* Driver type row: select + apply-defaults side by side */
+.in-driver-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.in-driver-row .in-text { flex: 1; }
+
+.in-driver-props {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+}
+
+.in-custom-driver {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 4px;
+}
+.in-custom-driver .in-text { flex: 1; }
+
+/* Connectors */
+.in-connector {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin-bottom: 6px;
+}
+
+.in-connector-hdr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 3px;
+}
+.in-connector-name { flex: 1; font-weight: 700; }

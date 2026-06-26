@@ -82,6 +82,28 @@ export interface Inertial { mass: number; com: Vec3; inertia: Inertia; auto: boo
 
 export interface Visual { geometry: Geometry; materialId: string | null; origin: Origin; }
 
+// ── Component ──────────────────────────────────────────────────────────────────
+// A Component groups bodies and joints into a logical module (Fusion 360 analogy).
+// Each modular robot arm segment = one Component.
+// ── Connector ──────────────────────────────────────────────────────────────────
+// A named attachment point on a body surface. Used for component assembly alignment.
+// Stored in body.meta.connectors (plain JSON, backward-compatible).
+export interface Connector {
+  id: string;
+  name: string;
+  position: Vec3;  // body-local space
+  normal: Vec3;    // direction the connector faces (for alignment matching)
+}
+
+export interface Component {
+  kind: 'component';
+  id: string;
+  name: string;
+  collapsed: boolean;
+  color: RGBA | null; // optional accent tint for the component row
+  meta: Meta;
+}
+
 export interface Body {
   kind: 'body';
   id: string;
@@ -91,6 +113,7 @@ export interface Body {
   collision: Visual | null; // null → derive from visual
   inertial: Inertial;
   assetId: string | null;
+  componentId: string | null; // which Component this body belongs to
   tags: Meta;
   meta: Meta;
 }
@@ -114,6 +137,7 @@ export interface Joint {
   dynamics: JointDynamics;
   mimic: JointMimic | null;
   state: JointState;
+  componentId: string | null; // which Component this joint belongs to
   meta: Meta;
 }
 
@@ -160,6 +184,11 @@ export interface Constraint {
   meta: Meta;
 }
 
+// ── Assembly Mates ─────────────────────────────────────────────────────────────
+// Stores a persisted snap relationship between two connector points.
+export interface AssemblySide { bodyId: string; connectorId: string; }
+export interface AssemblyMate { id: string; a: AssemblySide; b: AssemblySide; label: string; }
+
 export interface Document {
   kind: 'document';
   id: string;
@@ -171,6 +200,8 @@ export interface Document {
   assets: Record<string, Asset>;
   frames: Record<string, Frame>;
   constraints: Record<string, Constraint>;
+  components: Record<string, Component>;
+  mates: AssemblyMate[];
   meta: Meta;
 }
 
@@ -213,10 +244,21 @@ export function makeGeometry(type: GeometryType = GeometryType.BOX, params: Geom
 
 export function makeInertial(params: Partial<Inertial> = {}): Inertial {
   return {
-    mass: params.mass ?? 1,
+    mass: params.mass ?? 0.05,
     com: params.com ?? [0, 0, 0],
     inertia: params.inertia ?? { ixx: 0, ixy: 0, ixz: 0, iyy: 0, iyz: 0, izz: 0 },
     auto: params.auto ?? true, // auto-compute from geometry+density when true
+  };
+}
+
+export function makeComponent(params: Partial<Component> = {}): Component {
+  return {
+    kind: 'component',
+    id: params.id ?? uid('comp'),
+    name: params.name ?? 'Component',
+    collapsed: params.collapsed ?? false,
+    color: params.color ?? null,
+    meta: params.meta ?? {},
   };
 }
 
@@ -230,6 +272,7 @@ export function makeBody(params: Partial<Body> = {}): Body {
     collision: params.collision ?? null, // null → derive from visual
     inertial: params.inertial ?? makeInertial(),
     assetId: params.assetId ?? null,
+    componentId: params.componentId ?? null,
     tags: params.tags ?? {},
     meta: params.meta ?? {},
   };
@@ -253,6 +296,7 @@ export function makeJoint(params: Partial<Joint> = {}): Joint {
     dynamics: params.dynamics ?? { damping: 0, friction: 0 },
     mimic: params.mimic ?? null, // { jointId, multiplier, offset }
     state: params.state ?? { value: 0 }, // current joint position (rad or m)
+    componentId: params.componentId ?? null,
     meta: params.meta ?? {},
   };
 }
@@ -320,6 +364,8 @@ export function makeDocument(params: Partial<Document> = {}): Document {
     assets: params.assets ?? {},
     frames: params.frames ?? {},
     constraints: params.constraints ?? {},
+    components: params.components ?? {},
+    mates: params.mates ?? [],
     meta: params.meta ?? {},
   };
 }

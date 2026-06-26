@@ -1,0 +1,106 @@
+.kh-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(10, 15, 28, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: kh-fade 0.12s ease-out;
+}
+@keyframes kh-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.kh-modal {
+  width: min(780px, 94vw);
+  max-height: 88vh;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(10, 15, 28, 0.55);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: kh-slide 0.15s ease-out;
+}
+@keyframes kh-slide { from { transform: translateY(12px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+.kh-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 20px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.kh-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.kh-close {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: 14px; padding: 3px 6px;
+  border-radius: 5px; line-height: 1;
+  transition: all 0.12s;
+}
+.kh-close:hover { color: var(--text); background: var(--bg-card); }
+
+.kh-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  overflow-y: auto;
+  padding: 16px 20px 20px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.kh-section {
+  padding: 0 16px 16px 0;
+}
+.kh-section:nth-child(3n) { padding-right: 0; }
+
+.kh-section-title {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 8px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kh-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  min-height: 22px;
+}
+.kh-key {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--text);
+  white-space: nowrap;
+  flex-shrink: 0;
+  min-width: 60px;
+  text-align: center;
+}
+.kh-label {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.3;
+}
+
+@media (max-width: 580px) {
+  .kh-grid { grid-template-columns: repeat(2, 1fr); }
+}

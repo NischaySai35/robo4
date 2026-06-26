@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import './App.css';
 import LeftPanel from '@/features/panels/LeftPanel';
+import AnimLeftPanel from '@/features/panels/AnimLeftPanel';
 import SimCanvas from '@/features/canvas/SimCanvas';
 import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
 import ViewControls from '@/features/viewport-ui/ViewControls';
@@ -16,6 +17,7 @@ import RightDock from '@/features/dock/RightDock';
 import HumanoidActionBar from '@/features/humanoid/HumanoidActionBar';
 import LoadingBar from '@/features/common/LoadingBar';
 import CommandPalette from '@/features/command-palette/CommandPalette';
+import KeyboardHelp from '@/features/help/KeyboardHelp';
 import { useIntegrationStore } from '@/state/integrationStore';
 import { useHardwareStore } from '@/state/hardwareStore';
 import { useThemeStore } from '@/state/themeStore';
@@ -352,6 +354,7 @@ export default function App() {
   const [showIntro,  setShowIntro]  = useState(true);
   const [showPicker, setShowPicker] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Start the native runtime substrate (pub/sub bus, TF, params, diagnostics) once,
   // then register the motion stack (move_group action + planning service).
@@ -429,6 +432,7 @@ export default function App() {
         return;
       }
 
+      if (e.key === '?' || e.key === '/') { e.preventDefault(); setHelpOpen(v => !v); return; }
       if (typing || page === 'motor') return; // editing shortcuts work on all 3D pages
       const k = e.key.toLowerCase();
       const { selectedId, kind } = useSelectionStore.getState();
@@ -539,10 +543,16 @@ export default function App() {
             inset: 0,
           } : {}}
         >
-          {/* Left panel + resize handle only on the Editor page. */}
+          {/* Left panel + resize handle on Editor and Animation pages. */}
           {page === 'editor' && (
             <>
               <LeftPanel style={{ width: panelWidth }} />
+              <div className="panel-resize-handle" onMouseDown={startPanelResize} />
+            </>
+          )}
+          {page === 'animation' && (
+            <>
+              <AnimLeftPanel style={{ width: panelWidth }} />
               <div className="panel-resize-handle" onMouseDown={startPanelResize} />
             </>
           )}
@@ -557,7 +567,7 @@ export default function App() {
               </div>
               <div className="top-right-cluster">
                 <NavigationGizmo />
-                <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} />
+                <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} onHelpOpen={() => setHelpOpen(v => !v)} />
               </div>
             </div>
             {page === 'analysis' && <AnalysisBottomView />}
@@ -597,6 +607,7 @@ export default function App() {
         setPage={setPage}
         onToggleConn={toggleConn}
       />
+      {helpOpen && <KeyboardHelp onClose={() => setHelpOpen(false)} />}
     </div>
   );
 }

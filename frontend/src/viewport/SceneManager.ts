@@ -8,8 +8,10 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
+import { WebGLPathTracer } from 'three-gpu-pathtracer';
 import { bridge } from './cameraBridge';
 
 export class SceneManager {
@@ -52,9 +54,11 @@ export class SceneManager {
 
     // ── Lights ────────────────────────────────────────────────────────────────
     const ambient = new THREE.AmbientLight(0xc8d8f0, 1.5);
+    this.ambient = ambient;
     this.scene.add(ambient);
 
     const sun = new THREE.DirectionalLight(0xffffff, 2.8);
+    this.sun = sun;
     sun.position.set(5, 12, 7);
     sun.castShadow = true;
     sun.shadow.mapSize.width = 2048;
@@ -69,10 +73,12 @@ export class SceneManager {
     this.scene.add(sun);
 
     const fill = new THREE.DirectionalLight(0xb0c8f0, 0.8);
+    this.fill = fill;
     fill.position.set(-5, 4, -3);
     this.scene.add(fill);
 
     const rim = new THREE.DirectionalLight(0xe8f0ff, 0.5);
+    this.rim = rim;
     rim.position.set(0, -3, -8);
     this.scene.add(rim);
 
@@ -90,6 +96,14 @@ export class SceneManager {
     this.controls.screenSpacePanning = true;       // pan along camera view plane
     this.controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN; // middle-drag = pan (scroll wheel still zooms)
     this.controls.target.set(3, 0, 0);
+
+    // Reset Cycles accumulation whenever the camera changes.
+    // OrbitControls fires 'change' on every drag/zoom/pan/damping frame.
+    this.controls.addEventListener('change', () => {
+      if (this._engineMode === 'cycles' && this._pathTracer) {
+        this._pathTracer.updateCamera();
+      }
+    });
 
     // ── Post-processing ───────────────────────────────────────────────────────
     this._buildPostProcessing(w, h);
@@ -307,20 +321,161 @@ export class SceneManager {
 
   _buildPostProcessing(w: any, h: any) {
     this.composer = new EffectComposer(this.renderer);
-
-    const renderPass = new RenderPass(this.scene, this.camera);
-    this.composer.addPass(renderPass);
-
-    this.bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(w, h),
-      0.18,  // strength
-      0.25,  // radius
-      0.95   // threshold — high so near-white background does NOT bloom
-    );
+    this._renderPass = new RenderPass(this.scene, this.camera);
+    this.composer.addPass(this._renderPass);
+    this.bloomPass = new UnrealBloomPass(new THREE.Vector2(w, h), 0.20, 0.40, 0.85);
     this.composer.addPass(this.bloomPass);
+    this.composer.addPass(new OutputPass());
 
-    const outputPass = new OutputPass();
-    this.composer.addPass(outputPass);
+    this._engineMode    = 'eevee';
+    this._pathTracer    = null as WebGLPathTracer | null;
+    this._computeDevice = 'gpu';
+    this._maxSamples    = 32;
+  }
+
+  // ── setRenderEngine ───────────────────────────────────────────────────────────
+  //
+  // EEVEE  — Rasterization (like a video game engine). Single render pass per
+  //          frame = always 60fps. PCFSoftShadowMap casts a kernel of shadow rays
+  //          and blurs them → soft penumbra. UnrealBloom on bright pixels. ACES
+  //          tone curve. No global illumination. Same algorithm as Blender Eevee.
+  //
+  // CYCLES — GPU path tracer via WebGLPathTracer (three-gpu-pathtracer). On first
+  //          call, builds a BVH (Bounding Volume Hierarchy) over all scene triangles.
+  //          Then each frame fires `_samplesPerFrame` sample passes: per pixel, a ray
+  //          is cast into the scene, bounces N times (8 for GPU / 2 for CPU), and
+  //          accumulates radiance. 1 sample = very noisy; 200+ samples = clean.
+  //          Camera move clears all accumulated samples (same as Blender).
+  //          GPU mode (4 spf × 8 bounces) is substantially heavier per frame than
+  //          Eevee; visible as lower FPS on complex scenes.
+  //
+  // RAYCAST — BasicShadowMap = 1 shadow ray per texel, NO PCF filter kernel → crisp
+  //           pixel-edged hard shadows (binary in-shadow / not-in-shadow per pixel).
+  //           This is literally ray casting: a single ray tests occlusion. Cineon tone
+  //           mapping gives a different highlight rolloff from ACES.
+  setRenderEngine(mode: string) {
+    this._engineMode = mode;
+    const r = this.renderer;
+
+    this._renderPass.enabled = (mode !== 'cycles');
+    this.bloomPass.enabled   = (mode === 'eevee');
+
+    switch (mode) {
+      case 'eevee':
+        r.shadowMap.type       = THREE.PCFSoftShadowMap;
+        r.toneMapping          = THREE.ACESFilmicToneMapping;
+        r.toneMappingExposure  = 0.95;
+        // Subtle bloom — only very bright highlights (threshold=0.92), narrow spread.
+        // Threshold 0.92 means only pixels >92% brightness bloom → no fog.
+        this.bloomPass.strength  = 0.15;
+        this.bloomPass.threshold = 0.92;
+        this.bloomPass.radius    = 0.25;
+        if (this.sun)     { this.sun.intensity = 3.0;  this.sun.shadow.radius = 4; }
+        if (this.ambient) this.ambient.intensity = 1.4;
+        if (this.fill)    this.fill.intensity    = 0.7;
+        if (this.rim)     this.rim.intensity     = 0.5;
+        this._teardownPathTracer();
+        break;
+
+      case 'cycles':
+        r.toneMapping         = THREE.ACESFilmicToneMapping;
+        r.toneMappingExposure = 1.0;
+        if (this.sun)     this.sun.intensity     = 3.0;
+        if (this.ambient) this.ambient.intensity = 1.2;
+        if (this.fill)    this.fill.intensity    = 0.6;
+        if (this.rim)     this.rim.intensity     = 0.4;
+          this._initPathTracer();
+        break;
+
+      case 'raycast':
+        r.shadowMap.type      = THREE.BasicShadowMap;
+        r.toneMapping         = THREE.CineonToneMapping;
+        r.toneMappingExposure = 1.25;
+        if (this.sun)     { this.sun.intensity = 3.8;  this.sun.shadow.radius = 1; }
+        if (this.ambient) this.ambient.intensity = 0.5;
+        if (this.fill)    this.fill.intensity    = 1.5;
+        if (this.rim)     this.rim.intensity     = 1.2;
+        this._teardownPathTracer();
+        break;
+    }
+
+    r.shadowMap.needsUpdate = true;
+  }
+
+  _initPathTracer() {
+    if (!this._pathTracer) {
+      this._pathTracer = new WebGLPathTracer(this.renderer);
+      // Show path traced output immediately — no delay, no min-sample ramp.
+      this._pathTracer.renderDelay    = 0;
+      this._pathTracer.minSamples     = 1;
+      this._pathTracer.fadeDuration   = 0;
+      this._pathTracer.rasterizeScene = false; // never fall back to Eevee on move
+      // 1×1 tiles: each renderSample() completes one FULL sample in one frame.
+      // Default 3×3=9 tiles means 9 frames per sample → visible lag on first drag frame.
+      // At 1×1 the first sample appears the very next frame after a camera reset.
+      (this._pathTracer as any)._pathTracer.tiles.set(1, 1);
+    }
+    this._pathTracer.bounces = this._computeDevice === 'gpu' ? 5 : 2;
+    // Hide ShaderMaterial objects (grid) — path tracer can't handle custom shaders.
+    const gridWasVisible = this.grid?.visible ?? true;
+    if (this.grid) this.grid.visible = false;
+    this._pathTracer.setScene(this.scene, this.camera);
+    if (this.grid) this.grid.visible = gridWasVisible;
+  }
+
+  _teardownPathTracer() {
+    this._pathTracer?.dispose();
+    this._pathTracer = null;
+  }
+
+  setComputeDevice(device: 'cpu' | 'gpu') {
+    this._computeDevice = device;
+    if (this._pathTracer) {
+      this._pathTracer.bounces = device === 'gpu' ? 5 : 2;
+      this._pathTracer.reset();
+    }
+  }
+
+  setMaxSamples(n: number) {
+    this._maxSamples = Math.max(1, Math.min(1024, Math.round(n)));
+    // If path tracer was paused at old limit, unpause so it can run to new limit.
+    if (this._pathTracer) this._pathTracer.pausePathTracing = false;
+  }
+
+  getMaxSamples(): number {
+    return this._maxSamples ?? 16;
+  }
+
+  getPathTracerSamples(): number {
+    return Math.floor(this._pathTracer?.samples ?? 0);
+  }
+
+  markPathTracerDirty() {
+    if (this._pathTracer && this._engineMode === 'cycles') {
+      const gridWasVisible = this.grid?.visible ?? true;
+      if (this.grid) this.grid.visible = false;
+      this._pathTracer.setScene(this.scene, this.camera);
+      if (this.grid) this.grid.visible = gridWasVisible;
+    }
+  }
+
+  getRendererStats() {
+    let triangles = 0;
+    this.scene.traverse((obj: any) => {
+      if (!obj.isMesh || !obj.visible || !obj.geometry) return;
+      if (obj.userData?.isConnector || obj.userData?.isCollision || obj.userData?.isGround) return;
+      const geo = obj.geometry;
+      if (geo.index) {
+        triangles += geo.index.count / 3;
+      } else if (geo.attributes?.position) {
+        triangles += geo.attributes.position.count / 3;
+      }
+    });
+    return { triangles: Math.round(triangles) };
+  }
+
+  getComputeDevice(): 'cpu' | 'gpu' {
+    return this._computeDevice ?? 'gpu';
   }
 
   _onResize() {
@@ -400,11 +555,20 @@ export class SceneManager {
   render() {
     this.controls.update();
     this._updateGround();
-    this.composer.render();
+
+    if (this._engineMode === 'cycles' && this._pathTracer) {
+      // Pause once we hit the user's sample limit (unpause when limit changes).
+      this._pathTracer.pausePathTracing =
+        Math.floor(this._pathTracer.samples) >= (this._maxSamples ?? 16);
+      this._pathTracer.renderSample();
+    } else {
+      this.composer.render();
+    }
   }
 
   dispose() {
     this._resizeObserver.disconnect();
+    this._pathTracer?.dispose();
     this.renderer.dispose();
     this.composer.dispose();
   }

@@ -60,18 +60,39 @@ const dataURLtoBlob = (url: string) => {
   return new Blob([bytes], { type: mime });
 };
 
+type CamEngine = 'eevee' | 'cycles' | 'raycast';
+type CamRes    = 'viewport' | '1080p' | '2k' | '4k';
+
+const CAM_RES_PRESETS: Record<CamRes, [number, number] | null> = {
+  viewport: null,
+  '1080p':  [1920, 1080],
+  '2k':     [2560, 1440],
+  '4k':     [3840, 2160],
+};
+
+const CAM_ENGINE_LABELS: Record<CamEngine, string> = {
+  eevee:   'Eevee — GPU rasterization, single pass/frame. PCFSoft shadows, ACES tone map, bloom. Always 60fps.',
+  cycles:  'Cycles — BVH path tracer. Builds acceleration tree, accumulates samples. Starts noisy → converges. Camera move resets.',
+  raycast: 'Raycast — BasicShadowMap: one hard binary shadow ray per pixel. Crisp edges. Cineon tone curve.',
+};
+
 export default function CameraPanel() {
   const [s, setS] = useState<State>(DEFAULTS);
   const [advanced, setAdvanced] = useState(false);
 
-  // Render settings (local — engine/type are presentational, format/path drive export).
-  const [location, setLocation] = useState('tetrobot');
-  const [mediaType, setMediaType] = useState<'image' | 'video'>('image');
-  const [format, setFormat] = useState('png');
-  const [engine, setEngine] = useState('eevee');
-  const [note, setNote] = useState('');
+  const [outputName, setOutputName] = useState('tetrobot');
+  const [mediaType,  setMediaType]  = useState<'image' | 'video'>('image');
+  const [imgFmt,     setImgFmt]     = useState<'png' | 'jpg'>('png');
+  const [vidFmt,     setVidFmt]     = useState<'webm' | 'mp4'>('webm');
+  const [engine,     setEngineState] = useState<CamEngine>(
+    () => (bridge.getRenderEngine?.() as CamEngine) ?? 'eevee'
+  );
+  const [compute,    setComputeState] = useState<'cpu'|'gpu'>(() => bridge.getComputeDevice?.() ?? 'gpu');
+  const [maxSamples, setMaxSamplesState] = useState<number>(() => bridge.getMaxSamples?.() ?? 32);
+  const [resolution, setResolution] = useState<CamRes>('viewport');
+  const [note,       setNote]       = useState('');
+  const [busy,       setBusy]       = useState(false);
 
-  // Poll live state so the readout follows orbit/zoom while the panel is open.
   useEffect(() => {
     const read = () => { if (bridge.getCameraState) setS(bridge.getCameraState()); };
     read();
@@ -89,21 +110,55 @@ export default function CameraPanel() {
     minDistance: DEFAULTS.minDistance, maxDistance: DEFAULTS.maxDistance,
   });
 
-  const onExport = () => {
+  const changeEngine = (e: CamEngine) => {
+    setEngineState(e);
+    bridge.setRenderEngine?.(e);
+  };
+
+  const changeCompute = (d: 'cpu' | 'gpu') => {
+    setComputeState(d);
+    bridge.setComputeDevice?.(d);
+  };
+
+  const changeMaxSamples = (v: number) => {
+    const n = Math.max(1, Math.min(1024, Math.round(v)));
+    setMaxSamplesState(n);
+    bridge.setMaxSamples?.(n);
+  };
+
+  const applyRes = () => {
+    const p = CAM_RES_PRESETS[resolution];
+    if (p) bridge.setRenderResolution?.(p[0], p[1]);
+  };
+  const resetRes = () => {
+    if (CAM_RES_PRESETS[resolution]) bridge.resetRenderResolution?.();
+  };
+
+  const onExport = async () => {
     if (mediaType === 'video') {
-      setNote('Video capture is not wired up yet — export a still for now.');
+      setNote('For video export use the Animation → Render tab.');
       return;
     }
-    const mime = format === 'jpg' ? 'image/jpeg' : 'image/png';
-    const url = bridge.captureImage?.(mime, 0.92);
-    if (!url) { setNote('Viewport not ready.'); return; }
-    downloadBlob(dataURLtoBlob(url), `${location || 'render'}.${format}`);
-    setNote(`Exported ${location || 'render'}.${format}`);
+    setBusy(true); setNote('Rendering…');
+    applyRes();
+    await new Promise((r) => requestAnimationFrame(r));
+    const mime = imgFmt === 'jpg' ? 'image/jpeg' : 'image/png';
+    const url = bridge.captureImage?.(mime, 0.95);
+    resetRes();
+    if (!url) { setNote('Viewport not ready.'); setBusy(false); return; }
+    downloadBlob(dataURLtoBlob(url), `${outputName || 'render'}.${imgFmt}`);
+    setNote(`Saved ${outputName || 'render'}.${imgFmt}`);
+    setBusy(false);
   };
 
   if (!bridge.applyCameraState) {
     return <div className="cam-panel"><div className="cam-empty">Viewport not ready.</div></div>;
   }
+
+  const resLabel = (r: CamRes) => {
+    const p = CAM_RES_PRESETS[r];
+    return r === 'viewport' ? 'Viewport' : p ? `${p[0]}×${p[1]}` : r.toUpperCase();
+  };
 
   return (
     <div className="cam-panel">
@@ -138,39 +193,81 @@ export default function CameraPanel() {
         <button onClick={reset}>Reset defaults</button>
       </div>
 
+      {/* ── RENDER ──────────────────────────────────────────────── */}
       <div className="cam-section">RENDER</div>
+
       <div className="cam-field">
         <span>Output name</span>
-        <input className="cam-text" value={location}
-          onChange={(e) => setLocation(e.target.value)} placeholder="filename" />
+        <input className="cam-text" value={outputName}
+          onChange={(e) => setOutputName(e.target.value)} placeholder="filename" />
       </div>
 
+      {/* Engine */}
+      <div className="cam-sublabel">ENGINE</div>
+      <div className="cam-seg4">
+        {(['eevee', 'cycles', 'raycast'] as CamEngine[]).map((e) => (
+          <button key={e} className={engine === e ? 'on' : ''} onClick={() => changeEngine(e)}
+            title={CAM_ENGINE_LABELS[e]}>
+            {e.charAt(0).toUpperCase() + e.slice(1)}
+          </button>
+        ))}
+      </div>
+      <div className="cam-note-sm">{CAM_ENGINE_LABELS[engine]}</div>
+      {engine === 'cycles' && (
+        <>
+          <div className="cam-compute-row">
+            <span className="cam-sublabel" style={{ margin: 0 }}>COMPUTE</span>
+            <div className="cam-seg" style={{ flex: 1 }}>
+              <button className={compute === 'cpu' ? 'on' : ''} onClick={() => changeCompute('cpu')}
+                title="2 bounces — lighter load, faster convergence">CPU</button>
+              <button className={compute === 'gpu' ? 'on' : ''} onClick={() => changeCompute('gpu')}
+                title="5 bounces, MIS — full quality path tracing">GPU</button>
+            </div>
+          </div>
+          <div className="cam-compute-row">
+            <span className="cam-sublabel" style={{ margin: 0 }}>MAX SAMPLES</span>
+            <NumberField
+              value={maxSamples} min={1} max={1024} step={1}
+              onCommit={changeMaxSamples}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Image / Video */}
+      <div className="cam-sublabel">MODE</div>
       <div className="cam-seg">
-        <button className={mediaType === 'image' ? 'on' : ''}
-          onClick={() => { setMediaType('image'); setFormat('png'); }}>Image</button>
-        <button className={mediaType === 'video' ? 'on' : ''}
-          onClick={() => { setMediaType('video'); setFormat('mp4'); }}>Video</button>
+        <button className={mediaType === 'image' ? 'on' : ''} onClick={() => setMediaType('image')}>Image</button>
+        <button className={mediaType === 'video' ? 'on' : ''} onClick={() => setMediaType('video')}>Video</button>
       </div>
 
-      <div className="cam-field">
-        <span>Format</span>
-        <select className="cam-sel" value={format} onChange={(e) => setFormat(e.target.value)}>
-          {mediaType === 'image'
-            ? [<option key="png" value="png">PNG</option>, <option key="jpg" value="jpg">JPEG</option>]
-            : [<option key="mp4" value="mp4">MP4</option>, <option key="webm" value="webm">WEBM</option>]}
-        </select>
+      {/* Format */}
+      <div className="cam-sublabel">FORMAT</div>
+      {mediaType === 'image' ? (
+        <div className="cam-seg">
+          <button className={imgFmt === 'png' ? 'on' : ''} onClick={() => setImgFmt('png')}>PNG</button>
+          <button className={imgFmt === 'jpg' ? 'on' : ''} onClick={() => setImgFmt('jpg')}>JPEG</button>
+        </div>
+      ) : (
+        <div className="cam-seg">
+          <button className={vidFmt === 'webm' ? 'on' : ''} onClick={() => setVidFmt('webm')}>WebM</button>
+          <button className={vidFmt === 'mp4' ? 'on' : ''} onClick={() => setVidFmt('mp4')}>MP4</button>
+        </div>
+      )}
+
+      {/* Resolution */}
+      <div className="cam-sublabel">RESOLUTION</div>
+      <div className="cam-seg4">
+        {(['viewport', '1080p', '2k', '4k'] as CamRes[]).map((r) => (
+          <button key={r} className={resolution === r ? 'on' : ''} onClick={() => setResolution(r)}>
+            {resLabel(r)}
+          </button>
+        ))}
       </div>
 
-      <div className="cam-field">
-        <span>Engine</span>
-        <select className="cam-sel" value={engine} onChange={(e) => setEngine(e.target.value)}>
-          <option value="eevee">Eevee (real-time)</option>
-          <option value="cycles">Cycles (path-traced)</option>
-          <option value="raycast">Raycast</option>
-        </select>
-      </div>
-
-      <button className="cam-export" onClick={onExport}>Export</button>
+      <button className="cam-export" onClick={onExport} disabled={busy}>
+        {busy ? 'Rendering…' : mediaType === 'image' ? `⤓ Export ${imgFmt.toUpperCase()}` : '⏺ Video → Render tab'}
+      </button>
       {note && <div className="cam-note">{note}</div>}
     </div>
   );

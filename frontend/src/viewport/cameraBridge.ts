@@ -40,8 +40,21 @@ export interface CameraBridge {
   commitAxisModal?: (exactMeters?: number) => void;
   cancelAxisModal?: () => void;
   // Render utilities
-  captureStream?: () => MediaStream | null;
+  captureStream?: (fps?: number) => MediaStream | null;
   setRenderScale?: (scale: number) => void;
+  setRenderResolution?: (w: number, h: number) => void;
+  resetRenderResolution?: () => void;
+  setRenderEngine?: (engine: string) => void;
+  getRenderEngine?: () => string;
+  getPathTracerSamples?: () => number;
+  markSceneChanged?: () => void;
+  getRendererStats?: () => { triangles: number };
+  setComputeDevice?: (device: 'cpu' | 'gpu') => void;
+  getComputeDevice?: () => 'cpu' | 'gpu';
+  setMaxSamples?: (n: number) => void;
+  getMaxSamples?: () => number;
+  setWireframe?: (on: boolean) => void;
+  getWireframe?: () => boolean;
 }
 
 export const bridge: CameraBridge = {

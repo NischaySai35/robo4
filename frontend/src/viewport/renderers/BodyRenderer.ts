@@ -16,7 +16,8 @@ import { stressColor } from '@/kinematics/analysis';
 
 const _picker = new THREE.Raycaster();
 const DEFAULT_COLOR = [0.62, 0.66, 0.72, 1];
-const HILITE = new THREE.Color(0x2f7dff);
+const HILITE_SEL   = new THREE.Color(0x2f7dff); // selection: blue
+const HILITE_HOVER = new THREE.Color(0xffa040); // hover: warm orange (Blender-style)
 const BLACK = new THREE.Color(0x000000);
 
 function primitiveGeometry(g: any) {
@@ -54,6 +55,8 @@ export class BodyRenderer {
     this._selectedIds = new Set(); // all selected bodies
     this._hoveredId = null;    // body under cursor (object-mode hover)
     this._showCollision = false;
+    this._engineMode = 'eevee'; // set by bridge.setRenderEngine
+    this._wireframe = false;
   }
 
   sync(doc: Document, fk: any = null) {
@@ -132,10 +135,29 @@ export class BodyRenderer {
     container.traverse((o: any) => { if (o.isMesh) fn(o); });
   }
 
+  setWireframe(on: boolean) {
+    this._wireframe = on;
+    // Force re-application across all bodies.
+    for (const [, entry] of this._entries) entry.matSig = null;
+  }
+
   _applyMaterial(container: any, body: any, doc: any) {
-    // In stress-overlay mode the meshes are vertex-coloured by load; don't stomp
-    // their colours with the solid material (re-painted via applyStress instead).
     if (this._stress) { this._paintContainer(container, body.id); return; }
+
+    if (this._wireframe) {
+      // Wireframe / X-ray view — show edge skeleton, dim fill colour.
+      this._forEachMesh(container, (mesh: any) => {
+        if (!mesh.material || Array.isArray(mesh.material)) return;
+        const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
+        const [r, gg, b] = m?.color ?? DEFAULT_COLOR;
+        mesh.material.color.setRGB(r, gg, b);
+        mesh.material.metalness = 0; mesh.material.roughness = 1;
+        mesh.material.opacity = 1; mesh.material.transparent = false;
+        mesh.material.wireframe = true;
+      });
+      return;
+    }
+
     const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
     const [r, gg, b, a] = m?.color ?? DEFAULT_COLOR;
     this._forEachMesh(container, (mesh: any) => {
@@ -145,6 +167,7 @@ export class BodyRenderer {
       mesh.material.roughness = m?.roughness ?? 0.45;
       mesh.material.opacity = a ?? 1;
       mesh.material.transparent = (a ?? 1) < 1;
+      mesh.material.wireframe = false;
     });
   }
 
@@ -242,8 +265,16 @@ export class BodyRenderer {
       const hovered = id === this._hoveredId;
       this._forEachMesh(container, (mesh: any) => {
         if (!mesh.material || Array.isArray(mesh.material)) return;
-        mesh.material.emissive = (sel || hovered) ? HILITE : BLACK;
-        mesh.material.emissiveIntensity = sel ? (active ? 0.55 : 0.32) : (hovered ? 0.12 : 0);
+        if (sel) {
+          mesh.material.emissive = HILITE_SEL;
+          mesh.material.emissiveIntensity = active ? 0.55 : 0.32;
+        } else if (hovered) {
+          mesh.material.emissive = HILITE_HOVER;
+          mesh.material.emissiveIntensity = 0.22;
+        } else {
+          mesh.material.emissive = BLACK;
+          mesh.material.emissiveIntensity = 0;
+        }
       });
     }
   }
@@ -296,43 +327,84 @@ export class BodyRenderer {
   _disposeContainer(container: any) { for (const c of container.children) this._disposeObject(c); }
 
   // ── Connector visuals ─────────────────────────────────────────────────────────
-  // Each connector is a small disc + normal arrow rendered as a child of the body
-  // container, so they move with the body automatically.
+  // Screen-space fixed-size connector markers (Blender/Fusion style).
+  // onBeforeRender rescales each marker every frame so it stays at ~CON_PX pixels
+  // regardless of camera distance / zoom level.
   _syncConnectors(container: any, body: any) {
-    // Remove old connector markers
     const old = container.children.filter((c: any) => c.userData?.isConnector);
     for (const o of old) { container.remove(o); this._disposeObject(o); }
 
     const connectors: any[] = (body.meta?.connectors as any[] | undefined) ?? [];
     if (connectors.length === 0) return;
 
-    const discMat = new THREE.MeshStandardMaterial({ color: 0x00e0ff, emissive: 0x00e0ff, emissiveIntensity: 0.5, metalness: 0, roughness: 0.4, side: THREE.DoubleSide });
-    const arrowMat = new THREE.MeshStandardMaterial({ color: 0x00e0ff, emissive: 0x00e0ff, emissiveIntensity: 0.5, metalness: 0, roughness: 0.4 });
+    const CON_PX = 7; // fixed screen size (radius in pixels)
+
+    // Shared materials (instanced per connector to avoid cross-body bleed).
+    const mkMat = () => new THREE.MeshBasicMaterial({
+      color: 0x00d8ff, transparent: true, opacity: 0.92,
+      depthTest: false, side: THREE.DoubleSide,
+    });
+    const mkArrowMat = () => new THREE.MeshBasicMaterial({
+      color: 0x00d8ff, transparent: true, opacity: 0.85, depthTest: false,
+    });
+
+    // Geometry at unit scale: ring 0.5→0.8 radius, arrow cone 0.15 radius × 0.5 height.
+    // onBeforeRender will scale the whole group to hit CON_PX in screen space.
+    const RING_OUTER = 0.8;
+    const ringGeo  = new THREE.RingGeometry(0.5, RING_OUTER, 32);
+    const dotGeo   = new THREE.CircleGeometry(0.18, 16);
+    const coneGeo  = new THREE.ConeGeometry(0.15, 0.5, 8);
 
     for (const con of connectors) {
       const group = new THREE.Group();
       group.userData = { isConnector: true, connectorId: con.id };
+      group.renderOrder = 900;
 
-      // Disc
-      const disc = new THREE.Mesh(new THREE.CircleGeometry(0.06, 16), discMat);
-      disc.castShadow = false;
-      group.add(disc);
+      // Thin ring outline.
+      const ring = new THREE.Mesh(ringGeo, mkMat());
+      ring.castShadow = false; ring.renderOrder = 900;
+      group.add(ring);
 
-      // Arrow cone (pointing along +Z then we rotate to normal)
-      const cone = new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.08, 8), arrowMat);
-      cone.position.set(0, 0, 0.06);
-      cone.rotation.x = -Math.PI / 2; // cone axis → +Z
+      // Center dot.
+      const dot = new THREE.Mesh(dotGeo, mkMat());
+      dot.castShadow = false; dot.renderOrder = 901;
+      group.add(dot);
+
+      // Normal-direction arrow cone (+Z at unit scale).
+      const cone = new THREE.Mesh(coneGeo, mkArrowMat());
+      cone.position.set(0, 0, RING_OUTER + 0.3);
+      cone.rotation.x = -Math.PI / 2;
+      cone.renderOrder = 900;
       group.add(cone);
 
-      // Position and orient to connector's position + normal
+      // Position the group at the connector's local position.
       const [px, py, pz] = con.position ?? [0, 0, 0];
       group.position.set(px, py, pz);
 
+      // Orient so +Z aligns with the connector normal (ring faces along normal).
       const normal = new THREE.Vector3(...(con.normal ?? [0, 0, 1])).normalize();
       if (normal.length() > 0.001) {
-        const defaultDir = new THREE.Vector3(0, 0, 1);
-        group.quaternion.setFromUnitVectors(defaultDir, normal);
+        group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), normal);
       }
+
+      // Screen-space scale: rescale each frame so the ring stays at CON_PX pixels.
+      // We capture the group in closure; onBeforeRender fires on the first child.
+      ring.onBeforeRender = (renderer, _scene, camera: any) => {
+        const worldPos = new THREE.Vector3();
+        group.getWorldPosition(worldPos);
+
+        const h = renderer.domElement.height || 1;
+        let worldR: number;
+        if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+          const dist = worldPos.distanceTo(camera.position);
+          const fovRad = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov);
+          worldR = (CON_PX / h) * 2 * dist * Math.tan(fovRad / 2);
+        } else {
+          const cam = camera as THREE.OrthographicCamera;
+          worldR = (CON_PX / h) * (cam.top - cam.bottom);
+        }
+        group.scale.setScalar(worldR / RING_OUTER);
+      };
 
       container.add(group);
     }

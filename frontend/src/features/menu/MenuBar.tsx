@@ -67,7 +67,7 @@ function Dropdown({ items, onClose }: any) {
   );
 }
 
-export default function MenuBar({ onToggleConn }: any) {
+export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
   const [open, setOpen] = useState<any>(null);
   const barRef = useRef<any>(null);
 
@@ -143,8 +143,7 @@ export default function MenuBar({ onToggleConn }: any) {
     Help: [
       { label: 'Check for Updates…', onClick: () => checkForUpdates(false) },
       SEP,
-      { label: 'Keyboard Shortcuts', onClick: () => alert(
-        'Shortcuts\n────────────\nCtrl+Z              Undo\nCtrl+Y / Ctrl+Shift+Z   Redo\nCtrl+K              Command palette\n\nViewport\n────────────\nClick a part        Select · gizmo\nClick empty         Deselect\nScroll              Zoom\nRight-drag          Orbit\nMiddle / Shift-drag Pan') },
+      { label: 'Keyboard Shortcuts', shortcut: '?', onClick: () => onHelpOpen?.() },
       { label: 'About TETROBOT', onClick: async () => alert(`TETROBOT — Modular Robotics\nby Nischay Sai${(await getAppVersion()) ? `\n\nVersion ${await getAppVersion()}` : ''}`) },
     ],
   };

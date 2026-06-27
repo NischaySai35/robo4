@@ -10,6 +10,7 @@
  */
 import { useEffect, useRef, Fragment } from 'react';
 import TransformHUD from '@/features/common/TransformHUD';
+import ViewportStats from './ViewportStats';
 import * as THREE from 'three';
 import { SceneManager } from '@/viewport/SceneManager';
 import { ModelEditor } from '@/viewport/ModelEditor';
@@ -58,14 +59,57 @@ export default function SimCanvas() {
     modelEditorRef.current = modelEditor;
 
     // Render utilities: canvas stream capture + resolution scaling.
-    bridge.captureStream = () => {
-      try { return (sceneMgr.renderer.domElement as any).captureStream(); }
+    bridge.captureStream = (fps = 30) => {
+      try { return (sceneMgr.renderer.domElement as any).captureStream(fps); }
       catch { return null; }
     };
     bridge.setRenderScale = (scale: number) => {
       const dpr = Math.max(0.5, Math.min(8, scale)) * (window.devicePixelRatio || 1);
       sceneMgr.renderer.setPixelRatio(dpr);
       sceneMgr.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
+    };
+
+    // High-res render: temporarily resize renderer to an exact pixel size.
+    let _preDpr = window.devicePixelRatio || 1;
+    let _preW = 0;
+    let _preH = 0;
+    bridge.setRenderResolution = (w: number, h: number) => {
+      _preDpr = sceneMgr.renderer.getPixelRatio();
+      _preW = sceneMgr.renderer.domElement.width;
+      _preH = sceneMgr.renderer.domElement.height;
+      sceneMgr.renderer.setPixelRatio(1);
+      sceneMgr.renderer.setSize(w, h, false);
+      sceneMgr.camera.aspect = w / h;
+      sceneMgr.camera.updateProjectionMatrix();
+      sceneMgr.composer.setSize(w, h);
+    };
+    bridge.resetRenderResolution = () => {
+      if (!_preW) return;
+      sceneMgr.renderer.setPixelRatio(_preDpr);
+      sceneMgr.renderer.setSize(_preW, _preH, false);
+      sceneMgr.camera.aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+      sceneMgr.camera.updateProjectionMatrix();
+      sceneMgr.composer.setSize(_preW, _preH);
+      _preW = 0;
+    };
+
+    // Engine switching — delegates to SceneManager which owns the render pipeline.
+    let _currentEngine = 'eevee';
+    bridge.getRenderEngine = () => _currentEngine;
+    bridge.getPathTracerSamples = () => sceneMgr.getPathTracerSamples();
+    bridge.markSceneChanged = () => sceneMgr.markPathTracerDirty();
+    bridge.getRendererStats = () => sceneMgr.getRendererStats();
+    bridge.setComputeDevice = (d) => sceneMgr.setComputeDevice(d);
+    bridge.getComputeDevice = () => sceneMgr.getComputeDevice();
+    bridge.setMaxSamples = (n: number) => sceneMgr.setMaxSamples(n);
+    bridge.getMaxSamples = () => sceneMgr.getMaxSamples();
+    bridge.setWireframe = (on) => { if (modelEditor?.bodyRenderer) modelEditor.bodyRenderer.setWireframe(on); };
+    bridge.getWireframe = () => modelEditor?.bodyRenderer?._wireframe ?? false;
+    bridge.setRenderEngine = (engine: string) => {
+      _currentEngine = engine;
+      sceneMgr.setRenderEngine(engine);
+      // BodyRenderer material mode for clay / wireframe override.
+      if (modelEditor?.bodyRenderer) modelEditor.bodyRenderer._engineMode = engine;
     };
 
     // FIT bounding box over the model bodies.
@@ -325,6 +369,8 @@ export default function SimCanvas() {
       clearTimeout(saveTimer);
       saveTimer = setTimeout(doSave, 700);
     };
+    // Mark path tracer dirty whenever the model geometry changes.
+    const unsubModelPT = useModelStore.subscribe(() => sceneMgr.markPathTracerDirty());
     const unsubModelSave = useModelStore.subscribe(scheduleSave);
     const unsubAnimSave = useAnimationStore.subscribe((s, p) => {
       if (s.tracks !== p.tracks || s.duration !== p.duration) scheduleSave();
@@ -341,6 +387,7 @@ export default function SimCanvas() {
       clearTimeout(fitTimer);
       unsubTheme();
       unsubMeasure();
+      unsubModelPT();
       unsubModelSave();
       unsubAnimSave();
       unsubAuto();
@@ -362,6 +409,7 @@ export default function SimCanvas() {
     <Fragment>
       <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
       <TransformHUD />
+      <ViewportStats />
     </Fragment>
   );
 }

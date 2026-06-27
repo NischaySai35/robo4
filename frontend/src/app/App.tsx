@@ -528,7 +528,7 @@ export default function App() {
     <div className="app-shell">
       {showIntro && <IntroOverlay onDone={() => { setShowIntro(false); setShowPicker(true); }} />}
       {showPicker && <StartupProjects onClose={() => setShowPicker(false)} />}
-      <MenuBar onToggleConn={toggleConn} />
+      <MenuBar onToggleConn={toggleConn} onHelpOpen={() => setHelpOpen(v => !v)} />
       <AppHeader page={page} setPage={setPage} />
 
       <main className="app-main">

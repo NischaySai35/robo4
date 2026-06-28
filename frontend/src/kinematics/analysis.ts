@@ -1,32 +1,61 @@
 /**
- * analysis.js — static engineering analysis over the model (Phase 8).
+ * analysis.ts — static engineering analysis over the robot model.
  *
- * Computes per-body mass (geometry volume × material density), the assembly's
- * center of mass, and the static gravity-holding torque at each joint (the torque
- * a motor must supply to hold everything downstream against gravity). Torque is
- * mapped to an estimated motor current using a simple ST3215 model, so the sim
- * connects to the real servos.
+ * Computes per-body mass, assembly center of mass, and static gravity-holding
+ * torque at each joint (the torque a motor must produce to hold everything
+ * downstream against gravity).
  *
- * Geometry types are compared as string literals (no '@/' imports) so this stays
- * Node-testable. Mesh volume is a rough default (no bounds in the model yet).
+ * ── NEW: Industrial-grade additions ─────────────────────────────────────────
+ *
+ * Per-joint motor lookup (joint.meta.motorType → motorDatabase):
+ *   Overload threshold, stall torque, Kt, and no-load current are now
+ *   motor-specific rather than hardcoded ST3215 everywhere.
+ *
+ * Von Mises stress + structural safety factor (bodyMechanics):
+ *   σ_vm = √(σ_bending² + 3τ_torsion²)
+ *   FoS  = yield_strength / σ_vm
+ *
+ *   The full 3D torque vector at each joint's pivot is decomposed into:
+ *   - Bending moment M (perpendicular to the link axis)
+ *   - Torsion T       (along the link axis)
+ *
+ *   Cross-section is modelled as a solid circle with radius = rHint (see
+ *   rHintOf). This is a conservative approximation — accurate for cylindrical
+ *   links, slightly conservative for box sections.
+ *
+ *   Section moduli:
+ *     Wb = π r³ / 4  → σ_bending = M / Wb
+ *     Wt = π r³ / 2  → τ_torsion = |T| / Wt
+ *
+ * Material lookup (body material name → materialDatabase):
+ *   Fuzzy-matched against the doc.materials name string. Defaults to PLA
+ *   (conservative for 3D-printed hobby robots).
+ *
+ * Stays Node-testable: geometry types compared as string literals, no
+ * dynamic imports inside pure functions.
  */
 import * as THREE from 'three';
 import { computeFK, mat, buildChildJointMap } from './modelFK';
 import type { Document, Body, Geometry } from '@/core/model/index';
+import { getMotorSpec } from './motorDatabase';
+import { getMaterialProps } from './materialDatabase';
 
-const G = new THREE.Vector3(0, -9.81, 0); // gravity field
+const G = new THREE.Vector3(0, -9.81, 0); // gravity field (m/s²)
 
-// ── ST3215 smart-servo model (approximate datasheet figures @ ~12V) ─────────────
+// ── Backward-compatible ST3215 constant (other modules import this) ───────────
 export const ST3215 = {
-  stallTorque: 2.94, // N·m  (~30 kgf·cm)
-  stallCurrent: 2.7, // A
-  Kt: 2.94 / 2.7,    // N·m per A
-  idle: 0.1,         // A no-load
+  stallTorque:  2.94,            // N·m
+  stallCurrent: 2.70,            // A
+  Kt:           2.94 / 2.70,     // N·m/A
+  idle:         0.10,            // A (no-load)
 };
 
-export function estimateCurrent(torqueNm: number) {
-  return Math.min(ST3215.idle + Math.abs(torqueNm) / ST3215.Kt, ST3215.stallCurrent);
+/** Estimate motor current from torque using a given motor spec (or ST3215 default). */
+export function estimateCurrent(torqueNm: number, motor = getMotorSpec('ST3215')) {
+  return Math.min(motor.noLoadCurrent + Math.abs(torqueNm) / motor.Kt, motor.stallCurrent);
 }
+
+// ── Geometry helpers ────────────────────────────────────────────────────────
 
 function originMat(o: any) {
   const oo = o ?? {};
@@ -45,11 +74,11 @@ export function geometryVolume(g: Partial<Geometry> = {}, s = [1, 1, 1]) {
     case 'sphere': { const r = (g.radius ?? 0.5) * Math.max(sx, sy, sz); return (4 / 3) * Math.PI * r ** 3; }
     case 'cylinder':
     case 'capsule': { const r = g.radius ?? 0.5; const l = g.length ?? 1; return Math.PI * (r * sx) * (r * sy) * (l * sz); }
-    default: return 0.008 * sx * sy * sz; // mesh: ~0.2 m cube default
+    default: return 0.008 * sx * sy * sz;
   }
 }
 
-/** Rough inertia tensor (kg·m²) about the body's center, from geometry + mass. */
+/** Approximate inertia tensor (kg·m²) about the body's center. */
 export function inertiaTensor(g: Partial<Geometry> = {}, s = [1, 1, 1], mass = 1) {
   const [sx, sy, sz] = s.map((v) => Math.abs(v));
   let ixx, iyy, izz;
@@ -65,7 +94,7 @@ export function inertiaTensor(g: Partial<Geometry> = {}, s = [1, 1, 1], mass = 1
       break;
     }
     case 'cylinder': case 'capsule': {
-      const r = (g.radius ?? 0.5) * Math.max(sx, sy), l = (g.length ?? 1) * sz; // axis along z
+      const r = (g.radius ?? 0.5) * Math.max(sx, sy), l = (g.length ?? 1) * sz;
       ixx = iyy = mass * (3 * r * r + l * l) / 12; izz = 0.5 * mass * r * r;
       break;
     }
@@ -76,11 +105,11 @@ export function inertiaTensor(g: Partial<Geometry> = {}, s = [1, 1, 1], mass = 1
 
 export function bodyMass(body: Body, doc: Document) {
   const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
-  const density = m?.density ?? 1000; // kg/m³
+  const density = m?.density ?? 1000;
   return density * geometryVolume(body.visual?.geometry, body.transform?.scale);
 }
 
-/** Total mass + center of mass (world) of all bodies. */
+/** Total mass and world-space center of mass. */
 export function centerOfMass(doc: Document, fk = computeFK(doc)) {
   let M = 0;
   const c = new THREE.Vector3();
@@ -95,8 +124,9 @@ export function centerOfMass(doc: Document, fk = computeFK(doc)) {
   return { mass: M, com: [c.x, c.y, c.z] };
 }
 
-// Bodies downstream of (and including) a body, following parent→child joints.
-function subtreeBodies(childrenOf: any, start: any) {
+// ── Subtree traversal ───────────────────────────────────────────────────────
+
+function subtreeBodies(childrenOf: Map<any, any[]>, start: any) {
   const out = new Set([start]);
   const q = [start];
   while (q.length) {
@@ -106,45 +136,95 @@ function subtreeBodies(childrenOf: any, start: any) {
   return out;
 }
 
+// ── Per-joint pivot helpers (shared by jointLoads + bodyMechanics) ──────────
+
+function pivotForJoint(j: any, doc: Document, fk: Map<string, any>) {
+  const parent = j.parentBodyId ? doc.bodies[j.parentBodyId] : null;
+  if (!parent) return null;
+  const pMat = (fk.get(j.parentBodyId)?.matrix?.clone() ?? mat(parent.transform)) as THREE.Matrix4;
+  const jw = pMat.clone().multiply(originMat(j.origin));
+  return { pivot: new THREE.Vector3().setFromMatrixPosition(jw), jw };
+}
+
+// ── Joint loads (gravity-holding torque + current per joint) ────────────────
+
 /**
- * Static gravity-holding torque (N·m, signed about the joint axis) and estimated
- * current per joint. Returns Map jointId -> { torque, current, overload }.
+ * Static gravity-holding torque, estimated current, and overload flag per joint.
+ * Uses the motor spec from joint.meta.motorType (falls back to ST3215).
  */
 export function jointLoads(doc: Document, fk = computeFK(doc)) {
-  const masses = new Map();
+  const masses = new Map<string, number>();
   for (const body of Object.values(doc.bodies)) masses.set(body.id, bodyMass(body, doc));
 
-  const childrenOf = new Map();
+  const childrenOf = new Map<string, string[]>();
   for (const j of Object.values(doc.joints)) {
+    if (!j.parentBodyId || !j.childBodyId) continue;
     if (!childrenOf.has(j.parentBodyId)) childrenOf.set(j.parentBodyId, []);
-    childrenOf.get(j.parentBodyId).push(j.childBodyId);
+    childrenOf.get(j.parentBodyId)!.push(j.childBodyId);
   }
 
-  const out = new Map();
+  const out = new Map<string, { torque: number; current: number; overload: boolean; motorName: string }>();
   for (const j of Object.values(doc.joints)) {
-    const parent = j.parentBodyId ? doc.bodies[j.parentBodyId] : null;
-    if (!parent) { out.set(j.id, { torque: 0, current: estimateCurrent(0), overload: false }); continue; }
-    const pMat = fk.get(j.parentBodyId)?.matrix?.clone() ?? mat(parent.transform);
-    const jw = pMat.multiply(originMat(j.origin));
-    const pivot = new THREE.Vector3().setFromMatrixPosition(jw);
-    const axis = new THREE.Vector3(...(j.axis ?? [0, 0, 1])).normalize().transformDirection(jw);
+    const motor  = getMotorSpec((j as any).meta?.motorType);
+    const pInfo  = pivotForJoint(j, doc, fk);
+    if (!pInfo) {
+      out.set(j.id, { torque: 0, current: estimateCurrent(0, motor), overload: false, motorName: motor.name });
+      continue;
+    }
+    const { pivot, jw } = pInfo;
+    const axis = new THREE.Vector3(...((j.axis as number[]) ?? [0, 0, 1])).normalize().transformDirection(jw);
 
     const torqueVec = new THREE.Vector3();
     for (const bid of subtreeBodies(childrenOf, j.childBodyId)) {
       const w = fk.get(bid);
       if (!w) continue;
       const r = new THREE.Vector3(...w.position).sub(pivot);
-      const force = G.clone().multiplyScalar(masses.get(bid) ?? 0);
-      torqueVec.add(r.cross(force));
+      torqueVec.add(r.clone().cross(G.clone().multiplyScalar(masses.get(bid) ?? 0)));
     }
     const torque = torqueVec.dot(axis);
-    out.set(j.id, { torque, current: estimateCurrent(torque), overload: Math.abs(torque) > ST3215.stallTorque });
+    out.set(j.id, {
+      torque,
+      current:    estimateCurrent(torque, motor),
+      overload:   Math.abs(torque) > motor.stallTorque,
+      motorName:  motor.name,
+    });
   }
   return out;
 }
 
-// ── Surface stress field (FEA-style heatmap) ────────────────────────────────
-const MOVABLE = new Set(['revolute', 'continuous', 'prismatic']);
+// ── Full 3D torque vectors at each joint (for structural analysis) ──────────
+
+function jointTorqueVectors(doc: Document, fk: Map<string, any>) {
+  const masses = new Map<string, number>();
+  for (const body of Object.values(doc.bodies)) masses.set(body.id, bodyMass(body, doc));
+
+  const childrenOf = new Map<string, string[]>();
+  for (const j of Object.values(doc.joints)) {
+    if (!j.parentBodyId || !j.childBodyId) continue;
+    if (!childrenOf.has(j.parentBodyId)) childrenOf.set(j.parentBodyId, []);
+    childrenOf.get(j.parentBodyId)!.push(j.childBodyId);
+  }
+
+  const out = new Map<string, THREE.Vector3>();
+  for (const j of Object.values(doc.joints)) {
+    const pInfo = pivotForJoint(j, doc, fk);
+    if (!pInfo) { out.set(j.id, new THREE.Vector3()); continue; }
+    const { pivot } = pInfo;
+    const tv = new THREE.Vector3();
+    for (const bid of subtreeBodies(childrenOf, j.childBodyId)) {
+      const w = fk.get(bid);
+      if (!w) continue;
+      const r = new THREE.Vector3(...w.position).sub(pivot);
+      tv.add(r.clone().cross(G.clone().multiplyScalar(masses.get(bid) ?? 0)));
+    }
+    out.set(j.id, tv);
+  }
+  return out;
+}
+
+// ── Surface stress heatmap ──────────────────────────────────────────────────
+
+const MOVABLE = new Set(['revolute', 'continuous', 'prismatic', 'ball', 'planar', 'floating']);
 
 /** Fusion-style scalar→colour ramp: 0 blue → cyan → green → yellow → 1 red. */
 export function stressColor(t: number): [number, number, number] {
@@ -155,83 +235,195 @@ export function stressColor(t: number): [number, number, number] {
   return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
 }
 
+// Effective cross-section radius for a body (solid circular approximation).
+function rHintOf(body: Body): number {
+  const g  = body.visual?.geometry ?? {};
+  const sc = body.transform?.scale ?? [1, 1, 1];
+  const ab = (v: number) => Math.abs(v);
+  switch ((g as Partial<Geometry>).type) {
+    case 'sphere':   return ((g as any).radius ?? 0.5) * Math.max(ab(sc[0]), ab(sc[1]), ab(sc[2]));
+    case 'cylinder':
+    case 'capsule':  return ((g as any).radius ?? 0.5) * Math.max(ab(sc[0]), ab(sc[1]));
+    case 'box': {
+      const dims = [
+        ((g as any).size?.[0] ?? 1) * ab(sc[0]),
+        ((g as any).size?.[1] ?? 1) * ab(sc[1]),
+        ((g as any).size?.[2] ?? 1) * ab(sc[2]),
+      ].sort((a, b) => a - b);
+      return (dims[0] + dims[1]) / 4; // equivalent radius from two cross-section dims
+    }
+    default: return 0.15;
+  }
+}
+
+// Walk up the joint graph to find the nearest proximal MOVABLE joint.
+function proxJointOf(bodyId: string, childJoint: Map<string, any>) {
+  let cur: any = bodyId, guard = 0;
+  while (guard++ < 64) {
+    const j = childJoint.get(cur);
+    if (!j) return null;
+    if (MOVABLE.has(j.type)) return j;
+    cur = j.parentBodyId;
+    if (!cur) return null;
+  }
+  return null;
+}
+
 /**
- * Per-body stress field for surface colouring — the BENDING MOMENT each member
- * transmits under gravity, the way CAD/FEA tools plot structural load.
+ * Per-body stress field for the 3D surface heatmap.
  *
- * For each link we compute the internal bending moment magnitude |Σ r × (m·g)| of all
- * the mass it carries, taken about its PROXIMAL support (where it's effectively fixed)
- * and about its DISTAL end. This is pose-correct and axis-independent: a horizontally
- * EXTENDED arm has large horizontal lever arms → high moment → red near the supports;
- * a vertical arm has tiny lever arms → low moment → blue. (The old version used the
- * torque about each joint's ROTATION axis, which is ~0 for a vertical/yaw joint even
- * when the member is heavily bent — hence the "extended link shows blue" bug.)
- *
- * Returns the world load-path anchors (P→D) + the normalised moment (0..1 of the peak
- * member) at each end; BodyRenderer ramps the colour along P→D. A fast structural
- * proxy, not a full FEA solve, but physically consistent.
+ * tP/tD = fraction of the motor's stall torque used at the proximal/distal
+ * joint of this body. Red = at the motor's physical limit; blue = light load.
  */
-export function bodyStressField(doc: Document, fk = computeFK(doc), _loads = jointLoads(doc, fk)) {
-  const childJoint = buildChildJointMap(doc);
-  const childrenOf = new Map<any, any[]>();
+export function bodyStressField(doc: Document, fk = computeFK(doc), loads = jointLoads(doc, fk)) {
+  const childJoint   = buildChildJointMap(doc);
   const parentJoints = new Map<any, any[]>();
+  const childrenOf   = new Map<any, any[]>();
   for (const j of Object.values(doc.joints)) {
-    if (!childrenOf.has(j.parentBodyId)) childrenOf.set(j.parentBodyId, []);
-    childrenOf.get(j.parentBodyId)!.push(j.childBodyId);
     if (!parentJoints.has(j.parentBodyId)) parentJoints.set(j.parentBodyId, []);
     parentJoints.get(j.parentBodyId)!.push(j);
+    if (!childrenOf.has(j.parentBodyId)) childrenOf.set(j.parentBodyId, []);
+    childrenOf.get(j.parentBodyId)!.push(j.childBodyId);
   }
 
-  const massOf = (id: string) => bodyMass(doc.bodies[id], doc);
-  const posOf = (id: string) => new THREE.Vector3(...(fk.get(id)?.position ?? [0, 0, 0]));
   const pivotWorld = (j: any) => {
     const pm = fk.get(j.parentBodyId)?.matrix?.clone() ?? mat(doc.bodies[j.parentBodyId]?.transform);
-    return new THREE.Vector3().setFromMatrixPosition(pm.multiply(originMat(j.origin)));
+    return new THREE.Vector3().setFromMatrixPosition((pm as THREE.Matrix4).multiply(originMat(j.origin)));
   };
-  // |Σ (com_i − anchor) × (m_i · g)| over a set of bodies = bending moment magnitude.
-  const bendAbout = (anchor: THREE.Vector3, ids: Iterable<string>) => {
-    const M = new THREE.Vector3();
-    for (const id of ids) M.add(posOf(id).clone().sub(anchor).cross(G.clone().multiplyScalar(massOf(id))));
-    return M.length();
-  };
+  const posOf = (id: string) => new THREE.Vector3(...(fk.get(id)?.position ?? [0, 0, 0]));
 
-  const recs: { id: string; P: THREE.Vector3; D: THREE.Vector3; Mp: number; Md: number }[] = [];
+  // Peak torque fraction across all joints (for structural base colouring).
+  const allTorques = [...loads.values()].map((l) => Math.abs(l.torque));
+  // Floor at 10% of the weakest motor's stall torque in the assembly.
+  const peakMotorStall = Math.max(...Object.values(doc.joints).map((j) => getMotorSpec((j as any).meta?.motorType).stallTorque));
+  const peakTorque = Math.max(peakMotorStall * 0.1, ...allTorques);
+
+  const out = new Map<string, { P: number[]; D: number[]; tP: number; tD: number; maxTorque: number; rHint: number }>();
+
   for (const body of Object.values(doc.bodies)) {
-    const center = posOf(body.id);
+    const center    = posOf(body.id);
+    const proxJoint = proxJointOf(body.id, childJoint);
 
-    // Proximal support: walk up welds to the first movable joint (else this is a root).
-    let Panchor = center.clone(), cur: any = body.id, guard = 0;
-    while (guard++ < 64) {
-      const j = childJoint.get(cur);
-      if (!j) { Panchor = center.clone(); break; }
-      if (MOVABLE.has(j.type)) { Panchor = pivotWorld(j); break; }
-      cur = j.parentBodyId;
-      if (!cur) break;
+    let tP: number, Panchor: THREE.Vector3;
+    if (proxJoint) {
+      const motor = getMotorSpec((proxJoint as any).meta?.motorType);
+      const torq  = loads.get(proxJoint.id)?.torque ?? 0;
+      tP      = Math.min(Math.abs(torq) / motor.stallTorque, 1);
+      Panchor = pivotWorld(proxJoint);
+    } else {
+      tP      = Math.min(peakTorque / peakMotorStall, 1);
+      Panchor = center.clone();
     }
 
-    const subtree = subtreeBodies(childrenOf, body.id);             // this body + all downstream
-    const downstream = [...subtree].filter((id) => id !== body.id);
-    const Mp = bendAbout(Panchor, subtree);                          // moment at the fixed end
+    const distalJoints = (parentJoints.get(body.id) ?? []).filter((j) => MOVABLE.has(j.type));
+    let tD: number, Danchor: THREE.Vector3;
+    if (distalJoints.length) {
+      const dj    = distalJoints[0];
+      const motor = getMotorSpec((dj as any).meta?.motorType);
+      const torq  = loads.get(dj.id)?.torque ?? 0;
+      tD      = Math.min(Math.abs(torq) / motor.stallTorque, 1);
+      Danchor = pivotWorld(dj);
+    } else {
+      tD      = 0;
+      Danchor = center.clone().multiplyScalar(2).sub(Panchor);
+    }
 
-    // Distal end: a movable joint hanging off this body, else the far end of the body.
-    let Danchor = center.clone().multiplyScalar(2).sub(Panchor);
-    const dj = (parentJoints.get(body.id) ?? []).filter((j) => MOVABLE.has(j.type));
-    if (dj.length) Danchor = pivotWorld(dj[0]);
-    const Md = downstream.length ? bendAbout(Danchor, downstream) : 0; // lighter further out
-
-    recs.push({ id: body.id, P: Panchor, D: Danchor, Mp, Md });
+    out.set(body.id, {
+      P: [Panchor.x, Panchor.y, Panchor.z],
+      D: [Danchor.x, Danchor.y, Danchor.z],
+      tP, tD,
+      maxTorque: peakTorque,
+      rHint:     rHintOf(body),
+    });
   }
+  return out;
+}
 
-  // Normalise to the most-loaded member (FEA convention: colour = fraction of peak).
-  const maxM = Math.max(1e-6, ...recs.map((r) => r.Mp));
-  const out = new Map<string, { P: number[]; D: number[]; tP: number; tD: number; maxTorque: number }>();
-  for (const r of recs) {
-    out.set(r.id, {
-      P: [r.P.x, r.P.y, r.P.z],
-      D: [r.D.x, r.D.y, r.D.z],
-      tP: Math.min(r.Mp / maxM, 1),
-      tD: Math.min(r.Md / maxM, 1),
-      maxTorque: maxM,
+// ── Structural mechanics: von Mises stress + safety factor ─────────────────
+
+export interface BodyMechanicsResult {
+  vonMises:   number;  // Pa — von Mises stress at the outer fiber of the proximal cross-section
+  fos:        number;  // dimensionless — Factor of Safety (yieldStrength / vonMises); Infinity if no load
+  bending:    number;  // N·m — bending moment (perpendicular to link axis)
+  torsion:    number;  // N·m — torsional moment (along link axis, absolute value)
+  matName:    string;  // matched material name (from materialDatabase)
+  yieldMPa:  number;  // MPa — material yield strength for display
+}
+
+/**
+ * Computes structural stress and safety factor for every body.
+ *
+ * Algorithm per body:
+ *   1. Find the proximal (nearest parent) movable joint.
+ *   2. Compute the full 3D torque vector at that joint's pivot due to
+ *      downstream body weights.
+ *   3. Decompose the torque into bending M (⊥ to link axis) and torsion T (‖).
+ *   4. Apply solid-circular section moduli:
+ *         σ = M / Wb,  τ = |T| / Wt
+ *         Wb = π r³ / 4,  Wt = π r³ / 2  (r = rHint)
+ *   5. von Mises:  σ_vm = √(σ² + 3τ²)
+ *   6. FoS = yield_strength / σ_vm
+ */
+export function bodyMechanics(doc: Document, fk = computeFK(doc)): Map<string, BodyMechanicsResult> {
+  const childJoint = buildChildJointMap(doc);
+  const tvecs      = jointTorqueVectors(doc, fk);
+
+  const out = new Map<string, BodyMechanicsResult>();
+
+  for (const body of Object.values(doc.bodies)) {
+    const proxJoint = proxJointOf(body.id, childJoint);
+    const matEntry  = doc.materials[body.visual?.materialId ?? ''];
+    const matName   = matEntry?.name ?? '';
+    const matProps  = getMaterialProps(matName);
+
+    if (!proxJoint) {
+      // Structural base — no joint above, not a failure point in this model
+      out.set(body.id, { vonMises: 0, fos: Infinity, bending: 0, torsion: 0, matName, yieldMPa: matProps.yieldStrength / 1e6 });
+      continue;
+    }
+
+    // Full torque vector at the proximal joint pivot
+    const tv = tvecs.get(proxJoint.id) ?? new THREE.Vector3();
+
+    // Link axis: from joint pivot toward body CoM
+    const pInfo = pivotForJoint(proxJoint, doc, fk);
+    if (!pInfo) { out.set(body.id, { vonMises: 0, fos: Infinity, bending: 0, torsion: 0, matName, yieldMPa: matProps.yieldStrength / 1e6 }); continue; }
+    const comPos   = new THREE.Vector3(...(fk.get(body.id)?.position ?? [0, 0, 0]));
+    const linkVec  = comPos.clone().sub(pInfo.pivot);
+    const linkLen  = linkVec.length();
+    if (linkLen < 1e-4) { out.set(body.id, { vonMises: 0, fos: Infinity, bending: 0, torsion: 0, matName, yieldMPa: matProps.yieldStrength / 1e6 }); continue; }
+    const linkAxis = linkVec.clone().divideScalar(linkLen);
+
+    // Decompose: torsion = torque projected onto link axis; bending = perpendicular
+    const T_scalar = tv.dot(linkAxis);                                     // N·m (signed)
+    const M_vec    = tv.clone().addScaledVector(linkAxis, -T_scalar);      // perpendicular
+    const M        = M_vec.length();                                       // N·m
+    const T        = Math.abs(T_scalar);                                   // N·m
+
+    // Effective cross-section radius
+    const r = rHintOf(body);
+    if (r < 1e-5) {
+      out.set(body.id, { vonMises: 0, fos: Infinity, bending: M, torsion: T, matName, yieldMPa: matProps.yieldStrength / 1e6 });
+      continue;
+    }
+
+    // Solid circular section moduli: Wb = π r³/4, Wt = π r³/2
+    const r3  = r * r * r;
+    const Wb  = Math.PI * r3 / 4;
+    const Wt  = Math.PI * r3 / 2;
+    const sig = M / Wb;      // Pa (bending normal stress at outer fiber)
+    const tau = T / Wt;      // Pa (torsional shear stress at outer fiber)
+    const vm  = Math.sqrt(sig * sig + 3 * tau * tau); // Pa (von Mises)
+
+    const fos = vm > 1 ? matProps.yieldStrength / vm : Infinity; // avoid ÷0
+
+    out.set(body.id, {
+      vonMises: vm,
+      fos,
+      bending:  M,
+      torsion:  T,
+      matName,
+      yieldMPa: matProps.yieldStrength / 1e6,
     });
   }
   return out;

@@ -47,8 +47,8 @@ export class PhysicsSim {
     // acceleration-based motor (stable regardless of link inertia). So gravity
     // LOADS the joints (you see the torque/current in Analysis) but the arm stays
     // rigid and holds its pose — it doesn't flop to the floor.
-    this._motorStiffness = 500;
-    this._motorDamping = 40;
+    this._motorStiffness = 50000;  // high stiffness = arm holds pose rigidly under box impacts
+    this._motorDamping = 500;
     // jointId -> { joint, type } so a controller can command motor targets LIVE
     // (closed-loop trajectory execution: the physical arm tracks setpoints under
     // gravity/contacts instead of teleporting). See setJointTargets().
@@ -267,6 +267,47 @@ export class PhysicsSim {
     return n;
   }
 
+  // ── Falling-box API ───────────────────────────────────────────────────────
+  /** Spawn a dynamic box into the physics world; returns its handle. */
+  spawnBox(pos: [number, number, number], half: [number, number, number], density: number): number {
+    this._spawnedBoxes ??= new Map<number, any>();
+    const rb = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(pos[0], pos[1], pos[2])
+        .setLinearDamping(0.1)
+        .setAngularDamping(0.3),
+    );
+    const col = RAPIER.ColliderDesc.cuboid(half[0], half[1], half[2]).setDensity(density);
+    this.world.createCollider(col, rb);
+    this._spawnedBoxes.set(rb.handle, rb);
+    return rb.handle;
+  }
+
+  /** Current poses of all spawned boxes. */
+  boxPoses(): Map<number, { pos: [number, number, number]; quat: [number, number, number, number] }> {
+    const out = new Map<number, any>();
+    if (!this._spawnedBoxes) return out;
+    for (const [h, rb] of this._spawnedBoxes) {
+      const t = rb.translation(), r = rb.rotation();
+      out.set(h, { pos: [t.x, t.y, t.z] as [number,number,number], quat: [r.x, r.y, r.z, r.w] as [number,number,number,number] });
+    }
+    return out;
+  }
+
+  /** Remove a single spawned box by its handle. */
+  removeBox(handle: number) {
+    if (!this._spawnedBoxes) return;
+    const rb = this._spawnedBoxes.get(handle);
+    if (rb) { try { this.world.removeRigidBody(rb); } catch { /* ignore */ } this._spawnedBoxes.delete(handle); }
+  }
+
+  /** Remove all spawned boxes. */
+  removeAllBoxes() {
+    if (!this._spawnedBoxes) return;
+    for (const rb of this._spawnedBoxes.values()) { try { this.world.removeRigidBody(rb); } catch { /* ignore */ } }
+    this._spawnedBoxes.clear();
+  }
+
   poses() {
     const out = new Map();
     for (const [id, rb] of this.bodies) {
@@ -282,5 +323,5 @@ export class PhysicsSim {
     return out;
   }
 
-  dispose() { try { this._events?.free?.(); this.world.free?.(); } catch { /* ignore */ } }
+  dispose() { this.removeAllBoxes(); try { this._events?.free?.(); this.world.free?.(); } catch { /* ignore */ } }
 }

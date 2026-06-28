@@ -162,6 +162,17 @@ export class ModelEditor {
     this._mateMarkers = new THREE.Group();
     this._mateMarkers.name = 'mate-markers';
     this.bodyRenderer.scene.add(this._mateMarkers);
+
+    // Falling-box state
+    this._fallingBoxes = false;
+    this._boxGroup = new THREE.Group();
+    this._boxGroup.name = 'falling-boxes';
+    scene.add(this._boxGroup);
+    this._boxMeshes = new Map<number, THREE.Mesh>(); // rapier handle → THREE mesh
+    this._boxHalves = new Map<number, [number,number,number]>(); // handle → half-extents
+    this._boxSpawnTimer = 0;
+    this._boxBounds = null;
+
     this._applySnap(useEditorStore.getState().snap);
     this._unsubEditor = useEditorStore.subscribe((s) => {
       this._ikDrag = s.ikDrag;
@@ -170,6 +181,11 @@ export class ModelEditor {
       this._handleSim(s.simRunning);
       // Live gravity updates while the sim is running.
       if (this._sim) this._sim.setGravity(s.gravityEnabled ? s.gravity : 0);
+      if (s.fallingBoxes !== this._fallingBoxes) {
+        this._fallingBoxes = s.fallingBoxes;
+        if (!s.fallingBoxes) this._stopBoxWorld();
+        else this._startBoxWorld();
+      }
       if (s.mateMode !== this._mateMode) {
         this._mateMode = s.mateMode;
         this._clearMate(); // reset picks/markers when entering or leaving mate mode
@@ -223,6 +239,8 @@ export class ModelEditor {
     this._updateCOM(doc);
     this._reattach(); // mesh may have been (re)created
     if (this.editMode?.active) this.editMode.onModelSynced();
+    // Keep box-world collision geometry in sync whenever the arm moves
+    if (this._boxWorld) this._boxWorld.updateRobotPose(this._fk);
   }
 
   _updateCOM(doc: any) {
@@ -328,10 +346,117 @@ export class ModelEditor {
   _stopSim() {
     this._startingSim = false;
     this._lastSimTime = 0;
+    useEditorStore.getState().setFallingBoxes(false);
     physicsBridge.sim = null;
     if (this._sim) { this._sim.dispose(); this._sim = null; }
     this._syncModel(this._doc); // restore FK pose
     this._onSelection(useSelectionStore.getState());
+  }
+
+  // ── Box World (separate from the main physics sim) ─────────────────────────
+  _startBoxWorld() {
+    this._stopBoxWorld(); // clean up any previous
+    this._boxBounds = null;
+    this._boxSpawnTimer = 0;
+    import('@/viewport/BoxWorld').then(({ BoxWorld }) =>
+      BoxWorld.create(this._doc, this._fk ?? computeFK(this._doc)),
+    ).then((bw: any) => {
+      if (!this._fallingBoxes) { bw.dispose(); return; }
+      this._boxWorld = bw;
+    }).catch((e: any) => console.warn('BoxWorld failed:', e));
+  }
+
+  _stopBoxWorld() {
+    if (this._boxWorld) { this._boxWorld.dispose(); this._boxWorld = null; }
+    // Clear THREE.js visuals
+    for (const mesh of this._boxMeshes.values()) {
+      this._boxGroup.remove(mesh);
+      mesh.geometry?.dispose();
+      (mesh.material as any)?.dispose?.();
+    }
+    this._boxMeshes.clear();
+    this._boxAges?.clear?.();
+    this._boxSpawnTimer = 0;
+  }
+
+  _computeBoxBounds() {
+    if (!this._doc) return null;
+    const fk = this._fk ?? computeFK(this._doc);
+    const pts: THREE.Vector3[] = [];
+    for (const w of fk.values()) if (w?.position) pts.push(new THREE.Vector3(...w.position));
+    if (!pts.length) return null;
+    const box3 = new THREE.Box3().setFromPoints(pts);
+    const size = box3.getSize(new THREE.Vector3());
+    const center = box3.getCenter(new THREE.Vector3());
+    const diag = Math.max(size.x, size.y, size.z, 0.1);
+    // Box size: 3%–10% of model diagonal (not too huge, not invisible)
+    // Spawn just above the model (0.3–0.8× diag overhead) over its footprint
+    return {
+      cx: center.x, cz: center.z,
+      spawnH: box3.max.y + diag * 0.6,
+      minR: diag * 0.03,
+      maxR: diag * 0.10,
+      footX: Math.max(size.x * 0.5, 0.05),
+      footZ: Math.max(size.z * 0.5, 0.05),
+      groundY: box3.min.y - 1.0,
+    };
+  }
+
+  _tickFallingBoxes(dt: number) {
+    if (!this._fallingBoxes || !this._boxWorld) return;
+
+    if (!this._boxBounds) this._boxBounds = this._computeBoxBounds();
+    const b = this._boxBounds as any;
+    if (!b) return;
+
+    this._boxWorld.stepFor(dt);
+
+    // Spawn at ~1.2/s, cap at 20 live boxes
+    this._boxSpawnTimer += dt;
+    if (this._boxSpawnTimer >= 0.85 && this._boxMeshes.size < 20) {
+      this._boxSpawnTimer = 0;
+      const r  = b.minR + Math.random() * (b.maxR - b.minR);
+      const hx = r * (0.6 + Math.random() * 0.8);
+      const hy = r * (0.6 + Math.random() * 0.8);
+      const hz = r * (0.6 + Math.random() * 0.8);
+      const px = b.cx + (Math.random() - 0.5) * 2 * b.footX;
+      const py = b.spawnH + Math.random() * b.minR * 4; // slight height variation
+      const pz = b.cz + (Math.random() - 0.5) * 2 * b.footZ;
+      const density = 300 + Math.random() * 1400; // 300–1700 kg/m³
+
+      const handle = this._boxWorld.spawnBox([px, py, pz], [hx, hy, hz], density);
+      const geo = new THREE.BoxGeometry(hx * 2, hy * 2, hz * 2);
+      const hue = Math.random() * 360;
+      const mat3 = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(`hsl(${hue},75%,58%)`),
+        metalness: 0.15, roughness: 0.65, opacity: 0.9, transparent: true,
+      });
+      const mesh = new THREE.Mesh(geo, mat3);
+      this._boxGroup.add(mesh);
+      this._boxMeshes.set(handle, mesh);
+      this._boxAges ??= new Map<number, number>();
+      this._boxAges.set(handle, 0);
+    }
+
+    const poses = this._boxWorld.boxPoses();
+    this._boxAges ??= new Map<number, number>();
+    const toRemove: number[] = [];
+
+    for (const [handle, mesh] of this._boxMeshes) {
+      const age = (this._boxAges.get(handle) ?? 0) + dt;
+      this._boxAges.set(handle, age);
+      const p = poses.get(handle);
+      if (!p || p.pos[1] < b.groundY - 2 || age > 12) { toRemove.push(handle); continue; }
+      mesh.position.set(...p.pos);
+      mesh.quaternion.set(...p.quat);
+    }
+    for (const h of toRemove) {
+      const mesh = this._boxMeshes.get(h);
+      if (mesh) { this._boxGroup.remove(mesh); mesh.geometry?.dispose(); (mesh.material as any)?.dispose?.(); }
+      this._boxMeshes.delete(h);
+      this._boxAges.delete(h);
+      this._boxWorld.removeBox(h);
+    }
   }
 
   /** Called every render frame by SimCanvas: physics sim, else animation preview. */
@@ -339,6 +464,13 @@ export class ModelEditor {
     // Always call: when active it syncs the overlay; when inactive it tears down
     // any lingering overlay (defensive against a missed enter/leave transition).
     this.editMode?.syncTransform();
+
+    // Per-frame dt for the box world (runs independently of the main physics sim)
+    const nowF = performance.now();
+    const frameDt = this._lastFrameTime ? Math.min(0.1, (nowF - this._lastFrameTime) / 1000) : 1 / 60;
+    this._lastFrameTime = nowF;
+    this._tickFallingBoxes(frameDt);
+
     if (this._sim) {
       // Advance by real elapsed time at a FIXED internal timestep, so the simulation
       // runs at the same speed and produces the same trajectory on any frame rate.

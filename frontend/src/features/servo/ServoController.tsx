@@ -60,6 +60,7 @@ function servoDefsFromDoc(doc?: Document | null) {
       name: (j.name ?? `Joint ${i + 1}`).toUpperCase(),
       type: kind,
       jointType: j.type,
+      motorType: (j.meta?.motorType as string) || '',
       color: COLOR_CYCLE[i % COLOR_CYCLE.length],
       lo, hi,
     };
@@ -813,6 +814,15 @@ export default function ServoController() {
   const doc  = useModelStore(s => s.doc);
   const defs = useMemo(() => servoDefsFromDoc(doc), [doc]);
   const typeNumMap = useMemo(() => servoTypeNumMap(defs), [defs]);
+  const motorSummary = useMemo(() => {
+    if (defs.length === 0) return 'Smart Servo';
+    const counts: Record<string, number> = {};
+    for (const d of defs) {
+      const mt = d.motorType || 'Servo';
+      counts[mt] = (counts[mt] || 0) + 1;
+    }
+    return Object.entries(counts).map(([t, n]) => `${n} × ${t}`).join(' · ');
+  }, [defs]);
   // Keep a ref so the (stable) poll callback can read the latest defs without
   // being re-created on every joint edit.
   const defsRef = useRef(defs);
@@ -1122,7 +1132,7 @@ export default function ServoController() {
           <div className="sc-brand">
             <p className="sc-brand-title">TETROBOT Servo Controller</p>
             <p className="sc-brand-sub">
-              {defs.length} × ST3215 Smart Servo · mirrors simulator joints · Real-time telemetry
+              {motorSummary} · mirrors simulator joints · Real-time telemetry
             </p>
           </div>
           <div className="sc-topbar-space" />

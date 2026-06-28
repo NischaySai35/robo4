@@ -103,7 +103,12 @@ export default function SimCanvas() {
     bridge.getComputeDevice = () => sceneMgr.getComputeDevice();
     bridge.setMaxSamples = (n: number) => sceneMgr.setMaxSamples(n);
     bridge.getMaxSamples = () => sceneMgr.getMaxSamples();
-    bridge.setWireframe = (on) => { if (modelEditor?.bodyRenderer) modelEditor.bodyRenderer.setWireframe(on); };
+    bridge.setWireframe = (on) => {
+      if (modelEditor?.bodyRenderer) {
+        modelEditor.bodyRenderer.setWireframe(on);
+        if (modelEditor._doc) modelEditor._syncModel(modelEditor._doc);
+      }
+    };
     bridge.getWireframe = () => modelEditor?.bodyRenderer?._wireframe ?? false;
     bridge.setRenderEngine = (engine: string) => {
       _currentEngine = engine;

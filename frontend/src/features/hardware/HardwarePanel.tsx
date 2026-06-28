@@ -59,7 +59,12 @@ function Peripherals() {
   );
 }
 
-// Joint → servo map: every movable joint gets a servo ID (its physical ST3215).
+const MOTOR_TYPES = [
+  'ST3215', 'ST3025', 'ST3235', 'ST3215-S',
+  'PWM Servo', 'Stepper', 'DC Motor', 'Linear Actuator',
+];
+
+// Joint → servo map: every movable joint gets a motor type + servo ID.
 // Editing here writes to the joint's model meta, so it's saved with the project and
 // used by both live streaming and the exported IDL.
 function ServoMap() {
@@ -71,6 +76,9 @@ function ServoMap() {
   }
   const setId = (j: any, id: any) => dispatch(commands.updateJoint(j.id, {
     meta: { ...(j.meta ?? {}), servoId: Number.isFinite(id) && id > 0 ? id : null },
+  }));
+  const setMotorType = (j: any, type: string) => dispatch(commands.updateJoint(j.id, {
+    meta: { ...(j.meta ?? {}), motorType: type || null },
   }));
   const autoAssign = () => joints.forEach((j, i) => setId(j, i + 1)); // 1..N
 
@@ -85,6 +93,15 @@ function ServoMap() {
           <div key={j.id} className="hw-map-row">
             <span className="hw-map-name" title={j.name}>{j.name}</span>
             <span className="hw-map-deg">{jointServoDegrees(j)}°</span>
+            <select
+              className="hw-map-type"
+              value={String(j.meta?.motorType ?? '')}
+              onChange={(e) => setMotorType(j, e.target.value)}
+              title="Motor type"
+            >
+              <option value="">— motor —</option>
+              {MOTOR_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select>
             <input
               className="hw-map-id"
               type="number"
@@ -92,7 +109,7 @@ function ServoMap() {
               placeholder="—"
               value={String(j.meta?.servoId ?? '')}
               onChange={(e) => setId(j, parseInt(e.target.value, 10))}
-              title="ST3215 servo ID"
+              title="Servo ID"
             />
           </div>
         ))}
@@ -112,7 +129,6 @@ export default function HardwarePanel() {
   const telemetry = useHardwareStore((s) => s.telemetry);
   const log = useHardwareStore((s) => s.log);
   const signal = useHardwareStore((s) => s.signal)();
-  const online = typeof navigator !== 'undefined' ? navigator.onLine : true;
   const hw = useHardwareStore.getState();
 
   const connected = status === 'connected';
@@ -132,11 +148,6 @@ export default function HardwarePanel() {
         <span className={`hw-status hw-${status}`}>
           ● {status}{connected && signal != null && <SignalBars pct={signal} />}
         </span>
-      </div>
-
-      {/* Laptop link + board */}
-      <div className="hw-host">
-        <span className={online ? 'hw-online' : 'hw-offline'}>● This device {online ? 'online' : 'offline'}</span>
       </div>
 
       <div className="hw-row">

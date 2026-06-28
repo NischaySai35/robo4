@@ -246,6 +246,11 @@ function ConnectorsSection({ body, up }: { body: any; up: (patch: any) => void }
 function BodyInspector({ body, doc, dispatch, select }: any) {
   const id = body.id;
   const [uniformScale, setUniformScale] = useState(true);
+  const [mirrorOpen, setMirrorOpen] = useState(false);
+  const [arrayOpen, setArrayOpen] = useState(false);
+  const [arrayCount, setArrayCount] = useState(2);
+  const [arrayAxis, setArrayAxis] = useState(0);
+  const [arrayGap, setArrayGap] = useState(1);
   const up = (patch: any) => dispatch(commands.updateBody(id, patch));
   const upT = (patch: any) => up({ transform: { ...body.transform, ...patch } });
 
@@ -346,11 +351,39 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
       <div className="in-group">OPERATIONS</div>
       <div className="in-ops">
         <button onClick={() => addOne(duplicate(body))}>Duplicate</button>
-        <button onClick={() => addOne(mirror(body, 0))}>Mirror X</button>
-        <button onClick={() => addOne(mirror(body, 1))}>Mirror Y</button>
-        <button onClick={() => addOne(mirror(body, 2))}>Mirror Z</button>
-        <button onClick={() => dispatch(commands.addBodies(array(body, 3, [0.8, 0, 0])))}>Array ×3</button>
+        <button
+          className={mirrorOpen ? 'in-ops-active' : ''}
+          onClick={() => { setMirrorOpen((o) => !o); setArrayOpen(false); }}
+        >Mirror {mirrorOpen ? '▴' : '▾'}</button>
+        <button
+          className={arrayOpen ? 'in-ops-active' : ''}
+          onClick={() => { setArrayOpen((o) => !o); setMirrorOpen(false); }}
+        >Array {arrayOpen ? '▴' : '▾'}</button>
       </div>
+      {arrayOpen && (
+        <div className="in-ops-array">
+          <div className="in-ops-array-row">
+            <span>Count</span>
+            <input type="number" min={2} value={arrayCount}
+              onChange={(e) => setArrayCount(Math.max(2, parseInt(e.target.value) || 2))} />
+            <span>Axis</span>
+            <select value={arrayAxis} onChange={(e) => setArrayAxis(parseInt(e.target.value))}>
+              <option value={0}>X</option>
+              <option value={1}>Y</option>
+              <option value={2}>Z</option>
+            </select>
+            <span>Gap</span>
+            <input type="number" step={0.1} value={arrayGap}
+              onChange={(e) => setArrayGap(parseFloat(e.target.value) || 1)} />
+          </div>
+          <button className="in-ops-apply" onClick={() => {
+            const off: [number, number, number] = [0, 0, 0];
+            off[arrayAxis] = arrayGap;
+            dispatch(commands.addBodies(array(body, arrayCount, off)));
+            setArrayOpen(false);
+          }}>Apply</button>
+        </div>
+      )}
 
       <IkSection body={body} doc={doc} dispatch={dispatch} />
     </>

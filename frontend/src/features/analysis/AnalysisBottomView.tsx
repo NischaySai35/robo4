@@ -1,54 +1,75 @@
 /**
- * AnalysisBottomView — the bottom pane of the Analysis page's split. It renders the
- * SAME live scene as the main (top) viewport, from a camera that follows the main one
- * each frame (so the two panes stay perfectly in sync as you orbit/zoom the top). The
- * top pane shows the stress/load overlay; this bottom pane renders the geometry CLEAN
- * (a neutral flat material) so you can compare "where the load is" against the actual
- * shape.
+ * AnalysisBottomView — the bottom pane of the Analysis page's split.
  *
- * It uses its own lightweight WebGLRenderer on its own canvas (a second WebGL context)
- * and sets `scene.overrideMaterial` only for the duration of its synchronous render —
- * so it never affects the editor's renderer (which runs in a separate rAF callback).
+ * SYNC ON (default): camera mirrors the top viewport exactly — same orbit,
+ * zoom, angle. The two panes track each other as you interact with the top.
+ *
+ * SYNC OFF: an independent OrbitControls instance lets you pan, zoom, and
+ * rotate the bottom view freely. The model stays live (model changes in the
+ * top still appear here immediately) but the camera is yours.
+ *
+ * Renders the SAME THREE.js scene using its own lightweight WebGLRenderer
+ * with per-body material swaps so the real colours show instead of the
+ * stress heatmap, without ever affecting the editor's own renderer.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { bridge } from '@/viewport/cameraBridge';
 import { useModelStore } from '@/state/modelStore';
 
 const DEFAULT_COL = '#b3b8c2';
 
 export default function AnalysisBottomView() {
-  const hostRef = useRef<HTMLDivElement | null>(null);
+  const hostRef   = useRef<HTMLDivElement | null>(null);
+  const [synced, setSynced] = useState(true);
+  const syncRef   = useRef(true);
+  const controlsRef = useRef<OrbitControls | null>(null);
+
+  // Keep ref in sync with React state (readable inside the RAF loop)
+  useEffect(() => {
+    syncRef.current = synced;
+    if (controlsRef.current) controlsRef.current.enabled = !synced;
+  }, [synced]);
 
   useEffect(() => {
     const host = hostRef.current;
     if (!host) return undefined;
 
     const canvas = document.createElement('canvas');
-    canvas.style.width = '100%';
-    canvas.style.height = '100%';
-    canvas.style.display = 'block';
+    canvas.style.cssText = 'width:100%;height:100%;display:block;';
     host.appendChild(canvas);
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
     const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
 
-    // Cache one solid (no-vertex-colour) material per colour so the bottom view shows
-    // the robot's REAL material colours instead of the top's stress heatmap. Swapping
-    // a mesh's `material` reference (vs toggling vertexColors) avoids shader recompiles.
+    // Independent orbit controls (only active when sync is OFF)
+    const controls = new OrbitControls(cam, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.enabled = false; // sync ON by default
+    controlsRef.current = controls;
+
+    // Material cache: real-colour solid materials (no vertex colour = no heatmap)
     const matCache = new Map<string, THREE.MeshStandardMaterial>();
     const solidFor = (hex: string) => {
       let m = matCache.get(hex);
-      if (!m) { m = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), metalness: 0.25, roughness: 0.6 }); matCache.set(hex, m); }
+      if (!m) {
+        m = new THREE.MeshStandardMaterial({ color: new THREE.Color(hex), metalness: 0.25, roughness: 0.6 });
+        matCache.set(hex, m);
+      }
       return m;
     };
     const colorHexOf = (bodyId: string): string => {
       const doc = useModelStore.getState().doc as any;
-      const b = doc.bodies?.[bodyId];
+      const b   = doc.bodies?.[bodyId];
       const mid = b?.visual?.materialId;
-      const c = mid ? doc.materials?.[mid]?.color : null;
-      return c ? `#${[0, 1, 2].map((i) => Math.round((c[i] ?? 0.7) * 255).toString(16).padStart(2, '0')).join('')}` : DEFAULT_COL;
+      const c   = mid ? doc.materials?.[mid]?.color : null;
+      return c
+        ? `#${[0, 1, 2].map((i) => Math.round((c[i] ?? 0.7) * 255).toString(16).padStart(2, '0')).join('')}`
+        : DEFAULT_COL;
     };
 
     const resize = () => {
@@ -63,44 +84,63 @@ export default function AnalysisBottomView() {
 
     let raf = 0;
     const tick = () => {
+      raf = requestAnimationFrame(tick);
       const scene = bridge.scene as THREE.Scene | undefined;
-      const main = bridge.camera as THREE.PerspectiveCamera | undefined;
-      if (scene && main) {
-        // follow the main camera (keep our own aspect)
+      const main  = bridge.camera as THREE.PerspectiveCamera | undefined;
+      if (!scene || !main) return;
+
+      if (syncRef.current) {
+        // Mirror the top camera exactly
         cam.position.copy(main.position);
         cam.quaternion.copy(main.quaternion);
         cam.fov = main.fov;
+        cam.near = main.near;
+        cam.far  = main.far;
         cam.updateProjectionMatrix();
-
-        // Swap each body's meshes to a solid material in its real colour, render, then
-        // restore — all synchronous, so the editor's renderer never sees the swap.
-        const swaps: [THREE.Mesh, THREE.Material | THREE.Material[]][] = [];
-        scene.traverse((o: any) => {
-          if (o.userData?.isModelBody && o.userData?.bodyId) {
-            const solid = solidFor(colorHexOf(o.userData.bodyId));
-            o.traverse((m: any) => { if (m.isMesh) { swaps.push([m, m.material]); m.material = solid; } });
-          }
-        });
-        renderer.render(scene, cam);
-        for (const [m, orig] of swaps) m.material = orig;
+        // Reset orbit target so it's ready when user switches to free mode
+        controls.target.copy((main as any).target ?? new THREE.Vector3());
+      } else {
+        controls.update();
       }
-      raf = requestAnimationFrame(tick);
+
+      // Swap each body mesh to its solid real-colour material, render, then restore —
+      // all synchronous so the editor's renderer never sees the swap.
+      const swaps: [THREE.Mesh, THREE.Material | THREE.Material[]][] = [];
+      scene.traverse((o: any) => {
+        if (o.userData?.isModelBody && o.userData?.bodyId) {
+          const solid = solidFor(colorHexOf(o.userData.bodyId));
+          o.traverse((m: any) => {
+            if (m.isMesh) { swaps.push([m, m.material]); m.material = solid; }
+          });
+        }
+      });
+      renderer.render(scene, cam);
+      for (const [m, orig] of swaps) m.material = orig;
     };
     raf = requestAnimationFrame(tick);
 
     return () => {
       cancelAnimationFrame(raf);
       ro.disconnect();
+      controls.dispose();
+      controlsRef.current = null;
       for (const m of matCache.values()) m.dispose();
       renderer.dispose();
-      host.removeChild(canvas);
+      if (host.contains(canvas)) host.removeChild(canvas);
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="an-bottom">
       <span className="an-bottom-label">Normal (real colours)</span>
       <div className="an-bottom-host" ref={hostRef} />
+      <button
+        className={`an-sync-btn${synced ? ' an-sync-btn--on' : ''}`}
+        onClick={() => setSynced((s) => !s)}
+        title={synced ? 'Camera synced with top view — click to unlock' : 'Camera free — click to sync with top view'}
+      >
+        {synced ? '⧉ Sync' : '⧉ Free'}
+      </button>
     </div>
   );
 }

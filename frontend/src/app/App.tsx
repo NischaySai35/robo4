@@ -14,7 +14,6 @@ import IntroOverlay from '@/features/intro/IntroOverlay';
 import StartupProjects from '@/features/startup/StartupProjects';
 import MenuBar from '@/features/menu/MenuBar';
 import RightDock from '@/features/dock/RightDock';
-import HumanoidActionBar from '@/features/humanoid/HumanoidActionBar';
 import LoadingBar from '@/features/common/LoadingBar';
 import CommandPalette from '@/features/command-palette/CommandPalette';
 import KeyboardHelp from '@/features/help/KeyboardHelp';
@@ -158,15 +157,21 @@ function BatteryChip() {
   );
 }
 
-// Dynamic actuator count — one ST3215 per movable joint (fixed joints excluded),
-// mirroring the dynamic servo grid on the Servo Control page.
+// Dynamic actuator count — groups movable joints by their configured motor type.
 function ServoCountChip() {
-  const count = useModelStore(
-    (s) => Object.values(s.doc.joints).filter((j) => j.type !== 'fixed').length,
+  const joints = useModelStore(
+    (s) => Object.values(s.doc.joints).filter((j) => j.type !== 'fixed'),
   );
+  if (joints.length === 0) return null;
+  const typeCounts: Record<string, number> = {};
+  for (const j of joints) {
+    const mt = (j.meta?.motorType as string) || 'Servo';
+    typeCounts[mt] = (typeCounts[mt] || 0) + 1;
+  }
+  const label = Object.entries(typeCounts).map(([t, n]) => `${n} × ${t}`).join(' · ');
   return (
-    <div className="app-status-chip app-status-chip-mono" title="One ST3215 servo per movable joint">
-      {count} × ST3215
+    <div className="app-status-chip app-status-chip-mono" title="Actuator count by motor type">
+      {label}
     </div>
   );
 }
@@ -298,8 +303,6 @@ function AppHeader({ page, setPage }: any) {
           </span>
         )}
       </nav>
-
-      <HumanoidActionBar />
 
       <div className="app-header-space" />
 

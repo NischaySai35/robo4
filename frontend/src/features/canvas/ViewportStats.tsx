@@ -78,10 +78,7 @@ export default function ViewportStats() {
     <div className="vp-stats">
       <div className="vp-stats-engine" style={{ color: ENGINE_COLOUR[stats.engine] ?? '#fff' }}>
         {stats.engine.toUpperCase()}
-        {isCycles && stats.ptSamples > 0 && stats.ptSamples < 96 && (
-          <span className="vp-stats-noisy">NOISY</span>
-        )}
-      </div>
+        </div>
 
       <div className="vp-stats-row">
         <span className="vp-stats-label">FPS</span>

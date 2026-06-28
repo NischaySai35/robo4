@@ -94,7 +94,11 @@ export default function CameraPanel() {
   const [busy,       setBusy]       = useState(false);
 
   useEffect(() => {
-    const read = () => { if (bridge.getCameraState) setS(bridge.getCameraState()); };
+    const read = () => {
+      if (bridge.getCameraState) setS(bridge.getCameraState());
+      const eng = bridge.getRenderEngine?.() as CamEngine | undefined;
+      if (eng) setEngineState((e) => (e !== eng ? eng : e));
+    };
     read();
     const id = window.setInterval(read, 250);
     return () => window.clearInterval(id);

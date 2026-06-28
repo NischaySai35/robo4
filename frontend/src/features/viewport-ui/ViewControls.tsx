@@ -34,6 +34,9 @@ export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: a
   const toggleWireframe = useCallback(() => {
     const next = !wireframe;
     setWireframe(next);
+    if (next && bridge.getRenderEngine?.() !== 'eevee') {
+      bridge.setRenderEngine?.('eevee');
+    }
     bridge.setWireframe?.(next);
   }, [wireframe]);
 

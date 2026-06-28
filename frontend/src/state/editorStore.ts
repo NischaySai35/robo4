@@ -38,6 +38,9 @@ interface EditorState {
   toggleCollision: () => void;
   ikDrag: boolean;
   toggleIkDrag: () => void;
+  fallingBoxes: boolean;
+  toggleFallingBoxes: () => void;
+  setFallingBoxes: (v: boolean) => void;
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -87,6 +90,10 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   // root (instead of selecting/moving the single body).
   ikDrag: false,
   toggleIkDrag: () => set((s) => ({ ikDrag: !s.ikDrag })),
+
+  fallingBoxes: false,
+  toggleFallingBoxes: () => set((s) => ({ fallingBoxes: !s.fallingBoxes })),
+  setFallingBoxes: (fallingBoxes) => set({ fallingBoxes }),
 }));
 
 // Unit conversion (model base = metres).

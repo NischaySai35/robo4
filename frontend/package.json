@@ -1,6 +1,6 @@
 {
   "name": "robo4-simulator",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "private": true,
   "description": "TETROBOT - GUI-first modular robotics modeling and simulation platform",
   "author": "Nischay Sai <nischaysai35@gmail.com>",

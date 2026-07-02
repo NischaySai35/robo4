@@ -6,7 +6,7 @@ import { create } from 'zustand';
  * it twice. `name` + `libraryId` are persisted to localStorage (the file handle can't
  * be) and restored on launch; the autosaved scene is paired back with its identity.
  */
-export type DocStatus = 'idle' | 'saving' | 'saved';
+export type DocStatus = 'idle' | 'saving' | 'saved' | 'loading';
 
 const REF_KEY = 'tetrobot:current:v1';
 function loadRef(): { name: string | null; libraryId: string | null } {
@@ -37,7 +37,14 @@ export const useDocStore = create<DocState>((set, get) => ({
   handle: null,
   status: 'idle',
   libraryId: ref.libraryId,
-  setDoc: (name, handle) => { saveRef(name, get().libraryId); set({ name, handle, status: handle ? 'saved' : 'idle' }); },
+  setDoc: (name, handle) => {
+    // Clear libraryId when switching to a fresh/new document (name === null).
+    // A null name means "not saved yet"; a non-null name can keep its existing
+    // library entry (e.g. re-opening from library preserves the link for Ctrl+S).
+    const libraryId = name === null ? null : get().libraryId;
+    saveRef(name, libraryId);
+    set({ name, handle, libraryId, status: handle ? 'saved' : 'idle' });
+  },
   setStatus: (status) => set({ status }),
   setLibraryId: (libraryId) => { saveRef(get().name, libraryId); set({ libraryId }); },
 }));

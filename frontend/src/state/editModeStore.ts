@@ -10,6 +10,7 @@
 import { create } from 'zustand';
 
 export type SelectMode = 'vertex' | 'edge' | 'face';
+export type EditStyle = 'fusion' | 'blender';
 export interface EditStats { count: number; area: number; length: number; point: number[] | null }
 // selection meaning depends on selectMode: vertex→number[], edge→[i,j][], face→number[].
 // Kept loose (the viewport narrows per mode); a precise union would force casts in
@@ -21,6 +22,7 @@ interface EditModeState {
   active: boolean;
   bodyId: string | null;
   selectMode: SelectMode;
+  editStyle: EditStyle;
   wireframe: boolean;
   selection: EditSelection;
   stats: EditStats;
@@ -29,6 +31,7 @@ interface EditModeState {
   enter: (bodyId: string) => void;
   exit: () => void;
   setSelectMode: (selectMode: SelectMode) => void;
+  setEditStyle: (style: EditStyle) => void;
   toggleWireframe: () => void;
   setSelection: (selection: EditSelection) => void;
   setStats: (stats: EditStats) => void;
@@ -37,7 +40,8 @@ interface EditModeState {
 export const useEditModeStore = create<EditModeState>((set) => ({
   active: false,
   bodyId: null,
-  selectMode: 'vertex',   // 'vertex' | 'edge' | 'face'
+  selectMode: 'vertex',
+  editStyle: 'fusion',
   wireframe: false,
   // Current sub-selection (meaning depends on selectMode):
   //   vertex → [vertexIndex…]   edge → [[i,j]…]   face → [triIndex…]
@@ -51,6 +55,7 @@ export const useEditModeStore = create<EditModeState>((set) => ({
   enter: (bodyId) => set({ active: true, bodyId, selection: [], stats: { count: 0, area: 0, length: 0, point: null } }),
   exit: () => set({ active: false, bodyId: null, selection: [], wireframe: false }),
   setSelectMode: (selectMode) => set({ selectMode, selection: [], stats: { count: 0, area: 0, length: 0, point: null } }),
+  setEditStyle: (editStyle) => set({ editStyle }),
   toggleWireframe: () => set((s) => ({ wireframe: !s.wireframe })),
   setSelection: (selection) => set({ selection }),
   setStats: (stats) => set({ stats }),

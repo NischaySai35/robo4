@@ -34,6 +34,11 @@ export interface DiagnosticsMsg {
   status: { name: string; level: 'OK' | 'WARN' | 'ERROR'; message: string }[];
 }
 
+const _invM = new THREE.Matrix4();
+const _tfP  = new THREE.Vector3();
+const _tfQ  = new THREE.Quaternion();
+const _tfS  = new THREE.Vector3();
+
 function publishModel(doc: Document): void {
   // Skip while playback owns the clock — the bag is the source of truth then.
   if (clock.source === 'sim' && player.bag) return;
@@ -50,7 +55,7 @@ function publishModel(doc: Document): void {
   const fk = computeFK(doc);
   const childJoint = buildChildJointMap(doc);
   const tfs: Transform[] = [];
-  const inv = new THREE.Matrix4();
+  const inv = _invM;
   for (const [id, w] of fk.entries() as Iterable<[string, any]>) {
     const body = doc.bodies[id];
     if (!body) continue;
@@ -60,10 +65,9 @@ function publishModel(doc: Document): void {
       const parent = doc.bodies[j.parentBodyId];
       const pw = fk.get(j.parentBodyId);
       const rel = inv.copy(pw.matrix).invert().multiply(w.matrix);
-      const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
-      rel.decompose(p, q, s);
+      rel.decompose(_tfP, _tfQ, _tfS);
       tfs.push({ parent: parent.name ?? j.parentBodyId, child: name, t: js.t,
-        position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w] });
+        position: [_tfP.x, _tfP.y, _tfP.z], quaternion: [_tfQ.x, _tfQ.y, _tfQ.z, _tfQ.w] });
     } else {
       tfs.push({ parent: 'world', child: name, t: js.t, position: w.position, quaternion: w.quaternion });
     }
@@ -123,8 +127,17 @@ export function initRuntimeBridge(): void {
   params.declare({ name: '/runtime/clock_hz', type: 'number', value: 10, min: 1, max: 60, step: 1,
     description: 'Clock + diagnostics heartbeat rate' });
 
-  // Model → joint_states + tf + loads, on every model change (+ once now).
-  useModelStore.getState().bus.subscribe(() => publishModel(useModelStore.getState().doc));
+  // Model → joint_states + tf + loads. Throttled to 20 Hz so that during
+  // animation playback (which calls applyTransient at 60fps) we don't create
+  // new Three.js objects + Maps on every render frame.
+  let _lastPublishT = 0;
+  const PUBLISH_MIN_MS = 50; // 20 Hz
+  useModelStore.getState().bus.subscribe(() => {
+    const now = Date.now();
+    if (now - _lastPublishT < PUBLISH_MIN_MS) return;
+    _lastPublishT = now;
+    publishModel(useModelStore.getState().doc);
+  });
   publishModel(useModelStore.getState().doc);
 
   // Hardware telemetry → topic.

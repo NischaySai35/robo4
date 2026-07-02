@@ -54,6 +54,14 @@
 .hw-telemetry span { color: var(--text-dim); }
 .hw-telemetry strong { font-family: var(--font-mono); color: var(--text); }
 
+.hw-feedback { display: flex; flex-direction: column; gap: 4px; }
+.hw-feedback-list { display: flex; flex-direction: column; gap: 3px; padding: 6px; background: var(--bg); border-radius: 6px; max-height: 160px; overflow-y: auto; }
+.hw-feedback-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; gap: 8px; }
+.hw-feedback-name { color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hw-feedback-vals { display: flex; align-items: baseline; gap: 6px; flex-shrink: 0; }
+.hw-feedback-vals strong { font-family: var(--font-mono); color: var(--text); }
+.hw-feedback-range { font-family: var(--font-mono); font-size: 9.5px; color: var(--text-dim); }
+
 .hw-log { display: flex; flex-direction: column; gap: 1px; font-family: var(--font-mono); font-size: 9.5px; max-height: 90px; overflow-y: auto; }
 .hw-log-line { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hw-log-tx { color: var(--accent); }

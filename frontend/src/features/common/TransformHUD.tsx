@@ -8,7 +8,7 @@ const MODE_LABEL: Record<string, string> = {
 };
 
 function formatValue(live: number, mode: string | null): string {
-  if (mode === 'translate') return `${live.toFixed(3)} m`;
+  if (mode === 'translate') return `${(live * 1000).toFixed(1)} mm`;
   if (mode === 'rotate') return `${live.toFixed(1)}°`;
   if (mode === 'scale') return `${live.toFixed(2)}×`;
   return live.toFixed(3);

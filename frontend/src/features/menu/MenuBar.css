@@ -114,8 +114,10 @@
 }
 .menubar-doc-name { color: var(--text); font-weight: 700; letter-spacing: 0.2px; }
 .menubar-doc-status { font-size: 10.5px; font-weight: 600; }
-.menubar-doc-saved { color: var(--success, #22c55e); }
-.menubar-doc-dim   { color: var(--text-dim); opacity: 0.8; }
+.menubar-doc-saved   { color: var(--success, #22c55e); }
+.menubar-doc-dim     { color: var(--text-dim); opacity: 0.8; }
+.menubar-doc-loading { color: var(--accent, #60a5fa); animation: menubar-pulse 0.9s ease-in-out infinite; }
+@keyframes menubar-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 .menubar-tools { display: flex; align-items: center; gap: 3px; }
 .menubar-icon {

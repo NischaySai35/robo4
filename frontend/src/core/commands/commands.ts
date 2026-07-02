@@ -259,6 +259,36 @@ export function removeComponent(componentId: string) {
   );
 }
 
+/** Delete a component AND everything inside it (its bodies + joints, plus any
+ *  joint that references one of those bodies even if the joint itself belongs to
+ *  a different/no component — e.g. a connector-generated cross-module joint).
+ *  Contrast with removeComponent(), which unassigns members instead of deleting them. */
+export function removeComponentAndContents(componentId: string) {
+  let prevComponent: any = null;
+  let removedBodies: any[] = [];
+  let removedJoints: any[] = [];
+  return command(
+    'Delete component',
+    (doc: any) => {
+      prevComponent = (doc.components ?? {})[componentId];
+      removedBodies = Object.values(doc.bodies).filter((b: any) => b.componentId === componentId);
+      const removedBodyIds = new Set(removedBodies.map((b: any) => b.id));
+      removedJoints = Object.values(doc.joints).filter((j: any) =>
+        j.componentId === componentId || removedBodyIds.has(j.parentBodyId) || removedBodyIds.has(j.childBodyId));
+      let d = doc;
+      for (const j of removedJoints) d = removeFrom(d, 'joints', j.id);
+      for (const b of removedBodies) d = removeFrom(d, 'bodies', b.id);
+      return removeFrom(d, 'components', componentId);
+    },
+    (doc: any) => {
+      let d = prevComponent ? putEntity(doc, prevComponent) : doc;
+      for (const b of removedBodies) d = putEntity(d, b);
+      for (const j of removedJoints) d = putEntity(d, j);
+      return d;
+    },
+  );
+}
+
 export function renameComponent(componentId: string, name: string) {
   let prev: any = null;
   return command(
@@ -314,6 +344,32 @@ export function moveJointToComponent(jointId: string, componentId: string | null
   );
 }
 
+/** Reposition bodies AND add one new joint as a single undo step — used by the
+ *  connector auto-snap tool (align a component onto another + physically join
+ *  them). `patches` = [[bodyId, patch], …], same shape as updateBodies(). */
+export function snapAndJoin(patches: [string, any][], joint: any) {
+  let prevBodies: any[] = [];
+  return command(
+    joint.name ?? 'Snap connectors',
+    (doc: any) => {
+      prevBodies = [];
+      let d = doc;
+      for (const [id, patch] of patches) {
+        const b = getBody(d, id);
+        if (!b) continue;
+        prevBodies.push(b);
+        d = putEntity(d, { ...b, ...patch });
+      }
+      return putEntity(d, joint);
+    },
+    (doc: any) => {
+      let d = removeFrom(doc, 'joints', joint.id);
+      for (const b of prevBodies) d = putEntity(d, b);
+      return d;
+    },
+  );
+}
+
 // ── Assembly Mates ──────────────────────────────────────────────────────────────
 
 export function addAssemblyMate(mate: any) {
@@ -345,6 +401,7 @@ export function addEntities(entities: any, label = `Add ${entities.length} entit
     asset: 'assets',
     frame: 'frames',
     constraint: 'constraints',
+    component: 'components',
   };
   return command(
     label,

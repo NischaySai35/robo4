@@ -15,6 +15,7 @@ import { getAssetObject } from '@/viewport/renderers/AssetCache';
 import { stressColor } from '@/kinematics/analysis';
 
 const _picker = new THREE.Raycaster();
+const _conWorldPos = new THREE.Vector3(); // reused across all connector onBeforeRender calls
 const DEFAULT_COLOR = [0.62, 0.66, 0.72, 1];
 const HILITE_SEL   = new THREE.Color(0x2f7dff); // selection: blue
 const HILITE_HOVER = new THREE.Color(0xffa040); // hover: warm orange (Blender-style)
@@ -35,7 +36,25 @@ function primitiveGeometry(g: any) {
 }
 
 // What changes force a rebuild of a body's visual child.
-const visualSignature = (body: any) => JSON.stringify({ g: body.visual?.geometry ?? {}, a: body.visual?.geometry?.assetId ?? body.assetId ?? null });
+// editMesh.positions can be hundreds of thousands of floats — never include them
+// verbatim in the signature or JSON.stringify turns every frame into a 7 MB op.
+const visualSignature = (body: any) => {
+  const g = body.visual?.geometry ?? {};
+  const em = g.editMesh;
+  return JSON.stringify({
+    type:    g.type,
+    size:    g.size,
+    radius:  g.radius,
+    length:  g.length,
+    tube:    g.tube,
+    scale:   g.scale,
+    assetId: g.assetId ?? body.assetId ?? null,
+    emV:     em?.positions?.length ?? 0,
+    emI:     em?.indices?.length   ?? 0,
+  });
+};
+
+const HILITE_ACTIVE = new THREE.Color(0x00ff88); // active/grounded body: green
 
 const COLL_MAT = new THREE.MeshBasicMaterial({
   color: 0x00aaff, opacity: 0.22, transparent: true, depthWrite: false, side: THREE.DoubleSide,
@@ -54,6 +73,7 @@ export class BodyRenderer {
     this._selectedId = null;   // active (primary) selection — brighter highlight
     this._selectedIds = new Set(); // all selected bodies
     this._hoveredId = null;    // body under cursor (object-mode hover)
+    this._activeBodyId = null; // "grounded" body in rigid mode — green highlight
     this._showCollision = false;
     this._engineMode = 'eevee'; // set by bridge.setRenderEngine
     this._wireframe = false;
@@ -79,9 +99,9 @@ export class BodyRenderer {
         entry.sig = sig;
       }
       this._applyMaterial(entry.container, body, doc);
-      // Update connector visuals when the connector list changes
-      const conSig = JSON.stringify(body.meta?.connectors ?? []);
-      if (entry.conSig !== conSig) { this._syncConnectors(entry.container, body); entry.conSig = conSig; }
+      // Connector visuals are drawn by ConnectorRenderer (magenta, interactive,
+      // constant screen size). This renderer used to draw its own cyan markers
+      // too, which double-rendered every connector — disabled to dedupe.
       // Collision overlay
       const collSig = this._showCollision ? JSON.stringify(body.collision?.geometry ?? body.visual?.geometry ?? {}) : '';
       if (entry.collSig !== collSig) { this._syncCollisionOverlay(entry.container, body); entry.collSig = collSig; }
@@ -126,7 +146,12 @@ export class BodyRenderer {
     }
     if (!child) child = new THREE.Mesh(primitiveGeometry(g), new THREE.MeshStandardMaterial());
 
-    child.traverse?.((o: any) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+    child.traverse?.((o: any) => {
+      if (!o.isMesh) return;
+      o.castShadow = true; o.receiveShadow = true;
+      const mats = Array.isArray(o.material) ? o.material : (o.material ? [o.material] : []);
+      mats.forEach((m: any) => { m.side = THREE.DoubleSide; m.needsUpdate = true; });
+    });
     if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; }
     container.add(child);
   }
@@ -200,7 +225,16 @@ export class BodyRenderer {
 
     const pos    = geo.attributes.position;
     const n      = pos.count;
-    const colors = new Float32Array(n * 3);
+
+    // Reuse existing color BufferAttribute to avoid creating a new WebGL buffer
+    // on every stress repaint. Disposing the old GPU buffer requires a renderer
+    // reference we don't have here; reuse + needsUpdate is the correct pattern.
+    let colorAttr: THREE.BufferAttribute = geo.getAttribute('color') as THREE.BufferAttribute;
+    if (!colorAttr || colorAttr.count !== n) {
+      colorAttr = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
+      geo.setAttribute('color', colorAttr);
+    }
+    const colors = colorAttr.array as Float32Array;
 
     // ── Load-path axis ──────────────────────────────────────────────────────
     const P  = new THREE.Vector3(...(f?.P ?? [0, 0, 0]));
@@ -297,15 +331,20 @@ export class BodyRenderer {
       colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
     }
 
-    geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    colorAttr.needsUpdate = true;
     const mat = mesh.material;
     if (mat && !Array.isArray(mat)) {
-      mat.vertexColors = true;
+      // Only trigger shader recompile when the vertexColors define actually changes.
+      // mat.needsUpdate = true increments material.version every call → 60 recompiles/sec
+      // → GPU shader-link failures → refreshUniformsCommon crash.
+      if (!mat.vertexColors) {
+        mat.vertexColors = true;
+        mat.needsUpdate = true;
+      }
       mat.color.setRGB(1, 1, 1);
-      mat.metalness = 0.18;  // slight gloss → depth readable from specular highlights
+      mat.metalness = 0.18;
       mat.roughness = 0.52;
       mat.opacity = 1; mat.transparent = false;
-      mat.needsUpdate = true;
     }
   }
 
@@ -315,7 +354,7 @@ export class BodyRenderer {
     for (const [id, { container }] of this._entries) {
       this._forEachMesh(container, (mesh: any) => {
         mesh.geometry?.deleteAttribute?.('color');
-        if (mesh.material && !Array.isArray(mesh.material)) {
+        if (mesh.material && !Array.isArray(mesh.material) && mesh.material.vertexColors) {
           mesh.material.vertexColors = false;
           mesh.material.needsUpdate = true;
         }
@@ -343,14 +382,32 @@ export class BodyRenderer {
     this._refreshHighlight();
   }
 
+  setActiveBody(id: string | null) {
+    this._activeBodyId = id;
+    this._refreshHighlight();
+  }
+
+  /** Show or hide bodies by ID. Hidden bodies are invisible and skipped by raycasting. */
+  setHidden(hiddenIds: string[]) {
+    const hiddenSet = new Set(hiddenIds);
+    for (const [id, { container }] of this._entries) {
+      container.visible = !hiddenSet.has(id);
+    }
+  }
+
   _refreshHighlight() {
     for (const [id, { container }] of this._entries) {
       const sel = this._selectedIds.has(id);
       const active = id === this._selectedId;
       const hovered = id === this._hoveredId;
+      const isGrounded = id === this._activeBodyId;
       this._forEachMesh(container, (mesh: any) => {
         if (!mesh.material || Array.isArray(mesh.material)) return;
-        if (sel) {
+        if (isGrounded && !sel) {
+          // Active/grounded body in rigid mode — green pulse
+          mesh.material.emissive = HILITE_ACTIVE;
+          mesh.material.emissiveIntensity = 0.35;
+        } else if (sel) {
           mesh.material.emissive = HILITE_SEL;
           mesh.material.emissiveIntensity = active ? 0.55 : 0.32;
         } else if (hovered) {
@@ -475,13 +532,12 @@ export class BodyRenderer {
       // Screen-space scale: rescale each frame so the ring stays at CON_PX pixels.
       // We capture the group in closure; onBeforeRender fires on the first child.
       ring.onBeforeRender = (renderer, _scene, camera: any) => {
-        const worldPos = new THREE.Vector3();
-        group.getWorldPosition(worldPos);
+        group.getWorldPosition(_conWorldPos);
 
         const h = renderer.domElement.height || 1;
         let worldR: number;
         if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
-          const dist = worldPos.distanceTo(camera.position);
+          const dist = _conWorldPos.distanceTo(camera.position);
           const fovRad = THREE.MathUtils.degToRad((camera as THREE.PerspectiveCamera).fov);
           worldR = (CON_PX / h) * 2 * dist * Math.tan(fovRad / 2);
         } else {
@@ -529,7 +585,7 @@ export class BodyRenderer {
     solid.raycast = () => {}; // not pickable
     container.add(solid);
 
-    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), COLL_EDGE_MAT);
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo, 25), COLL_EDGE_MAT);
     edges.userData = { isCollision: true };
     container.add(edges);
   }

@@ -3,7 +3,6 @@ import './RightDock.css';
 import { useDockStore } from '@/state/dockStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import EditorTools from '@/features/tools/EditorTools';
-import Outliner from '@/features/outliner/Outliner';
 import Inspector from '@/features/inspector/Inspector';
 import EditPanel from '@/features/editmode/EditPanel';
 import CopilotPanel from '@/features/ai/CopilotPanel';
@@ -34,10 +33,6 @@ const PANELS = [
   {
     id: 'inspector', title: 'Properties', Component: Inspector,
     icon: <Icon><path d="M3 4h14v12H3zM3 8h14M8 8v8" /></Icon>,
-  },
-  {
-    id: 'outliner', title: 'Scene Tree', Component: Outliner,
-    icon: <Icon><path d="M4 5h12M7 10h9M7 15h9M4 10h.01M4 15h.01" /></Icon>,
   },
   {
     id: 'tools', title: 'Precision & Measure', Component: EditorTools,

@@ -584,3 +584,7 @@
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+
+/* Pick-to-place pivot: crosshair cursor on the canvas while pick mode is active */
+.pivot-pick-active { cursor: crosshair !important; }

@@ -19,6 +19,8 @@ import { TransformControls } from 'three/examples/jsm/controls/TransformControls
 import { physicsBridge } from '@/viewport/physicsBridge';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer';
 import { JointRenderer } from '@/viewport/renderers/JointRenderer';
+import { ConnectorRenderer } from '@/viewport/renderers/ConnectorRenderer';
+import { getConnectorWorld } from '@/features/assembly/connectorSnap';
 import { EditModeController } from '@/viewport/EditModeController';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
@@ -32,9 +34,12 @@ import { commands } from '@/core/commands/index';
 import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild } from '@/kinematics/modelFK';
 import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
 import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
-import { stripNegativeTranslate } from '@/viewport/gizmoUtil';
+import { PivotPickTool } from '@/viewport/PivotPickTool';
+import { hideGizmoVisuals, constantScreenSize, circleSpriteTexture } from '@/viewport/gizmoUtil';
 import { useTransformHudStore } from '@/state/transformHudStore';
 import { bridge } from '@/viewport/cameraBridge';
+import { mateBridge, type MateAnimRequest } from '@/features/assembly/mateBridge';
+import { useWorkspaceStore } from '@/state/workspaceStore';
 import { jointLoads, centerOfMass, bodyStressField } from '@/kinematics/analysis';
 // PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
 // Play, so it stays out of the initial bundle and the app starts up fast.
@@ -52,13 +57,131 @@ export class ModelEditor {
     this.controls = controls;
     this.bodyRenderer = new BodyRenderer(scene);
     this.jointRenderer = new JointRenderer(scene);
+    this.connectorRenderer = new ConnectorRenderer(scene);
+
+    // Animated mating (approach → align → insert → latch). Panels request it via
+    // mateBridge; we play it by driving the moved bodies' meshes directly, then
+    // commit the real patches+joint at the end (see _startMateAnim/_tickMateAnim).
+    this._mateAnim = null;
+    mateBridge.play = (req: MateAnimRequest) => this._startMateAnim(req);
 
     this.transform = new TransformControls(camera, domElement);
-    this.transform.setSize(0.8);
+    this.transform.setSize(1.1);
     this.transform.enabled = false;
     this.transform.visible = false;
-    stripNegativeTranslate(this.transform); // only +X/+Y/+Z move arrows
+    // Hide the library gizmo's own arrows/rings/planes entirely and drive the
+    // visuals from our constant-screen-size custom indicator below. This is what
+    // removes the "two kinds of axes" double gizmo: the big constant-size
+    // TransformControls handles used to draw ON TOP of the custom indicator.
+    // The invisible pickers stay active (raycasting ignores visibility), so
+    // dragging a handle still works exactly as before.
+    hideGizmoVisuals(this.transform);
+    // Tag the entire gizmo tree so getRendererStats() excludes its ~7K internal triangles
+    this.transform.traverse((o: any) => { o.userData.isGizmo = true; });
     scene.add(this.transform);
+
+    // Backup visual indicator: TransformControls' own arrows/rings have proven
+    // unreliable to render in some scenes despite every visibility flag checking
+    // out (enabled/visible/attached/mode all correct — see gizmoUtil.ts fixes).
+    // ArrowHelper is the same simple primitive JointRenderer already uses
+    // reliably, so draw a plain R/G/B indicator at the gizmo's pivot as a
+    // guaranteed-visible stand-in for "where the handles are" while dragging
+    // still goes through the (invisible-but-functional) TransformControls pickers.
+    // Shape matches the active mode, same convention as the real gizmo: arrows
+    // for translate, rings for rotate, boxes for scale.
+    const AXES = ['x', 'y', 'z'] as const;
+    const AXIS_DIR: Record<string, THREE.Vector3> = {
+      x: new THREE.Vector3(1, 0, 0), y: new THREE.Vector3(0, 1, 0), z: new THREE.Vector3(0, 0, 1),
+    };
+    const AXIS_COLOR: Record<string, number> = { x: 0xff3333, y: 0x33ff33, z: 0x3388ff };
+    const R = 0.16;
+    this._moveIndicator = new THREE.Group();
+    this._moveIndicator.name = 'move-indicator-fallback';
+    this._moveIndicator.userData.isGizmo = true;
+
+    this._moveIndicatorArrows = AXES.map((axis) => {
+      const arrow = new THREE.ArrowHelper(AXIS_DIR[axis], new THREE.Vector3(), R + 0.02, AXIS_COLOR[axis], 0.07, 0.045);
+      (arrow.line.material as THREE.LineBasicMaterial).depthTest = false;
+      (arrow.cone.material as THREE.MeshBasicMaterial).depthTest = false;
+      // renderOrder on the ArrowHelper wrapper itself does nothing — it has no
+      // geometry of its own. The actually-drawn objects are its .line/.cone
+      // children, which is why this needs setting here too (this was the bug:
+      // arrows drew at the default order and got painted over by body meshes).
+      arrow.line.renderOrder = 9999;
+      arrow.cone.renderOrder = 9999;
+      arrow.renderOrder = 9999;
+      // An axis pointing nearly straight at/away from the camera foreshortens
+      // its shaft down to almost nothing — a 3D sphere marker has the same
+      // problem at a steep enough angle. A Sprite always faces the camera, so
+      // it can't foreshorten; put one at the tip so every axis stays visible
+      // as at least a colored dot regardless of view angle.
+      // Same visual weight as the scale-mode boxes (0.045 was too small to
+      // compete against them and read as "basically invisible" by comparison).
+      const dot = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: circleSpriteTexture(), color: AXIS_COLOR[axis], depthTest: false, sizeAttenuation: true,
+      }));
+      dot.scale.setScalar(0.09);
+      dot.position.copy(AXIS_DIR[axis]).multiplyScalar(R + 0.02);
+      dot.renderOrder = 9999;
+      arrow.add(dot);
+      this._moveIndicator.add(arrow);
+      return arrow;
+    });
+
+    this._moveIndicatorRings = AXES.map((axis) => {
+      // A LineLoop circle, not a TorusGeometry mesh — meshes in this fallback
+      // indicator have proven unreliable to render (same mystery as the real
+      // TransformControls gizmo); plain Line/ArrowHelper primitives haven't.
+      const N = 64;
+      const pts: THREE.Vector3[] = [];
+      for (let i = 0; i <= N; i++) {
+        const t = (i / N) * Math.PI * 2;
+        const c = Math.cos(t) * R, s = Math.sin(t) * R;
+        if (axis === 'x') pts.push(new THREE.Vector3(0, c, s));
+        else if (axis === 'y') pts.push(new THREE.Vector3(c, 0, s));
+        else pts.push(new THREE.Vector3(c, s, 0));
+      }
+      const geo = new THREE.BufferGeometry().setFromPoints(pts);
+      const mat = new THREE.LineBasicMaterial({ color: AXIS_COLOR[axis], depthTest: false });
+      const ring = new THREE.LineLoop(geo, mat);
+      ring.renderOrder = 9999;
+      this._moveIndicator.add(ring);
+      return ring;
+    });
+
+    this._moveIndicatorBoxes = AXES.map((axis) => {
+      const group = new THREE.Group();
+      const tip = AXIS_DIR[axis].clone().multiplyScalar(R);
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), tip]);
+      const line = new THREE.Line(lineGeo, new THREE.LineBasicMaterial({ color: AXIS_COLOR[axis], depthTest: false }));
+      line.renderOrder = 9999;
+      const box = new THREE.Mesh(
+        new THREE.BoxGeometry(0.045, 0.045, 0.045),
+        new THREE.MeshBasicMaterial({ color: AXIS_COLOR[axis], depthTest: false }),
+      );
+      box.position.copy(tip);
+      box.renderOrder = 9999;
+      group.add(line, box);
+      this._moveIndicator.add(group);
+      return group;
+    });
+
+    this._moveIndicator.traverse((o: any) => { o.frustumCulled = false; }); // same fix as the real gizmo (gizmoUtil.ts)
+    // Keep the gizmo a constant size on screen (Blender/Fusion behavior) instead
+    // of growing/shrinking with zoom. onBeforeRender only fires on drawn meshes,
+    // never on the Group, so drive the rescale from every rendered child — for
+    // any given mode at least one child is visible and rescales the whole group.
+    // GIZMO_PX = on-screen radius in pixels; INDICATOR_UNIT = its world design radius.
+    const GIZMO_PX = 64;
+    const INDICATOR_UNIT = R + 0.02;
+    this._moveIndicator.traverse((o: any) => {
+      if (o.isMesh || o.isLine || o.isLineLoop) {
+        constantScreenSize(o, this._moveIndicator, GIZMO_PX, INDICATOR_UNIT);
+      }
+    });
+    this._moveIndicator.visible = false;
+    scene.add(this._moveIndicator);
+    this.transform.addEventListener('change', () => this._syncMoveIndicator());
 
     // Invisible proxy the gizmo attaches to when a JOINT is selected, so the joint
     // pivot gets its own 3-axis move/rotate handles (commit → joint origin).
@@ -66,6 +189,13 @@ export class ModelEditor {
     this._jointProxy.name = 'joint-pivot-proxy';
     scene.add(this._jointProxy);
     this._attachedJointId = null;
+
+    // Same idea for a selected CONNECTOR: proxy's local +Z is defined to point
+    // along the connector's outward normal, so rotate-mode intuitively re-aims it.
+    this._connectorProxy = new THREE.Object3D();
+    this._connectorProxy.name = 'connector-proxy';
+    scene.add(this._connectorProxy);
+    this._attachedConnector = null; // { bodyId, connectorId } | null
 
     // Don't let orbit fight the gizmo while dragging a handle. Also remember that
     // a gizmo interaction just happened, so the click that ends it is not mistaken
@@ -144,11 +274,48 @@ export class ModelEditor {
     domElement.addEventListener('pointerup', this._onPointerUp);
     domElement.addEventListener('pointermove', this._onPointerMove);
     domElement.addEventListener('dblclick', this._onDblClick);
+    // Right-click on a body: in rigid-mode editor set active body silently;
+    // everywhere else open the viewport context menu.
+    this._onContextMenu = (e: MouseEvent) => {
+      const rect = domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((e.clientX - rect.left) / rect.width) * 2 - 1,
+        -((e.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      const hitId = this.bodyRenderer.pickBodyAt(ndc, this.camera);
+      if (!hitId) return; // missed all bodies — let browser show default menu
+      e.preventDefault();
+      const page = usePageStore.getState().page;
+      const { bodyMode } = useWorkspaceStore.getState();
+      if (page === 'editor' && bodyMode === 'rigid') {
+        // Quick-set active body without popup (preserved UX)
+        useWorkspaceStore.getState().setActiveBodyId(hitId);
+        this.bodyRenderer.setActiveBody(hitId);
+        this._syncModel(useModelStore.getState().doc);
+        return;
+      }
+      useSelectionStore.getState().setVpCtxMenu({ x: e.clientX, y: e.clientY, bodyId: hitId, page });
+    };
+    domElement.addEventListener('contextmenu', this._onContextMenu);
     this._snapIndicator = new SnapIndicator(scene);
+
+    // Joint pivot pick-to-place tool.
+    this._pivotPickTool = new PivotPickTool({
+      scene, camera, domElement,
+      getMeshes: () => [this.bodyRenderer.group],
+    });
+    bridge.startPivotPick  = (opts: any) => this._pivotPickTool.start(opts.onPick, opts.onCancel);
+    bridge.cancelPivotPick = ()          => this._pivotPickTool.stop();
 
     // React to model + selection changes.
     this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
+
+    // Recompute FK and update active-body highlight when body mode / active ID changes.
+    this._unsubWorkspace = useWorkspaceStore.subscribe((s) => {
+      this.bodyRenderer.setActiveBody(s.bodyMode === 'rigid' ? s.activeBodyId : null);
+      if (this._doc) this._syncModel(this._doc);
+    });
 
     // Gizmo snapping (Phase 3) + physics sim (Phase 7) + mate tool (assembly).
     this._sim = null;
@@ -235,12 +402,21 @@ export class ModelEditor {
     this.bodyRenderer.sync(doc, this._fk);
     const loads = this._showAnalysis ? jointLoads(doc, this._fk) : null;
     this.jointRenderer.sync(doc, this._fk, loads);
+    this.connectorRenderer.sync(doc, this._fk);
     if (this._showAnalysis && loads) this.bodyRenderer.applyStress(bodyStressField(doc, this._fk, loads));
     this._updateCOM(doc);
     this._reattach(); // mesh may have been (re)created
     if (this.editMode?.active) this.editMode.onModelSynced();
     // Keep box-world collision geometry in sync whenever the arm moves
     if (this._boxWorld) this._boxWorld.updateRobotPose(this._fk);
+    // Re-enable orbit after every model sync. If a gizmo drag was interrupted
+    // (file open, undo, page switch) without a mouseUp, transform.dragging stays
+    // stale-true and orbit would be stuck disabled — reset unconditionally here.
+    // IK is the only active-drag exception: it modifies the doc on every frame
+    // via applyTransient, so we must not fight it while it's running.
+    if (!this._ikActive) {
+      this.controls.enabled = true;
+    }
   }
 
   _updateCOM(doc: any) {
@@ -272,20 +448,46 @@ export class ModelEditor {
       this._gravArrow = group;
       this.bodyRenderer.scene.add(this._gravArrow);
     }
-    // Size the marker to the model so it doesn't dwarf a small desktop arm.
+    // Radius proportional to actual model bounding box (body mesh extents, not just
+    // pivot positions). No hard upper cap — a 2m robot deserves a visible marker.
     const pts: any[] = [];
-    for (const w of this._fk.values()) if (w?.position) pts.push(new THREE.Vector3(...w.position));
-    const L = pts.length ? (new THREE.Box3().setFromPoints(pts).getSize(new THREE.Vector3()).length() || 1) : 1;
-    const r = Math.min(Math.max(L * 0.025, 0.01), 0.12);
+    const _pt = new THREE.Vector3();
+    const _corner = new THREE.Vector3();
+    for (const [bid, w] of this._fk.entries()) {
+      if (!w?.position) continue;
+      pts.push(new THREE.Vector3(w.position[0], w.position[1], w.position[2]));
+      // Also push the corners of each body's geometry so large parts aren't ignored
+      const body = doc.bodies[bid];
+      const g = body?.visual?.geometry;
+      const sc = body?.transform?.scale ?? [1,1,1];
+      if (g?.type === 'box') {
+        const hx = ((g.size?.[0] ?? 1) * Math.abs(sc[0])) / 2;
+        const hy = ((g.size?.[1] ?? 1) * Math.abs(sc[1])) / 2;
+        const hz = ((g.size?.[2] ?? 1) * Math.abs(sc[2])) / 2;
+        _pt.set(w.position[0], w.position[1], w.position[2]);
+        for (const sx of [-hx, hx]) for (const sy of [-hy, hy]) for (const sz of [-hz, hz])
+          pts.push(_corner.set(sx, sy, sz).add(_pt).clone());
+      } else if (g?.radius) {
+        const rr = (g.radius ?? 0.5) * Math.max(Math.abs(sc[0]), Math.abs(sc[1]), Math.abs(sc[2]));
+        _pt.set(w.position[0], w.position[1], w.position[2]);
+        pts.push(new THREE.Vector3(_pt.x + rr, _pt.y, _pt.z));
+        pts.push(new THREE.Vector3(_pt.x - rr, _pt.y, _pt.z));
+        pts.push(new THREE.Vector3(_pt.x, _pt.y + rr, _pt.z));
+      }
+    }
+    const _box3 = new THREE.Box3();
+    const _size = new THREE.Vector3();
+    const L = pts.length ? (_box3.setFromPoints(pts).getSize(_size).length() || 1) : 1;
+    const r = Math.max(L * 0.022, 0.008); // 2.2% of full model diagonal, no hard cap
     const { com } = centerOfMass(doc, this._fk);
     this._comMarker.scale.setScalar(r);
     this._comMarker.position.set(com[0], com[1], com[2]);
     this._comMarker.visible = true;
-    // Arrow: scaled so it's always visible but not huge
+    // Arrow: only show on the Animation page — don't bleed into Editor/Analysis
     const arrowScale = r * 3.5;
     this._gravArrow.position.set(com[0], com[1], com[2]);
     this._gravArrow.scale.setScalar(arrowScale);
-    this._gravArrow.visible = this._animGravityOn;
+    this._gravArrow.visible = this._animGravityOn && usePageStore.getState().page === 'animation';
   }
 
   // ── Physics (Phase 7) ──────────────────────────────────────────────────────
@@ -459,6 +661,97 @@ export class ModelEditor {
     }
   }
 
+  // ── Animated connector mating ─────────────────────────────────────────────────
+  // Two phases sharing one precomputed goal (from computeSnapPatches / keyedMate-
+  // Rotation): (1) approach+align — reach a pre-insertion pose held `gap` back
+  // along the mating axis while slerping into the keyed rotation; (2) insert — a
+  // straight slide down the axis into the seated pose; then latch (commit). The
+  // meshes are driven directly (visual only); the doc changes once, at latch, so
+  // this is a single undo step and never spams per-frame commands.
+  _startMateAnim(req: MateAnimRequest) {
+    const axis = new THREE.Vector3(...req.axis).normalize();
+    const movedIds = new Set(req.bodies.map((b) => b.id));
+    const bodies = req.bodies.map((b) => {
+      const container = this.bodyRenderer.getMesh(b.id);
+      if (!container) return null;
+      const goalPos = new THREE.Vector3(...b.goalPos);
+      return {
+        container,
+        startPos: container.position.clone(),
+        startQuat: container.quaternion.clone(),
+        preInsPos: goalPos.clone().addScaledVector(axis, req.gap), // backed off along the axis
+        goalPos,
+        goalQuat: new THREE.Quaternion(...b.goalQuat),
+      };
+    }).filter(Boolean);
+    if (!bodies.length) { req.commit(); return; }
+
+    // Obstacle AABBs = every body that ISN'T part of the moving module and isn't
+    // the mate partner (the key is supposed to interlock with the partner). These
+    // don't move during the mate, so snapshot them once.
+    const obstacles: { id: string; box: THREE.Box3 }[] = [];
+    for (const id of Object.keys(this._doc?.bodies ?? {})) {
+      if (movedIds.has(id) || id === req.partnerId) continue;
+      const c = this.bodyRenderer.getMesh(id);
+      if (c) obstacles.push({ id, box: new THREE.Box3().setFromObject(c) });
+    }
+    this._mateAnim = {
+      bodies, t: 0, approachDur: 0.5, insertDur: 0.4,
+      commit: req.commit, onBlocked: req.onBlocked, obstacles,
+    };
+  }
+
+  // Deepest axis-overlap between two AABBs; ≤0 means they don't actually overlap.
+  _aabbPenetration(a: THREE.Box3, b: THREE.Box3): number {
+    const dx = Math.min(a.max.x, b.max.x) - Math.max(a.min.x, b.min.x);
+    const dy = Math.min(a.max.y, b.max.y) - Math.max(a.min.y, b.min.y);
+    const dz = Math.min(a.max.z, b.max.z) - Math.max(a.min.z, b.min.z);
+    return Math.min(dx, dy, dz);
+  }
+
+  _tickMateAnim(dt: number) {
+    const m = this._mateAnim;
+    if (!m) return;
+    m.t += dt;
+    const smooth = (x: number) => x * x * (3 - 2 * x); // smoothstep → slow-in/out
+    const inApproach = m.t <= m.approachDur;
+    for (const b of m.bodies) {
+      if (inApproach) {
+        const u = smooth(Math.min(1, m.t / m.approachDur));
+        b.container.position.lerpVectors(b.startPos, b.preInsPos, u);
+        b.container.quaternion.copy(b.startQuat).slerp(b.goalQuat, u);
+      } else {
+        const u = smooth(Math.min(1, (m.t - m.approachDur) / m.insertDur));
+        b.container.position.lerpVectors(b.preInsPos, b.goalPos, u);
+        b.container.quaternion.copy(b.goalQuat);
+      }
+    }
+
+    // Collision guard — only during the insert slide (approach flies through open
+    // space). A margin of 5mm ignores grazing/coplanar touches so packed modules
+    // don't false-trigger; a deeper overlap means we'd ram an obstacle → abort.
+    if (!inApproach && m.obstacles.length) {
+      const MARGIN = 0.005;
+      const _box = new THREE.Box3();
+      for (const b of m.bodies) {
+        _box.setFromObject(b.container);
+        for (const obs of m.obstacles) {
+          if (this._aabbPenetration(_box, obs.box) > MARGIN) {
+            this._mateAnim = null;
+            this._syncModel(this._doc); // restore meshes to their pre-mate doc pose
+            m.onBlocked?.(obs.id);
+            return;
+          }
+        }
+      }
+    }
+
+    if (m.t >= m.approachDur + m.insertDur) {
+      this._mateAnim = null;
+      m.commit(); // write real patches + joint; normal sync snaps everything to final
+    }
+  }
+
   /** Called every render frame by SimCanvas: physics sim, else animation preview. */
   tick() {
     // Always call: when active it syncs the overlay; when inactive it tears down
@@ -470,6 +763,7 @@ export class ModelEditor {
     const frameDt = this._lastFrameTime ? Math.min(0.1, (nowF - this._lastFrameTime) / 1000) : 1 / 60;
     this._lastFrameTime = nowF;
     this._tickFallingBoxes(frameDt);
+    this._tickMateAnim(frameDt);
 
     if (this._sim) {
       // Advance by real elapsed time at a FIXED internal timestep, so the simulation
@@ -569,7 +863,10 @@ export class ModelEditor {
     if (this.transform.dragging) return;
     const hitId = this.bodyRenderer.pickBodyAt(this._ndc(e), this.camera);
     if (!hitId || !this._doc) return;
-    if (chainJoints(this._doc, hitId).length === 0) return; // not articulated → let normal click handle it
+    const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
+    const rigidRoot = bodyMode === 'rigid' ? activeBodyId : null;
+    if (hitId === rigidRoot) return; // can't IK-drag the grounded body itself
+    if (chainJoints(this._doc, hitId, rigidRoot).length === 0) return; // not articulated → let normal click handle it
     const w = this._fk?.get(hitId);
     const p = new THREE.Vector3(...(w?.position ?? [0, 0, 0]));
     const n = new THREE.Vector3();
@@ -586,7 +883,9 @@ export class ModelEditor {
     this._ikRay.setFromCamera(this._ndc(e), this.camera);
     const target = new THREE.Vector3();
     if (!this._ikRay.ray.intersectPlane(this._ikPlane, target)) return;
-    const values = solveModelIK(this._doc, this._ikTip, [target.x, target.y, target.z]);
+    const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
+    const rigidRoot = bodyMode === 'rigid' ? activeBodyId : null;
+    const values = solveModelIK(this._doc, this._ikTip, [target.x, target.y, target.z], {}, rigidRoot);
     if (values) useModelStore.getState().dispatch(commands.setJointValues(values));
   }
 
@@ -657,6 +956,20 @@ export class ModelEditor {
     if (this._mateMode) { this._handleMatePick(ndc); return; }
 
     const sel = useSelectionStore.getState();
+    // Connector markers take priority over everything else — they're small, and
+    // if a body's raycast also hit here the marker is almost always what the
+    // click was aimed at.
+    const connectorHit = this.connectorRenderer.pickConnectorAt(ndc, this.camera);
+    if (connectorHit) {
+      const compositeId = `${connectorHit.bodyId}::${connectorHit.connectorId}`;
+      if (sel.kind === 'connector' && sel.selectedId === compositeId) {
+        if (!sel.showGizmo) sel.revealGizmo(); else sel.clear();
+      } else {
+        sel.select(compositeId, 'connector');
+      }
+      return;
+    }
+
     // A visible joint arrow takes priority — clicking it selects the joint (and the
     // Inspector auto-opens to its editor).
     const jointHit = this.jointRenderer.pickJointAt(ndc, this.camera);
@@ -679,9 +992,10 @@ export class ModelEditor {
       } else if (sel.kind === 'body' && sel.selectedId === hitId && sel.ids.length === 1) {
         // Clicking the already-selected (sole) body again reveals its move gizmo.
         if (!sel.showGizmo) sel.revealGizmo();
-      } else if (sel.kind === 'body' && sel.ids.includes(hitId)) {
-        // Clicking a member of the multi-selection reveals the group gizmo.
-        if (!sel.showGizmo) sel.revealGizmo(); else sel.select(hitId, 'body');
+      } else if (sel.kind === 'body' && sel.ids.length > 1 && sel.ids.includes(hitId)) {
+        // Plain click on a multi-selection member → narrow to just this body.
+        // (Ctrl/Shift-click handled above; M/R/S reveals the group gizmo when needed.)
+        sel.select(hitId, 'body');
       } else {
         sel.select(hitId, 'body'); // first click → highlight + Properties, no gizmo yet
       }
@@ -726,14 +1040,21 @@ export class ModelEditor {
     if (this._modal?.active) { this._updateAxisModal(e); return; }
 
     if (!this.editMode?.active && !this._sim) {
-      // Object-mode hover: subtle body highlight and snap indicator.
-      const hitId = this.bodyRenderer.pickBodyAt(ndc, this.camera);
-      if (hitId !== this._hoveredId) {
-        this.bodyRenderer.setHovered(hitId);
-        this._hoveredId = hitId;
+      if (useEditorStore.getState().measureMode || this._pivotPickTool?._enabled) {
+        // MeasureTool / PivotPickTool own snap + hover display in these modes.
+        if (this._hoveredId !== null) { this.bodyRenderer.setHovered(null); this._hoveredId = null; }
+        this._snapIndicator.hide();
+      } else {
+        // Normal object-mode hover: body glow + snap indicator.
+        const hitId = this.bodyRenderer.pickBodyAt(ndc, this.camera);
+        if (hitId !== this._hoveredId) {
+          this.bodyRenderer.setHovered(hitId);
+          this._hoveredId = hitId;
+          useSelectionStore.getState().setHoveredBodyId(hitId);
+        }
+        const snap = computeSnap(ndc, this.camera, this.domElement, [this.bodyRenderer.group]);
+        if (snap) this._snapIndicator.show(snap.point, snap.type); else this._snapIndicator.hide();
       }
-      const snap = computeSnap(ndc, this.camera, this.domElement, [this.bodyRenderer.group]);
-      if (snap) this._snapIndicator.show(snap.point, snap.type); else this._snapIndicator.hide();
     }
 
     if (this._mateMode && useEditorStore.getState().snap?.enabled && !this.editMode?.active) {
@@ -811,11 +1132,16 @@ export class ModelEditor {
     const bodyIds: string[] = s.kind === 'body' ? (s.ids ?? []) : [];
     const multi = bodyIds.length > 1;
     // Joints are shown only when relevant: the selected joint, or any joint that
-    // touches the selected body. Nothing selected → no joint arrows.
+    // touches a selected body (all of them, when a whole component is multi-selected
+    // — not just the last-clicked "active" one, which looked like an arbitrary single
+    // joint lighting up). Nothing selected → no joint arrows.
     const doc: Document = this._doc ?? useModelStore.getState().doc;
     const visible = new Set();
     for (const j of Object.values(doc.joints)) {
-      if (j.id === jointId || (bodyId && (j.parentBodyId === bodyId || j.childBodyId === bodyId))) {
+      const touchesSelection = multi
+        ? (bodyIds.includes(j.parentBodyId as string) || bodyIds.includes(j.childBodyId as string))
+        : (bodyId && (j.parentBodyId === bodyId || j.childBodyId === bodyId));
+      if (j.id === jointId || touchesSelection) {
         visible.add(j.id);
       }
     }
@@ -823,8 +1149,15 @@ export class ModelEditor {
     this.bodyRenderer.setSelectedIds(bodyIds, bodyId);
     this.jointRenderer.setSelected(jointId);
     this._multiIds = null;
+    const connectorSel = s.kind === 'connector' && s.selectedId ? String(s.selectedId).split('::') : null;
+    this.connectorRenderer.setSelected(connectorSel ? connectorSel[0] : null, connectorSel ? connectorSel[1] : null);
     if (useEditModeStore.getState().active) {
       this._attachTo(null); // Edit Mode is on → no body/joint gizmo from this editor
+    } else if (connectorSel) {
+      // Connectors support move + rotate only (scale is meaningless for a point+normal).
+      this.transform.setMode(s.gizmoMode === 'rotate' ? 'rotate' : 'translate');
+      this._attachTo(null);
+      if (s.showGizmo) this._attachToConnector(connectorSel[0], connectorSel[1]); else this._attachedConnector = null;
     } else if (jointId) {
       // Joints support move + rotate of the pivot (scale is meaningless → translate).
       // Like bodies, the gizmo only appears once revealed (Move/Rotate toggle), so a
@@ -882,9 +1215,11 @@ export class ModelEditor {
     this._multiProxy.updateMatrixWorld(true);
     this._attachedId = null;
     this._attachedJointId = null;
+    this._attachedConnector = null;
     this.transform.attach(this._multiProxy);
     this.transform.enabled = true;
     this.transform.visible = true;
+    this._syncMoveIndicator();
   }
 
   _beginMultiDrag() {
@@ -993,10 +1328,32 @@ export class ModelEditor {
     this.transform.visible = true;
     this._attachedId = null;
     this._attachedJointId = jointId;
+    this._attachedConnector = null;
+    this._syncMoveIndicator();
+  }
+
+  /** Local +Z is defined to point along the connector's world-space normal, so
+   *  the rotate gizmo's Z ring intuitively re-aims the connector. */
+  _attachToConnector(bodyId: string, connectorId: string) {
+    const doc: Document = this._doc ?? useModelStore.getState().doc;
+    const world = getConnectorWorld(doc, bodyId, connectorId, this._fk);
+    if (!world) { this._attachTo(null); return; }
+    this._connectorProxy.position.copy(world.position);
+    this._connectorProxy.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), world.normal);
+    this._connectorProxy.scale.set(1, 1, 1);
+    this._connectorProxy.updateMatrixWorld(true);
+    this.transform.attach(this._connectorProxy);
+    this.transform.enabled = true;
+    this.transform.visible = true;
+    this._attachedId = null;
+    this._attachedJointId = null;
+    this._attachedConnector = { bodyId, connectorId };
+    this._syncMoveIndicator();
   }
 
   _attachTo(bodyId: any) {
     this._attachedJointId = null;
+    this._attachedConnector = null;
     const mesh = bodyId ? this.bodyRenderer.getMesh(bodyId) : null;
     if (mesh) {
       this.transform.attach(mesh);
@@ -1009,6 +1366,26 @@ export class ModelEditor {
       this.transform.visible = false;
       this._attachedId = null;
     }
+    this._syncMoveIndicator();
+  }
+
+  /** Keep the fallback R/G/B arrow triad glued to whatever the real gizmo is
+   *  attached to (see the constructor comment for why this exists). */
+  _syncMoveIndicator() {
+    if (!this._moveIndicator) return;
+    const obj = this.transform.object;
+    if (!this.transform.enabled || !this.transform.visible || !obj) {
+      this._moveIndicator.visible = false;
+      return;
+    }
+    obj.updateMatrixWorld(true);
+    obj.getWorldPosition(this._moveIndicator.position);
+    this._moveIndicator.quaternion.identity(); // world-aligned axes, matching the gizmo's default 'world' space
+    this._moveIndicator.visible = true;
+    const mode = this.transform.mode;
+    for (const a of this._moveIndicatorArrows) a.visible = mode === 'translate';
+    for (const r of this._moveIndicatorRings) r.visible = mode === 'rotate';
+    for (const b of this._moveIndicatorBoxes) b.visible = mode === 'scale';
   }
 
   // Re-attach after a doc sync if the selected mesh still exists.
@@ -1026,6 +1403,10 @@ export class ModelEditor {
     } else if (sel.kind === 'joint' && sel.selectedId) {
       // Keep the pivot proxy glued to the (possibly moved) joint pivot.
       this._attachToJoint(sel.selectedId);
+    } else if (sel.kind === 'connector' && sel.selectedId) {
+      if (!sel.showGizmo) return;
+      const [bodyId, connectorId] = String(sel.selectedId).split('::');
+      this._attachToConnector(bodyId, connectorId);
     }
   }
 
@@ -1033,6 +1414,10 @@ export class ModelEditor {
     // Joint pivot drag → write back to the joint's origin (both bodies stay put).
     if (this._attachedJointId) {
       this._commitJointPivot();
+      return;
+    }
+    if (this._attachedConnector) {
+      this._commitConnector();
       return;
     }
     const mesh = this.transform.object;
@@ -1087,6 +1472,33 @@ export class ModelEditor {
     useModelStore.getState().dispatch(commands.updateJoint(joint.id, { origin: newOrigin, childRest }));
   }
 
+  /** Convert the connector proxy's new world transform back into the body-local
+   *  Connector.position/normal it's actually stored as, and write it back. */
+  _commitConnector() {
+    const att = this._attachedConnector;
+    if (!att) return;
+    const doc: Document = this._doc ?? useModelStore.getState().doc;
+    const body = doc.bodies[att.bodyId];
+    if (!body) return;
+    const conns = (body.meta?.connectors as any[] | undefined) ?? [];
+    const idx = conns.findIndex((c) => c.id === att.connectorId);
+    if (idx < 0) return;
+
+    const bodyQuat = new THREE.Quaternion(...body.transform.quaternion);
+    const bodyPos = new THREE.Vector3(...body.transform.position);
+    const bodyQuatInv = bodyQuat.clone().invert();
+    const localPos = this._connectorProxy.position.clone().sub(bodyPos).applyQuaternion(bodyQuatInv);
+    const worldNormal = new THREE.Vector3(0, 0, 1).applyQuaternion(this._connectorProxy.quaternion);
+    const localNormal = worldNormal.applyQuaternion(bodyQuatInv).normalize();
+
+    const nextConnectors = conns.map((c, i) => (i === idx
+      ? { ...c, position: [localPos.x, localPos.y, localPos.z], normal: [localNormal.x, localNormal.y, localNormal.z] }
+      : c));
+    useModelStore.getState().dispatch(commands.updateBody(att.bodyId, {
+      meta: { ...body.meta, connectors: nextConnectors },
+    }));
+  }
+
   // ── Transform HUD ───────────────────────────────────────────────────────────
 
   _updateHud() {
@@ -1110,16 +1522,25 @@ export class ModelEditor {
   // Keyboard-driven: press X/Y/Z while a body is selected → modal grab on that axis.
   // Type digits for exact offset (in mm); Enter = commit, Esc = cancel.
 
+  // Generic over whatever the real gizmo is currently attached to (single body
+  // mesh, joint proxy, connector proxy, or the multi-body proxy) — start/update/
+  // cancel all just drive `this.transform.object`'s transform directly. Only the
+  // final COMMIT differs per attachment type, and that reuses the exact same
+  // _commitTransform()/_commitMulti() dispatch a normal (non-modal) drag already
+  // uses, instead of a separate copy of the body/joint/connector write-back logic.
   startAxisModal(axis: 'x'|'y'|'z') {
     if (this.editMode?.active || this._sim) return;
-    const bodyId = this._attachedId;
-    if (!bodyId) return;
-    const mesh = this.bodyRenderer.getMesh(bodyId);
-    if (!mesh) return;
+    const isMulti = !!(this._multiIds && this._multiIds.length > 1);
+    const obj = this.transform.object;
+    if (!obj) return; // nothing attached — nothing to constrain
 
+    // Cancel any previous modal (user pressed a different axis key mid-move)
+    if (this._modal?.active) this._cancelAxisModal();
+
+    const gizmoMode = useSelectionStore.getState().gizmoMode; // 'translate' | 'rotate' | 'scale'
     const AXIS_COLORS: Record<string, number> = { x: 0xe05252, y: 0x52e070, z: 0x5280e0 };
     const axisVec = axis === 'x' ? new THREE.Vector3(1,0,0) : axis === 'y' ? new THREE.Vector3(0,1,0) : new THREE.Vector3(0,0,1);
-    const origin = mesh.position.clone();
+    const origin = obj.position.clone();
 
     // Axis line visual
     const points = [origin.clone().addScaledVector(axisVec, -20), origin.clone().addScaledVector(axisVec, 20)];
@@ -1128,20 +1549,66 @@ export class ModelEditor {
     this._axisLine.renderOrder = 2000;
     this._scene.add(this._axisLine);
 
-    // Disable standard gizmo so both don't fight
+    // Disable standard gizmo (and its fallback indicator) so nothing fights the modal.
     this.transform.enabled = false;
     this.transform.visible = false;
+    if (this._moveIndicator) this._moveIndicator.visible = false;
+
+    // Right-click cancels the modal
+    this._onModalContextMenu = (e: MouseEvent) => { e.preventDefault(); this._cancelAxisModal(); };
+    this.domElement.addEventListener('contextmenu', this._onModalContextMenu);
+
+    if (isMulti) this._beginMultiDrag(); // snapshots this._multiStart for every selected body
 
     this._modal = {
-      active: true, axis, axisVec,
-      targetId: bodyId,
+      active: true, axis, axisVec, gizmoMode, isMulti,
       startPos: origin.clone(),
-      startT: this._axisParamAtNdc(this._lastNdc, origin, axisVec),
+      startQuat: obj.quaternion.clone(),
+      startScale: obj.scale.clone(),
+      startNdc: this._lastNdc.clone(),
       liveT: 0,
-      inputBuffer: '',
     };
-    useTransformHudStore.getState().beginDrag('translate');
+    useTransformHudStore.getState().beginDrag(gizmoMode);
     useTransformHudStore.getState().setAxis(axis);
+  }
+
+  /** Multi-body counterpart of _applyModalLive — same math as _applyMultiDrag but
+   *  the proxy delta is replaced with a pure single-axis translate/rotate/scale. */
+  _applyMultiAxisModal(m: any, liveT: number) {
+    if (!this._multiStart) return;
+    const individual = useSelectionStore.getState().pivotMode === 'individual';
+    const pivot = this._multiStart.pivot;
+    const axisVec: THREE.Vector3 = m.axisVec;
+    const rotQuat = m.gizmoMode === 'rotate' ? new THREE.Quaternion().setFromAxisAngle(axisVec, liveT) : null;
+    const axisIdx = m.axis === 'x' ? 0 : m.axis === 'y' ? 1 : 2;
+
+    for (const b of this._multiStart.bodies) {
+      const mesh = this.bodyRenderer.getMesh(b.id);
+      if (!mesh) continue;
+      let pos = b.pos.clone();
+      let quat = b.quat.clone();
+      let scale = [...b.scale];
+      if (m.gizmoMode === 'translate') {
+        pos = b.pos.clone().addScaledVector(axisVec, liveT);
+      } else if (m.gizmoMode === 'rotate' && rotQuat) {
+        quat = rotQuat.clone().multiply(b.quat);
+        if (!individual) pos = b.pos.clone().sub(pivot).applyQuaternion(rotQuat).add(pivot);
+      } else if (m.gizmoMode === 'scale') {
+        const f = Math.max(0.001, 1 + liveT);
+        scale = [...b.scale];
+        scale[axisIdx] = Math.max(0.001, b.scale[axisIdx] * f);
+        if (!individual) {
+          const rel = b.pos.clone().sub(pivot);
+          rel.setComponent(axisIdx, rel.getComponent(axisIdx) * f);
+          pos = rel.add(pivot);
+        }
+      }
+      mesh.position.copy(pos);
+      mesh.quaternion.copy(quat);
+      mesh.scale.set(scale[0], scale[1], scale[2]);
+      mesh.updateMatrixWorld(true);
+      b._live = { pos, quat, scale };
+    }
   }
 
   _axisParamAtNdc(ndc: THREE.Vector2, origin: THREE.Vector3, dir: THREE.Vector3): number {
@@ -1160,33 +1627,93 @@ export class ModelEditor {
   _updateAxisModal(e: any) {
     if (!this._modal?.active) return;
     const m = this._modal;
+    const hud = useTransformHudStore.getState();
     const rect = this.domElement.getBoundingClientRect();
     const ndc = new THREE.Vector2(
       ((e.clientX - rect.left) / rect.width) * 2 - 1,
       -((e.clientY - rect.top) / rect.height) * 2 + 1,
     );
-    const t = this._axisParamAtNdc(ndc, m.startPos, m.axisVec);
-    m.liveT = t - m.startT;
-    // Live preview: move the body mesh (not committed yet)
-    const mesh = this.bodyRenderer.getMesh(m.targetId);
-    if (mesh) {
-      mesh.position.copy(m.startPos.clone().addScaledVector(m.axisVec, m.liveT));
-      mesh.updateMatrixWorld(true);
+    this._lastNdc.copy(ndc);
+
+    // While the user is typing a number, freeze mouse tracking and preview the typed value.
+    if (hud.buffer) {
+      const raw = parseFloat(hud.buffer);
+      if (!isNaN(raw)) {
+        const liveT = this._rawToLiveT(raw, m.gizmoMode);
+        if (m.isMulti) {
+          this._applyMultiAxisModal(m, liveT);
+        } else if (this.transform.object) {
+          this._applyModalLive(m, this.transform.object, liveT);
+        }
+        hud.setLive(this._liveToHud(liveT, m.gizmoMode));
+      }
+      return;
     }
-    useTransformHudStore.getState().setLive(Math.abs(m.liveT));
+
+    // Screen-space projection: project the axis onto 2-D screen, then project the
+    // mouse delta onto that direction. This avoids sign inversions that appear with the
+    // skew-lines formula when the axis is nearly perpendicular to the camera ray.
+    const p0 = m.startPos.clone().project(this.camera);
+    const p1 = m.startPos.clone().add(m.axisVec).project(this.camera);
+    const axisScreen = new THREE.Vector2(p1.x - p0.x, p1.y - p0.y);
+    const axisLen2d = axisScreen.length();
+    if (axisLen2d < 1e-4) return; // axis pointing straight at/away from camera
+
+    const mouseDelta = ndc.clone().sub(m.startNdc);
+    m.liveT = mouseDelta.dot(axisScreen) / (axisLen2d * axisLen2d);
+
+    if (m.isMulti) {
+      this._applyMultiAxisModal(m, m.liveT);
+    } else if (this.transform.object) {
+      this._applyModalLive(m, this.transform.object, m.liveT);
+    }
+    hud.setLive(this._liveToHud(m.liveT, m.gizmoMode));
   }
 
-  _commitAxisModal(exactMeters?: number) {
+  // Convert a raw typed number (mm / degrees / multiplier) to internal liveT units.
+  _rawToLiveT(raw: number, mode: string): number {
+    if (mode === 'translate') return raw * 0.001;  // mm → m
+    if (mode === 'rotate')    return raw * Math.PI / 180; // deg → rad
+    return raw - 1; // scale: user types multiplier (e.g. 2 = 2×), liveT = delta from 1
+  }
+
+  // Convert internal liveT to the value the HUD should display.
+  _liveToHud(liveT: number, mode: string): number {
+    if (mode === 'translate') return Math.abs(liveT);         // meters
+    if (mode === 'rotate')    return Math.abs(liveT) * 180 / Math.PI; // degrees
+    return 1 + liveT;                                          // ×  multiplier
+  }
+
+  // Apply the live preview to the mesh based on mode.
+  _applyModalLive(m: any, mesh: any, liveT: number) {
+    if (m.gizmoMode === 'translate') {
+      mesh.position.copy(m.startPos.clone().addScaledVector(m.axisVec, liveT));
+    } else if (m.gizmoMode === 'rotate') {
+      const q = new THREE.Quaternion().setFromAxisAngle(m.axisVec, liveT);
+      mesh.quaternion.copy(m.startQuat.clone().multiply(q));
+    } else { // scale
+      const axisIdx = m.axis === 'x' ? 0 : m.axis === 'y' ? 1 : 2;
+      mesh.scale.copy(m.startScale);
+      mesh.scale.setComponent(axisIdx, Math.max(0.001, m.startScale.getComponent(axisIdx) * Math.max(0.001, 1 + liveT)));
+    }
+    mesh.updateMatrixWorld(true);
+  }
+
+  // exactRaw is the raw typed number (mm for translate, degrees for rotate, × for scale).
+  _commitAxisModal(exactRaw?: number) {
     if (!this._modal) return;
     const m = this._modal;
-    const delta = exactMeters !== undefined ? exactMeters * Math.sign(m.liveT || 1) : m.liveT;
-    const newPos = m.startPos.clone().addScaledVector(m.axisVec, delta);
-    const doc: Document = this._doc ?? useModelStore.getState().doc;
-    const body = doc.bodies[m.targetId];
-    if (body) {
-      useModelStore.getState().dispatch(commands.updateBody(m.targetId, {
-        transform: { ...body.transform, position: [newPos.x, newPos.y, newPos.z] },
-      }));
+    const liveT = exactRaw !== undefined ? this._rawToLiveT(exactRaw, m.gizmoMode) : m.liveT;
+
+    if (m.isMulti) {
+      this._applyMultiAxisModal(m, liveT); // settle the live preview at the exact final value
+      this._commitMulti(); // reuses the same single-undo-step patch/dispatch as a normal group drag
+    } else if (this.transform.object) {
+      this._applyModalLive(m, this.transform.object, liveT); // settle at the exact final value
+      // Reuse the SAME body/joint/connector write-back a normal (non-modal) drag
+      // commit already uses — it dispatches on _attachedJointId/_attachedConnector/
+      // _attachedId, exactly matching whatever startAxisModal found attached.
+      this._commitTransform();
     }
     useTransformHudStore.getState().endDrag();
     this._cleanupModal();
@@ -1194,9 +1721,27 @@ export class ModelEditor {
 
   _cancelAxisModal() {
     if (!this._modal) return;
-    // Restore mesh to original position
-    const mesh = this.bodyRenderer.getMesh(this._modal.targetId);
-    if (mesh) { mesh.position.copy(this._modal.startPos); mesh.updateMatrixWorld(true); }
+    const m = this._modal;
+    if (m.isMulti) {
+      // Snap every body back to its pre-modal transform.
+      if (this._multiStart) {
+        for (const b of this._multiStart.bodies) {
+          const mesh = this.bodyRenderer.getMesh(b.id);
+          if (!mesh) continue;
+          mesh.position.copy(b.pos);
+          mesh.quaternion.copy(b.quat);
+          mesh.scale.set(b.scale[0], b.scale[1], b.scale[2]);
+          mesh.updateMatrixWorld(true);
+        }
+        this._multiStart = null;
+      }
+    } else if (this.transform.object) {
+      const obj = this.transform.object;
+      if (m.gizmoMode === 'translate') obj.position.copy(m.startPos);
+      else if (m.gizmoMode === 'rotate') obj.quaternion.copy(m.startQuat);
+      else obj.scale.copy(m.startScale);
+      obj.updateMatrixWorld(true);
+    }
     useTransformHudStore.getState().hide();
     this._cleanupModal();
   }
@@ -1208,11 +1753,16 @@ export class ModelEditor {
       (this._axisLine as any).material?.dispose();
       this._axisLine = null;
     }
+    if (this._onModalContextMenu) {
+      this.domElement.removeEventListener('contextmenu', this._onModalContextMenu);
+      this._onModalContextMenu = null;
+    }
     this._modal = null;
     // Re-enable gizmo
     const sel = useSelectionStore.getState();
     this.transform.enabled = !!sel.showGizmo;
     this.transform.visible = !!sel.showGizmo;
+    this._syncMoveIndicator();
   }
 
   dispose() {
@@ -1228,6 +1778,7 @@ export class ModelEditor {
     this.domElement?.removeEventListener('pointerup', this._onPointerUp);
     this.domElement?.removeEventListener('pointermove', this._onPointerMove);
     this.domElement?.removeEventListener('dblclick', this._onDblClick);
+    this.domElement?.removeEventListener('contextmenu', this._onContextMenu);
     this._snapIndicator?.dispose();
     this._clearMate();
     this._mateMarkers?.parent?.remove(this._mateMarkers);
@@ -1237,9 +1788,16 @@ export class ModelEditor {
     this.transform.parent?.remove(this.transform);
     this._jointProxy?.parent?.remove(this._jointProxy);
     this._multiProxy?.parent?.remove(this._multiProxy);
+    this._connectorProxy?.parent?.remove(this._connectorProxy);
     this.bodyRenderer.dispose();
     this.jointRenderer.dispose();
+    if (mateBridge.play) mateBridge.play = null;
+    this.connectorRenderer.dispose();
     if (this._comMarker) { this._comMarker.geometry.dispose(); this._comMarker.material.dispose(); this._comMarker.parent?.remove(this._comMarker); }
     if (this._gravArrow) { this._gravArrow.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); }); this._gravArrow.parent?.remove(this._gravArrow); }
+    if (this._moveIndicator) {
+      this._moveIndicator.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
+      this._moveIndicator.parent?.remove(this._moveIndicator);
+    }
   }
 }

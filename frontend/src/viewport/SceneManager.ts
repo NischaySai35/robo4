@@ -41,13 +41,37 @@ export class SceneManager {
     this.renderer.toneMappingExposure = 0.95;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+    // Resilient per-object draw: a single object whose material throws inside
+    // setProgram/refreshUniforms must NOT abort the whole frame (which silently drops
+    // every object drawn AFTER it in the render order — e.g. the mesh-edit overlay).
+    // Catch it, skip just that object, and let the rest of the frame render. This is a
+    // permanent safety net; it warns once per distinct offender so real bugs stay
+    // visible without spamming the console every frame.
+    {
+      const r: any = this.renderer;
+      const orig = r.renderBufferDirect.bind(r);
+      const warned = new Set<string>();
+      r.renderBufferDirect = (camera: any, scene: any, geometry: any, material: any, object: any, group: any) => {
+        try {
+          return orig(camera, scene, geometry, material, object, group);
+        } catch (e) {
+          const key = `${object?.type}/${object?.name || '?'}/${material?.type}`;
+          if (!warned.has(key)) {
+            warned.add(key);
+            console.warn('[SceneManager] skipped an object that failed to render:', key, e);
+          }
+          // skip this object this frame — the rest of the scene still draws
+        }
+      };
+    }
+
     // ── Scene ─────────────────────────────────────────────────────────────────
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0xf4f2ee);
     this.scene.fog = null;
 
     // ── Camera ─────────────────────────────────────────────────────────────────
-    this.camera = new THREE.PerspectiveCamera(52, w / h, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(52, w / h, 0.005, 200);
     // Arm extends ~0→6 along X; look at its midpoint from a 45° front-elevated angle
     this.camera.position.set(3, 4, 10);
     this.camera.lookAt(3, 0, 0);
@@ -91,7 +115,7 @@ export class SceneManager {
     this.controls.dampingFactor = 0.07;
     this.controls.minDistance = 0.1;
     this.controls.maxDistance = 25;
-    this.controls.maxPolarAngle = Math.PI * 0.48;
+    this.controls.maxPolarAngle = Math.PI; // full sphere — allows looking from below
     this.controls.enablePan = true;
     this.controls.screenSpacePanning = true;       // pan along camera view plane
     this.controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN; // middle-drag = pan (scroll wheel still zooms)
@@ -117,6 +141,7 @@ export class SceneManager {
     bridge.scene = this.scene; // exposed for the Analysis split's secondary view
     bridge.animateTo = (pos, lookAt, ms) => this.animateCameraTo(pos, lookAt, ms);
     bridge.fitCamera = () => this.fitCamera();
+    bridge.updateCameraLimits = () => this.updateCameraLimits();
 
     // Camera Settings panel: read current lens/control state…
     bridge.getCameraState = () => ({
@@ -140,7 +165,7 @@ export class SceneManager {
       if (fin(p.near))        cam.near = Math.max(0.001, p.near);
       if (fin(p.far))         cam.far = Math.max(cam.near + 0.01, p.far);
       cam.updateProjectionMatrix();
-      if (fin(p.minDistance)) ctl.minDistance = Math.max(0.1, p.minDistance);
+      if (fin(p.minDistance)) ctl.minDistance = Math.max(0.001, p.minDistance);
       if (fin(p.maxDistance)) ctl.maxDistance = Math.max(ctl.minDistance, p.maxDistance);
       if (fin(p.distance)) {
         const dir = cam.position.clone().sub(ctl.target);
@@ -165,18 +190,27 @@ export class SceneManager {
     // Capture the current frame as a data URL (used by the Render → Export
     // button). Force a fresh composite first so the read-back is never blank.
     bridge.captureImage = (mime = 'image/png', quality = 0.92) => {
-      this.composer.render();
+      this.renderer.render(this.scene, this.camera);
       return this.renderer.domElement.toDataURL(mime, quality);
     };
 
     // Small downscaled JPEG of the current frame, for project-card thumbnails.
     bridge.captureThumbnail = (maxDim = 256) => {
-      this.composer.render();
+      // Render inside a try-catch: if materials are mid-recompile (e.g. called from
+      // the autoSave setInterval between RAF frames), the render can crash and leave
+      // the WebGL context dirty. resetState() restores bindings so the main loop survives.
+      try {
+        this.renderer.render(this.scene, this.camera);
+      } catch {
+        this.renderer.resetState();
+        return '';
+      }
       const src = this.renderer.domElement;
       const scale = Math.min(1, maxDim / Math.max(src.width, src.height));
       const w = Math.max(1, Math.round(src.width * scale));
       const h = Math.max(1, Math.round(src.height * scale));
-      const c = document.createElement('canvas');
+      if (!this._thumbCanvas) this._thumbCanvas = document.createElement('canvas');
+      const c = this._thumbCanvas;
       c.width = w; c.height = h;
       const ctx = c.getContext('2d');
       if (!ctx) return '';
@@ -197,7 +231,6 @@ export class SceneManager {
       this.controls.update();
     };
 
-    // Ensure correct pixel-perfect resolution after DOM layout settles
     requestAnimationFrame(() => this._onResize());
   }
 
@@ -219,6 +252,7 @@ export class SceneManager {
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = GROUND_Y;
     ground.receiveShadow = true;
+    ground.userData.isGround = true;
     this.scene.add(ground);
     this.ground = ground;
 
@@ -286,6 +320,7 @@ export class SceneManager {
     grid.position.y = GROUND_Y + 0.01;
     grid.renderOrder = 1;
     grid.frustumCulled = false;
+    grid.userData.isGround = true;
     this.scene.add(grid);
     this.grid = grid;
   }
@@ -462,14 +497,16 @@ export class SceneManager {
   getRendererStats() {
     let triangles = 0;
     this.scene.traverse((obj: any) => {
-      if (!obj.isMesh || !obj.visible || !obj.geometry) return;
-      if (obj.userData?.isConnector || obj.userData?.isCollision || obj.userData?.isGround) return;
+      if (!obj.isMesh || !obj.geometry) return;
+      if (obj.userData?.isConnector || obj.userData?.isCollision || obj.userData?.isGround || obj.userData?.isGizmo) return;
+      // Check EFFECTIVE visibility: walk the parent chain — Three.js stores visibility
+      // locally per object, so a child can have visible=true even when its parent is
+      // hidden. TransformControls does exactly this, adding ~7K phantom triangles.
+      let cur: any = obj;
+      while (cur) { if (!cur.visible) return; cur = cur.parent; }
       const geo = obj.geometry;
-      if (geo.index) {
-        triangles += geo.index.count / 3;
-      } else if (geo.attributes?.position) {
-        triangles += geo.attributes.position.count / 3;
-      }
+      if (geo.index) triangles += geo.index.count / 3;
+      else if (geo.attributes?.position) triangles += geo.attributes.position.count / 3;
     });
     return { triangles: Math.round(triangles) };
   }
@@ -514,6 +551,54 @@ export class SceneManager {
   }
 
   /**
+   * Recompute camera min/max zoom limits and near/far clip planes from the
+   * current model bounding sphere. Called whenever bodies are added/removed/moved.
+   *
+   * Limits:
+   *   minDistance = max(0.001, radius * 0.002)  — can get within ~0.2% of model size
+   *   maxDistance = radius * 300                — zoom out 300× the model radius
+   *   near = max(0.0001, radius * 0.0005)       — no near-clip even at 1 mm from surface
+   *   far  = maxDistance * 4                    — never far-clip
+   *
+   * If no model exists yet, sensible small-scene defaults are applied.
+   * Clamps the current camera distance into the new limits without jumping.
+   */
+  updateCameraLimits() {
+    const box = bridge.getFitBox ? bridge.getFitBox() : null;
+    let radius: number;
+    if (box && !box.isEmpty()) {
+      radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.05);
+    } else {
+      // No geometry yet — use a sensible 1 m default world
+      radius = 1;
+    }
+
+    const minDist = Math.max(0.001, radius * 0.002);
+    const maxDist = Math.max(minDist * 2, radius * 300);
+    const near    = Math.max(0.0001, radius * 0.0005);
+    const far     = Math.max(maxDist * 4, 1000);
+
+    this.controls.minDistance = minDist;
+    this.controls.maxDistance = maxDist;
+    this.camera.near = near;
+    this.camera.far  = far;
+    this.camera.updateProjectionMatrix();
+
+    // Clamp current camera distance into the new range without repositioning
+    const dir = this.camera.position.clone().sub(this.controls.target);
+    const curDist = dir.length();
+    if (curDist > 1e-6) {
+      const clamped = THREE.MathUtils.clamp(curDist, minDist, maxDist);
+      if (Math.abs(clamped - curDist) > 1e-6) {
+        this.camera.position.copy(
+          this.controls.target.clone().add(dir.normalize().multiplyScalar(clamped))
+        );
+      }
+    }
+    this.controls.update();
+  }
+
+  /**
    * Fit the camera to frame all model bodies. Preserves current azimuth, sets a
    * clean elevation, and sizes distance so content fills ~70% of the viewport.
    * No content → no-op.
@@ -529,13 +614,13 @@ export class SceneManager {
     const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
     const fitDist  = (radius * 1.45) / Math.tan(halfFov);
 
-    // Dynamically size the depth range + zoom limits to the object so nothing clips
-    // and you can zoom in/out proportionally to how big the model is.
-    this.camera.near = Math.max(0.005, radius * 0.02);
-    this.camera.far  = Math.max(fitDist * 6, radius * 50);
+    // Apply the same wide limits as updateCameraLimits() so you can freely
+    // zoom to 0.2% in or 300× out after fitting.
+    this.controls.minDistance = Math.max(0.001, radius * 0.002);
+    this.controls.maxDistance = Math.max(fitDist * 2, radius * 300);
+    this.camera.near = Math.max(0.0001, radius * 0.0005);
+    this.camera.far  = Math.max(this.controls.maxDistance * 4, 1000);
     this.camera.updateProjectionMatrix();
-    this.controls.minDistance = Math.max(radius * 0.3, 0.05);
-    this.controls.maxDistance = fitDist * 8;
 
     // Preserve azimuth (horizontal angle), set elevation to a clean ~25°
     const offset = this.camera.position.clone().sub(this.controls.target);
@@ -562,7 +647,29 @@ export class SceneManager {
         Math.floor(this._pathTracer.samples) >= (this._maxSamples ?? 16);
       this._pathTracer.renderSample();
     } else {
-      this.composer.render();
+      // Render directly to screen. The EffectComposer's ping-pong render targets
+      // force LinearSRGBColorSpace output on first material compilation, which
+      // corrupts materialProperties.uniforms for STL-asset bodies (opacity missing).
+      // Tone mapping, ACES, and SRGB output are all handled by renderer settings,
+      // so visual quality is identical. UnrealBloom was threshold=0.92 (nearly invisible).
+      // Per-object failures are already contained by the resilient renderBufferDirect
+      // wrapper installed in the constructor (a single bad object is skipped, not the
+      // whole frame). This outer catch is only a last-resort guard for an error thrown
+      // outside that path; it evicts cached material properties and retries once.
+      try {
+        this.renderer.render(this.scene, this.camera);
+      } catch {
+        this.renderer.resetState();
+        const props: any = (this.renderer as any).properties;
+        this.scene.traverse((o: any) => {
+          if (!o.material) return;
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+            props?.remove?.(m);
+            m.needsUpdate = true;
+          }
+        });
+        try { this.renderer.render(this.scene, this.camera); } catch { /* give up for this frame */ }
+      }
     }
   }
 

@@ -11,10 +11,12 @@
 import { useEffect, useRef, Fragment } from 'react';
 import TransformHUD from '@/features/common/TransformHUD';
 import ViewportStats from './ViewportStats';
+import ViewportCtxMenu from './ViewportCtxMenu';
 import * as THREE from 'three';
 import { SceneManager } from '@/viewport/SceneManager';
 import { ModelEditor } from '@/viewport/ModelEditor';
 import { MeasureTool } from '@/viewport/MeasureTool';
+import { startMemoryMonitor } from '@/viewport/memoryMonitor';
 import { useThemeStore } from '@/state/themeStore';
 import { useEditorStore } from '@/state/editorStore';
 import { bridge } from '@/viewport/cameraBridge';
@@ -28,6 +30,9 @@ import { useDocStore } from '@/state/docStore';
 import { useHistoryStore } from '@/state/historyStore';
 import { useModelStore } from '@/state/modelStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { usePageStore } from '@/state/pageStore';
+import { useDockStore } from '@/state/dockStore';
+import { useWorkspaceStore } from '@/state/workspaceStore';
 import { useAutonomyStore } from '@/state/autonomyStore';
 import { useTrainingStore } from '@/state/trainingStore';
 import { scan2D } from '@/robotics/sensors/lidar';
@@ -110,6 +115,8 @@ export default function SimCanvas() {
       }
     };
     bridge.getWireframe = () => modelEditor?.bodyRenderer?._wireframe ?? false;
+    bridge.setConnectorsVisible = (on) => modelEditor?.connectorRenderer?.setVisible(on);
+    bridge.getConnectorsVisible = () => modelEditor?.connectorRenderer?._visible ?? true;
     bridge.setRenderEngine = (engine: string) => {
       _currentEngine = engine;
       sceneMgr.setRenderEngine(engine);
@@ -257,6 +264,7 @@ export default function SimCanvas() {
       domElement: sceneMgr.renderer.domElement,
       getMeshes: () => [modelEditor.bodyRenderer.group],
       onResult: (r: any) => useEditorStore.getState().setMeasureResult(r),
+      onCancel: () => useEditorStore.getState().setMeasureMode(false),
     });
     let lastMeasure = false;
     const unsubMeasure = useEditorStore.subscribe((s) => {
@@ -282,6 +290,19 @@ export default function SimCanvas() {
       catch (e) { return { ok: false, error: e.message }; }
       if (scene.model) useModelStore.getState().loadDocument(scene.model);
       if (scene.animation) useAnimationStore.getState().loadClip(scene.animation);
+      // Restore workspace layout (skip during undo/redo — those snapshots have no workspace).
+      if (!opts.skipWorkspace && scene.workspace && Object.keys(scene.workspace).length) {
+        const ws = scene.workspace;
+        useWorkspaceStore.getState().restore(ws);
+        if (ws.page) usePageStore.getState().setPage(ws.page);
+        const dock = useDockStore.getState();
+        if (ws.dockActive !== undefined) {
+          if (ws.dockActive) dock.open(ws.dockActive); else dock.close();
+        }
+        if (ws.dockSplit !== undefined && ws.dockSplit !== dock.split) dock.toggleSplit();
+        if (ws.dockSecondary) dock.setSecondary(ws.dockSecondary);
+        if (ws.cameraState) bridge.applyCameraState?.(ws.cameraState);
+      }
       if (opts.fit !== false) setTimeout(() => bridge.fitCamera?.(), 60);
       return { ok: true };
     };
@@ -319,7 +340,10 @@ export default function SimCanvas() {
     const history: { undo: string[]; redo: string[]; last: string | null; suppressNext: boolean } = { undo: [], redo: [], last: null, suppressNext: false };
     const applySnapshot = (snapJSON: any) => {
       const d = JSON.parse(snapJSON);
-      bridge.loadScene!({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false });
+      bridge.loadScene!({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false, skipWorkspace: true });
+      // Fit camera after undo/redo so restored content is always visible even if
+      // a previous file-open moved the camera to a completely different position.
+      setTimeout(() => bridge.fitCamera?.(), 120);
     };
     bridge.undo = () => {
       if (!history.undo.length) return;
@@ -341,6 +365,27 @@ export default function SimCanvas() {
     };
 
     // ── Autosave + record undo history when the model/animation settles ──────────
+
+    // Remove assets from the model that aren't referenced by any body.
+    // Orphaned assets (e.g. from deleted bodies or experimental imports) can be
+    // tens of MB each as base64 strings. With 30 undo entries each carrying a
+    // full copy, the heap can exceed 1 GB on large projects and cause the GC to
+    // freeze the render loop. The live doc keeps all assets; only snapshots are
+    // trimmed so undo/redo never blows up memory.
+    function stripOrphanAssets(model: any): any {
+      if (!model?.assets || !model?.bodies) return model;
+      const used = new Set<string>();
+      for (const b of Object.values(model.bodies) as any[]) {
+        const id = b.visual?.geometry?.assetId ?? b.assetId;
+        if (id) used.add(id);
+      }
+      const kept: Record<string, any> = {};
+      for (const [id, asset] of Object.entries(model.assets)) {
+        if (used.has(id)) kept[id] = asset;
+      }
+      return { ...model, assets: kept };
+    }
+
     let saveTimer: any = null;
     let persisting = false;
     const doSave = async () => {
@@ -349,7 +394,8 @@ export default function SimCanvas() {
         const project = serializeProject();
         saveAutosave(project);
 
-        const snap = JSON.stringify({ scene: project.scene, model: project.model, animation: project.animation });
+        // Undo snapshots strip orphaned assets to keep each entry small.
+        const snap = JSON.stringify({ scene: project.scene, model: stripOrphanAssets(project.model), animation: project.animation });
         if (history.suppressNext) {
           history.suppressNext = false;
         } else if (history.last !== null && snap !== history.last) {
@@ -363,7 +409,9 @@ export default function SimCanvas() {
         const docState = useDocStore.getState();
         if (docState.handle) {
           docState.setStatus('saving');
-          try { await writeProjectToHandle(docState.handle, project); useDocStore.getState().setStatus('saved'); }
+          // Strip orphans from the saved file too — keeps .nischay files lean.
+          const cleanProject = { ...project, model: stripOrphanAssets(project.model) };
+          try { await writeProjectToHandle(docState.handle, cleanProject); useDocStore.getState().setStatus('saved'); }
           catch { useDocStore.getState().setStatus('idle'); }
         }
       } catch { /* ignore */ }
@@ -377,23 +425,44 @@ export default function SimCanvas() {
     // Mark path tracer dirty whenever the model geometry changes.
     const unsubModelPT = useModelStore.subscribe(() => sceneMgr.markPathTracerDirty());
     const unsubModelSave = useModelStore.subscribe(scheduleSave);
+
+    // Body visibility — sync workspaceStore hiddenBodyIds → BodyRenderer on every change.
+    const applyHidden = () =>
+      modelEditor.bodyRenderer.setHidden(useWorkspaceStore.getState().hiddenBodyIds);
+    applyHidden(); // apply current state immediately
+    const unsubHidden = useWorkspaceStore.subscribe((s, p) => {
+      if (s.hiddenBodyIds !== p.hiddenBodyIds) applyHidden();
+    });
+
+    // Auto-update camera zoom limits whenever bodies are added/removed/moved so
+    // min/max distance always reflect the current scene scale.
+    let lastBodyCount = Object.keys(useModelStore.getState().doc.bodies).length;
+    const unsubCamLimits = useModelStore.subscribe((s) => {
+      const count = Object.keys(s.doc.bodies).length;
+      if (count !== lastBodyCount) { lastBodyCount = count; bridge.updateCameraLimits?.(); }
+    });
     const unsubAnimSave = useAnimationStore.subscribe((s, p) => {
       if (s.tracks !== p.tracks || s.duration !== p.duration) scheduleSave();
     });
 
     // ── Startup restore ─────────────────────────────────────────────────────────
-    const saved = loadAutosave();
-    if (saved) bridge.loadScene(saved);
-    const fitTimer = setTimeout(() => bridge.fitCamera?.(), 300);
+    // loadAutosave is async (IndexedDB). Restore takes <50ms; fitCamera fires
+    // 300ms later so the scene will be ready regardless.
+    loadAutosave().then(saved => { if (saved) bridge.loadScene?.(saved); }).catch(() => {});
+    const fitTimer = setTimeout(() => { bridge.fitCamera?.(); bridge.updateCameraLimits?.(); }, 300);
+    const stopMemoryMonitor = startMemoryMonitor(() => modelEditor._doc);
 
     return () => {
       cancelAnimationFrame(raf);
       clearTimeout(saveTimer);
       clearTimeout(fitTimer);
+      stopMemoryMonitor();
       unsubTheme();
       unsubMeasure();
       unsubModelPT();
       unsubModelSave();
+      unsubHidden();
+      unsubCamLimits();
       unsubAnimSave();
       unsubAuto();
       unsubReach();
@@ -415,6 +484,7 @@ export default function SimCanvas() {
       <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
       <TransformHUD />
       <ViewportStats />
+      <ViewportCtxMenu />
     </Fragment>
   );
 }

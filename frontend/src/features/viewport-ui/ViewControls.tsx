@@ -8,6 +8,7 @@ import { useEditModeStore } from '@/state/editModeStore';
 
 export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: any) {
   const [wireframe, setWireframe] = useState(false);
+  const [connectorsVisible, setConnectorsVisible] = useState(true);
 
   const fitCamera = useCallback(() => {
     if (bridge.fitCamera) bridge.fitCamera();
@@ -39,6 +40,12 @@ export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: a
     }
     bridge.setWireframe?.(next);
   }, [wireframe]);
+
+  const toggleConnectors = useCallback(() => {
+    const next = !connectorsVisible;
+    setConnectorsVisible(next);
+    bridge.setConnectorsVisible?.(next);
+  }, [connectorsVisible]);
 
   return (
     <div className="view-controls">
@@ -80,6 +87,20 @@ export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: a
           <line x1="9" y1="9" x2="12" y2="12" stroke="currentColor" strokeWidth="1.1"/>
         </svg>
         WIRE
+      </button>
+
+      <button
+        className={`view-btn${connectorsVisible ? ' view-btn--active' : ''}`}
+        onClick={toggleConnectors}
+        title="Show/hide connector markers (position + facing normal, used to align modules for snapping)"
+      >
+        {/* Connector dot-with-arrow icon */}
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="4.5" cy="7" r="2.3" stroke="currentColor" strokeWidth="1.3" fill="none"/>
+          <line x1="6.6" y1="7" x2="12" y2="7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/>
+          <path d="M9.6 4.6L12 7l-2.4 2.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+        </svg>
+        PLUGS
       </button>
 
       <button

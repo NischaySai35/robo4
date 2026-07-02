@@ -207,6 +207,7 @@ function jointTorqueVectors(doc: Document, fk: Map<string, any>) {
 
   const out = new Map<string, THREE.Vector3>();
   for (const j of Object.values(doc.joints)) {
+    if (!j.childBodyId) { out.set(j.id, new THREE.Vector3()); continue; }
     const pInfo = pivotForJoint(j, doc, fk);
     if (!pInfo) { out.set(j.id, new THREE.Vector3()); continue; }
     const { pivot } = pInfo;

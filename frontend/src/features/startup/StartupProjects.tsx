@@ -12,15 +12,17 @@ import { listProjects, removeProject, type LibraryEntry } from '@/core/serializa
 import { newProject, openFromLibrary, saveCurrentToLibrary } from '@/core/serialization/projectActions';
 import { buildRobotArmProject } from '@/core/factory/robotArm';
 import { buildHumanoidProject } from '@/core/factory/humanoid';
+import { buildSingleModuleDemoProject } from '@/core/factory/singleModuleDemo';
 
 // Built-in starter projects (grows as more samples are added).
 const PREDEFINED: { key: string; name: string; build: () => unknown }[] = [
+  { key: 'single-module', name: 'Single Module', build: buildSingleModuleDemoProject },
   { key: 'arm', name: 'Robot Arm (6-DOF)', build: buildRobotArmProject },
   { key: 'humanoid', name: 'Humanoid (20-DOF)', build: buildHumanoidProject },
 ];
 
 export default function StartupProjects({ onClose }: { onClose: () => void }) {
-  const [projects, setProjects] = useState<LibraryEntry[]>(() => listProjects());
+  const [projects, setProjects] = useState<LibraryEntry[]>([]);
   const [currentThumb, setCurrentThumb] = useState<string>('');
   const currentName = useDocStore((s) => s.name);
   const currentLibraryId = useDocStore((s) => s.libraryId);
@@ -31,12 +33,13 @@ export default function StartupProjects({ onClose }: { onClose: () => void }) {
     return () => cancelAnimationFrame(id);
   }, []);
 
-  const refresh = () => setProjects(listProjects());
+  const refresh = () => listProjects().then(setProjects);
+  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const onNew = () => { newProject(); onClose(); };
   const onContinue = () => onClose();
-  const onOpen = (e: LibraryEntry) => { if (openFromLibrary(e.id, e.name)) onClose(); };
-  const onDelete = (e: React.MouseEvent, id: string) => { e.stopPropagation(); removeProject(id); refresh(); };
+  const onOpen = async (e: LibraryEntry) => { if (await openFromLibrary(e.id, e.name)) onClose(); };
+  const onDelete = async (e: React.MouseEvent, id: string) => { e.stopPropagation(); await removeProject(id); refresh(); };
   const onSaveCurrent = () => { saveCurrentToLibrary(); refresh(); };
   const onPredefined = (p: { name: string; build: () => unknown }) => {
     const r = bridge.loadScene?.(p.build());

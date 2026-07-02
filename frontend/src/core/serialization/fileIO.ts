@@ -40,7 +40,7 @@ export async function saveProjectToFile(project: any, suggestedName = 'untitled.
     }
   }
 
-  downloadBlob(new Blob([bytes], { type: 'application/octet-stream' }), suggestedName);
+  downloadBlob(new Blob([bytes as unknown as BlobPart], { type: 'application/octet-stream' }), suggestedName);
   return { name: suggestedName, handle: null };
 }
 

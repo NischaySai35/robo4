@@ -45,6 +45,15 @@ export class EditModeController {
     this.container = null;   // body container (overlay parent)
     this.overlay = null;     // THREE.Group of overlay objects
     this._centroidLocal = new THREE.Vector3();
+    this._fusionEdgeVerts = new Set<number>(); // vertex indices on sharp/crease edges
+    this._fusionEdgeList = [] as number[];     // flat [a,b,a,b…] of crease edges (cached)
+    this._hoverPoint = null;                   // kept for legacy ref; hover uses _hoverGroup
+    this._pickMesh = null;                     // invisible mesh from work data for face raycasting
+    this._hoverGroup = null;                   // THREE.Group holding all hover highlight objects
+    this._hoverKey = '';                       // tracks current hover to avoid rebuild every frame
+    this._lastHover = null as any;             // { type:'vertex'|'edge'|'face', data } for click
+    this._snapIndicator = null as any;         // bright dot shown at snap target during drag
+    this._onFusionMouseMove = (e: MouseEvent) => this._fusionHover(e);
     // Two-stage like Object mode: a fresh pick selects (highlight only); the move
     // gizmo appears only after the selected element is clicked again (or an op runs).
     this._showGizmo = false;
@@ -61,7 +70,7 @@ export class EditModeController {
     scene.add(this.gizmo);
     this.gizmo.addEventListener('dragging-changed', (e: any) => { this.controls.enabled = !e.value; });
     this.gizmo.addEventListener('objectChange', () => this._onGizmoDrag());
-    this.gizmo.addEventListener('mouseUp', () => this._commit());
+    this.gizmo.addEventListener('mouseUp', () => { if (this._snapIndicator) this._snapIndicator.visible = false; this._commit(); });
 
     this._down = null;
     this._onDown = (e: any) => { if (e.button === 0) this._down = { x: e.clientX, y: e.clientY }; };
@@ -105,6 +114,7 @@ export class EditModeController {
       else if (s.active) {
         if (s.selectMode !== was.selectMode) { this._applyModeStyle(); this._rebuildSelectionMeshes(); }
         if (s.wireframe !== was.wireframe) this._applyWireframe(s.wireframe);
+        if (s.editStyle !== was.editStyle) this._applyEditStyle();
       }
     });
 
@@ -154,9 +164,13 @@ export class EditModeController {
     this._twoPoint = null; this._tpMarker = null;
     this._detachGizmo();
     this._applyWireframe(false);
+    this.domElement.removeEventListener('mousemove', this._onFusionMouseMove);
     if (this._proxy) { this._proxy.parent?.remove(this._proxy); this._proxy = null; }
     if (this.overlay) { this.scene.remove(this.overlay); this._disposeGroup(this.overlay); this.overlay = null; }
-    this._purgeOrphans(); // remove any overlay that lost its reference (defensive)
+    this._purgeOrphans();
+    this._hoverPoint = null; this._hoverGroup = null; this._snapIndicator = null; this._pickMesh = null;
+    this._hoverKey = ''; this._lastHover = null;
+    this._fusionEdgeVerts.clear(); this._fusionEdgeList = [];
     this.container = null; this.work = null; this.bodyId = null;
   }
 
@@ -195,8 +209,17 @@ export class EditModeController {
     // recomputed for shading by BodyRenderer, so losing them here is harmless.
     for (const name of Object.keys(geo.attributes)) { if (name !== 'position') geo.deleteAttribute(name); }
     geo.morphAttributes = {};
-    mesh.updateMatrix();
-    geo.applyMatrix4(mesh.matrix); // fold child transform into container-local space
+    // Fold the mesh's transform RELATIVE TO THE CONTAINER into the vertices, so
+    // work-space == container-local space (which the overlay mirrors, and which the
+    // editMesh round-trip in BodyRenderer expects). Using mesh.matrix alone only
+    // captures the mesh's immediate local transform — assets parsed as a Group
+    // (glTF/STEP/OBJ, or AssetCache's center() offset) put the placement on an
+    // intermediate parent, so mesh.matrix would leave vertices at their raw (often
+    // huge, metres-scale) coordinates and the overlay would render metres off-screen.
+    container.updateMatrixWorld(true);
+    mesh.updateWorldMatrix(true, false);
+    const relToContainer = new THREE.Matrix4().copy(container.matrixWorld).invert().multiply(mesh.matrixWorld);
+    geo.applyMatrix4(relToContainer);
     geo = mergeVertices(geo, 1e-4);
     return {
       positions: Array.from(geo.attributes.position.array),
@@ -219,13 +242,18 @@ export class EditModeController {
     // All vertices as points.
     const pgeo = new THREE.BufferGeometry();
     pgeo.setAttribute('position', pos);
-    // depthTest:true → vertices/edges behind the solid mesh are occluded (no more
-    // seeing dots through the object). depthWrite:false avoids fighting the mesh.
+    // depthTest:false → vertices are always drawn on top. They sit exactly on the
+    // mesh surface (coincident z), so depthTest:true z-fights against the mesh's
+    // own depth values almost every fragment and the dots vanish entirely. Always-on-
+    // top matches how every other overlay marker in this app (gizmo, connectors,
+    // joints) is drawn — depthWrite stays off so overlay dots never occlude each other.
     this.points = new THREE.Points(pgeo, new THREE.PointsMaterial({
-      color: GREY, size: 5, sizeAttenuation: false, depthTest: true, depthWrite: false,
+      color: GREY, size: 5, sizeAttenuation: false, depthTest: false, depthWrite: false,
       map: circleSpriteTexture(), alphaTest: 0.5, transparent: true,
     }));
     this.points.renderOrder = 2001;
+    this.points.frustumCulled = false; // geometry has no bounding sphere yet on first build — never cull
+    pgeo.computeBoundingSphere();
     this.overlay.add(this.points);
 
     // Wireframe edges (always drawn; thin grey, darken/thicken when Edge mode is
@@ -235,7 +263,7 @@ export class EditModeController {
     const egeo = new LineSegmentsGeometry();
     egeo.setPositions(this._edgeSegPositions());
     this.edges = new LineSegments2(egeo, new LineMaterial({
-      color: GREY, linewidth: 1.4, depthTest: true, depthWrite: false,
+      color: GREY, linewidth: 1.4, depthTest: false, depthWrite: false,
       transparent: true, opacity: 0.5,
     }));
     this.edges.computeLineDistances();
@@ -243,12 +271,47 @@ export class EditModeController {
     this.edges.renderOrder = 2000;
     this.overlay.add(this.edges);
 
+    // Invisible pick mesh built from work geometry — raycasted for face detection.
+    // colorWrite:false + depthWrite:false means it contributes nothing to the image;
+    // visible:true (default) means Three.js raycaster will test it.
+    const pickGeo = new THREE.BufferGeometry();
+    pickGeo.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(this.work.positions), 3));
+    pickGeo.setIndex(this.work.indices);
+    this._pickMesh = new THREE.Mesh(pickGeo, new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false, side: THREE.DoubleSide }));
+    // visible:false keeps it OUT of the render pipeline entirely — it writes neither
+    // colour nor depth, so it contributes nothing to the image and only ever served as
+    // a raycast target (hit-tested directly via Mesh.prototype.raycast.call, which does
+    // not require visibility). Rendering it was pure overhead that also tripped a WebGL
+    // uniform crash on this GPU/ANGLE path, aborting the frame before the overlay drew.
+    this._pickMesh.visible = false;
+    this.overlay.add(this._pickMesh);
+
+    // Hover highlight group — all fusion hover objects live here.
+    this._hoverGroup = new THREE.Group();
+    this.overlay.add(this._hoverGroup);
+
+    // Snap indicator — bright green dot shown when a drag snaps to a vertex.
+    const siGeo = new THREE.BufferGeometry();
+    siGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0], 3));
+    this._snapIndicator = new THREE.Points(siGeo, new THREE.PointsMaterial({
+      color: 0x00ff88, size: 12, sizeAttenuation: false,
+      depthTest: false, depthWrite: false,
+      map: circleSpriteTexture(), alphaTest: 0.5, transparent: true,
+    }));
+    this._snapIndicator.renderOrder = 2010;
+    this._snapIndicator.visible = false;
+    this.overlay.add(this._snapIndicator);
+
+    // Legacy ref kept so _leave cleanup doesn't crash.
+    this._hoverPoint = this._snapIndicator;
+
     // Selection highlight holders (rebuilt as selection changes).
     this.selPoints = null; this.selEdges = null; this.selFaces = null;
 
     this.scene.add(this.overlay);
     this.syncTransform();
     this._applyModeStyle();
+    this._applyEditStyle();
     this._rebuildSelectionMeshes();
   }
 
@@ -295,17 +358,60 @@ export class EditModeController {
     this.overlay.traverse((o: any) => { if (o.material?.isLineMaterial) o.material.resolution.set(w, h); });
   }
 
-  _edgeIndices() {
+  _edgeIndices(thresholdDeg = 25) {
+    const fusion = useEditModeStore.getState().editStyle === 'fusion';
     const idx = this.work.indices;
-    const seen = new Set<any>();
-    const out: any[] = [];
-    const add = (a: any, b: any) => {
-      const key = a < b ? `${a}_${b}` : `${b}_${a}`;
-      if (seen.has(key)) return;
-      seen.add(key); out.push(a, b);
-    };
-    for (let i = 0; i < idx.length; i += 3) {
-      add(idx[i], idx[i + 1]); add(idx[i + 1], idx[i + 2]); add(idx[i + 2], idx[i]);
+    const pos = this.work.positions;
+
+    if (!fusion) {
+      // Blender mode — emit every unique edge, no filtering.
+      const seen = new Set<string>();
+      const out: number[] = [];
+      for (let i = 0; i < idx.length; i += 3) {
+        for (let e = 0; e < 3; e++) {
+          const a = idx[i+e], b = idx[i+(e+1)%3];
+          const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+          if (!seen.has(key)) { seen.add(key); out.push(a, b); }
+        }
+      }
+      return out;
+    }
+    const triCount = idx.length / 3;
+    const cosThresh = Math.cos(thresholdDeg * Math.PI / 180);
+
+    // Compute face normal for every triangle.
+    const normals: [number, number, number][] = new Array(triCount);
+    for (let t = 0; t < triCount; t++) {
+      const a = idx[t * 3], b = idx[t * 3 + 1], c = idx[t * 3 + 2];
+      const ux = pos[b*3]-pos[a*3], uy = pos[b*3+1]-pos[a*3+1], uz = pos[b*3+2]-pos[a*3+2];
+      const vx = pos[c*3]-pos[a*3], vy = pos[c*3+1]-pos[a*3+1], vz = pos[c*3+2]-pos[a*3+2];
+      const nx = uy*vz-uz*vy, ny = uz*vx-ux*vz, nz = ux*vy-uy*vx;
+      const len = Math.sqrt(nx*nx+ny*ny+nz*nz) || 1;
+      normals[t] = [nx/len, ny/len, nz/len];
+    }
+
+    // Map each edge key → triangle indices that share it.
+    const edgeToTris = new Map<string, number[]>();
+    for (let t = 0; t < triCount; t++) {
+      for (let e = 0; e < 3; e++) {
+        const a = idx[t*3+e], b = idx[t*3+(e+1)%3];
+        const key = a < b ? `${a}_${b}` : `${b}_${a}`;
+        const arr = edgeToTris.get(key);
+        if (arr) arr.push(t); else edgeToTris.set(key, [t]);
+      }
+    }
+
+    // Keep boundary edges (silhouette) and edges where dihedral angle > threshold.
+    const out: number[] = [];
+    for (const [key, tris] of edgeToTris) {
+      const [a, b] = key.split('_').map(Number);
+      if (tris.length === 1) {
+        out.push(a, b); // boundary — always show
+      } else {
+        const n0 = normals[tris[0]], n1 = normals[tris[1]];
+        const dot = n0[0]*n1[0] + n0[1]*n1[1] + n0[2]*n1[2];
+        if (dot < cosThresh) out.push(a, b); // sharp edge — show; smooth curve — skip
+      }
     }
     return out;
   }
@@ -323,15 +429,31 @@ export class EditModeController {
   }
 
   _refreshGeometryAttributes() {
+    const fusion = useEditModeStore.getState().editStyle === 'fusion';
     if (this.points) {
       this.points.geometry.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(this.work.positions), 3));
       this.points.geometry.attributes.position.needsUpdate = true;
       this.points.geometry.computeBoundingSphere();
+      this.points.visible = !fusion;
     }
     if (this.edges) {
       this.edges.geometry.setPositions(this._edgeSegPositions());
       this.edges.computeLineDistances();
+      this.edges.visible = !fusion;
     }
+    // Rebuild fusion edge cache after geometry changes.
+    this._fusionEdgeList = this._edgeIndices();
+    this._fusionEdgeVerts.clear();
+    for (const v of this._fusionEdgeList) this._fusionEdgeVerts.add(v);
+    // Sync pick mesh geometry so face raycasting stays accurate after edits.
+    if (this._pickMesh) {
+      this._pickMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(Float32Array.from(this.work.positions), 3));
+      this._pickMesh.geometry.setIndex(this.work.indices);
+      this._pickMesh.geometry.attributes.position.needsUpdate = true;
+      this._pickMesh.geometry.boundingBox = null;
+      this._pickMesh.geometry.boundingSphere = null;
+    }
+    this._clearHoverGroup(); this._hoverKey = ''; this._lastHover = null;
     this._rebuildSelectionMeshes();
   }
 
@@ -345,6 +467,188 @@ export class EditModeController {
       const i = t * 3; set.add(this.work.indices[i]); set.add(this.work.indices[i + 1]); set.add(this.work.indices[i + 2]);
     });
     return set;
+  }
+
+  _applyEditStyle() {
+    if (!this.overlay) return;
+    const fusion = useEditModeStore.getState().editStyle === 'fusion';
+
+    // Rebuild edge overlay geometry first (mode may have changed filter).
+    if (this.edges) {
+      this.edges.geometry.setPositions(this._edgeSegPositions());
+      this.edges.computeLineDistances();
+      // Fusion: no static overlay at all — hover shows everything dynamically.
+      this.edges.visible = !fusion;
+    }
+    if (this.points) this.points.visible = !fusion;
+
+    // Cache crease-edge list and vertex set for hover.
+    this._fusionEdgeVerts.clear();
+    this._fusionEdgeList = this._edgeIndices(); // always rebuild (blender needs it too via _edgeSegPositions)
+    for (const v of this._fusionEdgeList) this._fusionEdgeVerts.add(v);
+
+    // Clear stale hover visuals when switching modes.
+    this._clearHoverGroup();
+    this._hoverKey = '';
+    this._lastHover = null;
+
+    this.domElement.removeEventListener('mousemove', this._onFusionMouseMove);
+    if (fusion) this.domElement.addEventListener('mousemove', this._onFusionMouseMove);
+  }
+
+  // ── fusion hover system ───────────────────────────────────────────────────────
+
+  /** Point-to-segment distance squared in 2D screen space. */
+  _ptSegDistSq(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+    const dx = bx - ax, dy = by - ay, lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return (px - ax) ** 2 + (py - ay) ** 2;
+    const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / lenSq));
+    return (px - ax - t * dx) ** 2 + (py - ay - t * dy) ** 2;
+  }
+
+  /** Dispose all objects in _hoverGroup and clear it. */
+  _clearHoverGroup() {
+    if (!this._hoverGroup) return;
+    for (const c of [...this._hoverGroup.children]) this._disposeObj(c);
+    this._hoverGroup.clear();
+  }
+
+  // Reusable temp objects — avoids per-vertex allocation in the hot hover loop.
+  _tmpV3 = new THREE.Vector3();
+  _tmpSX = 0; _tmpSY = 0; _tmpSZ = 0;
+
+  /** Project vertex vi (local overlay space) to screen. Result in _tmpSX/Y/Z. z>1 = behind camera. */
+  _vsToScreen(vi: number, W: number, H: number) {
+    const pos = this.work.positions;
+    this._tmpV3.set(pos[vi * 3], pos[vi * 3 + 1], pos[vi * 3 + 2]);
+    this._tmpV3.applyMatrix4(this.overlay.matrixWorld).project(this.camera);
+    this._tmpSX = (this._tmpV3.x * 0.5 + 0.5) * W;
+    this._tmpSY = (-this._tmpV3.y * 0.5 + 0.5) * H;
+    this._tmpSZ = this._tmpV3.z;
+  }
+
+  _makeHoverMat(color: number, size: number) {
+    return new THREE.PointsMaterial({
+      color, size, sizeAttenuation: false,
+      depthTest: false, depthWrite: false,   // always on top — never buried in mesh
+      map: circleSpriteTexture(), alphaTest: 0.5, transparent: true,
+    });
+  }
+
+  _makeHoverLineMat(color: number, width: number) {
+    return new LineMaterial({ color, linewidth: width, depthTest: false, depthWrite: false, transparent: true, opacity: 0.95 });
+  }
+
+  _addHoverPoints(coords: number[], color: number, size: number) {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(coords, 3));
+    const p = new THREE.Points(g, this._makeHoverMat(color, size));
+    p.renderOrder = 3001; this._hoverGroup.add(p);
+  }
+
+  _addHoverLine(coords: number[], color: number, width: number) {
+    const g = new LineSegmentsGeometry(); g.setPositions(coords);
+    const l = new LineSegments2(g, this._makeHoverLineMat(color, width));
+    l.computeLineDistances(); l.frustumCulled = false;
+    l.renderOrder = 3000; this._hoverGroup.add(l);
+  }
+
+  _showHoverVertex(vi: number) {
+    const key = `v:${vi}`;
+    if (this._hoverKey === key) return;
+    this._clearHoverGroup(); this._hoverKey = key;
+    this._lastHover = { type: 'vertex', data: vi };
+    const pos = this.work.positions;
+    this._addHoverPoints([pos[vi * 3], pos[vi * 3 + 1], pos[vi * 3 + 2]], 0xff8800, 11);
+  }
+
+  _showHoverEdge(a: number, b: number) {
+    const ea = Math.min(a, b), eb = Math.max(a, b);
+    const key = `e:${ea}_${eb}`;
+    if (this._hoverKey === key) return;
+    this._clearHoverGroup(); this._hoverKey = key;
+    this._lastHover = { type: 'edge', data: [ea, eb] };
+    const pos = this.work.positions;
+    const [ax, ay, az] = [pos[a * 3], pos[a * 3 + 1], pos[a * 3 + 2]];
+    const [bx, by, bz] = [pos[b * 3], pos[b * 3 + 1], pos[b * 3 + 2]];
+    this._addHoverLine([ax, ay, az, bx, by, bz], 0xff8800, 2.5);
+    this._addHoverPoints([ax, ay, az, bx, by, bz], 0xff8800, 9);  // endpoints
+    this._addHoverPoints([(ax + bx) / 2, (ay + by) / 2, (az + bz) / 2], 0xffbb44, 6); // midpoint
+  }
+
+  _showHoverFace(triIdx: number) {
+    const key = `f:${triIdx}`;
+    if (this._hoverKey === key) return;
+    this._clearHoverGroup(); this._hoverKey = key;
+    this._lastHover = { type: 'face', data: triIdx };
+    const pos = this.work.positions, idx = this.work.indices;
+    const a = idx[triIdx * 3], b = idx[triIdx * 3 + 1], c = idx[triIdx * 3 + 2];
+    const [ax, ay, az] = [pos[a * 3], pos[a * 3 + 1], pos[a * 3 + 2]];
+    const [bx, by, bz] = [pos[b * 3], pos[b * 3 + 1], pos[b * 3 + 2]];
+    const [cx, cy, cz] = [pos[c * 3], pos[c * 3 + 1], pos[c * 3 + 2]];
+
+    // Translucent face fill
+    const fGeo = new THREE.BufferGeometry();
+    fGeo.setAttribute('position', new THREE.Float32BufferAttribute([ax, ay, az, bx, by, bz, cx, cy, cz], 3));
+    fGeo.setIndex([0, 1, 2]);
+    const fMesh = new THREE.Mesh(fGeo, new THREE.MeshBasicMaterial({ color: 0x4488ff, transparent: true, opacity: 0.35, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+    fMesh.renderOrder = 2999; this._hoverGroup.add(fMesh);
+
+    // 3 boundary edges
+    this._addHoverLine([ax, ay, az, bx, by, bz, bx, by, bz, cx, cy, cz, cx, cy, cz, ax, ay, az], 0x4488ff, 2);
+    // Corner vertices
+    this._addHoverPoints([ax, ay, az, bx, by, bz, cx, cy, cz], 0x4488ff, 9);
+    // Edge midpoints
+    this._addHoverPoints([
+      (ax + bx) / 2, (ay + by) / 2, (az + bz) / 2,
+      (bx + cx) / 2, (by + cy) / 2, (bz + cz) / 2,
+      (cx + ax) / 2, (cy + ay) / 2, (cz + az) / 2,
+    ], 0x88bbff, 5);
+  }
+
+  _fusionHover(e: MouseEvent) {
+    if (!this.overlay || !this.work || !this._hoverGroup) return;
+    const rect = this.domElement.getBoundingClientRect();
+    const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+    const W = rect.width, H = rect.height;
+
+    // Priority 1 — vertex proximity (10 px radius — tighter so edges/faces are reachable).
+    let bestVertDist = 10 * 10, bestVert = -1;
+    for (const vi of this._fusionEdgeVerts) {
+      this._vsToScreen(vi, W, H);
+      if (this._tmpSZ > 1) continue;
+      const d = (this._tmpSX - mx) ** 2 + (this._tmpSY - my) ** 2;
+      if (d < bestVertDist) { bestVertDist = d; bestVert = vi; }
+    }
+    if (bestVert >= 0) { this._showHoverVertex(bestVert); return; }
+
+    // Priority 2 — edge proximity (12 px).
+    const el = this._fusionEdgeList;
+    let bestEdgeDist = 12 * 12, bestA = -1, bestB = -1;
+    for (let i = 0; i < el.length; i += 2) {
+      const a = el[i], b = el[i + 1];
+      this._vsToScreen(a, W, H);
+      const sax = this._tmpSX, say = this._tmpSY, saz = this._tmpSZ;
+      this._vsToScreen(b, W, H);
+      if (saz > 1 && this._tmpSZ > 1) continue;
+      const d = this._ptSegDistSq(mx, my, sax, say, this._tmpSX, this._tmpSY);
+      if (d < bestEdgeDist) { bestEdgeDist = d; bestA = a; bestB = b; }
+    }
+    if (bestA >= 0) { this._showHoverEdge(bestA, bestB); return; }
+
+    // Priority 3 — face raycast directly against the pick mesh.
+    if (this._pickMesh) {
+      const ndcX = (mx / W) * 2 - 1, ndcY = -(my / H) * 2 + 1;
+      this._ray.setFromCamera(new THREE.Vector2(ndcX, ndcY), this.camera);
+      const hits: any[] = [];
+      THREE.Mesh.prototype.raycast.call(this._pickMesh, this._ray, hits);
+      if (hits.length > 0 && hits[0].faceIndex !== undefined) {
+        this._showHoverFace(hits[0].faceIndex); return;
+      }
+    }
+
+    // Nothing under cursor.
+    if (this._hoverKey !== '') { this._clearHoverGroup(); this._hoverKey = ''; this._lastHover = null; }
   }
 
   _rebuildSelectionMeshes() {
@@ -361,8 +665,8 @@ export class EditModeController {
       selection.forEach((v) => a.push(...vAt(v)));
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3));
-      this.selPoints = new THREE.Points(g, new THREE.PointsMaterial({ color: SEL_COLOR, size: 11, sizeAttenuation: false, depthTest: true, depthWrite: false, map: circleSpriteTexture(), alphaTest: 0.5, transparent: true }));
-      this.selPoints.renderOrder = 2003; this.overlay.add(this.selPoints);
+      this.selPoints = new THREE.Points(g, new THREE.PointsMaterial({ color: SEL_COLOR, size: 11, sizeAttenuation: false, depthTest: false, depthWrite: false, map: circleSpriteTexture(), alphaTest: 0.5, transparent: true }));
+      this.selPoints.renderOrder = 2003; this.selPoints.frustumCulled = false; this.overlay.add(this.selPoints);
     } else if (selectMode === 'edge' && selection.length) {
       const seg: any[] = [];
       selection.forEach(([i, j]) => { seg.push(...vAt(i), ...vAt(j)); });
@@ -381,8 +685,8 @@ export class EditModeController {
       const g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(a, 3));
       g.computeVertexNormals();
-      this.selFaces = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: SEL_COLOR, transparent: true, opacity: 0.4, depthTest: true, depthWrite: false, side: THREE.DoubleSide }));
-      this.selFaces.renderOrder = 2002; this.overlay.add(this.selFaces);
+      this.selFaces = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: SEL_COLOR, transparent: true, opacity: 0.4, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+      this.selFaces.renderOrder = 2002; this.selFaces.frustumCulled = false; this.overlay.add(this.selFaces);
     }
 
     this._updateStats();
@@ -415,8 +719,22 @@ export class EditModeController {
 
     if (this._twoPoint) { this._handleTwoPoint(); return; }
 
-    const { selectMode } = useEditModeStore.getState();
+    const { selectMode, editStyle } = useEditModeStore.getState();
     const additive = e.shiftKey || e.ctrlKey;
+
+    // Fusion mode: pick whatever was last hovered — no separate vertex/edge/face raycast.
+    if (editStyle === 'fusion' && this._lastHover) {
+      const h = this._lastHover;
+      // Selection array shape depends on selectMode (vertex/face→number[], edge→[i,j][]).
+      // Fusion has no mode selector, so the hovered element's type must drive selectMode
+      // here too — otherwise a stale selectMode from a prior Blender session mismatches
+      // the shape actually being pushed and crashes _rebuildSelectionMeshes downstream.
+      if (h.type !== selectMode) { useEditModeStore.getState().setSelectMode(h.type); }
+      if (h.type === 'vertex') this._toggleInSelection(h.data, additive, (a: any, b: any) => a === b);
+      else if (h.type === 'edge') this._toggleEdge(h.data, additive);
+      else if (h.type === 'face') this._toggleInSelection(h.data, additive, (a: any, b: any) => a === b);
+      return;
+    }
 
     if (selectMode === 'vertex') this._pickVertex(additive);
     else this._pickFaceOrEdge(selectMode, additive);
@@ -528,6 +846,45 @@ export class EditModeController {
   _onGizmoDrag() {
     if (!this._dragVerts) return;
     const delta = this._proxy.position.clone().sub(this._centroidLocal);
+
+    // Fusion mode vertex snap: find nearest non-selected vertex within threshold.
+    if (useEditModeStore.getState().editStyle === 'fusion') {
+      const selectedSet = new Set(this._dragVerts);
+      const snapThresh = 0.04; // model units
+      const snapThreshSq = snapThresh * snapThresh;
+      const targetPos = new THREE.Vector3(
+        this._dragStart[0].x + delta.x,
+        this._dragStart[0].y + delta.y,
+        this._dragStart[0].z + delta.z,
+      );
+      let bestSnapDist = snapThreshSq, snapVi = -1;
+      const pos = this.work.positions;
+      for (let vi = 0; vi < pos.length / 3; vi++) {
+        if (selectedSet.has(vi)) continue;
+        const dx = pos[vi*3]-targetPos.x, dy = pos[vi*3+1]-targetPos.y, dz = pos[vi*3+2]-targetPos.z;
+        const d = dx*dx + dy*dy + dz*dz;
+        if (d < bestSnapDist) { bestSnapDist = d; snapVi = vi; }
+      }
+      if (snapVi >= 0) {
+        const snapDelta = new THREE.Vector3(pos[snapVi*3]-this._dragStart[0].x, pos[snapVi*3+1]-this._dragStart[0].y, pos[snapVi*3+2]-this._dragStart[0].z);
+        for (let k = 0; k < this._dragVerts.length; k++) {
+          const v = this._dragVerts[k], s = this._dragStart[k];
+          this.work.positions[v*3] = s.x + snapDelta.x;
+          this.work.positions[v*3+1] = s.y + snapDelta.y;
+          this.work.positions[v*3+2] = s.z + snapDelta.z;
+        }
+        if (this._snapIndicator) {
+          const si = this._snapIndicator.geometry.attributes.position;
+          si.setXYZ(0, pos[snapVi*3], pos[snapVi*3+1], pos[snapVi*3+2]);
+          si.needsUpdate = true;
+          this._snapIndicator.visible = true;
+        }
+        this._refreshGeometryAttributes();
+        return;
+      }
+    }
+
+    if (this._snapIndicator) this._snapIndicator.visible = false;
     for (let k = 0; k < this._dragVerts.length; k++) {
       const v = this._dragVerts[k], s = this._dragStart[k];
       this.work.positions[v * 3] = s.x + delta.x;

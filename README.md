@@ -1,14 +1,15 @@
-# TETROBOT — GUI-first Robotics Modeling, Simulation & Autonomy Platform
+# TETROBOT — GUI-first Robotics Modeling, Simulation & Training Platform
 
 Design any robot **without writing code**, simulate it (kinematics + physics),
-analyze it (mass, torque, stress), animate it, and run a full **native autonomy
-stack** (navigation, motion planning, perception, learning, behaviour trees) — all
-in one app. No ROS, no middleware, no servers. Optionally drive real hardware
+analyze it (mass, torque, stress), animate it, train intelligent control policies
+(ES / CMA-ES / Behavioral Cloning), and run a full **native autonomy stack**
+(navigation, motion planning, perception, behaviour trees) — all in one app.
+No ROS, no middleware, no servers. Optionally drive real hardware
 (ESP32-C3 + ST3215 smart servos) over WiFi.
 
 > One rich model, many backends: a single JSON-serializable robot **document** is
-> the source of truth; the 3D viewport, physics, analysis, exporters, hardware and
-> autonomy are all *views* of it.
+> the source of truth; the 3D viewport, physics, analysis, training, exporters,
+> hardware and autonomy are all *views* of it.
 
 By **Nischay Sai D R** · Proprietary & confidential.
 
@@ -18,8 +19,15 @@ By **Nischay Sai D R** · Proprietary & confidential.
 
 - **Code-free robot builder** — compose rigid **bodies** (box / cylinder / capsule /
   sphere / cone / torus / imported STL/OBJ mesh) and **joints** (revolute, continuous,
-  prismatic, fixed, …) into any kinematic graph. Move/rotate/scale gizmos, snapping,
-  measure tool, face-mate assembly, and a Blender-style mesh **Edit Mode**.
+  prismatic, fixed, …) into any kinematic graph. Constant-size move/rotate/scale gizmos,
+  snapping, measure tool, face-mate assembly, and a Blender-style mesh **Edit Mode**.
+- **Modular connector mating** — attach **keyed connectors** to any body (position +
+  outward normal + a roll/key tangent + rotational symmetry). Auto-Snap finds facing
+  connector pairs and mates them with a real detachable joint: it aligns opposing
+  normals, **rotates the module to the nearest keyed seat** (e.g. every 90°), then plays
+  an *approach → align → insert → latch* motion (backs off, slides straight down the
+  normal, locks) with an **obstacle collision guard** that aborts if the path is blocked.
+  Works on the live FK pose, so a posed or rotated module mates where it actually is.
 - **Kinematics** — generic forward kinematics over the graph + **inverse kinematics**
   (damped-least-squares and FABRIK). **Drag-from-tip IK**: grab any link and the chain
   solves to follow.
@@ -30,10 +38,22 @@ By **Nischay Sai D R** · Proprietary & confidential.
   **torque & estimated servo current**, and a Fusion-style **surface stress heatmap**
   painted across the meshes, plus a live multi-metric telemetry chart.
 - **Animation** — keyframe joint poses on a timeline; scrub, play, and pose live with IK.
-- **Native autonomy stack (no ROS)** — occupancy/costmap + **A\*** navigation, joint-space
-  **RRT** motion planning with real collision checking, simulated **LiDAR** + occupancy
-  **mapping**, a Gym-style RL env with an **Evolution-Strategies** trainer, and a
-  **Behaviour-Tree** mission engine.
+- **Multi-algorithm training** — train any robot directly in the browser with three
+  algorithms: **Evolution Strategies** (robust, any task), **CMA-ES** (adaptive covariance,
+  ~2× faster for manipulation), and **Behavioral Cloning** (supervised learning from
+  recorded demonstrations). Training enhancers: **observation normalization** (Welford's
+  online algorithm), **curriculum learning** (auto-advances difficulty), and a
+  **topology encoding** that lets one policy control any configuration of a
+  shape-changing robot (+60-dim joint-graph obs).
+- **AI goal parsing (VLM)** — type a natural-language instruction ("reach the top left")
+  and any of OpenAI, Anthropic, Google Gemini, or HuggingFace models parse it into a 3D
+  reach target. Dynamic model lists fetched live from provider APIs.
+- **Cloud training export** — export your robot + task as a Google Colab notebook
+  (NumPy sep-CMA-ES, free CPU, ~2–5 min). Import the trained policy JSON back to run
+  locally. Identical `PolicySpec` interface — cloud and browser policies are interchangeable.
+- **Native autonomy stack (no ROS)** — occupancy/costmap + **A\*** navigation,
+  joint-space **RRT** motion planning with real collision checking, simulated **LiDAR** +
+  occupancy **mapping**, and a **Behaviour-Tree** mission engine.
 - **Built-in robots** — generate a complete **6-DOF robot arm** or a **~20-DOF humanoid**
   in one click, with walk / jump / wave / home actions for the humanoid.
 - **AI Copilot** — in-app assistant (Transformers.js) that can build/edit the model.
@@ -51,13 +71,13 @@ By **Nischay Sai D R** · Proprietary & confidential.
                       │   Model document  (core/model, commands)  │   ← single source of truth
                       │   bodies · joints · materials · assets     │     (undoable, serializable)
                       └──────────────────────────────────────────┘
-            ┌──────────────┬──────────────┬───────────────┬───────────────┬─────────────┐
-            ▼              ▼              ▼               ▼               ▼             ▼
-       Viewport        Physics        Kinematics       Analysis       Autonomy      Exporters
-   (Three.js render,  (Rapier sim,   (FK / IK /       (mass, CoM,    (nav, RRT,    (.nischay,
-    gizmos, overlays)  collisions)    FABRIK)          torque, stress) lidar, RL, BT) OBJ/STL/GLB/URDF)
-                                                                                          │
-                                                                         Hardware ── ESP32-C3 ── ST3215 bus
+         ┌──────────────┬──────────────┬───────────────┬───────────────┬──────────────┬─────────────┐
+         ▼              ▼              ▼               ▼               ▼              ▼             ▼
+    Viewport        Physics        Kinematics       Analysis        Training       Autonomy      Exporters
+(Three.js render,  (Rapier sim,   (FK / IK /       (mass, CoM,    (ES/CMA-ES/BC  (nav, RRT,    (.nischay,
+ gizmos, overlays)  collisions)    FABRIK)          torque, stress)  + VLM cloud)  lidar, BT)   OBJ/STL/GLB/URDF)
+                                                                                                      │
+                                                                                   Hardware ── ESP32-C3 ── ST3215 bus
 ```
 
 See [`frontend/ARCHITECTURE.md`](frontend/ARCHITECTURE.md) and
@@ -79,15 +99,16 @@ robo4/
 │       │   └── serialization/      # .nischay codec, project I/O, exporters
 │       ├── kinematics/             # modelFK, modelIK (DLS), fabrik, analysis (mass/torque/stress)
 │       ├── viewport/               # SceneManager, ModelEditor, PhysicsSim (Rapier), renderers
-│       ├── robotics/               # NATIVE autonomy stack
+│       ├── robotics/               # NATIVE autonomy + training stack
 │       │   ├── nav/                # occupancyGrid, astar, pathFollower, worldModel
 │       │   ├── planning/           # rrt.ts (joint-space motion planning)
 │       │   ├── collision.ts        # self/world collision model
 │       │   ├── sensors/            # lidar.ts (scene raycast)
-│       │   ├── rl/                 # gymEnv.ts, es.ts (Evolution Strategies)
+│       │   ├── rl/                 # ES, CMA-ES, BC trainers · policy · tasks ·
+│       │   │                       #   obsNormalizer · curriculum · topologyEncoder
 │       │   └── behavior/           # behaviorTree.ts engine
-│       ├── features/               # UI: dock panels, menus, autonomy, humanoid, servo, AI, ...
-│       └── state/                  # Zustand stores (model, selection, dock, autonomy, ...)
+│       ├── features/               # UI: dock panels, menus, autonomy, training, servo, AI, ...
+│       └── state/                  # Zustand stores (model, selection, dock, training, ...)
 ├── backend/                        # Optional FastAPI stub (proxy to ESP32)
 ├── esp32/                          # ESP32-C3 firmware (WiFi API + ST3215 driver)
 ├── tools/                          # Blender import add-on, helpers
@@ -104,8 +125,9 @@ robo4/
 | App | React 18 + TypeScript (strict), Vite 5, Zustand |
 | 3D | Three.js, postprocessing |
 | Physics | Rapier3D (`@dimforge/rapier3d-compat`, WASM) |
+| Training | Custom ES / sep-CMA-ES / BC (Adam) — pure TypeScript, no GPU needed |
 | Charts | uPlot |
-| AI | `@huggingface/transformers` (Transformers.js) |
+| AI | `@huggingface/transformers` (Transformers.js) · OpenAI / Anthropic / Gemini APIs |
 | Desktop | Electron 33 + electron-builder |
 | Hardware | ESP32-C3 (Arduino) + SCServo / ST3215 RS-485 bus |
 | Backend (optional) | FastAPI + Uvicorn |
@@ -149,12 +171,29 @@ uvicorn main:app --reload --port 8000
 2. **Pose & simulate.** Toggle the top-view **IK** button and drag a link; enable
    **Gravity** to run physics. Open **Analysis ▸ Overlay** for the stress heatmap.
 3. **Animate.** Keyframe poses on the **Animation** timeline; scrub and play.
-4. **Autonomy.** Open the **Autonomy** panel: add obstacles, build a LiDAR map, set a
-   goal and **Navigate**; plan a collision-checked arm trajectory (**RRT**); **Train**
-   a reach policy (Evolution Strategies); or run a **Behaviour-Tree** patrol mission.
-   With the humanoid loaded, **Walk / Jump / Wave / Home** appear in the top bar.
-5. **Save / export.** **File ▸ Save Project As** writes a self-contained `.nischay`
+4. **Train a policy.** Open the **Training** panel → **Setup** (pick task: Reach /
+   Navigate / Walk / Pose) → **Train** (choose ES, CMA-ES, or BC; enable ObsNorm +
+   Curriculum for faster convergence; enable **TopoObs** for shape-changing robots) →
+   watch the live reward curve → **Save** the skill → **Watch** it run on your robot.
+   Use the **Cloud** tab to parse goals with a VLM or export a Colab notebook for
+   GPU-accelerated training.
+5. **Autonomy.** Open the **Autonomy** panel: add obstacles, build a LiDAR map, set a
+   goal and **Navigate**; plan a collision-checked arm trajectory (**RRT**); or run a
+   **Behaviour-Tree** patrol mission.
+6. **Save / export.** **File ▸ Save Project As** writes a self-contained `.nischay`
    (geometry + embedded meshes + animation, encrypted). Export OBJ / STL / GLB / URDF.
+
+### Training algorithms
+
+| Algorithm | Best for | Speed |
+|---|---|---|
+| **ES** (Evolution Strategies) | Any task, getting started | Moderate |
+| **CMA-ES** (Separable) | Manipulation, many-joint arms | ~2× faster than ES |
+| **BC** (Behavioral Cloning) | Tasks with easy-to-record demos | Fastest (supervised) |
+
+Enable **ObsNorm** (on by default) for stable training across all tasks.
+Enable **Curriculum** to automatically progress from easy → hard difficulty.
+Enable **TopoObs** if your robot can change shape — one policy generalizes across all configurations.
 
 ### The `.nischay` project file
 

@@ -90,3 +90,29 @@
 .et-grav-toggle--on { color: var(--accent); border-color: var(--accent); background: var(--accent-glow); }
 .et-num:disabled { opacity: 0.45; cursor: not-allowed; }
 .et-unit { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
+
+/* ── Fusion-style measurement panel ─────────────────────────────────────────── */
+
+.et-measure-panel {
+  display: flex; flex-direction: column; gap: 6px;
+  border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 10px; background: var(--bg-card);
+}
+.et-measure-slot { display: flex; align-items: center; gap: 8px; min-height: 22px; }
+.et-slot-label { font-size: 11px; font-weight: 800; font-family: var(--font-mono); min-width: 14px; }
+.et-slot-empty { font-size: 11px; color: var(--text-dim); font-style: italic; }
+.et-entity { display: flex; align-items: center; gap: 5px; }
+.et-entity-icon { font-size: 11px; font-family: var(--font-mono); line-height: 1; }
+.et-entity-type { font-size: 11px; font-weight: 600; color: var(--text); }
+.et-entity-body { font-size: 11px; color: var(--text-dim); }
+.et-dist-block {
+  display: flex; flex-direction: column; gap: 3px;
+  border-top: 1px solid var(--border); padding-top: 6px; margin-top: 2px;
+}
+.et-dist-row { display: flex; justify-content: space-between; align-items: center; }
+.et-dist-label { font-size: 11px; font-weight: 700; font-family: var(--font-mono); min-width: 60px; }
+.et-dist-val { font-size: 12px; font-weight: 700; font-family: var(--font-mono); }
+.et-measure-hint {
+  font-size: 10px; color: var(--text-dim);
+  border-top: 1px solid var(--border); padding-top: 5px; margin-top: 2px;
+}

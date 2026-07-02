@@ -8,12 +8,8 @@
  *   STEP / STP   → N bodies via OpenCascade WASM (one per solid/component).
  *   URDF         → importURDF() — separate entry point, always.
  *
- * Fusion 360 workflow:
- *   Export as GLB (File › Export › Format: glTF 2.0, *.glb).
- *   Each Fusion component becomes a separate body with the correct relative
- *   position and material colour.
- *   Joints: use File › Import › URDF Project after installing the
- *   "Fusion 360 URDF Exporter" add-in.
+ * Multiple files can be selected at once. Single-body formats (STL/OBJ) are
+ * batched and arranged side-by-side without overlapping.
  */
 import * as THREE from 'three';
 import { bytesToBase64 } from '@/core/serialization/binary';
@@ -45,7 +41,6 @@ function singleBodyScale(asset: any): [number, number, number] {
 }
 
 // Formats that carry a component scene tree → decompose into N bodies.
-// STEP: OCCT returns one mesh per solid, so same decomposition path works.
 const SCENE_FORMATS = new Set(['gltf', 'glb', 'usd', 'usdz', 'usda', 'step', 'stp']);
 
 // All supported formats shown in the file picker.
@@ -53,32 +48,41 @@ const SUPPORTED = ['stl', 'obj', 'gltf', 'glb', 'usd', 'usdz', 'usda', 'step', '
 
 // ── Main entry point ──────────────────────────────────────────────────────────
 
-/** Open a file picker, import the chosen mesh. No choices about "how" — format decides. */
+/** Open a file picker (supports multi-select), import all chosen meshes. */
 export async function importMesh(exts?: string[]) {
   const filter = Array.isArray(exts) && exts.length ? exts : SUPPORTED;
-  let picked: any;
-  try { picked = await pickFile(filter); }
+  let files: { name: string; bytes: Uint8Array }[];
+  try { files = await pickFiles(filter); }
   catch (e: any) { alert(`Could not open file: ${e.message}`); return; }
-  if (!picked) return;
+  if (!files.length) return;
 
-  const ext = (picked.name.split('.').pop() || '').toLowerCase();
-  if (!SUPPORTED.includes(ext)) {
-    alert(`Unsupported format ".${ext}". Supported: GLB, glTF, USD, USDZ, STL, OBJ, STEP.`);
+  const bad = files.filter((f) => !SUPPORTED.includes((f.name.split('.').pop() || '').toLowerCase()));
+  if (bad.length) {
+    alert(`Unsupported format(s): ${bad.map((f) => f.name).join(', ')}\nSupported: GLB, glTF, USD, USDZ, STL, OBJ, STEP.`);
     return;
   }
 
-  if (SCENE_FORMATS.has(ext)) {
-    await _importScene(picked, ext);
-  } else {
-    await _importSingleBody(picked, ext);
+  const sceneFiles  = files.filter((f) =>  SCENE_FORMATS.has(ext(f.name)));
+  const singleFiles = files.filter((f) => !SCENE_FORMATS.has(ext(f.name)));
+
+  // Scene files: import each independently (they carry internal positions).
+  for (const file of sceneFiles) {
+    await _importScene(file, ext(file.name));
+  }
+
+  // Single-body files: batch with side-by-side layout.
+  if (singleFiles.length) {
+    await _importSingleBodyBatch(singleFiles);
   }
 }
 
-// ── Scene import (glTF / GLB / USD / USDZ) → N bodies ───────────────────────
+function ext(name: string) { return (name.split('.').pop() || '').toLowerCase(); }
 
-async function _importScene(picked: { name: string; bytes: Uint8Array }, ext: string) {
+// ── Scene import (glTF / GLB / USD / USDZ / STEP) → N bodies ─────────────────
+
+async function _importScene(picked: { name: string; bytes: Uint8Array }, format: string) {
   await useBusyStore.getState().run(`Importing ${picked.name}…`, async (sig) => {
-    const asset = makeAsset({ name: picked.name, format: ext as any, data: bytesToBase64(picked.bytes) });
+    const asset = makeAsset({ name: picked.name, format: format as any, data: bytesToBase64(picked.bytes) });
     const ok = await preloadAsset(asset);
     if (sig.aborted) return;
     if (!ok) {
@@ -106,7 +110,7 @@ async function _importScene(picked: { name: string; bytes: Uint8Array }, ext: st
     }
 
     const label = `Import ${count} ${count === 1 ? 'body' : 'components'} from ${picked.name}`;
-    useModelStore.getState().dispatch(commands.addEntities(entities, label));
+    useModelStore.getState().dispatch(commands.addEntities([asset, ...entities], label));
 
     const firstBody = entities.find((e: any) => e.kind === 'body');
     if (firstBody) useSelectionStore.getState().select(firstBody.id, 'body');
@@ -114,53 +118,105 @@ async function _importScene(picked: { name: string; bytes: Uint8Array }, ext: st
   });
 }
 
-// ── Single-body import (STL / OBJ / STEP) ────────────────────────────────────
+// ── Single-body batch import (STL / OBJ) with side-by-side layout ─────────────
 
-async function _importSingleBody(picked: { name: string; bytes: Uint8Array }, ext: string) {
-  await useBusyStore.getState().run(`Importing ${picked.name}…`, async (sig) => {
-    const asset = makeAsset({ name: picked.name, format: ext as any, data: bytesToBase64(picked.bytes) });
-    const ok = await preloadAsset(asset);
+async function _importSingleBodyBatch(files: { name: string; bytes: Uint8Array }[]) {
+  const label = files.length === 1
+    ? `Importing ${files[0].name}…`
+    : `Importing ${files.length} files…`;
+
+  await useBusyStore.getState().run(label, async (sig) => {
+    // Pass 1: load all assets.
+    const loaded: { name: string; asset: any; scale: [number, number, number] }[] = [];
+    const errors: string[] = [];
+
+    for (const file of files) {
+      if (sig.aborted) return;
+      const format = ext(file.name) as any;
+      const asset = makeAsset({ name: file.name, format, data: bytesToBase64(file.bytes) });
+      const ok = await preloadAsset(asset);
+      if (!ok) { errors.push(file.name); continue; }
+      loaded.push({ name: file.name, asset, scale: singleBodyScale(asset) });
+    }
+
     if (sig.aborted) return;
-    if (!ok) {
-      alert(`Could not parse "${picked.name}". The file may be malformed or an unsupported variant.`);
+    if (!loaded.length) {
+      alert(`Could not parse any of the selected files.`);
       return;
     }
 
-    const doc = useModelStore.getState().doc;
-    const n = Object.keys(doc.bodies).length;
-    const scale = singleBodyScale(asset) as [number, number, number];
+    // Pass 2: compute side-by-side X positions using each mesh's scaled bounding box.
+    // Start just to the right of the ACTUAL right edge of existing bodies — using a
+    // count-based guess (bodyCount * 1.3) put new objects metres away from where the
+    // model really sits (a project with N bodies spawned imports at N*1.3 m even when
+    // every body was near the origin), which read as "added very far with a huge gap".
+    const existingDoc = useModelStore.getState().doc;
+    let curX = 0;
+    {
+      let maxRight = -Infinity;
+      for (const b of Object.values(existingDoc.bodies) as any[]) {
+        const px = b?.transform?.position?.[0];
+        if (typeof px === 'number') maxRight = Math.max(maxRight, px);
+      }
+      if (maxRight > -Infinity) curX = maxRight + 0.15; // 15 cm to the right of the rightmost body
+    }
+    const positions: [number, number, number][] = [];
+    for (const item of loaded) {
+      const obj = getAssetObject(item.asset);
+      const box = obj ? new THREE.Box3().setFromObject(obj) : null;
+      const rawSize = box ? box.getSize(new THREE.Vector3()) : new THREE.Vector3(1, 1, 1);
+      const sw = Math.max(rawSize.x * item.scale[0], 0.05);
+      const sh = rawSize.y * item.scale[1];
+      const gap = Math.max(sw * 0.15, 0.02); // 15% of this mesh's width, min 2 cm
+      positions.push([curX + sw / 2, Math.max(sh / 2, 0.05), 0]);
+      curX += sw + gap;
+    }
 
-    const body = makeBody({
-      name: picked.name.replace(/\.[^.]+$/, ''),
-      assetId: asset.id,
-      visual: {
-        geometry: makeGeometry(GeometryType.MESH, { assetId: asset.id }),
-        materialId: null,
-        origin: identityOrigin(),
-      },
-      transform: { position: [n * 1.3, 0.6, 3.5], quaternion: [0, 0, 0, 1], scale },
-    });
-
+    // Pass 3: dispatch.
     const { dispatch } = useModelStore.getState();
-    dispatch(commands.addAsset(asset));
-    dispatch(commands.addBody(body));
-    useSelectionStore.getState().select(body.id, 'body');
-    setTimeout(() => bridge.fitCamera?.(), 80);
+    const bodyIds: string[] = [];
+
+    for (let i = 0; i < loaded.length; i++) {
+      const item = loaded[i];
+      const body = makeBody({
+        name: item.name.replace(/\.[^.]+$/, ''),
+        assetId: item.asset.id,
+        visual: {
+          geometry: makeGeometry(GeometryType.MESH, { assetId: item.asset.id }),
+          materialId: null,
+          origin: identityOrigin(),
+        },
+        transform: { position: positions[i], quaternion: [0, 0, 0, 1], scale: item.scale },
+      });
+      dispatch(commands.addAsset(item.asset));
+      dispatch(commands.addBody(body));
+      bodyIds.push(body.id);
+    }
+
+    if (errors.length) alert(`Could not import:\n${errors.join('\n')}`);
+
+    if (bodyIds.length) {
+      useSelectionStore.getState().selectMany(bodyIds, 'body');
+      setTimeout(() => bridge.fitCamera?.(), 80);
+    }
   });
 }
 
 // ── URDF import ───────────────────────────────────────────────────────────────
 
 export async function importURDF() {
-  let picked: any;
-  try { picked = await pickFile(['urdf', 'xml']); }
+  let picked: { name: string; bytes: Uint8Array } | null;
+  try {
+    const files = await pickFiles(['urdf', 'xml']);
+    picked = files[0] ?? null;
+  }
   catch (e: any) { alert(`Could not open file: ${e.message}`); return; }
   if (!picked) return;
 
   await useBusyStore.getState().run(`Importing ${picked.name}…`, async () => {
     const { parseURDF } = await import('@/core/serialization/importers/urdf');
     let result;
-    try { result = parseURDF(new TextDecoder().decode(picked.bytes)); }
+    try { result = parseURDF(new TextDecoder().decode(picked!.bytes)); }
     catch (e: any) { alert(`URDF import failed: ${e.message}`); return; }
     if (!result.entities.length) { alert('No links found in the URDF.'); return; }
 
@@ -172,26 +228,32 @@ export async function importURDF() {
   });
 }
 
-// ── File picker ───────────────────────────────────────────────────────────────
+// ── File picker (multi-select) ────────────────────────────────────────────────
 
-async function pickFile(filter: string[]): Promise<{ name: string; bytes: Uint8Array } | null> {
+async function pickFiles(filter: string[]): Promise<{ name: string; bytes: Uint8Array }[]> {
   if ((window as any).tetrobot?.isDesktop) {
     const res = await (window as any).tetrobot.openFile({
       filters: [{ name: 'Mesh / Scene', extensions: filter }, { name: 'All Files', extensions: ['*'] }],
       binary: true,
+      multiple: true,
     });
-    if (!res) return null;
-    return { name: res.name, bytes: new Uint8Array(res.data) };
+    if (!res) return [];
+    const arr = Array.isArray(res) ? res : [res];
+    return arr.map((r: any) => ({ name: r.name, bytes: new Uint8Array(r.data) }));
   }
   return new Promise((resolve, reject) => {
     const inp = document.createElement('input');
     inp.type = 'file';
+    inp.multiple = true;
     inp.accept = filter.map((e) => `.${e}`).join(',');
     inp.onchange = async () => {
-      const f = inp.files?.[0];
-      if (!f) { resolve(null); return; }
-      try { resolve({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) }); }
-      catch (e) { reject(e); }
+      const files = Array.from(inp.files ?? []);
+      if (!files.length) { resolve([]); return; }
+      try {
+        resolve(await Promise.all(
+          files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })),
+        ));
+      } catch (e) { reject(e); }
     };
     inp.click();
   });

@@ -11,7 +11,7 @@ import type { Document, Connector } from '@/core/model/index';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { commands } from '@/core/commands/index';
-import { JointType, GeometryType, makeMaterial, uid } from '@/core/model/index';
+import { JointType, GeometryType, makeMaterial, uid, bodiesOfComponent, jointsOfComponent } from '@/core/model/index';
 import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation';
 import { duplicate, mirror, array } from '@/features/ops/bodyOps';
 import * as THREE from 'three';
@@ -19,6 +19,7 @@ import { computeFK, movePivotKeepingChild } from '@/kinematics/modelFK';
 import { solveModelIK, chainJoints } from '@/kinematics/modelIK';
 import { useState, useCallback } from 'react';
 import { getAllDrivers, saveCustomDriver, type DriverDef } from '@/features/driver/DriverRegistry';
+import { bridge } from '@/viewport/cameraBridge';
 
 const r3 = (v: any) => Math.round((v ?? 0) * 1000) / 1000;
 const clamp01 = (v: any) => Math.max(0, Math.min(1, v));
@@ -29,17 +30,18 @@ const hexToRgb = (hex: any) => {
   return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255];
 };
 
-function Num({ label, value, onChange, step = 0.1 }: any) {
+// scale: multiply stored value for display (e.g. 1000 for m→mm); divides on change.
+function Num({ label, value, onChange, step = 0.1, scale = 1 }: any) {
   return (
     <label className="in-num">
       <span>{label}</span>
-      <input type="number" step={step} value={r3(value)}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)} />
+      <input type="number" step={step} value={r3(value * scale)}
+        onChange={(e) => onChange((parseFloat(e.target.value) || 0) / scale)} />
     </label>
   );
 }
 
-function Vec3({ label, value, onChange, step = 0.1 }: any) {
+function Vec3({ label, value, onChange, step = 0.1, scale = 1 }: any) {
   return (
     <div className="in-vec">
       <div className="in-vec-label">{label}</div>
@@ -47,8 +49,12 @@ function Vec3({ label, value, onChange, step = 0.1 }: any) {
         {['X', 'Y', 'Z'].map((ax, i) => (
           <label key={ax} className="in-axis">
             <span>{ax}</span>
-            <input type="number" step={step} value={r3(value[i])}
-              onChange={(e) => { const v = [...value]; v[i] = parseFloat(e.target.value) || 0; onChange(v); }} />
+            <input type="number" step={step} value={r3((value[i] ?? 0) * scale)}
+              onChange={(e) => {
+                const v = [...value];
+                v[i] = (parseFloat(e.target.value) || 0) / scale;
+                onChange(v);
+              }} />
           </label>
         ))}
       </div>
@@ -69,7 +75,7 @@ function IkSection({ body, doc, dispatch }: any) {
   return (
     <>
       <div className="in-group">INVERSE KINEMATICS · {chain.length} DOF</div>
-      <Vec3 label="Target (world)" value={t} onChange={setTarget} />
+      <Vec3 label="Target (mm)" value={t} onChange={setTarget} scale={1000} step={1} />
       <div className="in-ops">
         <button onClick={solve}>Solve IK</button>
         <button onClick={() => setTarget(null)}>Reset target</button>
@@ -233,8 +239,8 @@ function ConnectorsSection({ body, up }: { body: any; up: (patch: any) => void }
               onChange={(e) => updateConnector(idx, { name: e.target.value })} />
             <button className="in-btn-xs in-btn-danger" onClick={() => removeConnector(idx)} title="Remove connector">✕</button>
           </div>
-          <Vec3 label="Position" value={c.position}
-            onChange={(v: any) => updateConnector(idx, { position: v })} step={0.05} />
+          <Vec3 label="Position (mm)" value={c.position}
+            onChange={(v: any) => updateConnector(idx, { position: v })} scale={1000} step={1} />
           <Vec3 label="Normal" value={c.normal}
             onChange={(v: any) => updateConnector(idx, { normal: v })} step={0.1} />
         </div>
@@ -285,7 +291,7 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
       </label>
 
       <div className="in-group">TRANSFORM</div>
-      <Vec3 label="Position" value={body.transform.position} onChange={(v: any) => upT({ position: v })} />
+      <Vec3 label="Position (mm)" value={body.transform.position} onChange={(v: any) => upT({ position: v })} scale={1000} step={1} />
       <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(body.transform.quaternion)}
         onChange={(v: any) => upT({ quaternion: eulerDegToQuatArr(v) })} step={5} />
       <Vec3 label="Scale" value={body.transform.scale} onChange={onScale} step={0.05} />
@@ -296,27 +302,27 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
 
       <div className="in-group">GEOMETRY · {g.type}</div>
       {g.type === GeometryType.BOX && (
-        <Vec3 label="Size" value={g.size ?? [1, 1, 1]} onChange={(v: any) => upGeo({ size: v })} step={0.05} />
+        <Vec3 label="Size (mm)" value={g.size ?? [1, 1, 1]} onChange={(v: any) => upGeo({ size: v })} scale={1000} step={1} />
       )}
       {(g.type === GeometryType.CYLINDER || g.type === GeometryType.CAPSULE || g.type === GeometryType.CONE) && (
         <div className="in-row2">
-          <Num label="Radius" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} step={0.05} />
-          <Num label="Length" value={g.length} onChange={(v: any) => upGeo({ length: v })} step={0.05} />
+          <Num label="Radius (mm)" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} scale={1000} step={1} />
+          <Num label="Length (mm)" value={g.length} onChange={(v: any) => upGeo({ length: v })} scale={1000} step={1} />
         </div>
       )}
       {(g.type === GeometryType.SPHERE || g.type === GeometryType.CIRCLE) && (
-        <Num label="Radius" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} step={0.05} />
+        <Num label="Radius (mm)" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} scale={1000} step={1} />
       )}
       {g.type === GeometryType.TORUS && (
         <div className="in-row2">
-          <Num label="Radius" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} step={0.05} />
-          <Num label="Tube" value={g.tube} onChange={(v: any) => upGeo({ tube: v })} step={0.02} />
+          <Num label="Radius (mm)" value={g.radius} onChange={(v: any) => upGeo({ radius: v })} scale={1000} step={1} />
+          <Num label="Tube (mm)" value={g.tube} onChange={(v: any) => upGeo({ tube: v })} scale={1000} step={0.5} />
         </div>
       )}
       {g.type === GeometryType.PLANE && (
         <div className="in-row2">
-          <Num label="Width"  value={(g.size ?? [1, 1])[0]} onChange={(v: any) => upGeo({ size: [v, (g.size ?? [1, 1])[1]] })} step={0.05} />
-          <Num label="Height" value={(g.size ?? [1, 1])[1]} onChange={(v: any) => upGeo({ size: [(g.size ?? [1, 1])[0], v] })} step={0.05} />
+          <Num label="Width (mm)"  value={(g.size ?? [1, 1])[0]} onChange={(v: any) => upGeo({ size: [v, (g.size ?? [1, 1])[1]] })} scale={1000} step={1} />
+          <Num label="Height (mm)" value={(g.size ?? [1, 1])[1]} onChange={(v: any) => upGeo({ size: [(g.size ?? [1, 1])[0], v] })} scale={1000} step={1} />
         </div>
       )}
 
@@ -395,6 +401,7 @@ const DEG2RAD = Math.PI / 180;
 const rDeg = (rad: any) => Math.round((rad ?? 0) * RAD2DEG * 10) / 10;
 
 function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; dispatch: any }) {
+  const [pickingPivot, setPickingPivot] = useState(false);
   const id = joint.id;
   const up = (patch: any) => dispatch(commands.updateJoint(id, patch));
   const lim = joint.limit ?? { lower: -Math.PI, upper: Math.PI, effort: 0, velocity: 0 };
@@ -409,6 +416,38 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
   const hasLimits = joint.type === 'revolute' || joint.type === 'prismatic';
   const setValue = (v: any) => dispatch(commands.setJointValue(id, v));
   const setAxis = (a: any) => up({ axis: a });
+
+  // Detect FK conflict: in the current tree-FK, each body can only be the
+  // "moving side" (childBodyId) of one joint. If another joint already owns
+  // Body 2 the value drag has no effect.
+  const childConflict  = otherJoints.find((j) => j.childBodyId === joint.childBodyId  && joint.childBodyId);
+  const parentConflict = otherJoints.find((j) => j.childBodyId === joint.parentBodyId && joint.parentBodyId);
+  // Only flag it if the conflict can be seen AND swapping would actually help
+  // (i.e. the other side is NOT also already claimed).
+  const conflictJoint = childConflict && !parentConflict ? childConflict : null;
+  const swapBodies = () => {
+    // Recompute origin + childRest from current FK so neither body moves.
+    // new parent = old Body 2 (w2), new child = old Body 1 (w1).
+    if (!w1 || !w2) { up({ parentBodyId: joint.childBodyId, childBodyId: joint.parentBodyId }); return; }
+    const ONE3 = new THREE.Vector3(1, 1, 1);
+    const originM = new THREE.Matrix4().compose(
+      new THREE.Vector3(...(origin.position as [number, number, number])),
+      new THREE.Quaternion(...(origin.quaternion as [number, number, number, number])),
+      ONE3,
+    );
+    const pivotWorld = w1.matrix.clone().multiply(originM);
+    const dec = (M: THREE.Matrix4) => {
+      const p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      M.decompose(p, q, s);
+      return { position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w] };
+    };
+    up({
+      parentBodyId: joint.childBodyId,
+      childBodyId:  joint.parentBodyId,
+      origin:    dec(w2.matrix.clone().invert().multiply(pivotWorld)),
+      childRest: dec(pivotWorld.clone().invert().multiply(w1.matrix)),
+    });
+  };
 
   const childRest = joint.childRest ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
   // Move ONLY the pivot — Body 2 stays where it is (childRest compensates).
@@ -426,6 +465,25 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
   };
   const distBody1 = Math.round(Math.hypot(...origin.position) * 1000);     // mm, pivot ← Body 1
   const distBody2 = Math.round(Math.hypot(...childRest.position) * 1000);  // mm, pivot → Body 2
+
+  const startPickPivot = () => {
+    setPickingPivot(true);
+    bridge.startPivotPick?.({
+      onPick: (result) => {
+        setPickingPivot(false);
+        if (!w1) return;
+        const local = result.worldPosition.clone().applyMatrix4(w1.matrix.clone().invert());
+        const newOrigin = { position: [local.x, local.y, local.z], quaternion: origin.quaternion };
+        up({ origin: newOrigin, childRest: movePivotKeepingChild(joint, newOrigin) });
+        // If cylinder was detected, also align the joint axis to the cylinder axis
+        if (result.suggestedAxis && result.snapType === 'cylinder-center') {
+          const axLocal = result.suggestedAxis.clone().transformDirection(w1.matrix.clone().invert());
+          up({ axis: [axLocal.x, axLocal.y, axLocal.z] });
+        }
+      },
+      onCancel: () => setPickingPivot(false),
+    });
+  };
 
   return (
     <>
@@ -453,9 +511,24 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
           {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
         </select>
       </label>
+      {conflictJoint && (
+        <div className="in-conflict">
+          <strong>⚠ This joint won't move anything.</strong><br />
+          "{doc.bodies[joint.childBodyId]?.name}" is already driven by <em>{conflictJoint.name}</em>.
+          Swap so the free body becomes Body 2.
+          <button className="in-conflict-swap" onClick={swapBodies}>⇄ Swap Body 1 ↔ Body 2</button>
+        </div>
+      )}
+      {childConflict && parentConflict && (
+        <div className="in-conflict">
+          <strong>⚠ Both bodies are already driven by other joints.</strong><br />
+          This is a current FK limitation — the graph-based FK (coming soon) will fix this automatically.
+          For now, change one of the body assignments above to a free body.
+        </div>
+      )}
 
       <div className="in-group">PIVOT · moves the joint only — both parts stay put</div>
-      <Vec3 label="Position (m)" value={origin.position} onChange={(v: any) => movePivot({ ...origin, position: v })} />
+      <Vec3 label="Position (mm)" value={origin.position} onChange={(v: any) => movePivot({ ...origin, position: v })} scale={1000} step={1} />
       <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(origin.quaternion)}
         onChange={(v: any) => movePivot({ ...origin, quaternion: eulerDegToQuatArr(v) })} step={5} />
       <div className="in-ops in-axis-presets">
@@ -465,6 +538,23 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
           onClick={() => w1 && w2 && setPivotWorld(w1.position.map((c: any, i: any) => (c + w2.position[i]) / 2))}
           title="Put the pivot midway between the parts">◎ Middle</button>
       </div>
+      <div className="in-ops in-axis-presets" style={{ marginTop: 4 }}>
+        <button
+          className={pickingPivot ? 'in-pick-active' : ''}
+          onClick={pickingPivot ? () => { bridge.cancelPivotPick?.(); setPickingPivot(false); } : startPickPivot}
+          title={pickingPivot
+            ? 'Click anywhere to cancel — Esc also cancels'
+            : 'Click any point / edge / vertex / circle center on any body to place the pivot there'}
+          style={{ flexGrow: 1 }}>
+          {pickingPivot ? '⊙ Click a point on the model… (Esc to cancel)' : '⊕ Pick pivot point in viewport'}
+        </button>
+      </div>
+      {pickingPivot && (
+        <div className="in-pick-hint">
+          Hover: vertex (white) · edge-mid (orange) · face-center (blue) · cylinder center (cyan ring).
+          Click to place. Cylinder snap also auto-aligns the axis.
+        </div>
+      )}
       <div className="in-servo-hint">
         Pivot distance — from Body 1: <strong>{distBody1} mm</strong> · from Body 2: <strong>{distBody2} mm</strong>.
         Editing Position moves the pivot only; both parts hold their place.
@@ -481,12 +571,12 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
 
       {hasLimits && (
         <>
-          <div className="in-group">LIMITS {joint.type === 'prismatic' ? '(m)' : '(°)'}</div>
+          <div className="in-group">LIMITS {joint.type === 'prismatic' ? '(mm)' : '(°)'}</div>
           <div className="in-row2">
             {joint.type === 'prismatic' ? (
               <>
-                <Num label="Lower" value={lim.lower} onChange={(v: any) => up({ limit: { ...lim, lower: v } })} />
-                <Num label="Upper" value={lim.upper} onChange={(v: any) => up({ limit: { ...lim, upper: v } })} />
+                <Num label="Lower (mm)" value={lim.lower} onChange={(v: any) => up({ limit: { ...lim, lower: v } })} scale={1000} step={1} />
+                <Num label="Upper (mm)" value={lim.upper} onChange={(v: any) => up({ limit: { ...lim, upper: v } })} scale={1000} step={1} />
               </>
             ) : (
               <>
@@ -531,14 +621,16 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
         </>
       )}
 
-      <div className="in-group">VALUE {joint.type === 'prismatic' ? '(m)' : '(°)'}</div>
+      <div className="in-group">VALUE {joint.type === 'prismatic' ? '(mm)' : '(°)'}</div>
       <div className="in-slider">
         <input type="range"
-          min={hasLimits ? lim.lower : -Math.PI} max={hasLimits ? lim.upper : Math.PI} step={0.01}
+          min={hasLimits ? lim.lower : -Math.PI} max={hasLimits ? lim.upper : Math.PI} step={0.001}
           value={joint.state?.value ?? 0}
           onChange={(e) => setValue(parseFloat(e.target.value))} />
         <span className="in-slider-val">
-          {joint.type === 'prismatic' ? r3(joint.state?.value) : `${rDeg(joint.state?.value)}°`}
+          {joint.type === 'prismatic'
+            ? `${r3((joint.state?.value ?? 0) * 1000)} mm`
+            : `${rDeg(joint.state?.value)}°`}
         </span>
       </div>
       {joint.type !== 'fixed' && (
@@ -590,6 +682,15 @@ export default function Inspector() {
     ? (kind === 'body' ? doc.bodies[selectedId] : doc.joints[selectedId])
     : null;
   const multi = kind === 'body' && ids.length > 1;
+  // Whole-component selection: every selected body belongs to the same Component,
+  // and it accounts for every body that Component owns.
+  const multiCompId = multi && doc.bodies[ids[0]]?.componentId;
+  const multiComponent = multiCompId
+    && ids.every((id) => doc.bodies[id]?.componentId === multiCompId)
+    && bodiesOfComponent(doc, multiCompId).length === ids.length
+    ? doc.components[multiCompId]
+    : null;
+  const multiComponentJointCount = multiComponent ? jointsOfComponent(doc, multiComponent.id).length : 0;
 
   return (
     <div className="in-panel">
@@ -609,7 +710,14 @@ export default function Inspector() {
 
       {multi && (
         <div className="in-multi">
-          <div className="in-multi-title">{ids.length} bodies selected</div>
+          <div className="in-multi-title">
+            {multiComponent
+              ? `Component: ${multiComponent.name} (${ids.length}B·${multiComponentJointCount}J)`
+              : `${ids.length} bodies selected`}
+          </div>
+          {multiComponent && (
+            <div className="in-multi-sub">Move/rotate/copy acts on the whole component as one rigid group.</div>
+          )}
           <div className="in-multi-sub">Transform pivot</div>
           <div className="in-pivot-row">
             {[

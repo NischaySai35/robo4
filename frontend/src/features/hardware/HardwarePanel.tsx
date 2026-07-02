@@ -59,6 +59,48 @@ function Peripherals() {
   );
 }
 
+// Feedback Mode: summarise the ring buffer as min/last/max per numeric telemetry field.
+function FeedbackHistory() {
+  const feedbackMode = useHardwareStore((s) => s.feedbackMode);
+  const history = useHardwareStore((s) => s.feedbackHistory);
+  if (!feedbackMode) return null;
+  if (!history.length) {
+    return <div className="hw-foot">Feedback Mode is on — waiting for telemetry to collect…</div>;
+  }
+
+  const fields = new Map<string, { min: number; max: number; last: number }>();
+  for (const { telemetry } of history) {
+    if (!telemetry || typeof telemetry !== 'object') continue;
+    for (const [k, v] of Object.entries(telemetry)) {
+      if (typeof v !== 'number' || !Number.isFinite(v)) continue;
+      const f = fields.get(k);
+      if (!f) fields.set(k, { min: v, max: v, last: v });
+      else { f.min = Math.min(f.min, v); f.max = Math.max(f.max, v); f.last = v; }
+    }
+  }
+
+  return (
+    <div className="hw-feedback">
+      <div className="hw-title">FEEDBACK · {history.length} samples</div>
+      {fields.size === 0 ? (
+        <div className="hw-foot">No numeric telemetry fields collected yet.</div>
+      ) : (
+        <div className="hw-feedback-list">
+          {[...fields.entries()].map(([k, f]) => (
+            <div key={k} className="hw-feedback-row">
+              <span className="hw-feedback-name">{k}</span>
+              <span className="hw-feedback-vals">
+                <strong>{f.last.toFixed(2)}</strong>
+                <span className="hw-feedback-range">min {f.min.toFixed(2)} · max {f.max.toFixed(2)}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const MOTOR_TYPES = [
   'ST3215', 'ST3025', 'ST3235', 'ST3215-S',
   'PWM Servo', 'Stepper', 'DC Motor', 'Linear Actuator',
@@ -126,6 +168,8 @@ export default function HardwarePanel() {
   const url = useHardwareStore((s) => s.url);
   const pollHz = useHardwareStore((s) => s.pollHz);
   const streaming = useHardwareStore((s) => s.streaming);
+  const feedbackMode = useHardwareStore((s) => s.feedbackMode);
+  const setFeedbackMode = useHardwareStore((s) => s.setFeedbackMode);
   const telemetry = useHardwareStore((s) => s.telemetry);
   const log = useHardwareStore((s) => s.log);
   const signal = useHardwareStore((s) => s.signal)();
@@ -199,15 +243,22 @@ export default function HardwarePanel() {
         </div>
       )}
 
+      <label className="hw-check" title="Collect incoming telemetry into a short history (current, load, position, temperature — whatever the device sends) instead of showing only the latest sample.">
+        <input type="checkbox" checked={feedbackMode} onChange={(e) => setFeedbackMode(e.target.checked)} />
+        <span>Feedback mode</span>
+      </label>
+
       <Peripherals />
 
-      {telemetry && typeof telemetry === 'object' && (
+      {telemetry && typeof telemetry === 'object' && !feedbackMode && (
         <div className="hw-telemetry">
           {Object.entries(telemetry).slice(0, 8).map(([k, v]) => (
             <div key={k}><span>{k}</span><strong>{typeof v === 'object' ? JSON.stringify(v) : String(v)}</strong></div>
           ))}
         </div>
       )}
+
+      <FeedbackHistory />
 
       {log.length > 0 && (
         <div className="hw-log">

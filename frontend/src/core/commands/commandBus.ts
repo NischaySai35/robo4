@@ -11,7 +11,7 @@
  * are framework-free; React integration lives in state/modelStore.js.
  */
 
-const DEFAULT_CAP = 100;
+const DEFAULT_CAP = 50;
 
 export class CommandBus {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

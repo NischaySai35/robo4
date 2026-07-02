@@ -30,6 +30,96 @@ function closestPointOnSegment(p: any, a: any, b: any) {
   return a.clone().add(ab.multiplyScalar(t));
 }
 
+// ── Rich geometry snap (used by MeasureTool) ─────────────────────────────────
+
+export interface GeoSnap {
+  type: 'vertex' | 'edge-mid' | 'edge' | 'face-center' | 'face';
+  point: THREE.Vector3;
+  normal?: THREE.Vector3;
+  edgeVerts?: [THREE.Vector3, THREE.Vector3];
+  faceVerts?: [THREE.Vector3, THREE.Vector3, THREE.Vector3];
+  object: THREE.Object3D;
+  bodyId: string | null;
+}
+
+function resolveBodyIdFromObj(obj: THREE.Object3D): string | null {
+  let o: THREE.Object3D | null = obj;
+  while (o) { if ((o as any).userData?.bodyId) return (o as any).userData.bodyId; o = o.parent; }
+  return null;
+}
+
+const SNAP_MIDPT_PX = 12;
+const SNAP_FACECTR_PX = 11;
+
+export function computeGeoSnap(ndc: any, camera: any, dom: any, meshes: any): GeoSnap | null {
+  if (!meshes?.length) return null;
+  _ray.setFromCamera(ndc, camera);
+  const hits = _ray.intersectObjects(meshes, true);
+  if (!hits.length) return null;
+  const h = hits[0];
+
+  const rect = dom.getBoundingClientRect();
+  const cursorPx = new THREE.Vector2(
+    (ndc.x * 0.5 + 0.5) * rect.width,
+    (-ndc.y * 0.5 + 0.5) * rect.height,
+  );
+  const toPx = (v: THREE.Vector3) => {
+    const p = v.clone().project(camera);
+    return new THREE.Vector2((p.x * 0.5 + 0.5) * rect.width, (-p.y * 0.5 + 0.5) * rect.height);
+  };
+
+  const bodyId = resolveBodyIdFromObj(h.object);
+  const normal = h.face
+    ? h.face.normal.clone().applyNormalMatrix(new THREE.Matrix3().getNormalMatrix(h.object.matrixWorld)).normalize()
+    : undefined;
+
+  if (!h.face || !(h.object as any).geometry?.attributes?.position) {
+    return { type: 'face', point: h.point.clone(), normal, object: h.object, bodyId };
+  }
+
+  const mw = h.object.matrixWorld;
+  const pos = (h.object as any).geometry.attributes.position;
+  const va = new THREE.Vector3().fromBufferAttribute(pos, h.face.a).applyMatrix4(mw);
+  const vb = new THREE.Vector3().fromBufferAttribute(pos, h.face.b).applyMatrix4(mw);
+  const vc = new THREE.Vector3().fromBufferAttribute(pos, h.face.c).applyMatrix4(mw);
+  const edges: [THREE.Vector3, THREE.Vector3][] = [[va, vb], [vb, vc], [vc, va]];
+
+  // 1. Vertex snap
+  let bestVD = Infinity, bestV: THREE.Vector3 | null = null;
+  for (const v of [va, vb, vc]) { const d = toPx(v).distanceTo(cursorPx); if (d < bestVD) { bestVD = d; bestV = v; } }
+  if (bestVD <= SNAP_VTX_PX)
+    return { type: 'vertex', point: bestV!.clone(), normal, object: h.object, bodyId };
+
+  // 2. Edge midpoint snap
+  let bestMD = Infinity, bestMid: THREE.Vector3 | null = null, bestMidEdge: [THREE.Vector3, THREE.Vector3] | null = null;
+  for (const [a, b] of edges) {
+    const mid = a.clone().add(b).multiplyScalar(0.5);
+    const d = toPx(mid).distanceTo(cursorPx);
+    if (d < bestMD) { bestMD = d; bestMid = mid; bestMidEdge = [a.clone(), b.clone()]; }
+  }
+  if (bestMD <= SNAP_MIDPT_PX)
+    return { type: 'edge-mid', point: bestMid!.clone(), normal, edgeVerts: bestMidEdge!, faceVerts: [va.clone(), vb.clone(), vc.clone()], object: h.object, bodyId };
+
+  // 3. Edge snap
+  let bestED = Infinity, bestEP: THREE.Vector3 | null = null, bestEdge: [THREE.Vector3, THREE.Vector3] | null = null;
+  for (const [a, b] of edges) {
+    const cp = closestPointOnSegment(h.point, a, b);
+    const d = toPx(cp).distanceTo(cursorPx);
+    if (d < bestED) { bestED = d; bestEP = cp; bestEdge = [a.clone(), b.clone()]; }
+  }
+  if (bestED <= SNAP_EDGE_PX)
+    return { type: 'edge', point: bestEP!.clone(), normal, edgeVerts: bestEdge!, faceVerts: [va.clone(), vb.clone(), vc.clone()], object: h.object, bodyId };
+
+  // 4. Face center snap
+  const center = va.clone().add(vb).add(vc).multiplyScalar(1 / 3);
+  const centerD = toPx(center).distanceTo(cursorPx);
+  if (centerD <= SNAP_FACECTR_PX)
+    return { type: 'face-center', point: center.clone(), normal, faceVerts: [va.clone(), vb.clone(), vc.clone()], object: h.object, bodyId };
+
+  // 5. Face fallback
+  return { type: 'face', point: h.point.clone(), normal, faceVerts: [va.clone(), vb.clone(), vc.clone()], object: h.object, bodyId };
+}
+
 /**
  * Resolve a snap at the given NDC coordinate.
  * @returns {{point:THREE.Vector3, type:'vertex'|'edge'|'face', normal?:THREE.Vector3}|null}
@@ -222,7 +312,11 @@ export class SnapIndicator {
 
   show(point: any, type = 'vertex') {
     for (const m of this._all) { m.visible = false; }
-    const target = type === 'vertex' ? this._vtx : type === 'edge' ? this._edge : this._face;
+    const target = type === 'vertex'
+      ? this._vtx
+      : (type === 'edge' || type === 'edge-mid')
+        ? this._edge
+        : this._face; // face / face-center
     target.position.copy(point);
     target.visible = true;
   }

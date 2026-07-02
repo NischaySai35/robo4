@@ -46,6 +46,7 @@ export default function NavigationGizmo() {
   const dragging   = useRef(false);
   const lastPos    = useRef({ x: 0, y: 0 });
   const svgRef     = useRef<any>(null);
+  const lastSig    = useRef('');
 
   useEffect(() => {
     const update = () => {
@@ -63,7 +64,14 @@ export default function NavigationGizmo() {
           };
         });
         result.sort((a, b) => b.depth - a.depth);
-        setProjected(result);
+        // Only re-render when the projection actually changed (camera moved).
+        // Calling setProjected on every RAF frame triggers 60 React re-renders/sec
+        // even when the camera is perfectly still, creating enormous GC pressure.
+        const sig = result.map(r => `${r.key}:${r.sx.toFixed(1)},${r.sy.toFixed(1)}`).join('|');
+        if (sig !== lastSig.current) {
+          lastSig.current = sig;
+          setProjected(result);
+        }
       }
       rafRef.current = requestAnimationFrame(update);
     };

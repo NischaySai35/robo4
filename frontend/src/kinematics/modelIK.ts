@@ -18,8 +18,63 @@ import type { Document } from '@/core/model/index';
 
 const MOVABLE = new Set(['revolute', 'continuous', 'prismatic']);
 
-/** Ordered movable joints from root → tip for the chain ending at tipId. */
-export function chainJoints(doc: any, tipId: any) {
+/**
+ * BFS through the undirected joint graph from rootId to tipId.
+ * Returns the ordered list of joints along that path (root → tip order).
+ * Used in rigid mode so joints on BOTH sides of the grounded body are reachable.
+ */
+function chainJointsFromRoot(doc: any, tipId: string, rootId: string): any[] {
+  if (tipId === rootId) return [];
+
+  // Build undirected adjacency (same as computeFKGraph)
+  const adj = new Map<string, { joint: any; neighborId: string }[]>();
+  for (const id of Object.keys(doc.bodies)) adj.set(id, []);
+  for (const j of Object.values(doc.joints) as any[]) {
+    if (j.parentBodyId && j.childBodyId && doc.bodies[j.parentBodyId] && doc.bodies[j.childBodyId]) {
+      adj.get(j.parentBodyId)!.push({ joint: j, neighborId: j.childBodyId });
+      adj.get(j.childBodyId)!.push({ joint: j, neighborId: j.parentBodyId });
+    }
+  }
+
+  // BFS from root to tip to find the path
+  const prev = new Map<string, { joint: any; from: string }>();
+  const visited = new Set<string>([rootId]);
+  const queue: string[] = [rootId];
+  let found = false;
+  while (queue.length > 0 && !found) {
+    const cur = queue.shift()!;
+    for (const { joint, neighborId } of adj.get(cur) ?? []) {
+      if (visited.has(neighborId)) continue;
+      visited.add(neighborId);
+      prev.set(neighborId, { joint, from: cur });
+      if (neighborId === tipId) { found = true; break; }
+      queue.push(neighborId);
+    }
+  }
+  if (!found) return [];
+
+  // Reconstruct path from tip back to root
+  const out: any[] = [];
+  let cur = tipId;
+  while (cur !== rootId) {
+    const p = prev.get(cur);
+    if (!p) return [];
+    out.unshift(p.joint);
+    cur = p.from;
+  }
+  return out.filter((j: any) => MOVABLE.has(j.type));
+}
+
+/**
+ * Ordered movable joints along the chain from root → tip.
+ * In rigid mode (rigidRootId provided): BFS through the undirected joint graph so
+ * joints on both sides of the grounded body are reachable by IK.
+ * In free-float mode: walks upward via the original parent→child tree structure.
+ */
+export function chainJoints(doc: any, tipId: any, rigidRootId?: string | null) {
+  if (rigidRootId && doc.bodies[rigidRootId]) {
+    return chainJointsFromRoot(doc, tipId, rigidRootId);
+  }
   const childJoint = buildChildJointMap(doc);
   const out: any[] = [];
   const seen = new Set();
@@ -108,9 +163,9 @@ interface IKOptions {
  * Solve IK. Returns { jointId: newValue } for the chain joints (or null if no chain).
  * Position-only by default; pass `targetQuaternion` for full 6-DOF pose IK.
  */
-export function solveModelIK(doc: any, tipId: any, target: any, opts: IKOptions = {}) {
+export function solveModelIK(doc: any, tipId: any, target: any, opts: IKOptions = {}, rootBodyId?: string | null) {
   const { iterations = 24, lambda = 0.6, eps = 1e-4, tol = 1e-3, oriWeight = 1 } = opts;
-  const chain = chainJoints(doc, tipId);
+  const chain = chainJoints(doc, tipId, rootBodyId);
   if (chain.length === 0) return null;
 
   const usePose = opts.targetQuaternion != null;

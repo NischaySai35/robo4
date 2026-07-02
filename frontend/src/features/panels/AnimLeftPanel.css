@@ -136,6 +136,7 @@
   transition: background 0.1s;
 }
 .alp-row:hover { background: var(--bg-card); }
+.alp-row--hover { background: color-mix(in srgb, var(--accent) 8%, var(--bg-card)); border-left: 2px solid color-mix(in srgb, var(--accent) 40%, transparent); }
 .alp-row--sel {
   background: var(--accent-glow);
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
@@ -289,6 +290,9 @@
   color: var(--text-dim);
   line-height: 1.5;
 }
+
+.alp-snap-hint { font-size: 11px; color: var(--text-dim); line-height: 1.5; margin-bottom: 6px; }
+.alp-snap-status { font-size: 11px; color: var(--accent); line-height: 1.4; margin-top: 6px; }
 
 /* ── Assembly Mates ── */
 .alp-mate-slots { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }

@@ -16,9 +16,13 @@
  */
 import { create } from 'zustand';
 
-export type SelectionKind = 'body' | 'joint' | null;
+// A connector's selectedId is the composite string `${bodyId}::${connectorId}`
+// (connectors aren't top-level doc entities, just entries in body.meta.connectors).
+export type SelectionKind = 'body' | 'joint' | 'connector' | null;
 export type GizmoMode = 'translate' | 'rotate' | 'scale';
 export type PivotMode = 'median' | 'individual' | 'active';
+export interface VpCtxMenu { x: number; y: number; bodyId: string; page: string }
+
 interface SelectionState {
   selectedId: string | null;          // active entity id (body or joint)
   ids: string[];                       // every selected entity (same kind), active last
@@ -26,6 +30,8 @@ interface SelectionState {
   gizmoMode: GizmoMode;
   showGizmo: boolean;
   pivotMode: PivotMode;
+  hoveredBodyId: string | null;        // body currently hovered in 3D viewport
+  vpCtxMenu: VpCtxMenu | null;         // viewport right-click context menu
   select: (id: string | null, kind?: SelectionKind) => void;
   toggle: (id: string, kind?: SelectionKind) => void;   // ctrl-click: add/remove from set
   selectMany: (ids: string[], kind?: SelectionKind) => void; // shift-range / select-all
@@ -34,15 +40,19 @@ interface SelectionState {
   hideGizmo: () => void;
   setGizmoMode: (gizmoMode: GizmoMode) => void;
   setPivotMode: (pivotMode: PivotMode) => void;
+  setHoveredBodyId: (id: string | null) => void;
+  setVpCtxMenu: (m: VpCtxMenu | null) => void;
 }
 
 export const useSelectionStore = create<SelectionState>((set) => ({
-  selectedId: null,   // entity id (body or joint)
-  ids: [],            // all selected ids (homogeneous with `kind`)
-  kind: null,         // 'body' | 'joint' | null
-  gizmoMode: 'translate', // 'translate' | 'rotate' | 'scale'
-  showGizmo: false,   // is the transform gizmo revealed for the current selection?
-  pivotMode: 'median', // 'median' | 'individual' | 'active' — multi-body transform pivot
+  selectedId: null,
+  ids: [],
+  kind: null,
+  gizmoMode: 'translate',
+  showGizmo: false,
+  pivotMode: 'median',
+  hoveredBodyId: null,
+  vpCtxMenu: null,
 
   // Selecting a (different) entity highlights it but does not reveal the gizmo.
   // Replaces any multi-selection with a single active entity.
@@ -74,4 +84,6 @@ export const useSelectionStore = create<SelectionState>((set) => ({
   hideGizmo: () => set({ showGizmo: false }),
   setGizmoMode: (gizmoMode) => set({ gizmoMode, showGizmo: true }),
   setPivotMode: (pivotMode) => set({ pivotMode }),
+  setHoveredBodyId: (hoveredBodyId) => set({ hoveredBodyId }),
+  setVpCtxMenu: (vpCtxMenu) => set({ vpCtxMenu }),
 }));

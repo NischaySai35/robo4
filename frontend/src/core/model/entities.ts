@@ -93,6 +93,15 @@ export interface Connector {
   name: string;
   position: Vec3;  // body-local space
   normal: Vec3;    // direction the connector faces (for alignment matching)
+  // roll: body-local tangent (⊥ to normal) marking the key's "up". Together with
+  // `normal` this makes the connector a full 6-DOF frame, so mating can align the
+  // rotation about the normal (the keyway), not just the facing direction.
+  // Optional for backward-compat: when absent it's derived from `normal` on read.
+  roll?: Vec3;
+  // Rotational symmetry of the key about its normal: how many discrete roll
+  // angles seat correctly. 4 = the lock mates every 90° (this platform's design);
+  // 0 = round pin, roll is free. Absent → treated as 4.
+  symmetry?: number;
 }
 
 export interface Component {
@@ -229,14 +238,15 @@ export const identityOrigin = (): Origin => ({ position: [0, 0, 0], quaternion: 
 
 export function makeGeometry(type: GeometryType = GeometryType.BOX, params: GeometryParams = {}): Geometry {
   switch (type) {
-    case GeometryType.BOX:      return { type, size: (params.size as Vec3) ?? [1, 1, 1] };
-    case GeometryType.CYLINDER: return { type, radius: params.radius ?? 0.5, length: params.length ?? 1 };
-    case GeometryType.CAPSULE:  return { type, radius: params.radius ?? 0.5, length: params.length ?? 1 };
-    case GeometryType.SPHERE:   return { type, radius: params.radius ?? 0.5 };
-    case GeometryType.CONE:     return { type, radius: params.radius ?? 0.5, length: params.length ?? 1 };
-    case GeometryType.TORUS:    return { type, radius: params.radius ?? 0.5, tube: params.tube ?? 0.18 };
-    case GeometryType.PLANE:    return { type, size: (params.size as Vec2) ?? [1, 1] };
-    case GeometryType.CIRCLE:   return { type, radius: params.radius ?? 0.5 };
+    // All dimensions in metres. Defaults are sized for small robot parts (~50–100 mm).
+    case GeometryType.BOX:      return { type, size: (params.size as Vec3) ?? [0.08, 0.08, 0.08] };   // 80 mm cube
+    case GeometryType.CYLINDER: return { type, radius: params.radius ?? 0.04, length: params.length ?? 0.12 }; // 40 mm r, 120 mm tall
+    case GeometryType.CAPSULE:  return { type, radius: params.radius ?? 0.03, length: params.length ?? 0.1 };
+    case GeometryType.SPHERE:   return { type, radius: params.radius ?? 0.04 };   // 40 mm radius
+    case GeometryType.CONE:     return { type, radius: params.radius ?? 0.04, length: params.length ?? 0.1 };
+    case GeometryType.TORUS:    return { type, radius: params.radius ?? 0.05, tube: params.tube ?? 0.012 };
+    case GeometryType.PLANE:    return { type, size: (params.size as Vec2) ?? [0.1, 0.1] };  // 100 mm square
+    case GeometryType.CIRCLE:   return { type, radius: params.radius ?? 0.05 };
     case GeometryType.MESH:     return { type, assetId: params.assetId ?? null, scale: params.scale ?? [1, 1, 1] };
     default:                    return { type };
   }

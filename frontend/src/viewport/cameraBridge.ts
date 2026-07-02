@@ -29,6 +29,11 @@ export interface CameraBridge {
   // Autonomy: cast a LiDAR scan from a world point (default: robot base) against
   // the scene; returns the scan (also pushed to the autonomy store + overlay).
   scanLidar?: (origin?: [number, number, number]) => any;
+  // Recompute camera min/max zoom limits from current model bounding sphere.
+  updateCameraLimits?: () => void;
+  // Joint pivot "click to place" — activates the PivotPickTool in the viewport.
+  startPivotPick?: (opts: { onPick: (result: import('@/viewport/PivotPickTool').PivotPickResult) => void; onCancel: () => void }) => void;
+  cancelPivotPick?: () => void;
   // Set later by SimCanvas; optional so reads are type-safe before assignment.
   getFitBox?: (...args: any[]) => any;
   loadScene?: (data: any, opts?: any) => { ok: boolean; error?: string } | void;
@@ -55,6 +60,8 @@ export interface CameraBridge {
   getMaxSamples?: () => number;
   setWireframe?: (on: boolean) => void;
   getWireframe?: () => boolean;
+  setConnectorsVisible?: (on: boolean) => void;
+  getConnectorsVisible?: () => boolean;
 }
 
 export const bridge: CameraBridge = {

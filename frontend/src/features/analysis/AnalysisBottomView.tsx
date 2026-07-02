@@ -19,6 +19,7 @@ import { bridge } from '@/viewport/cameraBridge';
 import { useModelStore } from '@/state/modelStore';
 
 const DEFAULT_COL = '#b3b8c2';
+const _zeroV = new THREE.Vector3();
 
 export default function AnalysisBottomView() {
   const hostRef   = useRef<HTMLDivElement | null>(null);
@@ -83,8 +84,12 @@ export default function AnalysisBottomView() {
     resize();
 
     let raf = 0;
-    const tick = () => {
+    let lastRender = 0;
+    const FRAME_MS = 1000 / 15; // 15fps cap — the material-swap + render is O(n_meshes)
+    const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
+      if (now - lastRender < FRAME_MS) return;
+      lastRender = now;
       const scene = bridge.scene as THREE.Scene | undefined;
       const main  = bridge.camera as THREE.PerspectiveCamera | undefined;
       if (!scene || !main) return;
@@ -98,7 +103,7 @@ export default function AnalysisBottomView() {
         cam.far  = main.far;
         cam.updateProjectionMatrix();
         // Reset orbit target so it's ready when user switches to free mode
-        controls.target.copy((main as any).target ?? new THREE.Vector3());
+        controls.target.copy((main as any).target ?? _zeroV);
       } else {
         controls.update();
       }

@@ -214,6 +214,54 @@
   margin-top: 4px;
 }
 
+/* Joint body conflict warning */
+.in-conflict {
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #ffcc44;
+  background: rgba(255, 180, 0, 0.08);
+  border-left: 3px solid #ffcc44;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: 4px 0;
+}
+.in-conflict strong { display: block; margin-bottom: 2px; }
+.in-conflict-swap {
+  display: block;
+  margin-top: 6px;
+  width: 100%;
+  padding: 5px;
+  background: rgba(255, 180, 0, 0.15);
+  border: 1px solid rgba(255, 180, 0, 0.4);
+  border-radius: 4px;
+  color: #ffcc44;
+  font-size: 12px;
+  cursor: pointer;
+}
+.in-conflict-swap:hover { background: rgba(255, 180, 0, 0.25); }
+
+/* Pick-to-place pivot button */
+.in-pick-active {
+  background: rgba(0, 220, 255, 0.15) !important;
+  border-color: rgba(0, 220, 255, 0.6) !important;
+  color: #00ddff !important;
+  animation: in-pick-pulse 1.2s ease-in-out infinite;
+}
+@keyframes in-pick-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(0, 220, 255, 0.5); }
+  50%       { box-shadow: 0 0 6px 3px rgba(0, 220, 255, 0.25); }
+}
+.in-pick-hint {
+  font-size: 11px;
+  color: #00aacc;
+  line-height: 1.4;
+  margin-top: 3px;
+  padding: 4px 6px;
+  background: rgba(0, 170, 200, 0.07);
+  border-left: 2px solid rgba(0, 170, 200, 0.4);
+  border-radius: 2px;
+}
+
 /* ── Physics / Driver / Connectors additions ─────────────────────────────────── */
 
 .in-hint {

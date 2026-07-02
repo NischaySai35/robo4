@@ -63,6 +63,16 @@ export function neighbors(doc: Document, bodyId: string) {
 export const listJoints = (doc: Document) => Object.values(doc.joints);
 export const getJoint = (doc: Document, id: string) => doc.joints[id] ?? null;
 
+// ── components ──────────────────────────────────────────────────────────────────
+
+/** Bodies belonging to a Component, in insertion order. */
+export const bodiesOfComponent = (doc: Document, componentId: string) =>
+  Object.values(doc.bodies).filter(b => b.componentId === componentId);
+
+/** Joints belonging to a Component, in insertion order. */
+export const jointsOfComponent = (doc: Document, componentId: string) =>
+  Object.values(doc.joints).filter(j => j.componentId === componentId);
+
 // ── graph algorithms ────────────────────────────────────────────────────────────
 
 /** Connected components of the body graph (over joints). Returns array of Set<bodyId>. */

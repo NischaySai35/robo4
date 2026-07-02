@@ -171,7 +171,7 @@ export default function CameraPanel() {
         unit="mm" onChange={(v) => apply({ focalLength: v })} />
 
       <div className="cam-section">ZOOM</div>
-      <Field label="Min distance" value={s.minDistance} min={0.1} max={20} step={0.1}
+      <Field label="Min distance" value={s.minDistance} min={0.001} max={20} step={0.001}
         unit="m" onChange={(v) => apply({ minDistance: v })} />
       <Field label="Max distance" value={s.maxDistance} min={5} max={200} step={1}
         unit="m" onChange={(v) => apply({ maxDistance: v })} />

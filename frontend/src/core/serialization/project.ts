@@ -9,25 +9,34 @@
 
 import { useModelStore } from '@/state/modelStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { usePageStore } from '@/state/pageStore';
+import { useDockStore } from '@/state/dockStore';
+import { useWorkspaceStore } from '@/state/workspaceStore';
+import { bridge } from '@/viewport/cameraBridge';
 import { makeDocument } from '../model/index';
 
 export const PROJECT_FORMAT  = 'tetrobot-project';
 export const PROJECT_VERSION = 1;
 
 export function serializeProject() {
+  const dock = useDockStore.getState();
   return {
     format:  PROJECT_FORMAT,
     version: PROJECT_VERSION,
     app:     'TETROBOT',
     savedAt: new Date().toISOString(),
-    // `scene` is kept (empty) for backward/forward compatibility with the file
-    // format; the robot now lives entirely in the graph `model`.
     scene: { activeModuleId: null, nextId: 1, modules: [], welds: [] },
-    // Graph model (bodies/joints/assets). Self-contained: imported meshes are
-    // embedded (base64), so the .nischay file keeps them.
     model: useModelStore.getState().doc,
-    // Animation clip (keyframe tracks).
     animation: useAnimationStore.getState().exportClip(),
+    // Workspace layout: page, panel widths, collapse states, dock.
+    workspace: {
+      ...useWorkspaceStore.getState().snapshot(),
+      page:          usePageStore.getState().page,
+      dockActive:    dock.active,
+      dockSplit:     dock.split,
+      dockSecondary: dock.secondary,
+      cameraState:   bridge.getCameraState?.() ?? null,
+    },
   };
 }
 
@@ -92,5 +101,6 @@ export function parseProject(obj: any) {
     ? { duration: Number(obj.animation.duration) || 4, tracks: obj.animation.tracks ?? {} }
     : { duration: 4, tracks: {} };
 
-  return { modules, welds, activeModuleId, nextId, model, animation };
+  const workspace = (obj.workspace && typeof obj.workspace === 'object') ? obj.workspace : {};
+  return { modules, welds, activeModuleId, nextId, model, animation, workspace };
 }

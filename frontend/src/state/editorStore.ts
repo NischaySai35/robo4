@@ -7,7 +7,17 @@ import { create } from 'zustand';
 
 export type Units = 'm' | 'cm' | 'mm';
 export interface SnapSettings { enabled: boolean; translate: number; rotateDeg: number; scale: number }
+/** Legacy single-distance result (kept for compatibility). */
 export interface MeasureResult { distance: number; a: number[]; b: number[] }
+/** Rich two-entity result from the upgraded MeasureTool. */
+export interface MeasureResult2 {
+  entityA?: { type: string; point: number[]; bodyId?: string; bodyName?: string };
+  entityB?: { type: string; point: number[]; bodyId?: string; bodyName?: string } | null;
+  minDist?: number;
+  centerDist?: number;
+  maxDist?: number;
+  live?: boolean;
+}
 
 interface EditorState {
   units: Units;
@@ -22,8 +32,8 @@ interface EditorState {
   toggleMate: () => void;
   setMateMode: (v: boolean) => void;
   setMatePick: (n: number) => void;
-  measureResult: MeasureResult | null;
-  setMeasureResult: (r: MeasureResult | null) => void;
+  measureResult: MeasureResult | MeasureResult2 | null;
+  setMeasureResult: (r: MeasureResult | MeasureResult2 | null) => void;
   simRunning: boolean;
   setSimRunning: (v: boolean) => void;
   toggleSim: () => void;

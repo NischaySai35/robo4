@@ -30,6 +30,11 @@ interface HardwareState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   telemetry: any;
   log: HwLogEntry[];
+  /** Feedback Mode: when on, every incoming telemetry snapshot is also kept in a
+   *  capped ring buffer (see FEEDBACK_HISTORY_MAX) so the panel can show
+   *  per-field min/last/max instead of only the latest sample. */
+  feedbackMode: boolean;
+  feedbackHistory: { t: number; telemetry: unknown }[];
   setStatus: (status: HardwareStatus) => void;
   setBoard: (board: BoardKind) => void;
   setType: (type: 'serial' | 'websocket') => void;
@@ -41,11 +46,14 @@ interface HardwareState {
   removePeripheral: (id: string) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setTelemetry: (telemetry: any) => void;
+  setFeedbackMode: (on: boolean) => void;
   pushLog: (dir: string, line: string) => void;
   clearLog: () => void;
   /** Signal strength % from telemetry RSSI (dBm), or null. */
   signal: () => number | null;
 }
+
+const FEEDBACK_HISTORY_MAX = 200;
 
 export const useHardwareStore = create<HardwareState>((set, get) => ({
   status: 'disconnected',
@@ -59,6 +67,8 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
   peripherals: [],
   telemetry: null,
   log: [],
+  feedbackMode: false,
+  feedbackHistory: [],
 
   setStatus: (status) => set({ status }),
   setBoard: (board) => set({ board, boardName: BOARDS[board].name, type: BOARDS[board].transport, baud: BOARDS[board].baud ?? get().baud }),
@@ -69,7 +79,13 @@ export const useHardwareStore = create<HardwareState>((set, get) => ({
   setStreaming: (streaming) => set({ streaming }),
   addPeripheral: (p) => set((s) => ({ peripherals: [...s.peripherals, { ...p, id: `p_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 5)}` }] })),
   removePeripheral: (id) => set((s) => ({ peripherals: s.peripherals.filter((p) => p.id !== id) })),
-  setTelemetry: (telemetry) => set({ telemetry }),
+  setTelemetry: (telemetry) => set((s) => ({
+    telemetry,
+    feedbackHistory: s.feedbackMode
+      ? [...s.feedbackHistory.slice(-(FEEDBACK_HISTORY_MAX - 1)), { t: Date.now(), telemetry }]
+      : s.feedbackHistory,
+  })),
+  setFeedbackMode: (on) => set({ feedbackMode: on, feedbackHistory: [] }),
   pushLog: (dir, line) => set((s) => ({ log: [...s.log.slice(-49), { dir, line, t: Date.now() }] })),
   clearLog: () => set({ log: [], telemetry: null }),
 

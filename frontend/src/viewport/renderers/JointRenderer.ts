@@ -30,6 +30,9 @@ export class JointRenderer {
     this._lastDoc = null;
     this._visible = new Set(); // joint ids to draw; empty → none (shown on selection)
     this._picker = new THREE.Raycaster();
+    // Default line-hit tolerance is ~1 world unit (1m here) — far too loose for
+    // small joint-axis arrows, letting clicks well away from one still hit it.
+    this._picker.params.Line = { threshold: 0.01 };
   }
 
   _mat(t: any) {

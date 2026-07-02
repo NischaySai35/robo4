@@ -11,28 +11,54 @@
  */
 import * as THREE from 'three';
 import type { Document, Origin } from '@/core/model/index';
+import { useWorkspaceStore } from '@/state/workspaceStore';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 
+// Pre-allocated temporaries reused across every computeFK call.
+// computeFK is called 60fps during animation and from multiple callers per frame,
+// so avoiding `new THREE.*` inside the hot path cuts GC pressure significantly.
+const _tmpP = new THREE.Vector3();
+const _tmpQ = new THREE.Quaternion();
+const _tmpS = new THREE.Vector3();
+const _tmpM = new THREE.Matrix4();
+
 export function mat(t: any) {
+  const [px, py, pz] = t?.position ?? [0, 0, 0];
+  const [qx, qy, qz, qw] = t?.quaternion ?? [0, 0, 0, 1];
   return new THREE.Matrix4().compose(
-    new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
-    new THREE.Quaternion(...(t?.quaternion ?? [0, 0, 0, 1])),
-    ONE.clone(),
+    _tmpP.set(px, py, pz),
+    _tmpQ.set(qx, qy, qz, qw),
+    ONE,
   );
 }
 
 const originMat = (o: any) => mat(o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
 
+const _dofAxis = new THREE.Vector3();
+
 /** The joint's degree-of-freedom transform at its current value. */
 export function jointDOFMatrix(joint: any) {
   const v = joint.state?.value ?? 0;
-  const axis = new THREE.Vector3(...(joint.axis ?? [0, 0, 1]));
-  if (axis.lengthSq() < 1e-9) axis.set(0, 0, 1);
-  axis.normalize();
-  if (joint.type === 'prismatic') return new THREE.Matrix4().makeTranslation(axis.x * v, axis.y * v, axis.z * v);
+  const [ax, ay, az] = joint.axis ?? [0, 0, 1];
+  _dofAxis.set(ax, ay, az);
+  if (_dofAxis.lengthSq() < 1e-9) _dofAxis.set(0, 0, 1);
+  _dofAxis.normalize();
+  if (joint.type === 'prismatic') return new THREE.Matrix4().makeTranslation(_dofAxis.x * v, _dofAxis.y * v, _dofAxis.z * v);
   if (joint.type === 'fixed') return new THREE.Matrix4();
-  return new THREE.Matrix4().makeRotationAxis(axis, v); // revolute / continuous / ball
+  return new THREE.Matrix4().makeRotationAxis(_dofAxis, v); // revolute / continuous / ball
+}
+
+/** Inverse of jointDOFMatrix — used when traversing the joint graph in reverse. */
+function jointDOFMatrixInverse(joint: any) {
+  const v = joint.state?.value ?? 0;
+  const [ax, ay, az] = joint.axis ?? [0, 0, 1];
+  _dofAxis.set(ax, ay, az);
+  if (_dofAxis.lengthSq() < 1e-9) _dofAxis.set(0, 0, 1);
+  _dofAxis.normalize();
+  if (joint.type === 'prismatic') return new THREE.Matrix4().makeTranslation(-_dofAxis.x * v, -_dofAxis.y * v, -_dofAxis.z * v);
+  if (joint.type === 'fixed') return new THREE.Matrix4();
+  return new THREE.Matrix4().makeRotationAxis(_dofAxis, -v);
 }
 
 /** childBodyId -> the joint whose child it is (first wins). */
@@ -44,8 +70,9 @@ export function buildChildJointMap(doc: Document) {
   return m;
 }
 
-/** Compute world transforms for every body. Returns Map id -> {position, quaternion, matrix}. */
-export function computeFK(doc: any) {
+// ── Tree FK (legacy, "free float" mode) ──────────────────────────────────────
+
+function computeFKTree(doc: any) {
   const childJoint = buildChildJointMap(doc);
   const cache = new Map();
   const visiting = new Set();
@@ -60,9 +87,6 @@ export function computeFK(doc: any) {
       M = mat(body.transform);
     } else {
       visiting.add(bodyId);
-      // Body 2 world = Body1 ∘ pivotOrigin ∘ DOF(value) ∘ childRest. The childRest
-      // term keeps Body 2 independent of the pivot, so the pivot can be placed
-      // anywhere between the parts without moving them.
       M = world(j.parentBodyId).clone()
         .multiply(originMat(j.origin))
         .multiply(jointDOFMatrix(j))
@@ -76,11 +100,85 @@ export function computeFK(doc: any) {
   const out = new Map();
   for (const id of Object.keys(doc.bodies)) {
     const M = world(id);
-    const p = new THREE.Vector3(); const q = new THREE.Quaternion(); const s = new THREE.Vector3();
-    M.decompose(p, q, s);
-    out.set(id, { position: [p.x, p.y, p.z], quaternion: [q.x, q.y, q.z, q.w], matrix: M });
+    M.decompose(_tmpP, _tmpQ, _tmpS);
+    out.set(id, { position: [_tmpP.x, _tmpP.y, _tmpP.z], quaternion: [_tmpQ.x, _tmpQ.y, _tmpQ.z, _tmpQ.w], matrix: M });
   }
   return out;
+}
+
+// ── Graph FK (rigid mode) — BFS from active body ──────────────────────────────
+// Traverses joints bidirectionally: if arriving from the parentBodyId side the
+// DOF applies forward; from the childBodyId side it applies in reverse.
+// This means the tree structure is derived at runtime from which body is "active"
+// — not from hardcoded parent/child in joint data.
+
+export function computeFKGraph(doc: any, rootBodyId: string) {
+  if (!doc.bodies[rootBodyId]) return computeFKTree(doc);
+
+  // Build undirected adjacency: bodyId → [{joint, neighborId}]
+  const adj = new Map<string, { joint: any; neighborId: string }[]>();
+  for (const id of Object.keys(doc.bodies)) adj.set(id, []);
+  for (const j of Object.values(doc.joints) as any[]) {
+    if (j.parentBodyId && j.childBodyId && doc.bodies[j.parentBodyId] && doc.bodies[j.childBodyId]) {
+      adj.get(j.parentBodyId)!.push({ joint: j, neighborId: j.childBodyId });
+      adj.get(j.childBodyId)!.push({ joint: j, neighborId: j.parentBodyId });
+    }
+  }
+
+  const worldM = new Map<string, THREE.Matrix4>();
+  const visited = new Set<string>();
+  // Active body is the "ground" — uses its authored transform as the world anchor.
+  worldM.set(rootBodyId, mat(doc.bodies[rootBodyId].transform));
+  visited.add(rootBodyId);
+
+  const queue: string[] = [rootBodyId];
+  while (queue.length > 0) {
+    const bodyId = queue.shift()!;
+    const parentM = worldM.get(bodyId)!;
+    for (const { joint: j, neighborId } of adj.get(bodyId) ?? []) {
+      if (visited.has(neighborId)) continue;
+      visited.add(neighborId);
+      let M: THREE.Matrix4;
+      if (j.parentBodyId === bodyId) {
+        // Forward: parent → child
+        M = parentM.clone()
+          .multiply(originMat(j.origin))
+          .multiply(jointDOFMatrix(j))
+          .multiply(originMat(j.childRest));
+      } else {
+        // Reverse: arrived from child side, solve for the parent
+        // child_world = parent_world × origin × DOF × childRest
+        // → parent_world = child_world × childRest⁻¹ × DOF⁻¹ × origin⁻¹
+        M = parentM.clone()
+          .multiply(originMat(j.childRest).invert())
+          .multiply(jointDOFMatrixInverse(j))
+          .multiply(originMat(j.origin).invert());
+      }
+      worldM.set(neighborId, M);
+      queue.push(neighborId);
+    }
+  }
+
+  // Bodies not reachable from root use their authored transform.
+  for (const id of Object.keys(doc.bodies)) {
+    if (!worldM.has(id)) worldM.set(id, mat(doc.bodies[id].transform));
+  }
+
+  const out = new Map<string, any>();
+  for (const [id, M] of worldM) {
+    M.decompose(_tmpP, _tmpQ, _tmpS);
+    out.set(id, { position: [_tmpP.x, _tmpP.y, _tmpP.z], quaternion: [_tmpQ.x, _tmpQ.y, _tmpQ.z, _tmpQ.w], matrix: M });
+  }
+  return out;
+}
+
+/** Compute world transforms — delegates to graph FK when in rigid mode. */
+export function computeFK(doc: any) {
+  const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
+  if (bodyMode === 'rigid' && activeBodyId && doc.bodies?.[activeBodyId]) {
+    return computeFKGraph(doc, activeBodyId);
+  }
+  return computeFKTree(doc);
 }
 
 /** Rest origin (child-in-parent) from two bodies' authored transforms. */
@@ -103,7 +201,7 @@ const decompose = (M: any) => {
  * Returns { origin, childRest } so FK reproduces both bodies' current placement at
  * value 0, with the pivot independently positioned.
  */
-export function jointFramesForBodies(body1: any, body2: any, pivotWorld = null) {
+export function jointFramesForBodies(body1: any, body2: any, pivotWorld: [number, number, number] | null = null) {
   const T1 = mat(body1.transform);
   const T2 = mat(body2.transform);
   const p1 = new THREE.Vector3().setFromMatrixPosition(T1);

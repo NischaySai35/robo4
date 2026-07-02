@@ -1,17 +1,23 @@
 import './LeftPanel.css';
-import { useState, useCallback, useRef } from 'react';
+import { useCallback, useRef } from 'react';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useDockStore } from '@/state/dockStore';
+import { useWorkspaceStore } from '@/state/workspaceStore';
 import { commands } from '@/core/commands/index';
 import {
   makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin, makeComponent, uid,
+  bodiesOfComponent, jointsOfComponent,
 } from '@/core/model/index';
 import type { Connector } from '@/core/model/index';
 import { jointFramesForBodies } from '@/kinematics/modelFK';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
+import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
+import GizmoModeButtons, { BODY_GIZMO_MODES, POINT_GIZMO_MODES, type GizmoModeId } from '@/features/common/GizmoModeButtons';
+import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 
 const cap = (s: any) => s.charAt(0).toUpperCase() + s.slice(1);
 
@@ -50,6 +56,25 @@ export default function LeftPanel({ style }: any) {
   const openPanel = useDockStore((s) => s.open);
   const editActive = useEditModeStore((s) => s.active);
 
+  // ── Workspace-persisted state ────────────────────────────────────────────────
+  const buildOpen    = useWorkspaceStore((s) => s.buildOpen);
+  const setBuildOpen = useWorkspaceStore((s) => s.setBuildOpen);
+  const controlsOpen    = useWorkspaceStore((s) => s.controlsOpen);
+  const setControlsOpen = useWorkspaceStore((s) => s.setControlsOpen);
+  const pxHeight    = useWorkspaceStore((s) => s.pxHeight);
+  const setPxHeight = useWorkspaceStore((s) => s.setPxHeight);
+  const collapsedCompIds    = useWorkspaceStore((s) => s.collapsedComponents);
+  const setCollapsedCompIds = useWorkspaceStore((s) => s.setCollapsedComponents);
+  const collapsedComps = new Set(collapsedCompIds);
+  const hiddenBodyIds       = useWorkspaceStore((s) => s.hiddenBodyIds);
+  const toggleBodyVisibility = useWorkspaceStore((s) => s.toggleBodyVisibility);
+  const hiddenSet = new Set(hiddenBodyIds);
+  const bodyMode        = useWorkspaceStore((s) => s.bodyMode);
+  const activeBodyId    = useWorkspaceStore((s) => s.activeBodyId);
+  const setBodyMode     = useWorkspaceStore((s) => s.setBodyMode);
+  const setActiveBodyId = useWorkspaceStore((s) => s.setActiveBodyId);
+  const hoveredBodyId   = useSelectionStore((s) => s.hoveredBodyId);
+
   const isBodySelected = !!(selectedId && doc.bodies[selectedId]);
   const toggleEditMode = () => {
     const es = useEditModeStore.getState();
@@ -62,32 +87,40 @@ export default function LeftPanel({ style }: any) {
   const comps  = Object.values(doc.components ?? {});
 
   const [addOpen, setAddOpen]   = useState(false);
-  const [editing, setEditing]   = useState<any>(null); // { id, kind, text }
+  const [editing, setEditing]   = useState<any>(null);
   const [searchQ, setSearchQ]   = useState('');
-  const [collapsedComps, setCollapsedComps] = useState<Set<string>>(new Set());
-  const [targetCompId, setTargetCompId]     = useState<string | null>(null);
+  const [targetCompId, setTargetCompId] = useState<string | null>(null);
   const [dragKey,  setDragKey]  = useState<string | null>(null);
   const [dragKind, setDragKind] = useState<'body' | 'joint' | null>(null);
-  const [dropTarget,     setDropTarget]     = useState<string | null>(null); // row drop
-  const [compDropTarget, setCompDropTarget] = useState<string | null>(null); // comp header drop
+  const [dropTarget,     setDropTarget]     = useState<string | null>(null);
+  const [compDropTarget, setCompDropTarget] = useState<string | null>(null);
 
   // ── Build actions ────────────────────────────────────────────────────────────
   const addPrimitive = (type: any, params: any) => {
     const n = bodies.length;
-    // Resolve the target component; auto-create one if the scene has none yet.
     const compEntries = Object.values(doc.components ?? {});
     let compId = targetCompId && (doc.components ?? {})[targetCompId] ? targetCompId : null;
     if (!compId && compEntries.length > 0) compId = compEntries[0].id;
 
+    // Spawn just to the right of the ACTUAL rightmost existing body, not at
+    // bodyCount*1.3 — with many bodies the old count-based X put new primitives
+    // metres away from where the model actually sits (huge "gap nearby").
+    let spawnX = 0;
+    let maxRight = -Infinity;
+    for (const b of bodies) {
+      const px = b?.transform?.position?.[0];
+      if (typeof px === 'number') maxRight = Math.max(maxRight, px);
+    }
+    if (maxRight > -Infinity) spawnX = maxRight + 1.3;
+
     const body = makeBody({
       name: `${cap(type)} ${n + 1}`,
       visual: { geometry: makeGeometry(type, params), materialId: null, origin: identityOrigin() },
-      transform: { position: [n * 1.3, 0.6, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
+      transform: { position: [spawnX, 0.6, 0], quaternion: [0, 0, 0, 1], scale: [1, 1, 1] },
       componentId: compId,
     });
 
     if (!compId) {
-      // No components yet — create Component 1 together with the body in one undo step.
       const comp = makeComponent({ name: 'Component 1' });
       body.componentId = comp.id;
       dispatch(commands.addEntities([comp, body], `Add ${cap(type)}`));
@@ -102,14 +135,19 @@ export default function LeftPanel({ style }: any) {
 
   const createJoint = () => {
     if (bodies.length < 2) { alert('Add at least 2 bodies first.'); return; }
-    const b1 = (selectedId && doc.bodies[selectedId]) ? doc.bodies[selectedId] : bodies[bodies.length - 2];
-    const b2 = bodies.find((b) => b.id !== b1.id);
+    // If exactly 2 bodies are multi-selected, use them as the joint pair.
+    const twoSelected = selKind === 'body' && selIds.length === 2
+      && selIds.every((id) => doc.bodies[id]);
+    const b1 = twoSelected ? doc.bodies[selIds[0]]
+      : (selectedId && doc.bodies[selectedId]) ? doc.bodies[selectedId] : bodies[bodies.length - 2];
+    const b2 = twoSelected ? doc.bodies[selIds[1]] : bodies.find((b) => b.id !== b1.id);
     if (!b2) return;
     const { origin, childRest } = jointFramesForBodies(b1, b2);
-    // Joint inherits the component of body 1 if available
     const compId = b1.componentId ?? null;
+    const existingNames = new Set(joints.map((j: any) => j.name));
+    let n = 1; while (existingNames.has(`Joint ${n}`)) n++;
     const j = makeJoint({
-      name: `Joint ${joints.length + 1}`, type: JointType.REVOLUTE,
+      name: `Joint ${n}`, type: JointType.REVOLUTE,
       parentBodyId: b1.id, childBodyId: b2.id, origin, childRest, componentId: compId,
     });
     dispatch(commands.addJoint(j));
@@ -122,7 +160,61 @@ export default function LeftPanel({ style }: any) {
     const comp = makeComponent({ name: `Component ${n}` });
     dispatch(commands.addComponent(comp));
     setTargetCompId(comp.id);
-    setCollapsedComps((s) => { const next = new Set(s); next.delete(comp.id); return next; });
+    const next = new Set(collapsedComps); next.delete(comp.id);
+    setCollapsedCompIds(Array.from(next));
+  };
+
+  /** Add another copy of the base module (a whole Component: bodies + joints),
+   *  offset clear of the original so repeated clicks stack modules side by side
+   *  instead of piling up on top of each other. Always copies the FIRST component
+   *  in the project (the hand-built original), not whichever copy was added last —
+   *  otherwise repeated clicks would chain off each other ("Module 2 2 2 …"). */
+  const addModule = () => {
+    const templateId = comps[0]?.id;
+    const template = templateId ? doc.components[templateId] : null;
+    const templateBodies = templateId ? bodiesOfComponent(doc, templateId) : [];
+    if (!template || !templateBodies.length) {
+      alert('No module to copy yet — add a body or use "+ Comp" to start one first.');
+      return;
+    }
+    const templateJoints = jointsOfComponent(doc, templateId!);
+
+    // Offset along +X by the template's own width (+ a margin), stepped further out
+    // for each existing copy so modules line up side by side without overlapping.
+    let minX = Infinity, maxX = -Infinity;
+    for (const b of templateBodies) {
+      minX = Math.min(minX, b.transform.position[0]);
+      maxX = Math.max(maxX, b.transform.position[0]);
+    }
+    const spacing = Math.max(0.15, maxX - minX) + 0.25;
+    const existingCopies = comps.filter((c) => c.name === template.name || c.name.startsWith(`${template.name} `)).length;
+    const offsetX = spacing * existingCopies;
+
+    const newComponent = { ...structuredClone(template), id: uid('comp'), name: `${template.name} ${existingCopies + 1}` };
+    const bodyIdRemap = new Map<string, string>();
+    const newBodies = templateBodies.map((b) => {
+      const copy = duplicateInPlace(b);
+      copy.componentId = newComponent.id;
+      copy.transform = { ...copy.transform, position: [copy.transform.position[0] + offsetX, copy.transform.position[1], copy.transform.position[2]] };
+      bodyIdRemap.set(b.id, copy.id);
+      return copy;
+    });
+    const jointIdRemap = new Map<string, string>();
+    for (const j of templateJoints) jointIdRemap.set(j.id, uid('joint'));
+    let newJoints = templateJoints.map((j) => {
+      const copy = duplicateJointInPlace(j, bodyIdRemap, jointIdRemap);
+      copy.componentId = newComponent.id;
+      return copy;
+    });
+    // New module copy gets its own servo ids, continuing from whatever's already
+    // assigned — otherwise it'd collide with the template module's real servos.
+    newJoints = reassignServoIds(newJoints, doc);
+
+    dispatch(commands.addEntities([newComponent, ...newBodies, ...newJoints], `Add ${newComponent.name}`));
+    const next = new Set(collapsedComps); next.delete(newComponent.id);
+    setCollapsedCompIds(Array.from(next));
+    useSelectionStore.getState().selectMany(newBodies.map((b) => b.id), 'body');
+    setAddOpen(false);
   };
 
   // ── Project explorer actions ─────────────────────────────────────────────────
@@ -173,36 +265,53 @@ export default function LeftPanel({ style }: any) {
 
   // ── Context menu ─────────────────────────────────────────────────────────────
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; bodyId: string } | null>(null);
-
   const closeCtx = useCallback(() => setCtxMenu(null), []);
 
+  // Close on Escape key anywhere
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') closeCtx(); };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [ctxMenu, closeCtx]);
+
   const addConnector = (bodyId: string) => {
+    closeCtx();
     const body = doc.bodies[bodyId];
     if (!body) return;
     const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
-    const con: Connector = {
-      id: uid('con'),
-      name: `Connector ${existing.length + 1}`,
-      position: [0, 0, 0],
-      normal: [0, 0, 1],
-    };
-    dispatch(commands.updateBody(bodyId, {
-      meta: { ...body.meta, connectors: [...existing, con] },
-    }));
-    // Open inspector so user can edit the new connector
+    const con: Connector = { id: uid('con'), name: `Connector ${existing.length + 1}`, position: [0, 0, 0], normal: [0, 0, 1] };
+    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: [...existing, con] } }));
     select(bodyId, 'body');
     openPanel('inspector');
-    closeCtx();
+  };
+
+  const deleteConnector = (bodyId: string, conId: string) => {
+    const body = doc.bodies[bodyId];
+    if (!body) return;
+    const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
+    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: existing.filter((c) => c.id !== conId) } }));
+  };
+
+  const smartMenuPos = (x: number, y: number) => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    return {
+      left: x + 210 > vw - 8 ? Math.max(8, x - 210) : x,
+      top:  y + 300 > vh - 8 ? Math.max(8, y - 300) : y,
+    };
   };
 
   // ── Row renderer ─────────────────────────────────────────────────────────────
   const renderRow = (
     entity: any, kind: any, ids: any, idx: any, collection: any, extra: any, indented = false,
   ) => {
-    const isSel      = selIds.includes(entity.id);
-    const isActive   = selectedId === entity.id;
-    const isEditing  = editing && editing.id === entity.id;
-    const isDropHere = dropTarget === entity.id && dragKey !== entity.id;
+    const isSel        = selIds.includes(entity.id);
+    const isActive     = selectedId === entity.id;
+    const isEditing    = editing && editing.id === entity.id;
+    const isDropHere   = dropTarget === entity.id && dragKey !== entity.id;
+    const isHidden     = kind === 'body' && hiddenSet.has(entity.id);
+    const isGrounded   = kind === 'body' && bodyMode === 'rigid' && entity.id === activeBodyId;
+    const isHovered    = kind === 'body' && entity.id === hoveredBodyId && !isSel;
     return (
       <div
         key={entity.id}
@@ -212,12 +321,12 @@ export default function LeftPanel({ style }: any) {
           isSel ? 'px-row--sel' : '',
           isActive ? 'px-row--active' : '',
           isDropHere ? 'px-row--drop' : '',
+          isHidden ? 'px-row--hidden' : '',
+          isGrounded ? 'px-row--grounded' : '',
+          isHovered ? 'px-row--hover' : '',
         ].filter(Boolean).join(' ')}
         draggable={!isEditing}
-        onContextMenu={kind === 'body' ? (e) => {
-          e.preventDefault();
-          setCtxMenu({ x: e.clientX, y: e.clientY, bodyId: entity.id });
-        } : undefined}
+        onContextMenu={kind === 'body' ? (e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, bodyId: entity.id }); } : undefined}
         onDragStart={(e) => {
           setDragKey(entity.id);
           setDragKind(kind as 'body' | 'joint');
@@ -229,7 +338,7 @@ export default function LeftPanel({ style }: any) {
         onDragLeave={() => setDropTarget((t) => (t === entity.id ? null : t))}
         onDrop={(e) => {
           e.preventDefault();
-          e.stopPropagation(); // don't bubble to component header
+          e.stopPropagation();
           if (dragKey && ids.includes(dragKey)) reorder(collection, ids, ids.indexOf(dragKey), idx);
           setDragKey(null); setDragKind(null); setDropTarget(null);
         }}
@@ -259,6 +368,15 @@ export default function LeftPanel({ style }: any) {
         )}
         {extra}
         <span className="px-row-actions">
+          {kind === 'body' && (
+            <button
+              className={`px-mini px-eye${hiddenSet.has(entity.id) ? ' px-eye--hidden' : ''}`}
+              title={hiddenSet.has(entity.id) ? 'Show body' : 'Hide body'}
+              onClick={(e) => { e.stopPropagation(); toggleBodyVisibility(entity.id); }}
+            >
+              {hiddenSet.has(entity.id) ? '🔕' : '👁'}
+            </button>
+          )}
           <button className="px-mini" title="Rename" onClick={() => startRename(entity.id, kind, entity.name)}>✎</button>
         </span>
       </div>
@@ -279,24 +397,27 @@ export default function LeftPanel({ style }: any) {
         {comps.map((comp) => {
           const compBodies = bodies.filter((b) => b.componentId === comp.id);
           const compJoints = joints.filter((j) => j.componentId === comp.id);
-          const isCollapsed  = collapsedComps.has(comp.id);
+          const isCollapsed   = collapsedComps.has(comp.id);
           const isEditingComp = editing?.id === comp.id && editing?.kind === 'component';
-          const isDropTarget = compDropTarget === comp.id;
-          const isTarget     = targetCompId === comp.id;
+          const isDropTarget  = compDropTarget === comp.id;
+          const isTarget      = targetCompId === comp.id;
 
           return (
             <div
               key={comp.id}
               className={`px-comp${isDropTarget ? ' px-comp--drop' : ''}${isTarget ? ' px-comp--target' : ''}`}
-              onDragOver={(e) => {
-                if (dragKey) { e.preventDefault(); setCompDropTarget(comp.id); }
-              }}
+              onDragOver={(e) => { if (dragKey) { e.preventDefault(); setCompDropTarget(comp.id); } }}
               onDragLeave={() => setCompDropTarget((t) => (t === comp.id ? null : t))}
               onDrop={(e) => {
                 e.preventDefault();
                 if (dragKey && dragKind) {
+                  // Move ALL selected items of the same kind, not just the one being dragged.
+                  const sel = useSelectionStore.getState();
+                  const idsToMove = (sel.kind === dragKind && sel.ids.includes(dragKey))
+                    ? sel.ids
+                    : [dragKey];
                   const cmd = dragKind === 'body' ? commands.moveBodyToComponent : commands.moveJointToComponent;
-                  dispatch(cmd(dragKey, comp.id));
+                  for (const id of idsToMove) dispatch(cmd(id, comp.id));
                 }
                 setDragKey(null); setDragKind(null); setCompDropTarget(null); setDropTarget(null);
               }}
@@ -306,11 +427,9 @@ export default function LeftPanel({ style }: any) {
                 className="px-comp-hdr"
                 onClick={() => {
                   setTargetCompId(comp.id);
-                  setCollapsedComps((s) => {
-                    const next = new Set(s);
-                    next.has(comp.id) ? next.delete(comp.id) : next.add(comp.id);
-                    return next;
-                  });
+                  const next = new Set(collapsedComps);
+                  next.has(comp.id) ? next.delete(comp.id) : next.add(comp.id);
+                  setCollapsedCompIds(Array.from(next));
                 }}
               >
                 <span className={`px-comp-chevron${isCollapsed ? '' : ' px-comp-chevron--open'}`}>▶</span>
@@ -322,26 +441,41 @@ export default function LeftPanel({ style }: any) {
                     onChange={(e) => setEditing({ ...editing, text: e.target.value })}
                     onBlur={commitRename}
                     onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') commitRename();
-                      if (e.key === 'Escape') setEditing(null);
-                    }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
                   />
                 ) : (
-                  <span className="px-comp-name">{comp.name}</span>
+                  <span
+                    className="px-comp-name"
+                    title="Click to select the whole component (move/rotate/copy as one rigid group)"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (compBodies.length) {
+                        useSelectionStore.getState().selectMany(compBodies.map((b) => b.id), 'body');
+                      }
+                    }}
+                  >
+                    {comp.name}
+                  </span>
                 )}
                 <span className="px-comp-count">{compBodies.length}B·{compJoints.length}J</span>
                 <div className="px-comp-actions" onClick={(e) => e.stopPropagation()}>
-                  <button className="px-mini" title="Rename"
-                    onClick={() => startRename(comp.id, 'component', comp.name)}>✎</button>
-                  <button className="px-mini px-mini--danger" title="Delete (unassigns members)"
+                  <button className="px-mini" title="Rename" onClick={() => startRename(comp.id, 'component', comp.name)}>✎</button>
+                  <button className="px-mini px-mini--danger" title="Unassign — removes the component, keeps its bodies/joints (they move to Unassigned)"
                     onClick={() => {
                       // eslint-disable-next-line no-restricted-globals
-                      if (confirm(`Delete "${comp.name}"? Its members will move to Unassigned.`)) {
+                      if (confirm(`Unassign "${comp.name}"? Its members will move to Unassigned (nothing is deleted).`)) {
                         dispatch(commands.removeComponent(comp.id));
                         if (targetCompId === comp.id) setTargetCompId(null);
                       }
                     }}>✕</button>
+                  <button className="px-mini px-mini--danger" title="Delete everything — the component AND all its bodies/joints"
+                    onClick={() => {
+                      // eslint-disable-next-line no-restricted-globals
+                      if (confirm(`Delete "${comp.name}" AND everything inside it (${compBodies.length} bodies, ${compJoints.length} joints)? This cannot be undone after closing the project.`)) {
+                        dispatch(commands.removeComponentAndContents(comp.id));
+                        if (targetCompId === comp.id) setTargetCompId(null);
+                      }
+                    }}>🗑</button>
                 </div>
               </div>
 
@@ -386,10 +520,6 @@ export default function LeftPanel({ style }: any) {
   };
 
   // ── Resizable project explorer ───────────────────────────────────────────────
-  const [pxHeight, setPxHeight] = useState(() => {
-    const v = parseInt(localStorage.getItem('tetrobot:px:height') || '', 10);
-    return Number.isFinite(v) ? Math.max(80, v) : 340;
-  });
   const pxRef = useRef(pxHeight);
   pxRef.current = pxHeight;
   const startPxResize = useCallback((e: React.MouseEvent) => {
@@ -403,7 +533,6 @@ export default function LeftPanel({ style }: any) {
       const next = Math.max(80, Math.min(700, startH + (ev.clientY - startY)));
       pxRef.current = next;
       setPxHeight(next);
-      localStorage.setItem('tetrobot:px:height', String(next));
     };
     const onUp = () => {
       document.body.style.cursor = '';
@@ -413,7 +542,7 @@ export default function LeftPanel({ style }: any) {
     };
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
-  }, []);
+  }, [setPxHeight]);
 
   return (
     <aside className="left-panel fade-in" style={style}>
@@ -446,27 +575,42 @@ export default function LeftPanel({ style }: any) {
         </div>
       )}
 
+      {/* ── Body Mode (Free Float ↔ Rigid) ── */}
+      <div className="section">
+        <div className="section-title">BODY MODE</div>
+        <div className="lp-mode-toggle">
+          <button
+            className={`lp-mode-btn ${bodyMode === 'free' ? 'lp-mode-btn--on' : ''}`}
+            onClick={() => setBodyMode('free')}
+            title="Free Float — no grounded body; FK uses first-wins tree">
+            Free Float
+          </button>
+          <button
+            className={`lp-mode-btn lp-mode-btn--rigid ${bodyMode === 'rigid' ? 'lp-mode-btn--on' : ''}`}
+            onClick={() => setBodyMode('rigid')}
+            title="Rigid — right-click any body to set it as the fixed base; graph FK propagates outward">
+            Rigid
+          </button>
+        </div>
+        {bodyMode === 'rigid' && (
+          <div className="lp-rigid-hint">
+            {activeBodyId
+              ? <><span className="lp-rigid-dot" /> Active: <strong>{doc.bodies[activeBodyId]?.name ?? '—'}</strong></>
+              : <><span className="lp-rigid-dot lp-rigid-dot--none" /> Right-click a body to set it as active</>}
+          </div>
+        )}
+      </div>
+
       {/* ── Transform (when body selected) ── */}
       {!editActive && selKind === 'body' && isBodySelected && (
         <div className="section">
           <div className="section-title">TRANSFORM</div>
-          <div className="lp-mode-toggle lp-xform">
-            {[
-              { id: 'translate', label: 'Move',   key: 'M' },
-              { id: 'rotate',    label: 'Rotate', key: 'R' },
-              { id: 'scale',     label: 'Scale',  key: 'S' },
-            ].map((m) => (
-              <button key={m.id}
-                className={`lp-mode-btn ${showGizmo && gizmoMode === m.id ? 'lp-mode-btn--on' : ''}`}
-                onClick={() => setGizmoMode(m.id as 'translate' | 'rotate' | 'scale')}
-                title={`${m.label} (${m.key})`}>
-                {m.label} <kbd className="lp-xform-key">{m.key}</kbd>
-              </button>
-            ))}
-          </div>
-          {!showGizmo && (
-            <p className="lp-mode-hint">Click the body again — or press M / R / S — to show gizmo.</p>
-          )}
+          <GizmoModeButtons
+            modes={BODY_GIZMO_MODES}
+            activeMode={gizmoMode}
+            active={showGizmo}
+            onSelect={(id: GizmoModeId) => setGizmoMode(id)}
+          />
           {selIds.length > 1 && (
             <>
               <div className="lp-pivot-label">{selIds.length} bodies · pivot</div>
@@ -488,43 +632,79 @@ export default function LeftPanel({ style }: any) {
         </div>
       )}
 
+      {/* ── Transform (when a connector marker is selected) ── */}
+      {!editActive && selKind === 'connector' && selectedId && (
+        <div className="section">
+          <div className="section-title">CONNECTOR TRANSFORM</div>
+          <GizmoModeButtons
+            modes={POINT_GIZMO_MODES}
+            activeMode={gizmoMode}
+            active={showGizmo}
+            onSelect={(id: GizmoModeId) => setGizmoMode(id)}
+          />
+          <div className="lp-pivot-label">Move repositions it on the body; Rotate re-aims its facing normal.</div>
+        </div>
+      )}
+
       {!editActive && (
         <>
-          {/* ── Build ── */}
+          {/* ── Build (collapsible, open by default) ── */}
           <div className="section">
-            <div className="section-title">BUILD</div>
-            <div className="lp-icon-row">
-              <div className="lp-add-wrap">
-                <button
-                  className={`lp-icon-btn lp-icon-btn--accent${addOpen ? ' lp-icon-btn--active' : ''}`}
-                  onClick={() => setAddOpen((v) => !v)}
-                  title="Add a primitive body">
-                  <I><path d="M10 4v12M4 10h12" /></I>
-                </button>
-                {addOpen && (
-                  <div className="lp-add-menu" onMouseLeave={() => setAddOpen(false)}>
-                    <div className="lp-add-title">ADD MESH</div>
-                    <div className="lp-add-grid">
-                      {PRIMITIVES.map((p) => (
-                        <button key={p.type} className="lp-add-item" onClick={() => addPrimitive(p.type, p.params)}>
-                          {p.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-              <button className="lp-icon-btn" onClick={createJoint} title="Create joint between two bodies">
-                <I><circle cx="4" cy="10" r="2" /><circle cx="16" cy="10" r="2" /><path d="M6 10h8" strokeDasharray="2 1.6" /></I>
-              </button>
-              <button className={`lp-icon-btn${mateMode ? ' lp-icon-btn--active' : ''}`} onClick={toggleMate} title="Mate faces">
-                <I><path d="M3 4v12M9 4v12M9 7h5l-2-2M9 13h5l-2 2" /></I>
-              </button>
-              <button className="lp-icon-btn lp-icon-btn--danger" onClick={deleteSelectedEntity}
-                disabled={!selectedId} title="Delete selected (Del / X)">
-                <I><path d="M3 5h14M7 5V3h6v2M6 8v6M10 8v6M14 8v6M4 5l1 12h10l1-12" /></I>
-              </button>
+            <div
+              className="section-title section-title--toggle"
+              onClick={() => setBuildOpen(!buildOpen)}
+              title={buildOpen ? 'Collapse' : 'Expand'}
+            >
+              BUILD
+              <span className={`section-chevron${buildOpen ? ' section-chevron--open' : ''}`}>▶</span>
             </div>
+            {buildOpen && (
+              <div className="lp-icon-row">
+                <div className="lp-add-wrap">
+                  <button
+                    className={`lp-icon-btn lp-icon-btn--accent${addOpen ? ' lp-icon-btn--active' : ''}`}
+                    onClick={() => setAddOpen((v) => !v)}
+                    title="Add a primitive body">
+                    <I><path d="M10 4v12M4 10h12" /></I>
+                  </button>
+                  {addOpen && (
+                    <div className="lp-add-menu" onMouseLeave={() => setAddOpen(false)}>
+                      {comps.length > 0 && (
+                        <>
+                          <div className="lp-add-title">MODULE</div>
+                          <div className="lp-add-grid">
+                            <button
+                              className="lp-add-item lp-add-item--module"
+                              onClick={addModule}
+                              title="Copy an existing module (its bodies + joints) and place it beside the original, offset so it never overlaps.">
+                              ⛓ Add Module
+                            </button>
+                          </div>
+                        </>
+                      )}
+                      <div className="lp-add-title">ADD MESH</div>
+                      <div className="lp-add-grid">
+                        {PRIMITIVES.map((p) => (
+                          <button key={p.type} className="lp-add-item" onClick={() => addPrimitive(p.type, p.params)}>
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+                <button className="lp-icon-btn" onClick={createJoint} title="Create joint between two bodies">
+                  <I><circle cx="4" cy="10" r="2" /><circle cx="16" cy="10" r="2" /><path d="M6 10h8" strokeDasharray="2 1.6" /></I>
+                </button>
+                <button className={`lp-icon-btn${mateMode ? ' lp-icon-btn--active' : ''}`} onClick={toggleMate} title="Mate faces">
+                  <I><path d="M3 4v12M9 4v12M9 7h5l-2-2M9 13h5l-2 2" /></I>
+                </button>
+                <button className="lp-icon-btn lp-icon-btn--danger" onClick={deleteSelectedEntity}
+                  disabled={!selectedId} title="Delete selected (Del / Backspace)">
+                  <I><path d="M3 5h14M7 5V3h6v2M6 8v6M10 8v6M14 8v6M4 5l1 12h10l1-12" /></I>
+                </button>
+              </div>
+            )}
           </div>
 
           {/* ── Project Explorer ── */}
@@ -572,32 +752,65 @@ export default function LeftPanel({ style }: any) {
         </>
       )}
 
-      {/* ── Controls hint ── */}
+      {/* ── Controls (collapsible, closed by default) ── */}
       <div className="instructions">
-        <div className="section-title">CONTROLS</div>
-        <div className="ctrl-grid">
-          <kbd>Click</kbd>        <span>select · again → gizmo</span>
-          <kbd>Ctrl/Shift</kbd>   <span>multi-select · <kbd>A</kbd> all</span>
-          <kbd>M · R · S</kbd>    <span>move · rotate · scale</span>
-          <kbd>Del / X</kbd>      <span>delete selected</span>
-          <kbd>Scroll</kbd>       <span>zoom · <kbd>RMB</kbd> orbit</span>
-          <kbd>Ctrl+Z</kbd>       <span>undo · <kbd>Ctrl+K</kbd> cmds</span>
+        <div
+          className="section-title section-title--toggle"
+          onClick={() => setControlsOpen(!controlsOpen)}
+          title={controlsOpen ? 'Collapse' : 'Expand'}
+        >
+          CONTROLS
+          <span className={`section-chevron${controlsOpen ? ' section-chevron--open' : ''}`}>▶</span>
         </div>
+        {controlsOpen && (
+          <div className="ctrl-grid">
+            <kbd>Click</kbd>        <span>select · again → gizmo</span>
+            <kbd>Ctrl/Shift</kbd>   <span>multi-select · <kbd>A</kbd> all</span>
+            <kbd>M · R · S</kbd>    <span>move · rotate · scale</span>
+            <kbd>Del</kbd>          <span>delete selected</span>
+            <kbd>Scroll</kbd>       <span>zoom · <kbd>RMB</kbd> orbit</span>
+            <kbd>Ctrl+Z</kbd>       <span>undo · <kbd>Ctrl+K</kbd> cmds</span>
+          </div>
+        )}
       </div>
 
-      {/* ── Context menu ── */}
-      {ctxMenu && (
-        <>
-          <div className="px-ctx-backdrop" onClick={closeCtx} onContextMenu={(e) => { e.preventDefault(); closeCtx(); }} />
-          <div className="px-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
-            <button onClick={() => addConnector(ctxMenu.bodyId)}>
-              ◈ Add Connector
-            </button>
-            <button onClick={() => { select(ctxMenu.bodyId, 'body'); openPanel('inspector'); closeCtx(); }}>
-              ✎ Open Inspector
-            </button>
-          </div>
-        </>
+      {/* ── Context menu — rendered via portal so position:fixed works correctly ── */}
+      {ctxMenu && createPortal(
+        (() => {
+          const ctxBody = doc.bodies[ctxMenu.bodyId];
+          const ctxConns: Connector[] = (ctxBody?.meta?.connectors as Connector[] | undefined) ?? [];
+          const pos = smartMenuPos(ctxMenu.x, ctxMenu.y);
+          return (
+            <>
+              <div className="px-ctx-backdrop" onMouseDown={closeCtx} onContextMenu={(e) => { e.preventDefault(); closeCtx(); }} />
+              <div className="px-ctx-menu" style={pos}>
+                <div className="px-ctx-header">{ctxBody?.name ?? '—'}</div>
+                <div className="px-ctx-sep" />
+                {bodyMode === 'rigid' && (
+                  <button onClick={() => { setActiveBodyId(activeBodyId === ctxMenu.bodyId ? null : ctxMenu.bodyId); closeCtx(); }}>
+                    {activeBodyId === ctxMenu.bodyId ? '⬛ Unset Active Body' : '⬛ Set as Active Body'}
+                  </button>
+                )}
+                <button onClick={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }}>✎ Select</button>
+                <button onClick={() => { closeCtx(); select(ctxMenu.bodyId, 'body'); openPanel('inspector'); }}>📋 Open Inspector</button>
+                <div className="px-ctx-sep" />
+                {ctxConns.length > 0 && (
+                  <>
+                    <div className="px-ctx-section">Connectors</div>
+                    {ctxConns.map((c) => (
+                      <div key={c.id} className="px-ctx-con-row">
+                        <span className="px-ctx-con-name">◈ {c.name}</span>
+                        <button className="danger" title="Delete connector" onClick={(e) => { e.stopPropagation(); deleteConnector(ctxMenu.bodyId, c.id); }}>✕</button>
+                      </div>
+                    ))}
+                  </>
+                )}
+                <button onClick={() => addConnector(ctxMenu.bodyId)}>+ Add Connector</button>
+              </div>
+            </>
+          );
+        })(),
+        document.body,
       )}
     </aside>
   );

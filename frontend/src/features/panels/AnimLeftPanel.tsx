@@ -1,5 +1,6 @@
 import './AnimLeftPanel.css';
 import { useState, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
@@ -7,6 +8,9 @@ import { useAnimSceneStore } from '@/state/animSceneStore';
 import { commands } from '@/core/commands/index';
 import { uid } from '@/core/model/index';
 import type { Connector, AssemblyMate } from '@/core/model/index';
+import { findBestSnapCandidate, computeSnapPatches, getConnectorWorld, mateWorldDelta, rigidMovePatches } from '@/features/assembly/connectorSnap';
+import { mateBridge } from '@/features/assembly/mateBridge';
+import { computeFK } from '@/kinematics/modelFK';
 
 // ── Global Rotate helper ──────────────────────────────────────────────────────
 function rotateVec3AroundAxis(v: THREE.Vector3, axis: 'x' | 'y' | 'z', angleDeg: number) {
@@ -38,9 +42,10 @@ function AxisBtn({ axis, active, onClick }: { axis: string; active: boolean; onC
 export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }) {
   const doc      = useModelStore((s) => s.doc);
   const dispatch = useModelStore((s) => s.dispatch);
-  const select   = useSelectionStore((s) => s.select);
-  const selectedId = useSelectionStore((s) => s.selectedId);
-  const selIds   = useSelectionStore((s) => s.ids);
+  const select        = useSelectionStore((s) => s.select);
+  const selectedId    = useSelectionStore((s) => s.selectedId);
+  const selIds        = useSelectionStore((s) => s.ids);
+  const hoveredBodyId = useSelectionStore((s) => s.hoveredBodyId);
 
   const rigidMode          = useAnimSceneStore((s) => s.rigidMode);
   const activeBodyIds      = useAnimSceneStore((s) => s.activeBodyIds);
@@ -64,22 +69,59 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   const [collapsedComps, setCollapsedComps] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; bodyId: string } | null>(null);
   const closeCtx = useCallback(() => setCtxMenu(null), []);
+  const [snapStatus, setSnapStatus] = useState<string | null>(null);
+
+  // Scan every connector pair for the closest facing/touching match across two
+  // DIFFERENT modules and physically join them (see connectorSnap.ts). Click again
+  // to snap additional pairs one at a time.
+  const autoSnapConnectors = () => {
+    const fk = computeFK(doc); // live world poses, so posed/rotated modules mate where they appear
+    const candidate = findBestSnapCandidate(doc, fk);
+    if (!candidate) { setSnapStatus('No connectors close enough to snap.'); return; }
+    const { patches, joint } = computeSnapPatches(doc, candidate, fk);
+    const commit = () => dispatch(commands.snapAndJoin(patches, joint));
+    // Play the approach → align → insert → latch motion in the viewport, then
+    // commit. Falls back to an instant snap if no viewport is registered.
+    const animBodies = patches.map(([id, p]) => ({
+      id,
+      goalPos: (p as { transform: { position: [number, number, number] } }).transform.position,
+      goalQuat: (p as { transform: { quaternion: [number, number, number, number] } }).transform.quaternion,
+    }));
+    const n = candidate.worldA.normal; // A's outward normal = the axis B backs off along
+    const nameA = doc.bodies[candidate.a.bodyId]?.name ?? '?';
+    const nameB = doc.bodies[candidate.b.bodyId]?.name ?? '?';
+    if (mateBridge.play) {
+      mateBridge.play({
+        bodies: animBodies, axis: [n.x, n.y, n.z], gap: 0.02, commit,
+        partnerId: candidate.a.bodyId,
+        onBlocked: (obsId) => setSnapStatus(`Insertion blocked by ${doc.bodies[obsId]?.name ?? 'an obstacle'} — clear the path and retry.`),
+      });
+    } else {
+      commit();
+    }
+    setSnapStatus(`Snapped ${nameA} ↔ ${nameB} (${(candidate.distance * 1000).toFixed(1)} mm apart)`);
+  };
 
   const addConnector = (bodyId: string) => {
     const body = doc.bodies[bodyId];
     if (!body) return;
     const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
-    const con: Connector = {
-      id: uid('con'),
-      name: `Connector ${existing.length + 1}`,
-      position: [0, 0, 0],
-      normal: [0, 0, 1],
-    };
-    dispatch(commands.updateBody(bodyId, {
-      meta: { ...body.meta, connectors: [...existing, con] },
-    }));
+    const con: Connector = { id: uid('con'), name: `Connector ${existing.length + 1}`, position: [0, 0, 0], normal: [0, 0, 1] };
+    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: [...existing, con] } }));
     select(bodyId, 'body');
     closeCtx();
+  };
+
+  const deleteConnector = (bodyId: string, conId: string) => {
+    const body = doc.bodies[bodyId];
+    if (!body) return;
+    const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
+    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: existing.filter((c) => c.id !== conId) } }));
+  };
+
+  const smartMenuPos = (x: number, y: number) => {
+    const vw = window.innerWidth, vh = window.innerHeight;
+    return { left: x + 210 > vw - 8 ? Math.max(8, x - 210) : x, top: y + 320 > vh - 8 ? Math.max(8, y - 320) : y };
   };
 
   // ── Global Rotate apply ───────────────────────────────────────────────────
@@ -158,6 +200,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   const renderBodyRow = (b: any) => {
     const isSel    = selIds.includes(b.id);
     const isActive = activeBodyIds.has(b.id);
+    const isHovered = b.id === hoveredBodyId && !isSel;
     return (
       <div
         key={b.id}
@@ -165,6 +208,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
           'alp-row',
           isSel ? 'alp-row--sel' : '',
           isActive ? 'alp-row--active' : '',
+          isHovered ? 'alp-row--hover' : '',
         ].filter(Boolean).join(' ')}
         onClick={(e) => onBodyClick(b.id, e)}
         onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY, bodyId: b.id }); }}
@@ -284,59 +328,26 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   }, []);
 
   // ── Assembly Mate: snap math ───────────────────────────────────────────────
-  const getConnectorWorld = (bodyId: string, connectorId: string) => {
-    const body = doc.bodies[bodyId];
-    if (!body) return null;
-    const conns: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
-    const con = conns.find((c) => c.id === connectorId);
-    if (!con) return null;
-    const [qx, qy, qz, qw] = body.transform.quaternion;
-    const bodyQ = new THREE.Quaternion(qx, qy, qz, qw);
-    const [bx, by, bz] = body.transform.position;
-    const localPos = new THREE.Vector3(...con.position).applyQuaternion(bodyQ);
-    const worldNormal = new THREE.Vector3(...con.normal).applyQuaternion(bodyQ).normalize();
-    return {
-      position: new THREE.Vector3(bx + localPos.x, by + localPos.y, bz + localPos.z),
-      normal: worldNormal,
-      body,
-    };
+  // Move componentB (or a lone body) so its connector seats onto A's, in live FK
+  // world space. Shared with Auto-Snap so keyed locking + posed-module handling
+  // behave identically; the only difference is manual mate doesn't add a joint.
+  const mkMatePatches = (aRef: { bodyId: string; connectorId: string }, bRef: { bodyId: string; connectorId: string }): [string, any][] | null => {
+    const fk = computeFK(doc);
+    const wA = getConnectorWorld(doc, aRef.bodyId, aRef.connectorId, fk);
+    const wB = getConnectorWorld(doc, bRef.bodyId, bRef.connectorId, fk);
+    if (!wA || !wB) return null;
+    const D = mateWorldDelta(wB, wA);
+    const bodyB = doc.bodies[bRef.bodyId];
+    const movedIds = bodyB?.componentId
+      ? bodies.filter((b) => b.componentId === bodyB.componentId).map((b) => b.id)
+      : [bRef.bodyId];
+    return rigidMovePatches(doc, movedIds, D, fk) as [string, any][];
   };
 
   const snapMate = () => {
     if (!mateSlotA || !mateSlotB) return;
-    const wA = getConnectorWorld(mateSlotA.bodyId, mateSlotA.connectorId);
-    const wB = getConnectorWorld(mateSlotB.bodyId, mateSlotB.connectorId);
-    if (!wA || !wB) return;
-
-    // Align connB onto connA: rotate B so that connB.normal → −connA.normal, then translate
-    const targetNormal = wA.normal.clone().negate(); // connectors face each other
-    const R_delta = new THREE.Quaternion().setFromUnitVectors(wB.normal, targetNormal);
-
-    // Determine which bodies to move (all bodies in componentB, or just bodyB if unassigned)
-    const compId = wB.body.componentId;
-    const movedBodies = compId
-      ? bodies.filter((b) => b.componentId === compId)
-      : [wB.body];
-
-    // For each body: new_pos = connA_pos + R_delta * (body_pos - connB_world_pos)
-    const patches: [string, any][] = movedBodies.map((b) => {
-      const [px, py, pz] = b.transform.position;
-      const [qx, qy, qz, qw] = b.transform.quaternion;
-      const rel = new THREE.Vector3(px - wB.position.x, py - wB.position.y, pz - wB.position.z);
-      const rotRel = rel.applyQuaternion(R_delta);
-      const newPos: [number, number, number] = [
-        wA.position.x + rotRel.x,
-        wA.position.y + rotRel.y,
-        wA.position.z + rotRel.z,
-      ];
-      const bodyQ = new THREE.Quaternion(qx, qy, qz, qw);
-      const newQ = R_delta.clone().multiply(bodyQ);
-      return [b.id, {
-        transform: { ...b.transform, position: newPos, quaternion: [newQ.x, newQ.y, newQ.z, newQ.w] as [number, number, number, number] },
-      }];
-    });
-
-    dispatch(commands.updateBodies(patches));
+    const patches = mkMatePatches(mateSlotA, mateSlotB);
+    if (patches) dispatch(commands.updateBodies(patches));
   };
 
   const saveMate = () => {
@@ -354,23 +365,8 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   const reapplyMate = (mate: AssemblyMate) => {
     setMateSlotA(mate.a);
     setMateSlotB(mate.b);
-    // snap immediately using captured slots
-    const wA = getConnectorWorld(mate.a.bodyId, mate.a.connectorId);
-    const wB = getConnectorWorld(mate.b.bodyId, mate.b.connectorId);
-    if (!wA || !wB) return;
-    const targetNormal = wA.normal.clone().negate();
-    const R_delta = new THREE.Quaternion().setFromUnitVectors(wB.normal, targetNormal);
-    const compId = wB.body.componentId;
-    const movedBodies = compId ? bodies.filter((b) => b.componentId === compId) : [wB.body];
-    const patches: [string, any][] = movedBodies.map((b) => {
-      const [px, py, pz] = b.transform.position;
-      const [qx, qy, qz, qw] = b.transform.quaternion;
-      const rel = new THREE.Vector3(px - wB.position.x, py - wB.position.y, pz - wB.position.z).applyQuaternion(R_delta);
-      const newPos: [number, number, number] = [wA.position.x + rel.x, wA.position.y + rel.y, wA.position.z + rel.z];
-      const newQ = R_delta.clone().multiply(new THREE.Quaternion(qx, qy, qz, qw));
-      return [b.id, { transform: { ...b.transform, position: newPos, quaternion: [newQ.x, newQ.y, newQ.z, newQ.w] as [number, number, number, number] } }];
-    });
-    dispatch(commands.updateBodies(patches));
+    const patches = mkMatePatches(mate.a, mate.b); // snap immediately using captured slots
+    if (patches) dispatch(commands.updateBodies(patches));
     clearMateSlots();
   };
 
@@ -494,6 +490,19 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
         )}
       </div>
 
+      {/* ── Auto-Snap Connectors ── */}
+      <div className="alp-section">
+        <div className="alp-section-title">AUTO-SNAP CONNECTORS</div>
+        <div className="alp-snap-hint">
+          Drag two modules' connectors close together (facing each other), then click Auto-Snap —
+          it aligns them and adds a real joint linking the two modules.
+        </div>
+        <button className="alp-apply-btn" onClick={autoSnapConnectors} title="Find the closest facing pair of connectors and join them">
+          ⚡ Auto-Snap Nearby Connectors
+        </button>
+        {snapStatus && <div className="alp-snap-status">{snapStatus}</div>}
+      </div>
+
       {/* ── Assembly Mates ── */}
       <div className="alp-section">
         <div className="alp-section-title">ASSEMBLY MATES</div>
@@ -611,37 +620,36 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
         </div>
       </div>
 
-      {/* ── Context menu ── */}
-      {ctxMenu && (() => {
-        const ctxBody = doc.bodies[ctxMenu.bodyId];
-        const ctxConns: Connector[] = (ctxBody?.meta?.connectors as Connector[] | undefined) ?? [];
-        return (
-          <>
-            <div className="px-ctx-backdrop" onClick={closeCtx} onContextMenu={(e) => { e.preventDefault(); closeCtx(); }} />
-            <div className="px-ctx-menu" style={{ left: ctxMenu.x, top: ctxMenu.y }}>
-              <button onClick={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }}>✎ Select body</button>
-              <button onClick={() => { addConnector(ctxMenu.bodyId); }}>◈ Add Connector</button>
-              {ctxConns.length > 0 && <div className="px-ctx-sep" />}
-              {ctxConns.map((c) => (
-                <button key={c.id} onClick={() => {
-                  setMateSlotA({ bodyId: ctxMenu.bodyId, connectorId: c.id });
-                  closeCtx();
-                }} title="Use as mate slot A">
-                  A ← {ctxBody?.name} › {c.name}
-                </button>
-              ))}
-              {ctxConns.map((c) => (
-                <button key={`b-${c.id}`} onClick={() => {
-                  setMateSlotB({ bodyId: ctxMenu.bodyId, connectorId: c.id });
-                  closeCtx();
-                }} title="Use as mate slot B">
-                  B ← {ctxBody?.name} › {c.name}
-                </button>
-              ))}
-            </div>
-          </>
-        );
-      })()}
+      {/* ── Context menu (portal so it's never clipped) ── */}
+      {ctxMenu && createPortal(
+        (() => {
+          const ctxBody = doc.bodies[ctxMenu.bodyId];
+          const ctxConns: Connector[] = (ctxBody?.meta?.connectors as Connector[] | undefined) ?? [];
+          const pos = smartMenuPos(ctxMenu.x, ctxMenu.y);
+          return (
+            <>
+              <div className="px-ctx-backdrop" onMouseDown={closeCtx} onContextMenu={(e) => { e.preventDefault(); closeCtx(); }} />
+              <div className="px-ctx-menu" style={pos}>
+                <div className="px-ctx-header">{ctxBody?.name ?? '—'}</div>
+                <div className="px-ctx-sep" />
+                <button onClick={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }}>✎ Select</button>
+                <div className="px-ctx-sep" />
+                <div className="px-ctx-section">Connectors</div>
+                {ctxConns.map((c) => (
+                  <div key={c.id} className="px-ctx-con-row">
+                    <span className="px-ctx-con-name">◈ {c.name}</span>
+                    <button title="Set as Mate A" onClick={(e) => { e.stopPropagation(); setMateSlotA({ bodyId: ctxMenu.bodyId, connectorId: c.id }); closeCtx(); }}>A</button>
+                    <button title="Set as Mate B" onClick={(e) => { e.stopPropagation(); setMateSlotB({ bodyId: ctxMenu.bodyId, connectorId: c.id }); closeCtx(); }}>B</button>
+                    <button className="danger" title="Delete connector" onClick={(e) => { e.stopPropagation(); deleteConnector(ctxMenu.bodyId, c.id); }}>✕</button>
+                  </div>
+                ))}
+                <button onClick={() => addConnector(ctxMenu.bodyId)}>+ Add Connector</button>
+              </div>
+            </>
+          );
+        })(),
+        document.body,
+      )}
     </aside>
   );
 }

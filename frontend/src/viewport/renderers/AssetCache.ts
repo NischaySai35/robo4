@@ -11,9 +11,6 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { USDZLoader } from 'three/examples/jsm/loaders/USDZLoader.js';
-// @ts-expect-error — occt-import-js ships no types
-import occtimportjs from 'occt-import-js';
-import occtWasmUrl from 'occt-import-js/dist/occt-import-js.wasm?url';
 import { base64ToBytes } from '@/core/serialization/binary';
 
 const _stl = new STLLoader();
@@ -75,26 +72,62 @@ function parseSync(asset: any): THREE.Object3D | null {
   return null;
 }
 
-let _occt: any = null;
-async function getOcct() {
-  if (!_occt) _occt = await occtimportjs({ locateFile: () => occtWasmUrl as string });
-  return _occt;
+// ── OCCT Web Worker (off-main-thread STEP tessellation) ──────────────────────
+let _worker: Worker | null = null;
+let _workerReqId = 0;
+const _workerPending = new Map<number, { resolve: (v: any) => void; reject: (e: any) => void }>();
+
+function getOcctWorker(): Worker {
+  if (!_worker) {
+    _worker = new Worker(new URL('../../workers/occtWorker.ts', import.meta.url), { type: 'module' });
+    _worker.onmessage = (e: MessageEvent) => {
+      const { id, meshes, error } = e.data;
+      const p = _workerPending.get(id);
+      if (!p) return;
+      _workerPending.delete(id);
+      if (error) p.reject(new Error(error));
+      else p.resolve(meshes);
+    };
+    _worker.onerror = (e) => {
+      // Reject all pending requests if worker crashes.
+      for (const p of _workerPending.values()) p.reject(new Error(e.message));
+      _workerPending.clear();
+      _worker = null; // will recreate on next call
+    };
+  }
+  return _worker;
 }
 
 async function parseStep(bytes: Uint8Array): Promise<THREE.Object3D | null> {
-  const occt = await getOcct();
-  const result = occt.ReadStepFile(bytes, null);
-  if (!result || !result.success || !result.meshes?.length) return null;
+  const worker = getOcctWorker();
+  const id = ++_workerReqId;
+
+  // Transfer the bytes buffer to the worker (zero-copy).
+  const meshData: any[] = await new Promise((resolve, reject) => {
+    _workerPending.set(id, { resolve, reject });
+    worker.postMessage({
+      id,
+      bytes: bytes.buffer,
+      params: {
+        linearDeflectionType: 'bounding_box_ratio',
+        linearDeflection: 0.0005,
+        angularDeflection: 0.08,
+      },
+    }, [bytes.buffer]);
+  });
+
+  if (!meshData?.length) return null;
+
   const group = new THREE.Group();
-  for (const m of result.meshes) {
+  for (const m of meshData) {
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(m.attributes.position.array, 3));
-    if (m.attributes.normal) geo.setAttribute('normal', new THREE.Float32BufferAttribute(m.attributes.normal.array, 3));
-    if (m.index) geo.setIndex(Array.from(m.index.array as ArrayLike<number>));
-    if (!m.attributes.normal) geo.computeVertexNormals();
+    const positions = new Float32Array(m.positions);
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    if (m.normals) geo.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(m.normals), 3));
+    if (m.indices) geo.setIndex(new THREE.BufferAttribute(new Uint32Array(m.indices), 1));
+    if (!m.normals) geo.computeVertexNormals();
     const col = m.color ? new THREE.Color(m.color[0], m.color[1], m.color[2]) : new THREE.Color(0.78, 0.80, 0.86);
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: col, metalness: 0.4, roughness: 0.5 }));
-    // Preserve OCCT component/product name so decomposeScene can name the body.
     if (m.name) mesh.name = m.name;
     group.add(mesh);
   }
@@ -134,16 +167,44 @@ export async function preloadAsset(asset: any): Promise<boolean> {
   }
 }
 
-/** Get a fresh clone of the parsed asset object, or null if unsupported/failed. */
+/** Get a fresh clone of the parsed asset object, or null if unsupported/failed.
+ *  Three.js .clone() shares materials by default — we deep-clone each material
+ *  so that emissive/highlight changes on one body never bleed into another. */
+/** True if every Mesh inside obj has a living (non-disposed) geometry. */
+function _isValidTemplate(obj: any): boolean {
+  let ok = true;
+  obj.traverse?.((o: any) => {
+    if (o.isMesh && (!o.geometry || !o.geometry.attributes?.position)) ok = false;
+  });
+  return ok;
+}
+
 export function getAssetObject(asset: any) {
   if (!asset?.data) return null;
   try {
+    // Evict stale cache entries whose geometries were disposed by _disposeObject.
+    if (_cache.has(asset.id) && !_isValidTemplate(_cache.get(asset.id))) {
+      _cache.delete(asset.id);
+    }
     if (!_cache.has(asset.id)) {
       const obj = parseSync(asset);          // glTF/STEP must be preloaded first
       if (!obj) return null;
       _cache.set(asset.id, obj);
     }
-    return _cache.get(asset.id).clone();
+    const cloned = _cache.get(asset.id).clone();
+    // Deep-clone geometries AND materials so each body instance owns its own copies.
+    // Geometry cloning also prevents _disposeObject on a body from poisoning the
+    // cache template for all future clones.
+    cloned.traverse((o: any) => {
+      if (!o.isMesh) return;
+      if (o.geometry) o.geometry = o.geometry.clone();
+      if (Array.isArray(o.material)) {
+        o.material = o.material.map((m: any) => m.clone());
+      } else if (o.material) {
+        o.material = o.material.clone();
+      }
+    });
+    return cloned;
   } catch (e) {
     console.warn('AssetCache: failed to parse', asset?.name, e);
     return null;
@@ -151,3 +212,21 @@ export function getAssetObject(asset: any) {
 }
 
 export function clearAsset(assetId: any) { _cache.delete(assetId); }
+
+/** Drop cached mesh templates for assets no longer referenced by the current
+ *  document — e.g. after deleting a body/component whose STL/glTF isn't used
+ *  anywhere else. Each cached template plus every clone made from it holds real
+ *  GPU-side geometry/material data, so this is a genuine (not cosmetic) memory
+ *  reclaim, not just clearing a JS reference. Returns how many were evicted. */
+export function pruneUnusedAssets(usedAssetIds: Set<string>): number {
+  let evicted = 0;
+  for (const id of [..._cache.keys()]) {
+    if (!usedAssetIds.has(id)) {
+      const obj = _cache.get(id);
+      obj?.traverse?.((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
+      _cache.delete(id);
+      evicted++;
+    }
+  }
+  return evicted;
+}

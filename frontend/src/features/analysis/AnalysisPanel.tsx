@@ -19,6 +19,7 @@ import { jointLoads, centerOfMass, bodyMechanics } from '@/kinematics/analysis';
 import { getMotorSpec } from '@/kinematics/motorDatabase';
 import { getTemp } from '@/kinematics/thermalModel';
 import LiveTelemetryChart from './LiveTelemetryChart';
+import RigidSelectionPanel from './RigidSelectionPanel';
 
 /** FoS → CSS class + short label */
 function fosClass(fos: number): { cls: string; label: string } {
@@ -59,11 +60,16 @@ export default function AnalysisPanel() {
   }, [onAnalysisPage]);
 
   const { mass, com, loads, mechanics } = useMemo(() => {
-    const fk = computeFK(doc);
-    const c  = centerOfMass(doc, fk);
-    const l  = jointLoads(doc, fk);
-    const m  = bodyMechanics(doc, fk);
-    return { mass: c.mass, com: c.com, loads: l, mechanics: m };
+    try {
+      const fk = computeFK(doc);
+      const c  = centerOfMass(doc, fk);
+      const l  = jointLoads(doc, fk);
+      const m  = bodyMechanics(doc, fk);
+      return { mass: c.mass, com: c.com, loads: l, mechanics: m };
+    } catch (e) {
+      console.error('[AnalysisPanel] computation error:', e);
+      return { mass: 0, com: [0, 0, 0] as [number, number, number], loads: new Map(), mechanics: new Map() };
+    }
   }, [doc]);
 
   const joints = Object.values(doc.joints);
@@ -107,9 +113,11 @@ export default function AnalysisPanel() {
           </div>
         </div>
 
+        <RigidSelectionPanel />
+
         <div className="an-stats">
           <div><span>Total mass</span><strong>{mass.toFixed(2)} kg</strong></div>
-          <div><span>Center of mass</span><strong>{com.map((v) => v.toFixed(2)).join(', ')}</strong></div>
+          <div><span>Center of mass (mm)</span><strong>{com.map((v) => (v * 1000).toFixed(1)).join(', ')}</strong></div>
           {isFinite(worstFos) && (
             <div>
               <span>Min. FoS (structural)</span>

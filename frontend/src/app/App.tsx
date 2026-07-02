@@ -23,15 +23,17 @@ import { useThemeStore } from '@/state/themeStore';
 import { useDocStore } from '@/state/docStore';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
-import { saveProject } from '@/core/serialization/projectActions';
+import { saveProject, saveProjectAs, autoSave } from '@/core/serialization/projectActions';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
 import { commands } from '@/core/commands/index';
-import { duplicateInPlace } from '@/features/ops/bodyOps';
+import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
+import { bodiesOfComponent, jointsOfComponent, uid } from '@/core/model/index';
 import { useEditModeStore } from '@/state/editModeStore';
 import { editBridge } from '@/viewport/editBridge';
 import { bridge } from '@/viewport/cameraBridge';
 import { useTransformHudStore } from '@/state/transformHudStore';
 import { usePageStore } from '@/state/pageStore';
+import { useWorkspaceStore } from '@/state/workspaceStore';
 import AnalysisPanel from '@/features/analysis/AnalysisPanel';
 import AnalysisBottomView from '@/features/analysis/AnalysisBottomView';
 import TrainingPanel from '@/features/training/TrainingPanel';
@@ -40,6 +42,77 @@ import HardwarePanel from '@/features/hardware/HardwarePanel';
 import ResizablePanel from '@/features/common/ResizablePanel';
 import { initRuntimeBridge } from '@/state/runtimeBridge';
 import { initMotionRuntime } from '@/control/motionRuntime';
+
+/** Module-level clipboard: either a flat list of bodies, or a whole component
+ *  (bodies + joints + the Component record) so copy/paste keeps modules intact. */
+type Clipboard =
+  | { kind: 'bodies'; bodies: any[] }
+  | { kind: 'component'; component: any; bodies: any[]; joints: any[] };
+let _clipboard: Clipboard | null = null;
+
+/** Copy selected bodies to the clipboard. If the selection is exactly every body
+ *  of one Component, copy that whole component (with its joints) as a unit. */
+function copySelected() {
+  const { ids, kind } = useSelectionStore.getState();
+  if (kind !== 'body' || !ids.length) return;
+  const { doc } = useModelStore.getState();
+  const bodies = ids.map((id) => doc.bodies[id]).filter(Boolean);
+  if (!bodies.length) return;
+
+  const compId = bodies[0].componentId;
+  if (compId && bodies.every((b) => b.componentId === compId)) {
+    const comp = doc.components[compId];
+    const allCompBodies = bodiesOfComponent(doc, compId);
+    if (comp && allCompBodies.length === bodies.length) {
+      _clipboard = { kind: 'component', component: comp, bodies: allCompBodies, joints: jointsOfComponent(doc, compId) };
+      return;
+    }
+  }
+  _clipboard = { kind: 'bodies', bodies };
+}
+
+/** Paste the clipboard. A component clipboard rebuilds a whole new Component with
+ *  duplicated bodies + joints (ids remapped) as one undo step; a plain body
+ *  clipboard duplicates each body in place as before. */
+function pasteClipboard() {
+  if (!_clipboard) return;
+  const { dispatch } = useModelStore.getState();
+
+  if (_clipboard.kind === 'component') {
+    const { component, bodies, joints } = _clipboard;
+    const newComponent = { ...structuredClone(component), id: uid('comp'), name: `${component.name} copy` };
+    const bodyIdRemap = new Map<string, string>();
+    const jointIdRemap = new Map<string, string>();
+    const newBodies = bodies.map((b) => {
+      const copy = duplicateInPlace(b);
+      copy.componentId = newComponent.id;
+      bodyIdRemap.set(b.id, copy.id);
+      return copy;
+    });
+    for (const j of joints) jointIdRemap.set(j.id, uid('joint'));
+    let newJoints = joints.map((j) => {
+      const copy = duplicateJointInPlace(j, bodyIdRemap, jointIdRemap);
+      copy.componentId = newComponent.id;
+      return copy;
+    });
+    // Give the copies their own servo ids — otherwise they'd point at the same
+    // physical servos as the originals (duplicate keys in Motor Control, and two
+    // joints fighting over one real motor).
+    newJoints = reassignServoIds(newJoints, useModelStore.getState().doc);
+    dispatch(commands.addEntities([newComponent, ...newBodies, ...newJoints], `Paste ${newComponent.name}`));
+    useSelectionStore.getState().selectMany(newBodies.map((b) => b.id), 'body');
+    return;
+  }
+
+  const copies: string[] = [];
+  for (const body of _clipboard.bodies) {
+    const copy = duplicateInPlace(body);
+    dispatch(commands.addBody(copy));
+    copies.push(copy.id);
+  }
+  if (!copies.length) return;
+  useSelectionStore.getState().selectMany(copies, 'body');
+}
 
 /** Duplicate the selected body/bodies in place, select the copies, and enter move mode. */
 function duplicateSelectedInPlace() {
@@ -57,7 +130,6 @@ function duplicateSelectedInPlace() {
   }
   if (!copies.length) return;
   useSelectionStore.getState().selectMany(copies, 'body');
-  useSelectionStore.getState().setGizmoMode('translate');
 }
 
 /** Select every body in the document (Ctrl+A in the editor). */
@@ -347,13 +419,13 @@ function AppFooter() {
 }
 
 const MIN_PANEL_W = 200;
-const DEFAULT_PANEL_W = 250;
 
 export default function App() {
   const page    = usePageStore(s => s.page);
   const setPage = usePageStore(s => s.setPage);
   const [connOpen,   setConnOpen]   = useState(false);
-  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_W);
+  const panelWidth    = useWorkspaceStore(s => s.leftPanelWidth);
+  const setPanelWidth = useWorkspaceStore(s => s.setLeftPanelWidth);
   const [showIntro,  setShowIntro]  = useState(true);
   const [showPicker, setShowPicker] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -362,6 +434,12 @@ export default function App() {
   // Start the native runtime substrate (pub/sub bus, TF, params, diagnostics) once,
   // then register the motion stack (move_group action + planning service).
   useEffect(() => { initRuntimeBridge(); initMotionRuntime(); }, []);
+
+  // Auto-save every 30 s for existing projects (skips untitled).
+  useEffect(() => {
+    const id = setInterval(() => { autoSave(); }, 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   // Quietly check for app updates a few seconds after launch (desktop only; only
   // prompts if a newer version is actually available).
@@ -382,7 +460,7 @@ export default function App() {
     document.title = `TETROBOT — ${docName ?? 'untitled'}`;
   }, [docName]);
 
-  const panelWidthRef = useRef(DEFAULT_PANEL_W);
+  const panelWidthRef = useRef(panelWidth);
   panelWidthRef.current = panelWidth;
 
   const startPanelResize = useCallback((e: any) => {
@@ -429,6 +507,9 @@ export default function App() {
           if (page === 'editor') selectAllBodies();
           return;
         }
+        if (k === 'c' && page === 'editor' && !useEditModeStore.getState().active) { e.preventDefault(); copySelected(); return; }
+        if (k === 'v' && page === 'editor' && !useEditModeStore.getState().active) { e.preventDefault(); pasteClipboard(); return; }
+        if (k === 's' && e.shiftKey) { e.preventDefault(); saveProjectAs(); return; }
         if (k === 's') { e.preventDefault(); saveProject(); return; }
         if (k === 'z' && !e.shiftKey)      { e.preventDefault(); bridge.undo?.(); }
         else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); bridge.redo?.(); }
@@ -474,13 +555,25 @@ export default function App() {
         return;
       }
 
-      // Delete / Backspace / X delete the selected body or joint.
-      if (e.key === 'Delete' || e.key === 'Backspace' || k === 'x') {
-        if (selectedId) { e.preventDefault(); deleteSelectedEntity(); }
-        return;
+      // Axis modal numeric input — must run BEFORE the delete check so that Backspace
+      // edits the buffer instead of deleting the selected body.
+      const hudState = useTransformHudStore.getState();
+      if (hudState.axis) {
+        if (/^[0-9.]$/.test(k) || (k === '-' && !hudState.buffer)) {
+          e.preventDefault(); hudState.appendChar(k); return;
+        }
+        if (e.key === 'Backspace') { e.preventDefault(); hudState.backspace(); return; }
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const v = parseFloat(hudState.buffer);
+          bridge.commitAxisModal?.(isNaN(v) ? undefined : v); // raw value — modal converts (mm/deg/×)
+          return;
+        }
       }
-      // Blender-style transform mode keys (only meaningful for a selected body).
-      if (kind === 'body' && selectedId) {
+
+      // Blender-style transform mode keys (bodies). X/Y/Z run BEFORE the generic delete
+      // handler so pressing X on a body starts axis-constrained move, not delete.
+      if (kind === 'body' && selectedId && !(e.ctrlKey || e.metaKey)) {
         const sel = useSelectionStore.getState();
         if (k === 'd') { e.preventDefault(); duplicateSelectedInPlace(); return; }
         // M/R/S toggle: pressing the same mode again hides the gizmo.
@@ -490,37 +583,32 @@ export default function App() {
           else { sel.setGizmoMode('translate'); if (!sel.showGizmo) sel.revealGizmo(); }
           return;
         }
-        if (k === 'r' && !(e.ctrlKey || e.metaKey)) {
+        if (k === 'r') {
           e.preventDefault();
           if (sel.gizmoMode === 'rotate' && sel.showGizmo) sel.hideGizmo();
           else { sel.setGizmoMode('rotate'); if (!sel.showGizmo) sel.revealGizmo(); }
           return;
         }
-        if (k === 's' && !(e.ctrlKey || e.metaKey)) {
+        if (k === 's' && !e.shiftKey) {
           e.preventDefault();
           if (sel.gizmoMode === 'scale' && sel.showGizmo) sel.hideGizmo();
           else { sel.setGizmoMode('scale'); if (!sel.showGizmo) sel.revealGizmo(); }
           return;
         }
-        // X/Y/Z — axis-constrained modal grab (only when gizmo is in translate mode).
-        if (k === 'x' && !(e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('x'); return; }
-        if (k === 'y' && !(e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('y'); return; }
-        if (k === 'z' && !(e.ctrlKey || e.metaKey) && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('z'); return; }
+        // X/Y/Z — axis-constrained modal grab.
+        if (k === 'x' && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('x'); return; }
+        if (k === 'y' && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('y'); return; }
+        if (k === 'z' && !e.shiftKey) { e.preventDefault(); bridge.startAxisModal?.('z'); return; }
       }
 
-      // Typed numeric input while axis modal is active.
-      const hudState = useTransformHudStore.getState();
-      if (hudState.visible && hudState.axis) {
-        if (/^[0-9.]$/.test(k) || (k === '-' && !hudState.buffer)) {
-          e.preventDefault(); hudState.appendChar(k); return;
-        }
-        if (e.key === 'Backspace') { e.preventDefault(); hudState.backspace(); return; }
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          const v = parseFloat(hudState.buffer);
-          bridge.commitAxisModal?.(isNaN(v) ? undefined : v * 0.001);
-          return;
-        }
+      // F — fit camera to scene (works even when nothing is selected)
+      if (k === 'f' && !useEditModeStore.getState().active) { e.preventDefault(); bridge.fitCamera?.(); return; }
+
+      // Delete / Backspace delete the selected body or joint. X only deletes joints
+      // (for bodies X is axis-constrained move, handled above).
+      if (e.key === 'Delete' || e.key === 'Backspace' || (k === 'x' && kind !== 'body')) {
+        if (selectedId) { e.preventDefault(); deleteSelectedEntity(); }
+        return;
       }
     };
     window.addEventListener('keydown', onKey);

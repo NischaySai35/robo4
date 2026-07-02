@@ -5,7 +5,9 @@ import { useHistoryStore } from '@/state/historyStore';
 import { useDocStore } from '@/state/docStore';
 import { useDockStore } from '@/state/dockStore';
 import { bridge } from '@/viewport/cameraBridge';
-import { newProject, newRobotArm, newHumanoid, openProject, saveProject, saveProjectAs, exportModel } from '@/core/serialization/projectActions';
+import { newProject, newRobotArm, newHumanoid, openProject, saveProject, saveProjectAs, exportModel, openFromLibrary } from '@/core/serialization/projectActions';
+import { listProjects } from '@/core/serialization/projectLibrary';
+import type { LibraryEntry } from '@/core/serialization/projectLibrary';
 import { importMesh, importURDF } from '@/features/import/importMesh';
 import { checkForUpdates, getAppVersion } from '@/features/update/checkForUpdates';
 import { exportRobot } from '@/features/export/exportRobot';
@@ -25,9 +27,10 @@ function DocIndicator() {
         <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
       </svg>
       <span className="menubar-doc-name">{display}</span>
-      {name && status === 'saving' && <span className="menubar-doc-status">saving…</span>}
-      {name && status === 'saved'  && <span className="menubar-doc-status menubar-doc-saved">saved</span>}
-      {!name && <span className="menubar-doc-status menubar-doc-dim">local only</span>}
+      {status === 'loading'           && <span className="menubar-doc-status menubar-doc-loading">loading…</span>}
+      {name && status === 'saving'  && <span className="menubar-doc-status">saving…</span>}
+      {name && status === 'saved'   && <span className="menubar-doc-status menubar-doc-saved">saved</span>}
+      {!name && status !== 'loading' && <span className="menubar-doc-status menubar-doc-dim">local only</span>}
     </div>
   );
 }
@@ -70,6 +73,7 @@ function Dropdown({ items, onClose }: any) {
 export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
   const [open, setOpen] = useState<any>(null);
   const barRef = useRef<any>(null);
+  const [recentProjects, setRecentProjects] = useState<LibraryEntry[]>([]);
 
   const canUndo        = useHistoryStore(s => s.canUndo);
   const canRedo        = useHistoryStore(s => s.canRedo);
@@ -87,6 +91,11 @@ export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
     };
   }, [open]);
 
+  // Load recent projects when the File menu opens.
+  useEffect(() => {
+    if (open === 'File') listProjects().then(setRecentProjects).catch(() => {});
+  }, [open]);
+
   const openPanel = useDockStore.getState().open;
 
   const menus = {
@@ -95,6 +104,13 @@ export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
       { label: 'New 6-DOF Robot Arm', onClick: newRobotArm },
       { label: 'New Humanoid Robot', onClick: newHumanoid },
       { label: 'Open Project…',   onClick: openProject },
+      { label: 'Open Recent', submenu: recentProjects.length
+        ? recentProjects.slice(0, 10).map((p) => ({
+            label: p.name,
+            onClick: () => openFromLibrary(p.id, p.name),
+          }))
+        : [{ label: '(no recent projects)', onClick: () => {} }],
+      },
       SEP,
       { label: 'Save Project',    shortcut: 'Ctrl+S', onClick: saveProject },
       { label: 'Save Project As…', onClick: saveProjectAs },
@@ -127,7 +143,6 @@ export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
       { label: 'Fit View', shortcut: 'F', onClick: () => bridge.fitCamera?.() },
       SEP,
       { label: 'Properties (Edit panel)', onClick: () => openPanel('inspector') },
-      { label: 'Scene Tree (Outliner)',   onClick: () => openPanel('outliner') },
       { label: 'AI Copilot',              onClick: () => openPanel('copilot') },
       { label: 'Hardware / Servos',       onClick: () => openPanel('hardware') },
       { label: 'Analysis',                onClick: () => openPanel('analysis') },

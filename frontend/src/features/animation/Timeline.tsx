@@ -43,7 +43,6 @@ import { useAnimationStore, type ClipGroup } from '@/state/animationStore';
 import { useModelStore } from '@/state/modelStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
-import { saveProject } from '@/core/serialization/projectActions';
 
 // ── Clip Groups Panel ──────────────────────────────────────────────────────────
 function GroupsPanel({ clips, groups, playingGroupId }: {
@@ -94,6 +93,7 @@ function GroupsPanel({ clips, groups, playingGroupId }: {
               </span>
               <span className="tl-group-meta">{g.entries.length} clip{g.entries.length !== 1 ? 's' : ''}</span>
               <div className="tl-group-ops">
+                <button title="Rename group" onClick={() => renameGroup(g)}>✎</button>
                 <button
                   title={isPlaying ? 'Playing…' : 'Play this group'}
                   className={isPlaying ? 'tl-group-playing-btn' : ''}
@@ -125,7 +125,15 @@ function GroupsPanel({ clips, groups, playingGroupId }: {
 
             {/* Entries */}
             {isExpanded && (
-              <div className="tl-group-entries">
+              <div className="tl-group-entries"
+                onDragOver={(e) => { e.preventDefault(); if (!dragging) setDropOver({ groupId: g.id, to: g.entries.length }); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const clipId = e.dataTransfer.getData('clipId');
+                  if (clipId && !dragging) store().addClipToGroup(g.id, clipId);
+                  setDropOver(null);
+                }}
+              >
                 {g.entries.length === 0 && (
                   <div className="tl-group-drop-hint tl-group-drop-hint--padded">
                     Drag clips from the CLIPS list above into this group.
@@ -147,8 +155,11 @@ function GroupsPanel({ clips, groups, playingGroupId }: {
                         onDragLeave={() => setDropOver(null)}
                         onDrop={(e) => {
                           e.preventDefault(); e.stopPropagation();
+                          const clipId = e.dataTransfer.getData('clipId');
                           if (dragging && dragging.groupId === g.id) {
-                            store().reorderGroupEntry(g.id, dragging.from, idx);
+                            store().reorderGroupEntry(g.id, dragging.from, idx); // reorder within group
+                          } else if (clipId) {
+                            store().addClipToGroup(g.id, clipId); // a clip dragged in from the CLIPS list
                           }
                           setDragging(null); setDropOver(null);
                         }}
@@ -190,6 +201,7 @@ function AnimationTab() {
   const a = useAnimationStore();
   const nJoints = Object.keys(useModelStore((s) => s.doc).joints).length;
   const keyTimes = useAnimationStore((s) => s.keyTimes)();
+  const [clipDragOver, setClipDragOver] = useState<number | null>(null);
 
   const addKey = () => {
     const doc = useModelStore.getState().doc;
@@ -208,26 +220,33 @@ function AnimationTab() {
       <div className="tl-section">CLIPS · played top → bottom in sequence</div>
       <div className="tl-clips">
         {a.clips.map((c, i) => (
-          <div key={c.id} className={`tl-clip ${c.id === a.activeClipId ? 'active' : ''}`}
+          <div key={c.id} className={`tl-clip ${c.id === a.activeClipId ? 'active' : ''}${clipDragOver === i ? ' tl-clip--dropover' : ''}`}
             draggable
-            onDragStart={(e) => { e.dataTransfer.setData('clipId', c.id); e.dataTransfer.effectAllowed = 'copy'; }}
+            onDragStart={(e) => { e.dataTransfer.setData('clipId', c.id); e.dataTransfer.effectAllowed = 'copyMove'; }}
+            onDragOver={(e) => { e.preventDefault(); setClipDragOver(i); }}
+            onDragLeave={() => setClipDragOver((v) => (v === i ? null : v))}
+            onDrop={(e) => {
+              e.preventDefault();
+              const clipId = e.dataTransfer.getData('clipId');
+              if (clipId && clipId !== c.id) a.moveClipToIndex(clipId, i); // drag to reorder the list
+              setClipDragOver(null);
+            }}
+            onDragEnd={() => setClipDragOver(null)}
             onClick={() => a.selectClip(c.id)}
-            title="Click to select · drag onto a group to add"
+            title="Click to select · drag to reorder · drag onto a group to add"
           >
+            <span className="tl-entry-grip" title="Drag to reorder">⋮⋮</span>
             <span className="tl-clip-idx">{i + 1}</span>
             <span className="tl-clip-name" onDoubleClick={() => rename(c.id, c.name)} title="Double-click to rename">{c.name}</span>
             <span className="tl-clip-meta">{Object.keys(c.tracks).length ? `${new Set(Object.values(c.tracks).flatMap((k) => k.map((x) => x.t))).size}k · ${c.duration}s` : 'empty'}</span>
             <span className="tl-clip-ops">
               <button onClick={(e) => { e.stopPropagation(); rename(c.id, c.name); }} title="Rename clip">✎</button>
-              <button onClick={(e) => { e.stopPropagation(); a.reorderClip(c.id, -1); }} disabled={i === 0} title="Move up">▲</button>
-              <button onClick={(e) => { e.stopPropagation(); a.reorderClip(c.id, 1); }} disabled={i === a.clips.length - 1} title="Move down">▼</button>
               <button onClick={(e) => { e.stopPropagation(); a.deleteClip(c.id); }} disabled={a.clips.length <= 1} title="Delete clip">✕</button>
             </span>
           </div>
         ))}
         <button className="tl-addclip" onClick={() => a.addClip()}>＋ Add clip</button>
-        <button className="tl-addclip" onClick={() => saveProject()} title="Write all clips, keyframes and groups into the .nischay project file">💾 Save project</button>
-        <div className="tl-hint">◆ Key records into the <strong>selected</strong> clip automatically (its key count shows on the right). 💾 Save (or Ctrl+S) writes every clip, key and group into your .nischay file.</div>
+        <div className="tl-hint">◆ Key records into the <strong>selected</strong> clip automatically (its key count shows on the right). Ctrl+S saves every clip, key and group into your .nischay file.</div>
       </div>
 
       {/* Groups */}

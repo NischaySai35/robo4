@@ -1,0 +1,8 @@
+# Code owners — automatically requested for review on matching paths.
+# Replace the email with your GitHub @username if you prefer handle-based routing.
+
+*                       nischaysai35@gmail.com
+
+/frontend/src/kinematics/    nischaysai35@gmail.com
+/frontend/src/core/model/    nischaysai35@gmail.com
+/esp32/                      nischaysai35@gmail.com

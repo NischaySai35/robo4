@@ -36,6 +36,8 @@ import { usePageStore } from '@/state/pageStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import AnalysisPanel from '@/features/analysis/AnalysisPanel';
 import AnalysisBottomView from '@/features/analysis/AnalysisBottomView';
+import AnalysisModeButtons from '@/features/analysis/AnalysisModeButtons';
+import OverloadCards from '@/features/analysis/OverloadCards';
 import TrainingPanel from '@/features/training/TrainingPanel';
 import Timeline from '@/features/animation/Timeline';
 import HardwarePanel from '@/features/hardware/HardwarePanel';
@@ -619,7 +621,7 @@ export default function App() {
     <div className="app-shell">
       {showIntro && <IntroOverlay onDone={() => { setShowIntro(false); setShowPicker(true); }} />}
       {showPicker && <StartupProjects onClose={() => setShowPicker(false)} />}
-      <MenuBar onToggleConn={toggleConn} onHelpOpen={() => setHelpOpen(v => !v)} />
+      <MenuBar onToggleConn={toggleConn} onHelpOpen={() => setHelpOpen(v => !v)} onOpenProjects={() => setShowPicker(true)} />
       <AppHeader page={page} setPage={setPage} />
 
       <main className="app-main">
@@ -650,7 +652,8 @@ export default function App() {
 
           <div className={`canvas-wrapper ${page === 'analysis' ? 'canvas-split' : ''}`}>
             <div className="canvas-top">
-              {page === 'analysis' && <span className="an-top-label">Stress / load overlay</span>}
+              {page === 'analysis' && <AnalysisModeButtons />}
+              {page === 'analysis' && <OverloadCards />}
               <SimCanvas />
               <div className="top-center-cluster">
                 <HomeButton />

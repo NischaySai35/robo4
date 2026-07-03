@@ -1,15 +1,26 @@
 # TETROBOT — GUI-first Robotics Modeling, Simulation & Training Platform
 
-Design any robot **without writing code**, simulate it (kinematics + physics),
-analyze it (mass, torque, stress), animate it, train intelligent control policies
-(ES / CMA-ES / Behavioral Cloning), and run a full **native autonomy stack**
-(navigation, motion planning, perception, behaviour trees) — all in one app.
+![License: Proprietary](https://img.shields.io/badge/license-Proprietary-red)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
+![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
+![Three.js](https://img.shields.io/badge/Three.js-3D-000000?logo=three.js&logoColor=white)
+![Rapier](https://img.shields.io/badge/Rapier3D-physics-8B5CF6)
+![Electron](https://img.shields.io/badge/Electron-desktop-47848F?logo=electron&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20web-informational)
+
+Design any robot **without writing code** — including **modular robots** you
+assemble by snapping keyed connectors together. Simulate it (kinematics + physics),
+analyze it (mass, motor load, material stress, current), animate it, train intelligent
+control policies (ES / CMA-ES / Behavioral Cloning), and run a full **native autonomy
+stack** (navigation, motion planning, perception, behaviour trees) — all in one app.
 No ROS, no middleware, no servers. Optionally drive real hardware
-(ESP32-C3 + ST3215 smart servos) over WiFi.
+(ESP32-C3 + ST3215 smart servos) over WiFi, in real time.
 
 > One rich model, many backends: a single JSON-serializable robot **document** is
-> the source of truth; the 3D viewport, physics, analysis, training, exporters,
-> hardware and autonomy are all *views* of it.
+> the source of truth; the 3D viewport, physics, analysis, animation, training,
+> exporters, hardware and autonomy are all *views* of it. The app is organized into
+> pages — **Editor · Analysis · Training · Animation · Motor Control** — that share
+> one live 3D scene.
 
 By **Nischay Sai D R** · Proprietary & confidential.
 
@@ -22,22 +33,37 @@ By **Nischay Sai D R** · Proprietary & confidential.
   prismatic, fixed, …) into any kinematic graph. Constant-size move/rotate/scale gizmos,
   snapping, measure tool, face-mate assembly, and a Blender-style mesh **Edit Mode**.
 - **Modular connector mating** — attach **keyed connectors** to any body (position +
-  outward normal + a roll/key tangent + rotational symmetry). Auto-Snap finds facing
-  connector pairs and mates them with a real detachable joint: it aligns opposing
-  normals, **rotates the module to the nearest keyed seat** (e.g. every 90°), then plays
-  an *approach → align → insert → latch* motion (backs off, slides straight down the
-  normal, locks) with an **obstacle collision guard** that aborts if the path is blocked.
-  Works on the live FK pose, so a posed or rotated module mates where it actually is.
-- **Kinematics** — generic forward kinematics over the graph + **inverse kinematics**
-  (damped-least-squares and FABRIK). **Drag-from-tip IK**: grab any link and the chain
-  solves to follow.
+  outward normal + a roll/key tangent + rotational symmetry). Auto-Snap (or the manual
+  Assembly Mate) finds facing connectors and mates them with a real detachable joint: it
+  aligns opposing normals, **rotates the module to the nearest keyed seat** (e.g. every
+  90°), then plays an *approach → align → insert → latch* motion (backs off, slides
+  straight down the normal, locks) with an **obstacle collision guard**. Right-click a
+  locked joint to **Unlock** — it slides the module back out and detaches. All of it runs
+  in live **FK space**, so a posed/rotated/grounded module mates where it actually appears.
+- **Reusable modules** — a **default module** ships with the app and can be dropped into
+  *any* project with **Add Module** (or **Edit Default** to customize and save your own).
+- **Kinematics & grounding** — generic **forward kinematics over the graph** (honors
+  loops / cross-module snap joints) + **inverse kinematics** (damped-least-squares and
+  FABRIK). **Drag-from-tip IK**: grab any link and the chain solves to follow. A shared
+  **Free / Rigid grounding** (with optional **Auto-ground to CoM**) picks the fixed base;
+  the choice is consistent across Editor, Analysis and Animation.
 - **Physics** — live gravity simulation on Rapier with anchored roots, joint limits,
   servo-style holding motors, and a per-pair **self-collision** model (parts that are
   jointed or nest at rest pass through; everything else collides solidly).
-- **Engineering analysis** — total mass, center of mass, per-joint gravity-holding
-  **torque & estimated servo current**, and a Fusion-style **surface stress heatmap**
-  painted across the meshes, plus a live multi-metric telemetry chart.
-- **Animation** — keyframe joint poses on a timeline; scrub, play, and pose live with IK.
+- **Joint types (actuators)** — group joints into named **profiles** (e.g. "Twist",
+  "Bend") that share a motor + torque limit; edit one and every joint of that type
+  updates. The actuator lives on the joint; mass/material on the body.
+- **Engineering analysis** — total mass + center of mass, per-joint gravity-holding
+  **torque** (N·m and kg·cm), **estimated current**, and a live surface heatmap with three
+  switchable modes: **Motor load** (% of torque limit), **Material stress** (relative
+  structural stress + Min FoS), and **Current** (% of stall). Over-limit joints raise
+  **pulsing alert cards**; type/scrub joint **angles** right in the table; an interactive
+  color-bar shows the live peak with **overstrain past 100%**. Plus a multi-metric,
+  CVD-safe live **telemetry chart**.
+- **Animation** — build **clips** of keyframed joint poses on a timeline (type/scrub the
+  duration & fps, drag to reorder), then chain clips into **groups** (sequences with
+  delays) to choreograph shape-changing demos. Pose live with IK; everything round-trips
+  in the `.nischay` file.
 - **Multi-algorithm training** — train any robot directly in the browser with three
   algorithms: **Evolution Strategies** (robust, any task), **CMA-ES** (adaptive covariance,
   ~2× faster for manipulation), and **Behavioral Cloning** (supervised learning from
@@ -60,7 +86,10 @@ By **Nischay Sai D R** · Proprietary & confidential.
 - **Projects** — save/load self-contained, encrypted **`.nischay`** files (geometry +
   embedded meshes + animation, all in one file). Export to OBJ / STL / GLB / URDF / IDL.
 - **Desktop + web** — runs as an Electron desktop app or in the browser.
-- **Hardware control** — a Servo Control page drives ST3215 servos via an ESP32-C3.
+- **Hardware control + real-time Sync** — a **Motor Control** page drives ST3215 servos
+  via an ESP32-C3 (live telemetry, group control, sequences). A **Sync** toggle streams
+  the live model joint values straight to the connected motors (~20 Hz) while telemetry
+  flows back — so playing an animation or dragging a joint moves the real robot.
 
 ---
 
@@ -74,8 +103,8 @@ By **Nischay Sai D R** · Proprietary & confidential.
          ┌──────────────┬──────────────┬───────────────┬───────────────┬──────────────┬─────────────┐
          ▼              ▼              ▼               ▼               ▼              ▼             ▼
     Viewport        Physics        Kinematics       Analysis        Training       Autonomy      Exporters
-(Three.js render,  (Rapier sim,   (FK / IK /       (mass, CoM,    (ES/CMA-ES/BC  (nav, RRT,    (.nischay,
- gizmos, overlays)  collisions)    FABRIK)          torque, stress)  + VLM cloud)  lidar, BT)   OBJ/STL/GLB/URDF)
+(Three.js render,  (Rapier sim,   (FK / IK /       (mass, motor    (ES/CMA-ES/BC  (nav, RRT,    (.nischay,
+ gizmos, mating)    collisions)    FABRIK, gr'd)    load, stress)    + VLM cloud)  lidar, BT)   OBJ/STL/GLB/URDF)
                                                                                                       │
                                                                                    Hardware ── ESP32-C3 ── ST3215 bus
 ```
@@ -97,8 +126,10 @@ robo4/
 │       │   ├── commands/           # undoable command bus
 │       │   ├── factory/            # robotArm.ts, humanoid.ts generators
 │       │   └── serialization/      # .nischay codec, project I/O, exporters
-│       ├── kinematics/             # modelFK, modelIK (DLS), fabrik, analysis (mass/torque/stress)
+│       ├── kinematics/             # modelFK (graph FK + grounding), modelIK (DLS), fabrik,
+│       │                           #   analysis (mass/torque/motor load/material stress)
 │       ├── viewport/               # SceneManager, ModelEditor, PhysicsSim (Rapier), renderers
+│       ├── hardware/               # HardwareBridge (live sync), transports, ST3215 protocol
 │       ├── robotics/               # NATIVE autonomy + training stack
 │       │   ├── nav/                # occupancyGrid, astar, pathFollower, worldModel
 │       │   ├── planning/           # rrt.ts (joint-space motion planning)
@@ -107,8 +138,9 @@ robo4/
 │       │   ├── rl/                 # ES, CMA-ES, BC trainers · policy · tasks ·
 │       │   │                       #   obsNormalizer · curriculum · topologyEncoder
 │       │   └── behavior/           # behaviorTree.ts engine
-│       ├── features/               # UI: dock panels, menus, autonomy, training, servo, AI, ...
-│       └── state/                  # Zustand stores (model, selection, dock, training, ...)
+│       ├── features/               # UI: panels, menus, assembly (mating), analysis,
+│       │                           #   animation, autonomy, training, motor control, AI, ...
+│       └── state/                  # Zustand stores (model, selection, workspace, hardware, ...)
 ├── backend/                        # Optional FastAPI stub (proxy to ESP32)
 ├── esp32/                          # ESP32-C3 firmware (WiFi API + ST3215 driver)
 ├── tools/                          # Blender import add-on, helpers
@@ -166,22 +198,30 @@ uvicorn main:app --reload --port 8000
 
 ## Using it
 
-1. **Build or load a robot.** Drop in primitives/meshes and connect joints, or use
-   **File ▸ New 6-DOF Robot Arm** / **New Humanoid Robot** for a complete sample.
-2. **Pose & simulate.** Toggle the top-view **IK** button and drag a link; enable
-   **Gravity** to run physics. Open **Analysis ▸ Overlay** for the stress heatmap.
-3. **Animate.** Keyframe poses on the **Animation** timeline; scrub and play.
-4. **Train a policy.** Open the **Training** panel → **Setup** (pick task: Reach /
-   Navigate / Walk / Pose) → **Train** (choose ES, CMA-ES, or BC; enable ObsNorm +
-   Curriculum for faster convergence; enable **TopoObs** for shape-changing robots) →
-   watch the live reward curve → **Save** the skill → **Watch** it run on your robot.
-   Use the **Cloud** tab to parse goals with a VLM or export a Colab notebook for
-   GPU-accelerated training.
-5. **Autonomy.** Open the **Autonomy** panel: add obstacles, build a LiDAR map, set a
-   goal and **Navigate**; plan a collision-checked arm trajectory (**RRT**); or run a
-   **Behaviour-Tree** patrol mission.
-6. **Save / export.** **File ▸ Save Project As** writes a self-contained `.nischay`
-   (geometry + embedded meshes + animation, encrypted). Export OBJ / STL / GLB / URDF.
+1. **Build or load a robot.** On the **Editor** page drop in primitives/meshes and
+   connect joints, or use **File ▸ New 6-DOF Robot Arm** / **New Humanoid Robot** for a
+   complete sample. **Add Module** drops in the default modular unit; edit its geometry,
+   connectors and joints as you like.
+2. **Assemble modules.** Give bodies **connectors**, drag two modules close, and
+   **Auto-Snap** (or pick the pair in Assembly Mate) — they align to the keyed seat and
+   slide together into a real joint. Right-click a snap joint to **Unlock**.
+3. **Pose & simulate.** Turn on **Drag tip to move** and drag a link (IK); pick **Rigid**
+   grounding and set a base (or **Auto-ground**); enable **Gravity** to run physics.
+4. **Analyze.** On the **Analysis** page toggle **Stress overlay** and switch modes
+   (**Motor limit / Material stress / Current**). Type or drag joint **angles** in the
+   table, watch overload alert cards, and read the live telemetry chart.
+5. **Animate.** On the **Animation** page pose the joints, move the playhead and hit
+   **◆ Key** to record into the selected **clip**; make more clips and drag them into a
+   **group** to sequence a demo. **Sync** streams it to real motors if hardware is connected.
+6. **Train a policy.** Open the **Training** panel → **Setup** (Reach / Navigate / Walk /
+   Pose) → **Train** (ES, CMA-ES, or BC; enable ObsNorm + Curriculum; **TopoObs** for
+   shape-changing robots) → watch the reward curve → **Save** the skill → **Watch** it run.
+   Use **Cloud** to parse goals with a VLM or export a Colab notebook.
+7. **Autonomy.** Add obstacles, build a LiDAR map, set a goal and **Navigate**; plan a
+   collision-checked arm trajectory (**RRT**); or run a **Behaviour-Tree** mission.
+8. **Save / export.** **File ▸ Save Project As** writes a self-contained `.nischay`
+   (geometry + embedded meshes + all animation clips/groups, encrypted). Export OBJ / STL
+   / GLB / URDF.
 
 ### Training algorithms
 
@@ -197,11 +237,12 @@ Enable **TopoObs** if your robot can change shape — one policy generalizes acr
 
 ### The `.nischay` project file
 
-A `.nischay` file is the model document + animation, serialized to JSON and wrapped in
-an encrypted binary container (SHA-256 keystream XOR with a per-file salt). It is
-**self-contained** — imported meshes are embedded as base64 — so a single file carries
-the whole robot. It opens in any copy of TETROBOT. (This is app-format obfuscation, not
-secure DRM, since the key ships in the client.)
+A `.nischay` file is the model document (bodies, joints, joint profiles, connectors,
+materials, assets) + all animation clips/groups + workspace, serialized to JSON and
+wrapped in an encrypted binary container (SHA-256 keystream XOR with a per-file salt).
+It is **self-contained** — imported meshes are embedded as base64 — so a single file
+carries the whole robot. It opens in any copy of TETROBOT. (This is app-format
+obfuscation, not secure DRM, since the key ships in the client.)
 
 ---
 
@@ -212,10 +253,12 @@ ESP32-C3  ──► RS-485 transceiver ──► ST3215 smart-servo bus (half-du
 Power: 7.4 V LiPo / regulated supply, sized to the servo count
 ```
 
-The **Servo Control** page polls live telemetry (angle, current, temperature, load,
+The **Motor Control** page polls live telemetry (angle, current, temperature, load,
 voltage), drives each servo (GO / CW / CCW / WAVE / STOP / torque), supports group
 control, sequence recording, presets, and thermal/overcurrent alerts. One ST3215 maps
-to each movable joint in the model.
+to each movable joint in the model. The viewport **Sync** toggle (next to the axis
+gizmo) streams live model joint values to the connected board so the physical robot
+follows your poses/animation in real time, with telemetry fed back into the app.
 
 ### ESP32 firmware endpoints
 

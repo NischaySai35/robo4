@@ -30,19 +30,19 @@ function GroundingControls() {
   useAutoGround();
   return (
     <div className="an-rigid an-ground">
-      <div className="an-rigid-row">
+      <div className="an-ground-hdr">
         <span className="an-rigid-label">Grounding</span>
-        <div className="an-rigid-gizmo">
-          <button className={`an-rigid-btn${!rigid ? ' an-rigid-btn--on' : ''}`} onClick={() => setBodyMode('free')} title="Free float — no fixed base">Free</button>
-          <button className={`an-rigid-btn${rigid ? ' an-rigid-btn--on' : ''}`} onClick={() => setBodyMode('rigid')} title="Rigid — ground a base body (right-click one in 3D)">Rigid</button>
+        <div className="an-ground-seg">
+          <button className={!rigid ? 'on' : ''} onClick={() => setBodyMode('free')} title="Free float — no fixed base">Free</button>
+          <button className={rigid ? 'on' : ''} onClick={() => setBodyMode('rigid')} title="Rigid — ground a base body (right-click one in 3D)">Rigid</button>
         </div>
       </div>
       {rigid && (
-        <div className="an-rigid-row">
-          <button className={`an-rigid-btn${autoBase ? ' an-rigid-btn--on' : ''}`} onClick={() => setAutoBase(!autoBase)} title="Auto-ground the body nearest the center of mass, updating as the model moves">
-            ⚖ Auto-ground (CoM)
+        <div className="an-ground-row">
+          <button className={`an-ground-btn${autoBase ? ' on' : ''}`} onClick={() => setAutoBase(!autoBase)} title="Auto-ground the body nearest the center of mass, updating as the model moves">
+            ⚖ Auto-ground
           </button>
-          <span className="an-rigid-label">Base: {activeBodyId ? (doc.bodies[activeBodyId]?.name ?? '—') : 'right-click a body'}</span>
+          <span className="an-ground-base">Base: <strong>{activeBodyId ? (doc.bodies[activeBodyId]?.name ?? '—') : 'right-click a body'}</strong></span>
         </div>
       )}
     </div>

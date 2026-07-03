@@ -18,6 +18,17 @@
   box-shadow: 0 6px 28px rgba(60, 80, 140, 0.14), 0 1px 3px rgba(0,0,0,0.06);
 }
 
+/* Smooth SVG interactions (Chromium transitions geometry props). */
+.gizmo-disc { cursor: grab; transition: stroke 0.2s; }
+.gizmo-disc:active { cursor: grabbing; }
+.gizmo-axis { cursor: pointer; transition: opacity 0.18s ease; }
+.gizmo-dot { transition: r 0.14s cubic-bezier(0.34, 1.56, 0.64, 1), fill 0.14s, stroke 0.14s; }
+.gizmo-halo { transition: r 0.14s ease; pointer-events: none; }
+.gizmo-line { pointer-events: none; transition: opacity 0.2s, stroke-width 0.15s; }
+.gizmo-center { cursor: pointer; }
+.gizmo-center circle { transition: fill 0.15s, stroke 0.15s; }
+.gizmo-center:hover circle:first-child { fill: rgba(52, 64, 86, 0.95); stroke: #fff; }
+
 .gizmo-btn-row {
   display: flex;
   gap: 4px;
@@ -28,13 +39,13 @@
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  padding: 3px 6px;
-  border-radius: 5px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid color-mix(in srgb, var(--ax-color, var(--accent)) 35%, var(--border));
+  background: color-mix(in srgb, var(--ax-color, var(--accent)) 8%, var(--bg-card));
   color: var(--ax-color, var(--accent));
   cursor: pointer;
-  transition: all 0.15s;
+  transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.05s;
 }
 
 .gizmo-axis-btn:hover {
@@ -42,3 +53,4 @@
   color: white;
   border-color: transparent;
 }
+.gizmo-axis-btn:active { transform: scale(0.92); }

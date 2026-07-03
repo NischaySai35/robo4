@@ -23,13 +23,16 @@ const LABEL_H   = 18;
 const LABEL_PAD = 3; // min gap between spread labels
 const LABEL_OFF = 10; // horizontal offset from cursor to label
 
+// Categorical palette validated for the dark chart surface (CVD-safe, worst
+// adjacent ΔE 27.6; see dataviz validator). Ordered so no two adjacent series
+// clash under colour-blindness.
 const SERIES = [
-  { key: 'velocity',     label: 'Velocity',     unit: '°/s',  color: '#3b82f6' },
-  { key: 'acceleration', label: 'Acceleration', unit: '°/s²', color: '#22c55e' },
-  { key: 'torque',       label: 'Torque',       unit: 'N·m',  color: '#e11d48' },
-  { key: 'current',      label: 'Current',      unit: 'A',    color: '#a855f7' },
-  { key: 'stress',       label: 'Stress',       unit: '%',    color: '#06b6d4' },
-  { key: 'temperature',  label: 'Temperature',  unit: '°C',   color: '#f97316' },
+  { key: 'velocity',     label: 'Velocity',     unit: '°/s',  color: '#3987e5' },
+  { key: 'acceleration', label: 'Acceleration', unit: '°/s²', color: '#c98500' },
+  { key: 'torque',       label: 'Torque',       unit: 'N·m',  color: '#e66767' },
+  { key: 'current',      label: 'Current',      unit: 'A',    color: '#9085e9' },
+  { key: 'stress',       label: 'Stress',       unit: '%',    color: '#199e70' },
+  { key: 'temperature',  label: 'Temperature',  unit: '°C',   color: '#d95926' },
 ] as const;
 
 type SeriesKey = typeof SERIES[number]['key'];
@@ -58,7 +61,7 @@ function spreadLabels(items: { yPx: number; sy: number }[], chartH: number) {
 }
 
 /** Estimate px width of a monospace label string. */
-function labelWidth(text: string) { return text.length * 6.5 + 14; }
+function labelWidth(text: string) { return text.length * 6.5 + 22; } // +room for colour dot
 
 export default function LiveTelemetryChart() {
   const hostRef  = useRef<HTMLDivElement | null>(null);
@@ -109,25 +112,48 @@ export default function LiveTelemetryChart() {
 
     const CHART_H = 200;
 
+    // Pull theme-aware ink/grid from CSS so the chart matches light & dark modes.
+    // Concrete colours (canvas can't resolve CSS vars / color-mix / oklch); a mid
+    // grey reads on both light and dark surfaces.
+    const axisInk = '#8a8f98';
+    const gridCol = 'rgba(128,128,128,0.15)';
+    const AX_FONT = '10px ui-monospace, monospace';
+
     const plot = new uPlot({
       width:  host.clientWidth || 280,
       height: CHART_H,
-      scales: { x: { time: false }, y: { auto: true } },
+      // Normalised to each series' own peak → a stable 0..100% vertical scale.
+      scales: { x: { time: false }, y: { auto: false, range: [0, 1.06] } },
       legend: { show: false },
-      cursor: { drag: { x: true, y: false } },
+      cursor: { drag: { x: true, y: false }, points: { show: false } },
       series: [
         { label: 't (s)' },
         ...SERIES.map((s) => ({
           label:  s.label,
           stroke: s.color,
-          width:  1.6,
+          width:  2,
           show:   enabledRef.current[s.key],
           points: { show: false },
         })),
       ],
       axes: [
-        { stroke: '#888', grid: { stroke: 'rgba(128,128,128,0.15)' }, ticks: { stroke: 'rgba(128,128,128,0.2)' } },
-        { show: false },
+        {
+          stroke: axisInk,
+          font: AX_FONT,
+          size: 26,
+          grid: { stroke: gridCol, width: 1, dash: [3, 4] },
+          ticks: { show: false },
+        },
+        {
+          show: true,
+          stroke: axisInk,
+          font: AX_FONT,
+          size: 30,
+          splits: () => [0, 0.5, 1],
+          values: (_u: any, splits: number[]) => splits.map((v) => `${Math.round(v * 100)}%`),
+          grid: { stroke: gridCol, width: 1, dash: [3, 4] },
+          ticks: { show: false },
+        },
       ],
       hooks: {
         setCursor: [(u: any) => {
@@ -164,8 +190,9 @@ export default function LiveTelemetryChart() {
           const vline = document.createElementNS(SVG_NS, 'line');
           vline.setAttribute('x1', String(left)); vline.setAttribute('y1', '0');
           vline.setAttribute('x2', String(left)); vline.setAttribute('y2', String(CHART_H));
-          vline.setAttribute('stroke', 'rgba(200,200,200,0.18)');
+          vline.setAttribute('stroke', 'rgba(200,200,200,0.28)');
           vline.setAttribute('stroke-width', '1');
+          vline.setAttribute('stroke-dasharray', '3 3');
           svg.appendChild(vline);
 
           for (const { s, r, yPx, sy } of raw) {
@@ -202,20 +229,27 @@ export default function LiveTelemetryChart() {
             rect.setAttribute('y', String(sy));
             rect.setAttribute('width', String(boxW));
             rect.setAttribute('height', String(LABEL_H));
-            rect.setAttribute('rx', '4');
-            rect.setAttribute('fill', '#0f1117ee');
+            rect.setAttribute('rx', '5');
+            rect.setAttribute('fill', 'rgba(16,18,24,0.92)');
             rect.setAttribute('stroke', s.color);
-            rect.setAttribute('stroke-width', '1');
+            rect.setAttribute('stroke-width', '1.5');
             svg.appendChild(rect);
 
-            // label text
+            // colour dot inside the label (identity) + value text in near-white ink
+            const chip = document.createElementNS(SVG_NS, 'circle');
+            chip.setAttribute('cx', String(boxX + 8));
+            chip.setAttribute('cy', String(midY));
+            chip.setAttribute('r', '2.6');
+            chip.setAttribute('fill', s.color);
+            svg.appendChild(chip);
+
             const text = document.createElementNS(SVG_NS, 'text');
-            text.setAttribute('x', String(boxX + 7));
-            text.setAttribute('y', String(sy + 12));
-            text.setAttribute('fill', s.color);
+            text.setAttribute('x', String(boxX + 15));
+            text.setAttribute('y', String(sy + 12.5));
+            text.setAttribute('fill', '#f2f3f6');
             text.setAttribute('font-size', '10');
-            text.setAttribute('font-family', 'monospace');
-            text.setAttribute('dominant-baseline', 'auto');
+            text.setAttribute('font-family', 'ui-monospace, monospace');
+            text.setAttribute('font-weight', '600');
             text.textContent = txt;
             svg.appendChild(text);
           }

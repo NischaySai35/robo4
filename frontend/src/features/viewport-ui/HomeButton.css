@@ -30,6 +30,15 @@
 .canvas-home-btn:hover { border-color: var(--accent); color: var(--accent); }
 .canvas-home-btn:active { transform: scale(0.96); }
 
+/* Real-time Sync toggle — greenish glow while streaming to hardware. */
+.canvas-home-btn--on {
+  color: #fff; background: #16794a; border-color: #31d07a;
+  animation: ik-glow 1.4s ease-in-out infinite;
+}
+.canvas-home-btn--on:hover { filter: brightness(1.08); border-color: #31d07a; color: #fff; }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.canvas-home-btn--on .sync-dot { box-shadow: 0 0 6px currentColor; animation: ik-blink 1.4s ease-in-out infinite; }
+
 /* Permanent IK-drag toggle. ON → glows/blinks in accent; OFF → plain neutral pill. */
 .canvas-ik-btn {
   display: inline-flex;

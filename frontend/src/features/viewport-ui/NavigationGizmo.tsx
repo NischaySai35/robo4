@@ -11,19 +11,19 @@ import type { CSSProperties } from 'react';
 import * as THREE from 'three';
 import { bridge } from '@/viewport/cameraBridge';
 
-const SIZE   = 110;
+const SIZE   = 112;
 const CENTER = SIZE / 2;
 const AXIS_R = 40;
-const DOT_POS = 14;
-const DOT_NEG = 10;
+const DOT_POS = 11;
+const DOT_NEG = 8;
 
 const AXES = [
-  { key: '+X', dir: [1, 0, 0],  label: 'X',  color: '#e84040', glow: '#ff000044', isPos: true  },
-  { key: '-X', dir: [-1, 0, 0], label: '-X', color: '#cc6666', glow: '#cc000022', isPos: false },
-  { key: '+Y', dir: [0, 1, 0],  label: 'Y',  color: '#22cc55', glow: '#00ff4444', isPos: true  },
-  { key: '-Y', dir: [0, -1, 0], label: '-Y', color: '#66bb88', glow: '#00cc2222', isPos: false },
-  { key: '+Z', dir: [0, 0, 1],  label: 'Z',  color: '#4488ff', glow: '#0044ff44', isPos: true  },
-  { key: '-Z', dir: [0, 0, -1], label: '-Z', color: '#7799cc', glow: '#0022cc22', isPos: false },
+  { key: '+X', dir: [1, 0, 0],  label: 'X',  color: '#e5534b', glow: 'rgba(229,83,75,0.35)',  isPos: true  },
+  { key: '-X', dir: [-1, 0, 0], label: 'X',  color: '#e5534b', glow: 'rgba(229,83,75,0.25)',  isPos: false },
+  { key: '+Y', dir: [0, 1, 0],  label: 'Y',  color: '#63c14e', glow: 'rgba(99,193,78,0.35)',  isPos: true  },
+  { key: '-Y', dir: [0, -1, 0], label: 'Y',  color: '#63c14e', glow: 'rgba(99,193,78,0.25)',  isPos: false },
+  { key: '+Z', dir: [0, 0, 1],  label: 'Z',  color: '#4a90d9', glow: 'rgba(74,144,217,0.35)', isPos: true  },
+  { key: '-Z', dir: [0, 0, -1], label: 'Z',  color: '#4a90d9', glow: 'rgba(74,144,217,0.25)', isPos: false },
 ];
 
 const SNAP_VIEWS = {
@@ -126,19 +126,20 @@ export default function NavigationGizmo() {
         onPointerUp={onBgPointerUp}
       >
         <defs>
-          <radialGradient id="gizmo-bg" cx="50%" cy="50%" r="50%">
-            <stop offset="0%"   stopColor="rgba(255,255,255,0.22)" />
-            <stop offset="100%" stopColor="rgba(200,215,235,0.06)" />
+          <radialGradient id="gizmo-bg" cx="42%" cy="38%" r="65%">
+            <stop offset="0%"   stopColor="rgba(255,255,255,0.14)" />
+            <stop offset="70%"  stopColor="rgba(160,180,210,0.05)" />
+            <stop offset="100%" stopColor="rgba(120,140,175,0.02)" />
           </radialGradient>
         </defs>
 
         {/* Draggable background disc */}
         <circle
-          cx={CENTER} cy={CENTER} r={CENTER - 4}
+          className="gizmo-disc"
+          cx={CENTER} cy={CENTER} r={CENTER - 3}
           fill="url(#gizmo-bg)"
-          stroke="rgba(180,200,225,0.4)"
+          stroke="rgba(180,200,225,0.28)"
           strokeWidth="1"
-          style={{ cursor: 'grab' }}
           onPointerDown={onBgPointerDown}
         />
 
@@ -146,12 +147,11 @@ export default function NavigationGizmo() {
         {projected.map(ax => {
           const front = ax.depth < 0;
           return (
-            <line key={`ln-${ax.key}`}
+            <line key={`ln-${ax.key}`} className="gizmo-line"
               x1={CENTER} y1={CENTER} x2={ax.sx} y2={ax.sy}
               stroke={ax.color}
-              strokeWidth={front ? 2 : 1}
-              opacity={front ? 0.85 : 0.28}
-              style={{ pointerEvents: 'none' }}
+              strokeWidth={front ? 2.5 : 1.5} strokeLinecap="round"
+              opacity={front ? 0.9 : 0.22}
             />
           );
         })}
@@ -159,40 +159,34 @@ export default function NavigationGizmo() {
         {/* Axis dots + labels */}
         {projected.map(ax => {
           const front   = ax.depth < 0;
-          const r       = ax.isPos ? DOT_POS : DOT_NEG;
+          const r       = (ax.isPos ? DOT_POS : DOT_NEG) + (hovered === ax.key ? 2 : 0);
           const isHov   = hovered === ax.key;
-          const opacity = front ? 1 : (ax.isPos ? 0.42 : 0.2);
+          const opacity = front ? 1 : (ax.isPos ? 0.5 : 0.3);
 
           return (
             <g key={`dot-${ax.key}`}
-              opacity={opacity}
-              style={{ cursor: 'pointer' }}
+              className="gizmo-axis" opacity={opacity}
               onMouseEnter={() => setHovered(ax.key)}
               onMouseLeave={() => setHovered(null)}
               onClick={(e) => { e.stopPropagation(); snap(ax.key); }}
             >
               {isHov && (
-                <circle cx={ax.sx} cy={ax.sy} r={r + 5}
-                  fill={ax.glow} stroke={ax.color} strokeWidth="1" opacity="0.7"
-                />
+                <circle className="gizmo-halo" cx={ax.sx} cy={ax.sy} r={r + 6}
+                  fill={ax.glow} stroke={ax.color} strokeWidth="1" opacity="0.85" />
               )}
-              {/* Face square (rounded) */}
-              <rect
-                x={ax.sx - r} y={ax.sy - r}
-                width={r * 2} height={r * 2}
-                rx={ax.isPos ? 4 : 3}
-                fill={isHov ? ax.color : (ax.isPos ? ax.color : 'rgba(200,215,235,0.75)')}
-                stroke={ax.isPos ? 'rgba(255,255,255,0.4)' : 'rgba(120,140,170,0.3)'}
-                strokeWidth="0.8"
+              <circle
+                className="gizmo-dot"
+                cx={ax.sx} cy={ax.sy} r={r}
+                fill={ax.isPos ? ax.color : 'rgba(24,30,42,0.82)'}
+                stroke={ax.isPos ? 'rgba(255,255,255,0.5)' : ax.color}
+                strokeWidth={ax.isPos ? 1 : 1.6}
               />
               <text
                 x={ax.sx} y={ax.sy}
-                textAnchor="middle"
-                dominantBaseline="central"
-                fontSize={ax.isPos ? 9.5 : 7}
-                fontWeight="700"
-                fontFamily="'Share Tech Mono', monospace"
-                fill={ax.isPos ? 'white' : '#334466'}
+                textAnchor="middle" dominantBaseline="central"
+                fontSize={ax.isPos ? 9.5 : 8}
+                fontWeight="700" fontFamily="'Share Tech Mono', monospace"
+                fill={ax.isPos ? '#fff' : ax.color}
                 style={{ pointerEvents: 'none', userSelect: 'none' }}
               >
                 {ax.label}
@@ -201,14 +195,12 @@ export default function NavigationGizmo() {
           );
         })}
 
-        {/* Center — perspective view */}
-        <circle cx={CENTER} cy={CENTER} r="6"
-          fill="rgba(80,100,130,0.75)"
-          stroke="rgba(255,255,255,0.65)"
-          strokeWidth="1"
-          style={{ cursor: 'pointer' }}
-          onClick={(e) => { e.stopPropagation(); snapPersp(); }}
-        />
+        {/* Center — reset to perspective view */}
+        <g className="gizmo-center" onClick={(e) => { e.stopPropagation(); snapPersp(); }}>
+          <circle cx={CENTER} cy={CENTER} r="7" fill="rgba(30,38,52,0.9)"
+            stroke="rgba(255,255,255,0.55)" strokeWidth="1" />
+          <circle cx={CENTER} cy={CENTER} r="2.4" fill="rgba(255,255,255,0.7)" />
+        </g>
       </svg>
 
       {/* Axis snap quick-buttons */}

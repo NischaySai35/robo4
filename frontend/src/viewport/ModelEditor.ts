@@ -312,6 +312,7 @@ export class ModelEditor {
     this._startingSim = false;
     this._lastPlayhead = -1; // last animation playhead we wrote into the doc
     this._showAnalysis = useEditorStore.getState().showAnalysis;
+    this._analysisMode = useEditorStore.getState().analysisMode;
     this._showCollision = useEditorStore.getState().showCollision;
     this.bodyRenderer.setShowCollision(this._showCollision);
     this._mateMode = useEditorStore.getState().mateMode;
@@ -353,6 +354,11 @@ export class ModelEditor {
         if (!s.showAnalysis && this._doc) this.bodyRenderer.clearStress(this._doc);
         if (this._doc) this._syncModel(this._doc);
       }
+      if (s.analysisMode !== this._analysisMode) {
+        this._analysisMode = s.analysisMode;
+        this._lastStressT = 0; // force an immediate recolour in the new mode
+        if (this._showAnalysis && this._doc) this._syncModel(this._doc);
+      }
       if (s.showCollision !== this._showCollision) {
         this._showCollision = s.showCollision;
         this.bodyRenderer.setShowCollision(s.showCollision);
@@ -393,7 +399,28 @@ export class ModelEditor {
     const loads = this._showAnalysis ? jointLoads(doc, this._fk) : null;
     this.jointRenderer.sync(doc, this._fk, loads);
     this.connectorRenderer.sync(doc, this._fk);
-    if (this._showAnalysis && loads) this.bodyRenderer.applyStress(bodyStressField(doc, this._fk, loads));
+    // Recoloring the whole mesh (bodyStressField + applyStress uploads ~300K vertex
+    // colors to the GPU) is far too heavy to run on every IK-drag frame — it drops
+    // the app to a few FPS. Throttle it to ~12 Hz, with a trailing update so the
+    // final pose is always coloured accurately once dragging settles.
+    if (this._showAnalysis && loads) {
+      const mode = useEditorStore.getState().analysisMode;
+      const now = performance.now();
+      if (!this._lastStressT || now - this._lastStressT >= 80) {
+        this._lastStressT = now;
+        this.bodyRenderer.applyStress(bodyStressField(doc, this._fk, loads, mode));
+        if (this._stressTrail) { clearTimeout(this._stressTrail); this._stressTrail = null; }
+      } else if (!this._stressTrail) {
+        this._stressTrail = setTimeout(() => {
+          this._stressTrail = null;
+          if (this._showAnalysis && this._doc && this._fk) {
+            this._lastStressT = performance.now();
+            const l = jointLoads(this._doc, this._fk);
+            this.bodyRenderer.applyStress(bodyStressField(this._doc, this._fk, l, useEditorStore.getState().analysisMode));
+          }
+        }, 90);
+      }
+    }
     this._updateCOM(doc);
     this._reattach(); // mesh may have been (re)created
     if (this.editMode?.active) this.editMode.onModelSynced();

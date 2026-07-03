@@ -44,6 +44,8 @@ interface EditorState {
   setGravity: (g: number) => void;
   showAnalysis: boolean;
   toggleAnalysis: () => void;
+  analysisMode: 'motor' | 'material' | 'current';
+  setAnalysisMode: (m: 'motor' | 'material' | 'current') => void;
   showCollision: boolean;
   toggleCollision: () => void;
   ikDrag: boolean;
@@ -91,6 +93,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   showAnalysis: false, // load heatmap + center-of-mass overlay
   toggleAnalysis: () => set((s) => ({ showAnalysis: !s.showAnalysis })),
+  analysisMode: 'motor',
+  setAnalysisMode: (analysisMode) => set({ analysisMode }),
 
   showCollision: false,
   toggleCollision: () => set((s) => ({ showCollision: !s.showCollision })),

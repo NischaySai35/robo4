@@ -5,31 +5,78 @@
 
 import { serializeProject } from './project';
 import { saveProjectToFile, openProjectFromFile, writeProjectToHandle } from './fileIO';
-import { putProject, getProjectData, listProjects } from './projectLibrary';
+import { putProject, getProjectData, listProjects, removeProject } from './projectLibrary';
 // Note: all projectLibrary functions are async (IndexedDB-backed).
 import { useDocStore } from '@/state/docStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { buildRobotArmProject } from '@/core/factory/robotArm';
 import { buildHumanoidProject } from '@/core/factory/humanoid';
+import { getDefaultModuleDoc, moduleDocToProject } from '@/core/factory/defaultModule';
 
-export function newProject() {
-  if (!window.confirm('Start a new project? The current scene will be cleared (saved files are untouched).')) return;
-  const fresh = {
-    format: 'tetrobot-project',
-    version: 1,
-    scene: { activeModuleId: null, nextId: 1, modules: [], welds: [] },
-    model: undefined, // cleared → empty model document
-    animation: { duration: 4, tracks: {} },
-  };
-  const r = bridge.loadScene?.(fresh);
+/** Start a new project. New projects begin with the default module already placed
+ *  as a component (freshly-id'd so it's an independent copy) — users can delete or
+ *  edit it freely. Pass `{ empty: true }` for a truly blank document. */
+export function newProject(opts: { empty?: boolean; confirm?: boolean } = {}) {
+  const ask = opts.confirm ?? true;
+  if (ask && !window.confirm('Start a new project? The current scene will be cleared (saved files are untouched).')) return;
+  const project = opts.empty
+    ? {
+        format: 'tetrobot-project', version: 1,
+        scene: { activeModuleId: null, nextId: 1, modules: [], welds: [] },
+        model: undefined, // truly empty
+        animation: { duration: 4, tracks: {} },
+      }
+    : moduleDocToProject(freshCopyOfDefaultModule());
+  const r = bridge.loadScene?.(project);
   if (r && !r.ok) { alert(r.error); return; }
   useDocStore.getState().setDoc(null, null); // also clears libraryId (see setDoc)
+}
+
+/** A deep copy of the default module document with regenerated ids, so a new
+ *  project's starter module is independent (not sharing ids with the bundled one). */
+function freshCopyOfDefaultModule() {
+  const src: any = getDefaultModuleDoc();
+  const clone: any = structuredClone(src);
+  clone.id = `doc-${Math.random().toString(36).slice(2, 9)}`;
+  clone.name = 'Untitled';
+  // Regenerate component/body/joint ids (keep asset & material ids — meshes are shared).
+  const remap = new Map<string, string>();
+  const rid = (prefix: string) => `${prefix}-${Math.random().toString(36).slice(2, 9)}`;
+  for (const kind of ['components', 'bodies', 'joints', 'jointProfiles'] as const) {
+    const coll = clone[kind]; if (!coll) continue;
+    for (const oldId of Object.keys(coll)) remap.set(oldId, rid(kind.slice(0, 4)));
+  }
+  const map = (id: any) => (id && remap.has(id) ? remap.get(id) : id);
+  const rebuild: any = {};
+  for (const kind of ['components', 'bodies', 'joints', 'jointProfiles'] as const) {
+    const coll = clone[kind]; if (!coll) continue;
+    const next: any = {};
+    for (const [oldId, e] of Object.entries<any>(coll)) {
+      const id = remap.get(oldId)!;
+      const copy: any = { ...e, id };
+      if ('componentId' in copy) copy.componentId = map(copy.componentId);
+      if ('parentBodyId' in copy) copy.parentBodyId = map(copy.parentBodyId);
+      if ('childBodyId' in copy) copy.childBodyId = map(copy.childBodyId);
+      if ('profileId' in copy) copy.profileId = map(copy.profileId);
+      next[id] = copy;
+    }
+    rebuild[kind] = next;
+  }
+  return { ...clone, ...rebuild };
 }
 
 /** Load the built-in articulated 6-DOF arm sample into the scene. */
 export function newRobotArm() {
   if (!window.confirm('Load the 6-DOF robot arm sample? The current scene will be replaced (saved files are untouched).')) return;
   const r = bridge.loadScene?.(buildRobotArmProject());
+  if (r && !r.ok) { alert(r.error); return; }
+  useDocStore.getState().setDoc(null, null);
+}
+
+/** Load a fresh copy of the default module (freshly-id'd) as a new scene. */
+export function newModule() {
+  if (!window.confirm('Load the default module? The current scene will be replaced (saved files are untouched).')) return;
+  const r = bridge.loadScene?.(moduleDocToProject(freshCopyOfDefaultModule()));
   if (r && !r.ok) { alert(r.error); return; }
   useDocStore.getState().setDoc(null, null);
 }
@@ -98,10 +145,16 @@ export async function autoSave() {
   // untitled with no libraryId → skip (nothing to auto-save to)
 }
 
-/** Always prompt for a new file location. */
+/** Always prompt for a new file location. Save As creates a DISTINCT project, so
+ *  it must NOT reuse the previous project's library id — otherwise it overwrites
+ *  that entry (name + contents), wiping the original from the library/recents. */
 export async function saveProjectAs() {
   const res = await saveProjectToFile(serializeProject(), 'tetrobot.nischay');
-  if (res) { useDocStore.getState().setDoc(res.name, res.handle); await saveCurrentToLibrary(res.name); }
+  if (res) {
+    useDocStore.getState().setDoc(res.name, res.handle);
+    useDocStore.getState().setLibraryId(null); // force a fresh library entry for the new file
+    await saveCurrentToLibrary(res.name);
+  }
 }
 
 export async function openProject() {
@@ -136,9 +189,37 @@ export async function saveCurrentToLibrary(nameOverride?: string): Promise<strin
   const { name, libraryId } = useDocStore.getState();
   const projName = nameOverride || name || 'Untitled';
   const thumb = bridge.captureThumbnail?.(256) ?? '';
-  const id = await putProject(projName, serializeProject(), thumb, libraryId ?? undefined);
-  if (id) useDocStore.getState().setLibraryId(id);
+
+  // The library is keyed by a random id, so without a target id every save would
+  // create a NEW entry → many duplicates with the same name. Reuse the existing
+  // entry for this name (dedupe by name), then remove any leftover same-name dupes.
+  let targetId = libraryId ?? undefined;
+  if (!targetId) {
+    try { targetId = (await listProjects()).find((p) => p.name === projName)?.id; } catch { /* non-fatal */ }
+  }
+  const id = await putProject(projName, serializeProject(), thumb, targetId);
+  if (id) {
+    useDocStore.getState().setLibraryId(id);
+    try {
+      for (const p of await listProjects()) {
+        if (p.name === projName && p.id !== id) await removeProject(p.id);
+      }
+    } catch { /* non-fatal */ }
+  }
   return id;
+}
+
+/** Remove pre-existing duplicate library entries: keep the newest per name, drop
+ *  the rest. Fixes libraries that already accumulated same-name duplicates. */
+export async function dedupeLibrary(): Promise<void> {
+  try {
+    const all = await listProjects(); // newest first
+    const seen = new Set<string>();
+    for (const p of all) {
+      if (seen.has(p.name)) await removeProject(p.id);
+      else seen.add(p.name);
+    }
+  } catch { /* non-fatal */ }
 }
 
 /** Load a project from the local library into the scene. */

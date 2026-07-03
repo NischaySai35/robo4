@@ -317,7 +317,7 @@ function proxJointOf(bodyId: string, childJoint: Map<string, any>) {
  * tP/tD = fraction of the motor's stall torque used at the proximal/distal
  * joint of this body. Red = at the motor's physical limit; blue = light load.
  */
-export function bodyStressField(doc: Document, fk = computeFK(doc), loads = jointLoads(doc, fk)) {
+export function bodyStressField(doc: Document, fk = computeFK(doc), loads = jointLoads(doc, fk), mode: 'motor' | 'material' | 'current' = 'motor') {
   const childJoint   = buildChildJointMap(doc);
   const parentJoints = new Map<any, any[]>();
   const childrenOf   = new Map<any, any[]>();
@@ -355,26 +355,53 @@ export function bodyStressField(doc: Document, fk = computeFK(doc), loads = join
     return getMotorSpec(act.motorType).stallTorque;
   };
 
+  // Per-joint load fraction for the active overlay mode (0..1):
+  //  motor   → |torque| ÷ torque limit   (default)
+  //  current → |current| ÷ stall current
+  const jointFrac = (joint: any, body: any) => {
+    const l = loads.get(joint.id);
+    if (!l) return 0;
+    if (mode === 'current') {
+      const limit = getMotorSpec(getJointActuator(doc, joint).motorType).stallCurrent || 1;
+      return Math.min(Math.abs(l.current) / limit, 1);
+    }
+    return Math.min(Math.abs(l.torque) / limitOf(body, joint), 1);
+  };
+  // Material mode: colour by structural stress RELATIVE to the most-stressed link
+  // (vonMises ÷ peak vonMises). Absolute stress ÷ yield is ~0 here (parts are hugely
+  // over-built), so relative shows the useful distribution — where bending peaks.
+  const mech = mode === 'material' ? bodyMechanics(doc, fk) : null;
+  let peakVM = 0;
+  if (mech) for (const [, m] of mech) if (m.vonMises > peakVM) peakVM = m.vonMises;
+  const materialFrac = (bodyId: string) => {
+    const m = mech?.get(bodyId);
+    return m && peakVM > 1e-9 ? Math.min(1, m.vonMises / peakVM) : 0;
+  };
+
   for (const body of Object.values(doc.bodies)) {
     const center    = posOf(body.id);
     const proxJoint = proxJointOf(body.id, childJoint);
 
     let tP: number, Panchor: THREE.Vector3;
-    if (proxJoint) {
-      const torq  = loads.get(proxJoint.id)?.torque ?? 0;
-      tP      = Math.min(Math.abs(torq) / limitOf(body, proxJoint), 1); // this body's servo limit
+    if (mode === 'material') {
+      tP = materialFrac(body.id); // uniform per link
+      Panchor = proxJoint ? pivotWorld(proxJoint) : center.clone();
+    } else if (proxJoint) {
+      tP      = jointFrac(proxJoint, body); // this body's servo
       Panchor = pivotWorld(proxJoint);
     } else {
-      tP      = Math.min(peakTorque / peakMotorStall, 1);
+      tP      = 0;
       Panchor = center.clone();
     }
 
     const distalJoints = (parentJoints.get(body.id) ?? []).filter((j) => MOVABLE.has(j.type));
     let tD: number, Danchor: THREE.Vector3;
-    if (distalJoints.length) {
+    if (mode === 'material') {
+      tD = tP; // uniform
+      Danchor = distalJoints.length ? pivotWorld(distalJoints[0]) : center.clone().multiplyScalar(2).sub(Panchor);
+    } else if (distalJoints.length) {
       const dj    = distalJoints[0];
-      const torq  = loads.get(dj.id)?.torque ?? 0;
-      tD      = Math.min(Math.abs(torq) / limitOf(doc.bodies[dj.childBodyId], dj), 1); // next segment's limit
+      tD      = jointFrac(dj, doc.bodies[dj.childBodyId]); // next segment
       Danchor = pivotWorld(dj);
     } else {
       tD      = 0;

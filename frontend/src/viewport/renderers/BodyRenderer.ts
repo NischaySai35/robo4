@@ -245,89 +245,21 @@ export class BodyRenderer {
     const axisVec = D.clone().sub(P);
     const axisLen = axisVec.length();
     const axisN   = axisLen > 1e-6 ? axisVec.clone().divideScalar(axisLen) : new THREE.Vector3(0, 1, 0);
-
-    // ── Gravity bending direction ───────────────────────────────────────────
-    // σ_bending = M·y/I where y is distance in the gravity-perpendicular-to-axis direction.
-    // For a horizontal arm this is the top/bottom faces; for a vertical pillar it's radial.
-    const G_DIR  = new THREE.Vector3(0, -1, 0);
-    const gDotA  = G_DIR.dot(axisN);
-    // Component of gravity perpendicular to the beam axis (= bending plane direction)
-    const bendDir = G_DIR.clone().sub(axisN.clone().multiplyScalar(gDotA));
-    const bendLen = bendDir.length();
-    const hasBendDir = bendLen > 0.08; // false for nearly vertical beams
-    if (hasBendDir) bendDir.divideScalar(bendLen);
-
-    // ── Cross-section radius from actual vertices (fast sample) ─────────────
-    // Uses the geometry-hint from analysis as a floor, then refines from verts.
-    let rMax      = Math.max(f?.rHint ?? 0.05, 0.005);
-    let rMaxBend  = rMax;
     const mw      = mesh.matrixWorld;
     const vTmp    = new THREE.Vector3();
     const relTmp  = new THREE.Vector3();
-    const SAMPLE_STEP = Math.max(1, Math.floor(n / 180));
 
-    for (let i = 0; i < n; i += SAMPLE_STEP) {
-      vTmp.fromBufferAttribute(pos, i).applyMatrix4(mw);
-      relTmp.copy(vTmp).sub(P);
-      const axialDot = relTmp.dot(axisN);
-      // Radial distance from neutral axis
-      const radial = Math.sqrt(Math.max(0, relTmp.lengthSq() - axialDot * axialDot));
-      if (radial > rMax) rMax = radial;
-      // Bending-plane distance (y in σ=My/I)
-      if (hasBendDir) {
-        const bend = Math.abs(relTmp.dot(bendDir));
-        if (bend > rMaxBend) rMaxBend = bend;
-      }
-    }
-    rMax     = Math.max(rMax, 0.005);
-    rMaxBend = Math.max(rMaxBend, 0.005);
-
-    // ── Stress Concentration Factor at the proximal joint face ───────────────
-    // Physically: welded/press-fit interfaces concentrate stress 1.3–2×.
-    // Model: exponential decay from SCF_PEAK at u=0 → 1 at u≈0.5
-    const SCF_PEAK  = 1.40; // 40% higher stress right at the joint face
-    const SCF_DECAY = 5.0;  // e-folding: ~20% of body length
-
-    // ── Per-vertex coloring ─────────────────────────────────────────────────
+    // ── Per-vertex coloring: pure MOTOR LOAD ─────────────────────────────────
+    // Colour by how hard this link's servo is working (|torque| ÷ its torque limit,
+    // = tP at the proximal joint, tD at the distal), interpolated along the link.
+    // No structural bending distribution — a joint at 100% load paints its link
+    // fully red, matching the table's Load %.
     for (let i = 0; i < n; i++) {
       vTmp.fromBufferAttribute(pos, i).applyMatrix4(mw);
       relTmp.copy(vTmp).sub(P);
-
-      const axialDot = relTmp.dot(axisN);
-      // u: 0 at proximal joint, 1 at distal
-      const u = Math.min(1, Math.max(0, axisLen > 1e-6 ? axialDot / axisLen : 0));
-
-      // ── Axial bending moment (quadratic for distributed load) ───────────
-      // Linear: M(u) = tP*(1-u) + tD*u
-      // Quadratic self-weight component: body carries its own mass → M peaks mid-span
-      const tLinear = tP * (1 - u) + tD * u;
-      const tMid    = (tP + tD) * 0.5 + Math.min(tP, tD) * 0.25;
-      const tAxial  = tLinear + (tMid - tLinear) * 4 * u * (1 - u) * 0.35;
-
-      // ── Stress concentration at proximal joint ──────────────────────────
-      const scf    = 1 + (SCF_PEAK - 1) * Math.exp(-SCF_DECAY * u);
-      const tConc  = tAxial * scf;
-
-      // ── Cross-sectional bending distribution ────────────────────────────
-      // σ(y) ∝ y/c  (Euler-Bernoulli beam bending, c = outer fiber distance)
-      // For beams with a strong bending direction (gravity ⊥ axis), use the
-      // gravity-bending component (top/bottom hot). For near-vertical members
-      // (gravity ≈ along axis), fall back to radial distance.
-      let perpNorm: number;
-      if (hasBendDir) {
-        // Distance in the bending plane (y in σ=My/I) — top/bottom faces hottest
-        perpNorm = Math.min(1, Math.abs(relTmp.dot(bendDir)) / rMaxBend);
-      } else {
-        // Vertical member: no preferred direction → radial (torsion-like)
-        const radial = Math.sqrt(Math.max(0, relTmp.lengthSq() - axialDot * axialDot));
-        perpNorm = Math.min(1, radial / rMax);
-      }
-
-      // Floor keeps the neutral axis from going pure blue (inner material carries ~20%)
-      const FLOOR = 0.18;
-      const tFinal = Math.min(1, tConc * (FLOOR + (1 - FLOOR) * perpNorm));
-
-      const [r, g, b] = stressColor(tFinal);
+      const u = Math.min(1, Math.max(0, axisLen > 1e-6 ? relTmp.dot(axisN) / axisLen : 0));
+      const t = Math.min(1, tP * (1 - u) + tD * u);
+      const [r, g, b] = stressColor(t);
       colors[i * 3] = r; colors[i * 3 + 1] = g; colors[i * 3 + 2] = b;
     }
 

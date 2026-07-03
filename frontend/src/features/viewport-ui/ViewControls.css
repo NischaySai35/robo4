@@ -7,6 +7,22 @@
   gap: 8px;
 }
 
+/* Responsive reflow (ViewControls picks the mode by measured space):
+   col   → single labelled column (default, above)
+   grid  → two-per-row, labelled
+   icons → two-per-row, icon-only compact */
+.view-controls--grid,
+.view-controls--icons {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.view-controls--icons .view-btn-label { display: none; }
+.view-controls--icons .view-btn {
+  padding: 8px;
+  border-radius: 12px;
+}
+
 .view-btn {
   justify-content: center;
 }
@@ -43,3 +59,29 @@
   color: white;
   box-shadow: 0 4px 16px rgba(0, 119, 221, 0.3);
 }
+
+/* Sync control: two click regions — word/icon (open panel) + ON/OFF (stream). */
+.view-btn--sync { gap: 0; padding: 0; overflow: hidden; }
+/* Don't let the whole pill flood with accent on hover — regions handle their own. */
+.view-btn--sync:hover {
+  background: var(--overlay-bg); color: var(--text-dim); border-color: var(--accent);
+  box-shadow: 0 2px 12px rgba(60, 80, 140, 0.08);
+}
+.view-sync-word {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 6px 12px; cursor: pointer;
+}
+.view-sync-word:hover { color: #fff; }
+.view-sync-state {
+  padding: 6px 10px; font-weight: 800; letter-spacing: 1px;
+  border-left: 1px solid var(--overlay-border); cursor: pointer;
+  color: var(--text-dim);
+}
+.view-sync-state:hover { color: #fff; }
+.view-sync-state--on {
+  color: #fff; background: #16794a;
+}
+/* Icon-only mode: keep the ON/OFF pill visible (it's the toggle). */
+.view-controls--icons .view-btn--sync { padding: 0; }
+.view-controls--icons .view-sync-word { padding: 8px; }
+.view-controls--icons .view-sync-state { padding: 8px 6px; font-size: 9px; }

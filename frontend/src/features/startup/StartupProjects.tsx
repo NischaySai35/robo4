@@ -9,7 +9,7 @@ import './StartupProjects.css';
 import { bridge } from '@/viewport/cameraBridge';
 import { useDocStore } from '@/state/docStore';
 import { listProjects, removeProject, type LibraryEntry } from '@/core/serialization/projectLibrary';
-import { newProject, openFromLibrary, saveCurrentToLibrary } from '@/core/serialization/projectActions';
+import { newProject, openFromLibrary, saveCurrentToLibrary, dedupeLibrary } from '@/core/serialization/projectActions';
 import { buildRobotArmProject } from '@/core/factory/robotArm';
 import { buildHumanoidProject } from '@/core/factory/humanoid';
 import { buildSingleModuleDemoProject } from '@/core/factory/singleModuleDemo';
@@ -34,9 +34,10 @@ export default function StartupProjects({ onClose }: { onClose: () => void }) {
   }, []);
 
   const refresh = () => listProjects().then(setProjects);
-  useEffect(() => { refresh(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Clean up any pre-existing same-name duplicates once, then list.
+  useEffect(() => { dedupeLibrary().then(refresh); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const onNew = () => { newProject(); onClose(); };
+  const onNew = () => { newProject({ confirm: false }); onClose(); };
   const onContinue = () => onClose();
   const onOpen = async (e: LibraryEntry) => { if (await openFromLibrary(e.id, e.name)) onClose(); };
   const onDelete = async (e: React.MouseEvent, id: string) => { e.stopPropagation(); await removeProject(id); refresh(); };

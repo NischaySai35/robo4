@@ -5,7 +5,7 @@ import { useHistoryStore } from '@/state/historyStore';
 import { useDocStore } from '@/state/docStore';
 import { useDockStore } from '@/state/dockStore';
 import { bridge } from '@/viewport/cameraBridge';
-import { newProject, newRobotArm, newHumanoid, openProject, saveProject, saveProjectAs, exportModel, openFromLibrary } from '@/core/serialization/projectActions';
+import { newProject, newRobotArm, newHumanoid, newModule, openProject, saveProject, saveProjectAs, exportModel, openFromLibrary } from '@/core/serialization/projectActions';
 import { listProjects } from '@/core/serialization/projectLibrary';
 import type { LibraryEntry } from '@/core/serialization/projectLibrary';
 import { importMesh, importURDF } from '@/features/import/importMesh';
@@ -70,7 +70,7 @@ function Dropdown({ items, onClose }: any) {
   );
 }
 
-export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
+export default function MenuBar({ onToggleConn, onHelpOpen, onOpenProjects }: any) {
   const [open, setOpen] = useState<any>(null);
   const barRef = useRef<any>(null);
   const [recentProjects, setRecentProjects] = useState<LibraryEntry[]>([]);
@@ -100,9 +100,10 @@ export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
 
   const menus = {
     File: [
-      { label: 'New Project',     onClick: newProject },
+      { label: 'New Project',     onClick: () => newProject() },
       { label: 'New 6-DOF Robot Arm', onClick: newRobotArm },
       { label: 'New Humanoid Robot', onClick: newHumanoid },
+      { label: 'New Module', onClick: newModule },
       { label: 'Open Project…',   onClick: openProject },
       { label: 'Open Recent', submenu: recentProjects.length
         ? recentProjects.slice(0, 10).map((p) => ({
@@ -156,6 +157,8 @@ export default function MenuBar({ onToggleConn, onHelpOpen }: any) {
         onClick: () => useThemeStore.getState().toggleTheme() },
     ],
     Help: [
+      { label: 'Projects…', onClick: () => onOpenProjects?.() },
+      SEP,
       { label: 'Check for Updates…', onClick: () => checkForUpdates(false) },
       SEP,
       { label: 'Keyboard Shortcuts', shortcut: '?', onClick: () => onHelpOpen?.() },

@@ -69,10 +69,12 @@
 /* clips */
 .tl-clips { display: flex; flex-direction: column; gap: 4px; }
 .tl-clip {
-  display: grid; grid-template-columns: auto 1fr auto auto; align-items: center; gap: 8px;
+  display: grid; grid-template-columns: auto auto 1fr auto auto; align-items: center; gap: 8px;
   padding: 6px 8px; border-radius: 7px; cursor: pointer;
   background: var(--bg-card); border: 1px solid var(--border);
 }
+.tl-clip .tl-entry-grip { opacity: 0.4; cursor: grab; }
+.tl-clip.tl-clip--dropover { border-color: var(--accent); box-shadow: 0 -2px 0 0 var(--accent); }
 .tl-clip.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent-glow); }
 .tl-clip-idx { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--bg); color: var(--text-dim); font-size: 10px; font-weight: 700; }
 .tl-clip.active .tl-clip-idx { background: var(--accent); color: #fff; }

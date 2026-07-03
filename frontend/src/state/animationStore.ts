@@ -48,6 +48,7 @@ interface AnimationState {
   renameClip: (id: string, name: string) => void;
   selectClip: (id: string) => void;
   reorderClip: (id: string, dir: -1 | 1) => void;
+  moveClipToIndex: (id: string, toIdx: number) => void;
 
   // editing the active clip
   setDuration: (duration: number) => void;
@@ -153,6 +154,16 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
       if (i < 0 || j < 0 || j >= clips.length) return {};
       const next = [...clips];
       [next[i], next[j]] = [next[j], next[i]];
+      return { clips: next };
+    }),
+
+    moveClipToIndex: (id, toIdx) => set((s) => {
+      const clips = syncActive(s);
+      const from = clips.findIndex((c) => c.id === id);
+      if (from < 0) return {};
+      const next = [...clips];
+      const [m] = next.splice(from, 1);
+      next.splice(Math.max(0, Math.min(next.length, toIdx)), 0, m);
       return { clips: next };
     }),
 

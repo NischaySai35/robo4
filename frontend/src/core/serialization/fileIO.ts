@@ -8,8 +8,12 @@
 
 import { encodeProject, decodeProject } from './codec';
 
-const ACCEPT_SAVE = { 'application/octet-stream': ['.nischay'] };
-const ACCEPT_OPEN = { 'application/octet-stream': ['.nischay'], 'application/json': ['.json'] };
+// Use a custom vendor MIME type, NOT application/octet-stream: the generic
+// octet-stream type makes Chromium/Windows expand the save filter to every
+// extension registered for "binary" (.com, .exe, .bin, …) alongside .nischay.
+// A made-up type nothing else claims keeps the dialog to just .nischay.
+const ACCEPT_SAVE = { 'application/x-nischay': ['.nischay'] };
+const ACCEPT_OPEN = { 'application/x-nischay': ['.nischay'] };
 
 export function downloadBlob(blob: any, filename: any) {
   const url = URL.createObjectURL(blob);
@@ -63,7 +67,7 @@ export async function openProjectFromFile() {
   return new Promise((resolve, reject) => {
     const inp = document.createElement('input');
     inp.type = 'file';
-    inp.accept = '.nischay,.json';
+    inp.accept = '.nischay';
     inp.onchange = async () => {
       const f = inp.files?.[0];
       if (!f) { resolve(null); return; }

@@ -11,7 +11,8 @@ import type { Document, Connector } from '@/core/model/index';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { commands } from '@/core/commands/index';
-import { JointType, GeometryType, makeMaterial, uid, bodiesOfComponent, jointsOfComponent } from '@/core/model/index';
+import { JointType, GeometryType, makeMaterial, makeJointProfile, getJointActuator, uid, bodiesOfComponent, jointsOfComponent } from '@/core/model/index';
+import { MOTOR_DB, MOTOR_IDS } from '@/kinematics/motorDatabase';
 import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation';
 import { duplicate, mirror, array } from '@/features/ops/bodyOps';
 import * as THREE from 'three';
@@ -92,7 +93,7 @@ function PhysicsSection({ body, up }: { body: any; up: (patch: any) => void }) {
 
   return (
     <>
-      <div className="in-group">PHYSICS</div>
+      <div className="in-group">PHYSICS · the body's structural properties</div>
       <Num label="Mass (kg)" value={mass} step={0.001}
         onChange={(v: any) => up({ inertial: { ...body.inertial, mass: Math.max(0, v) } })} />
       <div className="in-row2">
@@ -101,8 +102,7 @@ function PhysicsSection({ body, up }: { body: any; up: (patch: any) => void }) {
         <Num label="I-max (mA)" value={meta.currentLimitMax ?? 1000} step={10}
           onChange={(v: any) => upMeta({ currentLimitMax: Math.max(0, v) })} />
       </div>
-      <Num label="Torque limit (N·m)" value={meta.torqueLimit ?? 2.5} step={0.1}
-        onChange={(v: any) => upMeta({ torqueLimit: Math.max(0, v) })} />
+      <div className="in-hint">Torque limit &amp; motor moved to the <strong>joint</strong> (select the joint → JOINT TYPE) — torque is a property of the actuator, not the link. Mass stays here (it's what gravity acts on).</div>
     </>
   );
 }
@@ -400,6 +400,59 @@ const RAD2DEG = 180 / Math.PI;
 const DEG2RAD = Math.PI / 180;
 const rDeg = (rad: any) => Math.round((rad ?? 0) * RAD2DEG * 10) / 10;
 
+/** JOINT TYPE — assign this joint a shared profile (e.g. "Twist", "Bend"). Every
+ *  joint on the same profile inherits its motor + torque limit, so editing the
+ *  profile here updates them all at once. */
+function JointTypePanel({ joint, doc, dispatch }: { joint: any; doc: Document; dispatch: any }) {
+  const [newName, setNewName] = useState('');
+  const profiles = Object.values(doc.jointProfiles ?? {});
+  const profile = joint.profileId ? (doc.jointProfiles ?? {})[joint.profileId] : null;
+  const act = getJointActuator(doc, joint);
+  const count = profile ? Object.values(doc.joints).filter((j) => j.profileId === profile.id).length : 0;
+
+  const assign = (pid: string | null) => dispatch(commands.updateJoint(joint.id, { profileId: pid }));
+  const editProfile = (patch: any) => profile && dispatch(commands.updateJointProfile(profile.id, patch));
+  const createProfile = () => {
+    const name = newName.trim() || `Type ${profiles.length + 1}`;
+    // Seed the new profile from the joint's current effective actuator.
+    const p = makeJointProfile({ name, motorType: act.motorType, torqueLimit: act.torqueLimit ?? MOTOR_DB[act.motorType]?.stallTorque ?? 2.5 });
+    dispatch(commands.addJointProfileAndAssign(p, joint.id));
+    setNewName('');
+  };
+
+  return (
+    <>
+      <div className="in-group">JOINT TYPE · shared actuator (edits sync to all of this type)</div>
+      <label className="in-field">
+        <span>Type</span>
+        <select className="in-text" value={joint.profileId ?? ''} onChange={(e) => assign(e.target.value || null)}>
+          <option value="">— none (per-joint) —</option>
+          {profiles.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+      </label>
+
+      {profile ? (
+        <>
+          <label className="in-field">
+            <span>Motor</span>
+            <select className="in-text" value={profile.motorType} onChange={(e) => editProfile({ motorType: e.target.value })}>
+              {MOTOR_IDS.map((m) => <option key={m} value={m}>{MOTOR_DB[m].name} ({MOTOR_DB[m].stallTorque} N·m)</option>)}
+            </select>
+          </label>
+          <Num label="Torque limit (N·m)" value={profile.torqueLimit} step={0.1}
+            onChange={(v: any) => editProfile({ torqueLimit: Math.max(0, v) })} />
+          <div className="in-hint">{count} joint{count === 1 ? '' : 's'} share “{profile.name}”. Editing here updates all of them.</div>
+        </>
+      ) : (
+        <div className="in-row2">
+          <input className="in-text" placeholder="New type name (e.g. Twist)" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <button className="in-btn-sm" onClick={createProfile} title="Create a shared joint type from this joint and assign it">+ Create type</button>
+        </div>
+      )}
+    </>
+  );
+}
+
 function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; dispatch: any }) {
   const [pickingPivot, setPickingPivot] = useState(false);
   const id = joint.id;
@@ -414,6 +467,9 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
   const otherJoints = Object.values(doc.joints).filter((j) => j.id !== id);
 
   const hasLimits = joint.type === 'revolute' || joint.type === 'prismatic';
+  // A fixed joint doesn't move — hide axis / dynamics / mimic / value, which are
+  // all meaningless for it (it just rigidly locks the two bodies together).
+  const isFixed = joint.type === 'fixed';
   const setValue = (v: any) => dispatch(commands.setJointValue(id, v));
   const setAxis = (a: any) => up({ axis: a });
 
@@ -498,6 +554,8 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
         </select>
       </label>
 
+      {!isFixed && <JointTypePanel joint={joint} doc={doc} dispatch={dispatch} />}
+
       <div className="in-group">BODIES · connected pair (equal — not parent/child)</div>
       <label className="in-field">
         <span>Body 1</span>
@@ -560,14 +618,18 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
         Editing Position moves the pivot only; both parts hold their place.
       </div>
 
-      <div className="in-group">AXIS · rotation / slide direction</div>
-      <Vec3 label="Axis" value={joint.axis} onChange={setAxis} step={1} />
-      <div className="in-ops in-axis-presets">
-        <button onClick={() => setAxis([1, 0, 0])}>X</button>
-        <button onClick={() => setAxis([0, 1, 0])}>Y</button>
-        <button onClick={() => setAxis([0, 0, 1])}>Z</button>
-        <button onClick={() => setAxis(joint.axis.map((c: any) => -c))} title="Flip direction">⇄ Flip</button>
-      </div>
+      {!isFixed && (
+        <>
+          <div className="in-group">AXIS · rotation / slide direction</div>
+          <Vec3 label="Axis" value={joint.axis} onChange={setAxis} step={1} />
+          <div className="in-ops in-axis-presets">
+            <button onClick={() => setAxis([1, 0, 0])}>X</button>
+            <button onClick={() => setAxis([0, 1, 0])}>Y</button>
+            <button onClick={() => setAxis([0, 0, 1])}>Z</button>
+            <button onClick={() => setAxis(joint.axis.map((c: any) => -c))} title="Flip direction">⇄ Flip</button>
+          </div>
+        </>
+      )}
 
       {hasLimits && (
         <>
@@ -594,45 +656,49 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
         </>
       )}
 
-      <div className="in-group">DYNAMICS</div>
-      <div className="in-row2">
-        <Num label="Damping" value={dyn.damping} onChange={(v: any) => up({ dynamics: { ...dyn, damping: v } })} step={0.01} />
-        <Num label="Friction" value={dyn.friction} onChange={(v: any) => up({ dynamics: { ...dyn, friction: v } })} step={0.01} />
-      </div>
-
-      <div className="in-group">MIMIC</div>
-      <label className="in-check">
-        <input type="checkbox" checked={!!mimic}
-          onChange={(e) => up({ mimic: e.target.checked ? { jointId: otherJoints[0]?.id ?? '', multiplier: 1, offset: 0 } : null })} />
-        <span>Mirror another joint</span>
-      </label>
-      {mimic && (
+      {!isFixed && (
         <>
-          <label className="in-field">
-            <span>Source joint</span>
-            <select className="in-text" value={mimic.jointId} onChange={(e) => up({ mimic: { ...mimic, jointId: e.target.value } })}>
-              {otherJoints.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
-            </select>
-          </label>
+          <div className="in-group">DYNAMICS</div>
           <div className="in-row2">
-            <Num label="Multiplier" value={mimic.multiplier} onChange={(v: any) => up({ mimic: { ...mimic, multiplier: v } })} step={0.1} />
-            <Num label="Offset" value={mimic.offset} onChange={(v: any) => up({ mimic: { ...mimic, offset: v } })} step={0.1} />
+            <Num label="Damping" value={dyn.damping} onChange={(v: any) => up({ dynamics: { ...dyn, damping: v } })} step={0.01} />
+            <Num label="Friction" value={dyn.friction} onChange={(v: any) => up({ dynamics: { ...dyn, friction: v } })} step={0.01} />
+          </div>
+
+          <div className="in-group">MIMIC</div>
+          <label className="in-check">
+            <input type="checkbox" checked={!!mimic}
+              onChange={(e) => up({ mimic: e.target.checked ? { jointId: otherJoints[0]?.id ?? '', multiplier: 1, offset: 0 } : null })} />
+            <span>Mirror another joint</span>
+          </label>
+          {mimic && (
+            <>
+              <label className="in-field">
+                <span>Source joint</span>
+                <select className="in-text" value={mimic.jointId} onChange={(e) => up({ mimic: { ...mimic, jointId: e.target.value } })}>
+                  {otherJoints.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
+                </select>
+              </label>
+              <div className="in-row2">
+                <Num label="Multiplier" value={mimic.multiplier} onChange={(v: any) => up({ mimic: { ...mimic, multiplier: v } })} step={0.1} />
+                <Num label="Offset" value={mimic.offset} onChange={(v: any) => up({ mimic: { ...mimic, offset: v } })} step={0.1} />
+              </div>
+            </>
+          )}
+
+          <div className="in-group">VALUE {joint.type === 'prismatic' ? '(mm)' : '(°)'}</div>
+          <div className="in-slider">
+            <input type="range"
+              min={hasLimits ? lim.lower : -Math.PI} max={hasLimits ? lim.upper : Math.PI} step={0.001}
+              value={joint.state?.value ?? 0}
+              onChange={(e) => setValue(parseFloat(e.target.value))} />
+            <span className="in-slider-val">
+              {joint.type === 'prismatic'
+                ? `${r3((joint.state?.value ?? 0) * 1000)} mm`
+                : `${rDeg(joint.state?.value)}°`}
+            </span>
           </div>
         </>
       )}
-
-      <div className="in-group">VALUE {joint.type === 'prismatic' ? '(mm)' : '(°)'}</div>
-      <div className="in-slider">
-        <input type="range"
-          min={hasLimits ? lim.lower : -Math.PI} max={hasLimits ? lim.upper : Math.PI} step={0.001}
-          value={joint.state?.value ?? 0}
-          onChange={(e) => setValue(parseFloat(e.target.value))} />
-        <span className="in-slider-val">
-          {joint.type === 'prismatic'
-            ? `${r3((joint.state?.value ?? 0) * 1000)} mm`
-            : `${rDeg(joint.state?.value)}°`}
-        </span>
-      </div>
       {joint.type !== 'fixed' && (
         <div className="in-ops in-jog">
           {hasLimits && <button onClick={() => setValue(lim.lower)} title="Go to lower limit">⤓ Min</button>}

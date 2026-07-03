@@ -35,8 +35,9 @@
  * dynamic imports inside pure functions.
  */
 import * as THREE from 'three';
-import { computeFK, mat, buildChildJointMap } from './modelFK';
+import { computeFK, resolveRoot, mat, buildChildJointMap } from './modelFK';
 import type { Document, Body, Geometry } from '@/core/model/index';
+import { getJointActuator } from '@/core/model/index';
 import { getMotorSpec } from './motorDatabase';
 import { getMaterialProps } from './materialDatabase';
 
@@ -104,6 +105,15 @@ export function inertiaTensor(g: Partial<Geometry> = {}, s = [1, 1, 1], mass = 1
 }
 
 export function bodyMass(body: Body, doc: Document) {
+  // Mesh volume can't be reliably estimated from parameters (the fallback is a
+  // crude constant that collapses to ~0 at small scales like mm→m 0.001), so for
+  // meshes — or whenever the user has turned OFF auto-inertia — trust the body's
+  // explicit inertial mass. Primitives keep using density × computed volume.
+  const explicit = body.inertial?.mass;
+  const isMesh = body.visual?.geometry?.type === 'mesh';
+  if ((isMesh || body.inertial?.auto === false) && typeof explicit === 'number' && explicit > 0) {
+    return explicit;
+  }
   const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
   const density = m?.density ?? 1000;
   return density * geometryVolume(body.visual?.geometry, body.transform?.scale);
@@ -156,16 +166,35 @@ export function jointLoads(doc: Document, fk = computeFK(doc)) {
   const masses = new Map<string, number>();
   for (const body of Object.values(doc.bodies)) masses.set(body.id, bodyMass(body, doc));
 
-  const childrenOf = new Map<string, string[]>();
+  // Undirected joint graph. The load a joint carries = the weight of everything on
+  // the side of it AWAY from the grounded root (the cantilever hanging off it), so
+  // where you ground the model actually decides which joints bear the arm.
+  const adj = new Map<string, { jointId: string; other: string }[]>();
+  for (const id of Object.keys(doc.bodies)) adj.set(id, []);
   for (const j of Object.values(doc.joints)) {
     if (!j.parentBodyId || !j.childBodyId) continue;
-    if (!childrenOf.has(j.parentBodyId)) childrenOf.set(j.parentBodyId, []);
-    childrenOf.get(j.parentBodyId)!.push(j.childBodyId);
+    adj.get(j.parentBodyId)?.push({ jointId: j.id, other: j.childBodyId });
+    adj.get(j.childBodyId)?.push({ jointId: j.id, other: j.parentBodyId });
   }
+  const reachSkip = (start: string, skipJointId: string) => {
+    const seen = new Set<string>([start]);
+    const q = [start];
+    while (q.length) {
+      const c = q.shift()!;
+      for (const e of adj.get(c) ?? []) {
+        if (e.jointId === skipJointId || seen.has(e.other)) continue;
+        seen.add(e.other); q.push(e.other);
+      }
+    }
+    return seen;
+  };
+  const root = resolveRoot(doc);
 
   const out = new Map<string, { torque: number; current: number; overload: boolean; motorName: string }>();
   for (const j of Object.values(doc.joints)) {
-    const motor  = getMotorSpec((j as any).meta?.motorType);
+    const act    = getJointActuator(doc, j);          // profile → own → default
+    const motor  = getMotorSpec(act.motorType);
+    const limit  = act.torqueLimit ?? motor.stallTorque; // usable torque ceiling
     const pInfo  = pivotForJoint(j, doc, fk);
     if (!pInfo) {
       out.set(j.id, { torque: 0, current: estimateCurrent(0, motor), overload: false, motorName: motor.name });
@@ -174,8 +203,20 @@ export function jointLoads(doc: Document, fk = computeFK(doc)) {
     const { pivot, jw } = pInfo;
     const axis = new THREE.Vector3(...((j.axis as number[]) ?? [0, 0, 1])).normalize().transformDirection(jw);
 
+    // Bodies hanging off this joint = the component on the far side from the root.
+    let hanging: Set<string>;
+    if (root) {
+      const rootReach = reachSkip(root, j.id); // reachable without crossing this joint
+      const seed = !rootReach.has(j.childBodyId!) ? j.childBodyId!
+                 : !rootReach.has(j.parentBodyId!) ? j.parentBodyId!
+                 : null; // both reachable → closed loop, load shared → no cantilever
+      hanging = seed ? reachSkip(seed, j.id) : new Set();
+    } else {
+      hanging = reachSkip(j.childBodyId!, j.id); // no ground → fall back to child side
+    }
+
     const torqueVec = new THREE.Vector3();
-    for (const bid of subtreeBodies(childrenOf, j.childBodyId)) {
+    for (const bid of hanging) {
       const w = fk.get(bid);
       if (!w) continue;
       const r = new THREE.Vector3(...w.position).sub(pivot);
@@ -185,7 +226,7 @@ export function jointLoads(doc: Document, fk = computeFK(doc)) {
     out.set(j.id, {
       torque,
       current:    estimateCurrent(torque, motor),
-      overload:   Math.abs(torque) > motor.stallTorque,
+      overload:   Math.abs(torque) > limit,
       motorName:  motor.name,
     });
   }
@@ -301,15 +342,27 @@ export function bodyStressField(doc: Document, fk = computeFK(doc), loads = join
 
   const out = new Map<string, { P: number[]; D: number[]; tP: number; tD: number; maxTorque: number; rHint: number }>();
 
+  // Torque limit used to normalise the load into a 0..1 colour fraction. Prefer
+  // the body's own configured torqueLimit (meta.torqueLimit — the field the user
+  // edits in the inspector), falling back to the joint's motor stall torque, then
+  // ST3215's default. This makes the overlay respond to the per-body Torque limit.
+  // Priority: the joint's actuator (shared profile → own value), then the body's
+  // legacy torqueLimit override, then the motor's stall torque.
+  const limitOf = (b: any, joint: any) => {
+    const act = getJointActuator(doc, joint);
+    if (act.torqueLimit && act.torqueLimit > 0) return act.torqueLimit;
+    if (typeof b?.meta?.torqueLimit === 'number' && b.meta.torqueLimit > 0) return b.meta.torqueLimit;
+    return getMotorSpec(act.motorType).stallTorque;
+  };
+
   for (const body of Object.values(doc.bodies)) {
     const center    = posOf(body.id);
     const proxJoint = proxJointOf(body.id, childJoint);
 
     let tP: number, Panchor: THREE.Vector3;
     if (proxJoint) {
-      const motor = getMotorSpec((proxJoint as any).meta?.motorType);
       const torq  = loads.get(proxJoint.id)?.torque ?? 0;
-      tP      = Math.min(Math.abs(torq) / motor.stallTorque, 1);
+      tP      = Math.min(Math.abs(torq) / limitOf(body, proxJoint), 1); // this body's servo limit
       Panchor = pivotWorld(proxJoint);
     } else {
       tP      = Math.min(peakTorque / peakMotorStall, 1);
@@ -320,9 +373,8 @@ export function bodyStressField(doc: Document, fk = computeFK(doc), loads = join
     let tD: number, Danchor: THREE.Vector3;
     if (distalJoints.length) {
       const dj    = distalJoints[0];
-      const motor = getMotorSpec((dj as any).meta?.motorType);
       const torq  = loads.get(dj.id)?.torque ?? 0;
-      tD      = Math.min(Math.abs(torq) / motor.stallTorque, 1);
+      tD      = Math.min(Math.abs(torq) / limitOf(doc.bodies[dj.childBodyId], dj), 1); // next segment's limit
       Danchor = pivotWorld(dj);
     } else {
       tD      = 0;

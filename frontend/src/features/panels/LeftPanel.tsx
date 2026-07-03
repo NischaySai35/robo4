@@ -13,6 +13,8 @@ import {
 } from '@/core/model/index';
 import type { Connector } from '@/core/model/index';
 import { jointFramesForBodies } from '@/kinematics/modelFK';
+import { buildDefaultModuleEntities, getDefaultModuleDoc, moduleDocToProject, saveDefaultModule } from '@/core/factory/defaultModule';
+import { bridge } from '@/viewport/cameraBridge';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
 import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
 import GizmoModeButtons, { BODY_GIZMO_MODES, POINT_GIZMO_MODES, type GizmoModeId } from '@/features/common/GizmoModeButtons';
@@ -173,8 +175,16 @@ export default function LeftPanel({ style }: any) {
     const templateId = comps[0]?.id;
     const template = templateId ? doc.components[templateId] : null;
     const templateBodies = templateId ? bodiesOfComponent(doc, templateId) : [];
+    // No module in THIS project → instantiate the global default module (the
+    // bundled hand-built one, or the user's saved override) so Add Module works
+    // in every project, not just the one that contains the original.
     if (!template || !templateBodies.length) {
-      alert('No module to copy yet — add a body or use "+ Comp" to start one first.');
+      const { entities, componentName } = buildDefaultModuleEntities(doc);
+      if (!entities.length) { alert('No default module available.'); return; }
+      dispatch(commands.addEntities(entities, `Add ${componentName}`));
+      const newBodyIds = entities.filter((e: any) => e.kind === 'body').map((e: any) => e.id);
+      useSelectionStore.getState().selectMany(newBodyIds, 'body');
+      setAddOpen(false);
       return;
     }
     const templateJoints = jointsOfComponent(doc, templateId!);
@@ -214,6 +224,23 @@ export default function LeftPanel({ style }: any) {
     const next = new Set(collapsedComps); next.delete(newComponent.id);
     setCollapsedCompIds(Array.from(next));
     useSelectionStore.getState().selectMany(newBodies.map((b) => b.id), 'body');
+    setAddOpen(false);
+  };
+
+  // Open the default module as its own editable project. Edit its geometry /
+  // connectors / joints in the normal Editor, then "Save as Default Module" to
+  // make those edits the source for future Add Module calls (in any project).
+  const editDefaultModule = () => {
+    if (!confirm('Open the default module for editing? Any unsaved changes in the current project will be replaced.')) return;
+    bridge.loadScene?.(moduleDocToProject(getDefaultModuleDoc()));
+    setAddOpen(false);
+  };
+
+  // Save the CURRENT project's document as the default module (override the
+  // bundled one). Add Module will then instantiate this edited module everywhere.
+  const saveAsDefaultModule = () => {
+    saveDefaultModule(doc);
+    alert('Saved the current project as the default module. Add Module will now use it in every project.');
     setAddOpen(false);
   };
 
@@ -350,11 +377,15 @@ export default function LeftPanel({ style }: any) {
         {isEditing ? (
           <input
             className="px-rename"
-            autoFocus
+            ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+            draggable={false}
             value={editing.text}
             onChange={(e) => setEditing({ ...editing, text: e.target.value })}
             onBlur={commitRename}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
           />
         ) : (
           <button
@@ -436,12 +467,15 @@ export default function LeftPanel({ style }: any) {
                 {isEditingComp ? (
                   <input
                     className="px-rename"
-                    autoFocus
+                    ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+                    draggable={false}
                     value={editing.text}
                     onChange={(e) => setEditing({ ...editing, text: e.target.value })}
                     onBlur={commitRename}
+                    onMouseDown={(e) => e.stopPropagation()}
+                    onPointerDown={(e) => e.stopPropagation()}
                     onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
+                    onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
                   />
                 ) : (
                   <span
@@ -669,19 +703,27 @@ export default function LeftPanel({ style }: any) {
                   </button>
                   {addOpen && (
                     <div className="lp-add-menu" onMouseLeave={() => setAddOpen(false)}>
-                      {comps.length > 0 && (
-                        <>
-                          <div className="lp-add-title">MODULE</div>
-                          <div className="lp-add-grid">
-                            <button
-                              className="lp-add-item lp-add-item--module"
-                              onClick={addModule}
-                              title="Copy an existing module (its bodies + joints) and place it beside the original, offset so it never overlaps.">
-                              ⛓ Add Module
-                            </button>
-                          </div>
-                        </>
-                      )}
+                      <div className="lp-add-title">MODULE</div>
+                      <div className="lp-add-grid">
+                        <button
+                          className="lp-add-item lp-add-item--module"
+                          onClick={addModule}
+                          title="Add a module: copies this project's module if it has one, otherwise the global default module. Placed offset so it never overlaps.">
+                          ⛓ Add Module
+                        </button>
+                        <button
+                          className="lp-add-item"
+                          onClick={editDefaultModule}
+                          title="Open the default module in the editor to change its geometry / connectors / joints, then Save as Default.">
+                          ✎ Edit Default
+                        </button>
+                        <button
+                          className="lp-add-item"
+                          onClick={saveAsDefaultModule}
+                          title="Save the current project as the default module — Add Module will use it in every project.">
+                          ★ Save as Default
+                        </button>
+                      </div>
                       <div className="lp-add-title">ADD MESH</div>
                       <div className="lp-add-grid">
                         {PRIMITIVES.map((p) => (

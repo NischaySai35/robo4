@@ -20,11 +20,12 @@ export interface MateAnimRequest {
   axis: [number, number, number]; // world mating axis (A's outward normal) to back off along
   gap: number;                    // pre-insertion stand-off distance, world units (e.g. 0.02 = 20mm)
   commit: () => void;             // apply the real patches + joint once the motion finishes
-  // Collision guard: `partnerId` is connector A's body — excluded from obstacle
-  // checks because the key is MEANT to interlock with it. During the insert slide
-  // the moving module is tested against every other body; if it would ram one,
-  // the motion aborts (no commit) and `onBlocked` fires instead of `commit`.
-  partnerId?: string;
+  // Collision guard: `ignoreIds` are bodies excluded from obstacle checks — the
+  // whole target module the key is MEANT to mate into (its bodies come flush, so
+  // they must not count as obstacles). During the insert slide the moving module
+  // is tested against every OTHER body; if it would ram one, the motion aborts
+  // (no commit) and `onBlocked` fires instead of `commit`.
+  ignoreIds?: string[];
   onBlocked?: (obstacleId: string) => void;
 }
 

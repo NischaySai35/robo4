@@ -14,7 +14,7 @@ import type { Document } from './entities';
 // ── collection helpers ──────────────────────────────────────────────────────────
 
 const COLLECTIONS = {
-  body: 'bodies', joint: 'joints', material: 'materials',
+  body: 'bodies', joint: 'joints', jointProfile: 'jointProfiles', material: 'materials',
   asset: 'assets', frame: 'frames', constraint: 'constraints',
   component: 'components',
 };

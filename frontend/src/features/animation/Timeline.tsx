@@ -6,10 +6,44 @@
  */
 import { useState, useRef, useEffect } from 'react';
 import './Timeline.css';
+
+/** Number input that lets you type freely (backspace, clear, retype) and only
+ *  commits — parse + clamp — on Enter or blur, instead of re-clamping every
+ *  keystroke (which made "4" → backspace → "1", and typing "10" → "110"). */
+function CommitNumber({ value, onCommit, min, max, step, int }: {
+  value: number; onCommit: (v: number) => void; min?: number; max?: number; step?: number; int?: boolean;
+}) {
+  const [buf, setBuf] = useState(String(value));
+  const [editing, setEditing] = useState(false);
+  useEffect(() => { if (!editing) setBuf(String(value)); }, [value, editing]);
+  const commit = () => {
+    setEditing(false);
+    let v = int ? parseInt(buf, 10) : parseFloat(buf);
+    if (isNaN(v)) { setBuf(String(value)); return; } // empty/garbage → revert
+    if (min != null) v = Math.max(min, v);
+    if (max != null) v = Math.min(max, v);
+    setBuf(String(v));
+    if (v !== value) onCommit(v);
+  };
+  return (
+    <input
+      type="number" min={min} max={max} step={step} value={buf}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setBuf(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') e.currentTarget.blur();      // commit
+        else if (e.key === 'Escape') { setBuf(String(value)); setEditing(false); e.currentTarget.blur(); }
+      }}
+    />
+  );
+}
 import { useAnimationStore, type ClipGroup } from '@/state/animationStore';
 import { useModelStore } from '@/state/modelStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
+import { saveProject } from '@/core/serialization/projectActions';
 
 // ── Clip Groups Panel ──────────────────────────────────────────────────────────
 function GroupsPanel({ clips, groups, playingGroupId }: {
@@ -184,6 +218,7 @@ function AnimationTab() {
             <span className="tl-clip-name" onDoubleClick={() => rename(c.id, c.name)} title="Double-click to rename">{c.name}</span>
             <span className="tl-clip-meta">{Object.keys(c.tracks).length ? `${new Set(Object.values(c.tracks).flatMap((k) => k.map((x) => x.t))).size}k · ${c.duration}s` : 'empty'}</span>
             <span className="tl-clip-ops">
+              <button onClick={(e) => { e.stopPropagation(); rename(c.id, c.name); }} title="Rename clip">✎</button>
               <button onClick={(e) => { e.stopPropagation(); a.reorderClip(c.id, -1); }} disabled={i === 0} title="Move up">▲</button>
               <button onClick={(e) => { e.stopPropagation(); a.reorderClip(c.id, 1); }} disabled={i === a.clips.length - 1} title="Move down">▼</button>
               <button onClick={(e) => { e.stopPropagation(); a.deleteClip(c.id); }} disabled={a.clips.length <= 1} title="Delete clip">✕</button>
@@ -191,6 +226,8 @@ function AnimationTab() {
           </div>
         ))}
         <button className="tl-addclip" onClick={() => a.addClip()}>＋ Add clip</button>
+        <button className="tl-addclip" onClick={() => saveProject()} title="Write all clips, keyframes and groups into the .nischay project file">💾 Save project</button>
+        <div className="tl-hint">◆ Key records into the <strong>selected</strong> clip automatically (its key count shows on the right). 💾 Save (or Ctrl+S) writes every clip, key and group into your .nischay file.</div>
       </div>
 
       {/* Groups */}
@@ -225,10 +262,10 @@ function AnimationTab() {
       <div className="tl-section">SETTINGS</div>
       <div className="tl-settings">
         <label>Duration (s)
-          <input type="number" min={0.5} step={1} value={a.duration} onChange={(e) => a.setDuration(parseFloat(e.target.value) || 1)} />
+          <CommitNumber value={a.duration} min={0.5} step={1} onCommit={(v) => a.setDuration(v)} />
         </label>
         <label>FPS
-          <input type="number" min={1} max={120} step={1} value={a.fps} onChange={(e) => a.setFps(parseInt(e.target.value) || 30)} />
+          <CommitNumber value={a.fps} min={1} max={120} step={1} int onCommit={(v) => a.setFps(v)} />
         </label>
         <label className="tl-snap">
           <input type="checkbox" checked={a.snap} onChange={() => a.toggleSnap()} /> Snap to fps grid

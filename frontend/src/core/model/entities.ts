@@ -147,6 +147,21 @@ export interface Joint {
   mimic: JointMimic | null;
   state: JointState;
   componentId: string | null; // which Component this joint belongs to
+  // Optional shared "joint type" (e.g. "Twist", "Bend"): joints sharing a profile
+  // read their actuator (motor + torque limit) from it, so editing the profile
+  // updates every joint of that type at once. Null = use the joint's own values.
+  profileId: string | null;
+  meta: Meta;
+}
+
+/** A named, shared joint type — the actuator settings many joints inherit.
+ *  Editing one profile live-updates every joint that references it. */
+export interface JointProfile {
+  kind: 'jointProfile';
+  id: string;
+  name: string;        // "Twist", "Bend", …
+  motorType: string;   // key into the motor database (e.g. "ST3215")
+  torqueLimit: number; // N·m — the actuator's usable torque ceiling
   meta: Meta;
 }
 
@@ -205,6 +220,7 @@ export interface Document {
   modelVersion: number;
   bodies: Record<string, Body>;
   joints: Record<string, Joint>;
+  jointProfiles: Record<string, JointProfile>;
   materials: Record<string, Material>;
   assets: Record<string, Asset>;
   frames: Record<string, Frame>;
@@ -307,8 +323,31 @@ export function makeJoint(params: Partial<Joint> = {}): Joint {
     mimic: params.mimic ?? null, // { jointId, multiplier, offset }
     state: params.state ?? { value: 0 }, // current joint position (rad or m)
     componentId: params.componentId ?? null,
+    profileId: params.profileId ?? null,
     meta: params.meta ?? {},
   };
+}
+
+export function makeJointProfile(params: Partial<JointProfile> = {}): JointProfile {
+  return {
+    kind: 'jointProfile',
+    id: params.id ?? uid('jprofile'),
+    name: params.name ?? 'Joint Type',
+    motorType: params.motorType ?? 'ST3215',
+    torqueLimit: params.torqueLimit ?? 2.5,
+    meta: params.meta ?? {},
+  };
+}
+
+/** Resolve a joint's effective actuator (motor + torque limit) — from its shared
+ *  profile if it has one, else its own meta, else sensible defaults. Single source
+ *  of truth used by the analysis so profiles and per-joint values stay consistent. */
+export function getJointActuator(doc: Document, joint: Joint | undefined | null): { motorType: string; torqueLimit: number | null } {
+  const prof = joint?.profileId ? doc.jointProfiles?.[joint.profileId] : null;
+  if (prof) return { motorType: prof.motorType, torqueLimit: prof.torqueLimit > 0 ? prof.torqueLimit : null };
+  const mt = (joint?.meta?.motorType as string | undefined) ?? 'ST3215';
+  const tl = joint?.meta?.torqueLimit as number | undefined;
+  return { motorType: mt, torqueLimit: typeof tl === 'number' && tl > 0 ? tl : null };
 }
 
 export function makeMaterial(params: Partial<Material> = {}): Material {
@@ -370,6 +409,7 @@ export function makeDocument(params: Partial<Document> = {}): Document {
     modelVersion: MODEL_VERSION,
     bodies: params.bodies ?? {},
     joints: params.joints ?? {},
+    jointProfiles: params.jointProfiles ?? {},
     materials: params.materials ?? {},
     assets: params.assets ?? {},
     frames: params.frames ?? {},

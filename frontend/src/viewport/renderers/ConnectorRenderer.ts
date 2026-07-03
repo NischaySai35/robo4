@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import type { Document } from '@/core/model/index';
 import { listConnectors, getConnectorWorld } from '@/features/assembly/connectorSnap';
+import { connectorHighlight, type ConnPair } from '@/features/assembly/connectorHighlight';
 import { constantScreenSize } from '@/viewport/gizmoUtil';
 
 // Size the marker as a fraction of the canvas height (not a fixed pixel count),
@@ -31,6 +32,8 @@ export class ConnectorRenderer {
     scene.add(this.group);
     this._lastDoc = null;
     this._visible = true;
+    this._highlightPairs = [];
+    connectorHighlight.set = (pairs: ConnPair[]) => this.setHighlighted(pairs);
     this._picker = new THREE.Raycaster();
     // Default line-hit tolerance is ~1 world unit (1m in this scene) — absurdly
     // loose for ~10cm markers, and the reason clicking well away from a
@@ -71,7 +74,8 @@ export class ConnectorRenderer {
       // projects saved before ids were regenerated on copy), and matching by id
       // only would light up every same-id twin at once.
       const isSelected = this._selectedBodyId === ref.bodyId && ref.connectorId === this._selectedId;
-      const color = isSelected ? SEL_COLOR : COLOR;
+      const isHighlighted = (this._highlightPairs as ConnPair[]).some((p) => p.bodyId === ref.bodyId && p.connectorId === ref.connectorId);
+      const color = isSelected || isHighlighted ? SEL_COLOR : COLOR;
 
       const node = new THREE.Group();
       node.position.copy(world.position);
@@ -143,6 +147,13 @@ export class ConnectorRenderer {
     if (this._lastDoc) this.sync(this._lastDoc, this._lastFk);
   }
 
+  /** Highlight (glow) an arbitrary set of connectors — used to show which two a
+   *  snap-joint links when its row is hovered/selected. Pass [] to clear. */
+  setHighlighted(pairs: ConnPair[]) {
+    this._highlightPairs = pairs ?? [];
+    if (this._lastDoc) this.sync(this._lastDoc, this._lastFk);
+  }
+
   /** Raycast connector markers; returns { bodyId, connectorId } or null. */
   pickConnectorAt(ndc: any, camera: any) {
     if (!this.group.children.length) return null;
@@ -157,6 +168,7 @@ export class ConnectorRenderer {
   }
 
   dispose() {
+    connectorHighlight.set = () => {};
     for (const c of [...this.group.children]) {
       c.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
     }

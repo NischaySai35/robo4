@@ -172,13 +172,32 @@ export function computeFKGraph(doc: any, rootBodyId: string) {
   return out;
 }
 
-/** Compute world transforms — delegates to graph FK when in rigid mode. */
-export function computeFK(doc: any) {
+/** A deterministic "natural root" for graph FK in free mode: a body that isn't
+ *  the child of any joint (a real chain base), else the first body. Rooting graph
+ *  FK here reproduces the tree-FK pose for pure trees, but ALSO honors cross-chain
+ *  (snap/loop) joints — so two snapped modules stay connected in free mode instead
+ *  of falling apart (the old tree FK dropped those "second-parent" joints). */
+function pickDefaultRoot(doc: any): string | null {
+  const ids = Object.keys(doc.bodies ?? {});
+  if (!ids.length) return null;
+  const childJoint = buildChildJointMap(doc);
+  return ids.find((id) => !childJoint.has(id)) ?? ids[0];
+}
+
+/** The body everything is measured/hung from: the grounded body in rigid mode,
+ *  else a natural base. Shared by FK and the load analysis so "where it's
+ *  grounded" consistently defines the load path. */
+export function resolveRoot(doc: any): string | null {
   const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
-  if (bodyMode === 'rigid' && activeBodyId && doc.bodies?.[activeBodyId]) {
-    return computeFKGraph(doc, activeBodyId);
-  }
-  return computeFKTree(doc);
+  if (bodyMode === 'rigid' && activeBodyId && doc.bodies?.[activeBodyId]) return activeBodyId;
+  return pickDefaultRoot(doc);
+}
+
+/** Compute world transforms. Rigid mode roots the graph at the grounded body;
+ *  free mode roots it at a natural base — both use graph FK so snap joints hold. */
+export function computeFK(doc: any) {
+  const root = resolveRoot(doc);
+  return root ? computeFKGraph(doc, root) : computeFKTree(doc);
 }
 
 /** Rest origin (child-in-parent) from two bodies' authored transforms. */

@@ -33,6 +33,9 @@ interface WorkspaceState {
   // FK body mode: 'free' = tree FK (legacy), 'rigid' = graph FK rooted at activeBodyId
   bodyMode: 'free' | 'rigid';
   activeBodyId: string | null;
+  // Auto-ground: keep the grounded body at whichever is nearest the live CoM.
+  autoBase: boolean;
+  setAutoBase: (v: boolean) => void;
   setLeftPanelWidth: (v: number) => void;
   setPxHeight: (v: number) => void;
   setBuildOpen: (v: boolean) => void;
@@ -71,6 +74,8 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   hiddenBodyIds:  init.hiddenBodyIds  ?? [],
   bodyMode:       'free',
   activeBodyId:   null,
+  autoBase:       false,
+  setAutoBase:    (autoBase) => set({ autoBase }),
 
   setLeftPanelWidth: (leftPanelWidth) => { set({ leftPanelWidth }); persist(get()); },
   setPxHeight:       (pxHeight)       => { set({ pxHeight });       persist(get()); },

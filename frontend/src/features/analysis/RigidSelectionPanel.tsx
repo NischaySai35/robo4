@@ -12,7 +12,42 @@
 import './AnalysisPanel.css';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
+import { useWorkspaceStore } from '@/state/workspaceStore';
+import { useAutoGround } from '@/features/rigid/useAutoGround';
 import { bodiesOfComponent, jointsOfComponent } from '@/core/model/index';
+
+/** Free/Rigid grounding + Auto-ground — the SAME shared state as the Editor and
+ *  Animation pages, surfaced here so you can ground the model and see stress
+ *  update without leaving Analysis. */
+function GroundingControls() {
+  const doc = useModelStore((s) => s.doc);
+  const bodyMode = useWorkspaceStore((s) => s.bodyMode);
+  const setBodyMode = useWorkspaceStore((s) => s.setBodyMode);
+  const activeBodyId = useWorkspaceStore((s) => s.activeBodyId);
+  const autoBase = useWorkspaceStore((s) => s.autoBase);
+  const setAutoBase = useWorkspaceStore((s) => s.setAutoBase);
+  const rigid = bodyMode === 'rigid';
+  useAutoGround();
+  return (
+    <div className="an-rigid an-ground">
+      <div className="an-rigid-row">
+        <span className="an-rigid-label">Grounding</span>
+        <div className="an-rigid-gizmo">
+          <button className={`an-rigid-btn${!rigid ? ' an-rigid-btn--on' : ''}`} onClick={() => setBodyMode('free')} title="Free float — no fixed base">Free</button>
+          <button className={`an-rigid-btn${rigid ? ' an-rigid-btn--on' : ''}`} onClick={() => setBodyMode('rigid')} title="Rigid — ground a base body (right-click one in 3D)">Rigid</button>
+        </div>
+      </div>
+      {rigid && (
+        <div className="an-rigid-row">
+          <button className={`an-rigid-btn${autoBase ? ' an-rigid-btn--on' : ''}`} onClick={() => setAutoBase(!autoBase)} title="Auto-ground the body nearest the center of mass, updating as the model moves">
+            ⚖ Auto-ground (CoM)
+          </button>
+          <span className="an-rigid-label">Base: {activeBodyId ? (doc.bodies[activeBodyId]?.name ?? '—') : 'right-click a body'}</span>
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function RigidSelectionPanel() {
   const doc = useModelStore((s) => s.doc);
@@ -26,9 +61,12 @@ export default function RigidSelectionPanel() {
 
   if (kind !== 'body' || !ids.length) {
     return (
-      <div className="an-rigid an-rigid--empty">
-        Click a body in the viewport to select it, then Move/Rotate — mass, CoM, and stress update live.
-      </div>
+      <>
+        <GroundingControls />
+        <div className="an-rigid an-rigid--empty">
+          Click a body in the viewport to select it, then Move/Rotate — mass, CoM, and stress update live.
+        </div>
+      </>
     );
   }
 
@@ -49,6 +87,8 @@ export default function RigidSelectionPanel() {
       : activeBody?.name ?? 'Body';
 
   return (
+    <>
+    <GroundingControls />
     <div className="an-rigid">
       <div className="an-rigid-row">
         <span className="an-rigid-label">{label}</span>
@@ -83,5 +123,6 @@ export default function RigidSelectionPanel() {
         </div>
       )}
     </div>
+    </>
   );
 }

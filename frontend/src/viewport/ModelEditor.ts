@@ -35,7 +35,7 @@ import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepi
 import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
 import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
 import { PivotPickTool } from '@/viewport/PivotPickTool';
-import { hideGizmoVisuals, constantScreenSize, circleSpriteTexture } from '@/viewport/gizmoUtil';
+import { hideGizmoVisuals, constantScreenSize } from '@/viewport/gizmoUtil';
 import { useTransformHudStore } from '@/state/transformHudStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { mateBridge, type MateAnimRequest } from '@/features/assembly/mateBridge';
@@ -110,20 +110,9 @@ export class ModelEditor {
       arrow.line.renderOrder = 9999;
       arrow.cone.renderOrder = 9999;
       arrow.renderOrder = 9999;
-      // An axis pointing nearly straight at/away from the camera foreshortens
-      // its shaft down to almost nothing — a 3D sphere marker has the same
-      // problem at a steep enough angle. A Sprite always faces the camera, so
-      // it can't foreshorten; put one at the tip so every axis stays visible
-      // as at least a colored dot regardless of view angle.
-      // Same visual weight as the scale-mode boxes (0.045 was too small to
-      // compete against them and read as "basically invisible" by comparison).
-      const dot = new THREE.Sprite(new THREE.SpriteMaterial({
-        map: circleSpriteTexture(), color: AXIS_COLOR[axis], depthTest: false, sizeAttenuation: true,
-      }));
-      dot.scale.setScalar(0.09);
-      dot.position.copy(AXIS_DIR[axis]).multiplyScalar(R + 0.02);
-      dot.renderOrder = 9999;
-      arrow.add(dot);
+      // (Previously a round Sprite "dot" sat at each arrow tip as a
+      // camera-facing fallback for axes pointing at the camera — but it read as
+      // an unwanted circle on the gizmo, so it's removed for clean arrows.)
       this._moveIndicator.add(arrow);
       return arrow;
     });
@@ -287,8 +276,9 @@ export class ModelEditor {
       e.preventDefault();
       const page = usePageStore.getState().page;
       const { bodyMode } = useWorkspaceStore.getState();
-      if (page === 'editor' && bodyMode === 'rigid') {
-        // Quick-set active body without popup (preserved UX)
+      if (bodyMode === 'rigid' && (page === 'editor' || page === 'animation' || page === 'analysis')) {
+        // Quick-set the grounded/active body without a popup, on any page that
+        // uses rigid grounding — shared state keeps them all in sync.
         useWorkspaceStore.getState().setActiveBodyId(hitId);
         this.bodyRenderer.setActiveBody(hitId);
         this._syncModel(useModelStore.getState().doc);
@@ -689,9 +679,10 @@ export class ModelEditor {
     // Obstacle AABBs = every body that ISN'T part of the moving module and isn't
     // the mate partner (the key is supposed to interlock with the partner). These
     // don't move during the mate, so snapshot them once.
+    const ignore = new Set([...movedIds, ...(req.ignoreIds ?? [])]);
     const obstacles: { id: string; box: THREE.Box3 }[] = [];
     for (const id of Object.keys(this._doc?.bodies ?? {})) {
-      if (movedIds.has(id) || id === req.partnerId) continue;
+      if (ignore.has(id)) continue;
       const c = this.bodyRenderer.getMesh(id);
       if (c) obstacles.push({ id, box: new THREE.Box3().setFromObject(c) });
     }

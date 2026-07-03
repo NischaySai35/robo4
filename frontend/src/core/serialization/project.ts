@@ -97,8 +97,12 @@ export function parseProject(obj: any) {
 
   // Graph model (Phase 0+). Absent in legacy files → start with an empty document.
   const model = obj.model && obj.model.kind === 'document' ? obj.model : makeDocument();
-  const animation = obj.animation && typeof obj.animation === 'object'
-    ? { duration: Number(obj.animation.duration) || 4, tracks: obj.animation.tracks ?? {} }
+  // Pass the animation object through UNCHANGED so the full multi-clip v3 shape
+  // (clips + keyframe tracks + groups) survives a save→open round-trip. loadClip
+  // handles both the v3 format and the legacy { duration, tracks }; reducing it
+  // here would silently drop every non-active clip and all groups.
+  const animation = (obj.animation && typeof obj.animation === 'object')
+    ? obj.animation
     : { duration: 4, tracks: {} };
 
   const workspace = (obj.workspace && typeof obj.workspace === 'object') ? obj.workspace : {};

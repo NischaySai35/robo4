@@ -169,7 +169,10 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
         keys.sort((a, b) => a.t - b.t);
         tracks[jid] = keys;
       }
-      return { tracks };
+      // Also write back into the active clip so its stored key count updates live
+      // (was only synced on add/select/delete → the clip row showed "empty").
+      const clips = s.clips.map((c) => (c.id === s.activeClipId ? { ...c, tracks } : c));
+      return { tracks, clips };
     }),
 
     keyTimes: () => {
@@ -181,10 +184,14 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
     deleteKeyAt: (t) => set((s) => {
       const tracks: Tracks = {};
       for (const [jid, keys] of Object.entries(s.tracks)) tracks[jid] = keys.filter((k) => Math.abs(k.t - t) > 1e-3);
-      return { tracks };
+      const clips = s.clips.map((c) => (c.id === s.activeClipId ? { ...c, tracks } : c));
+      return { tracks, clips };
     }),
 
-    clear: () => set({ tracks: {}, playhead: 0, playing: false, preview: false }),
+    clear: () => set((s) => ({
+      tracks: {}, playhead: 0, playing: false, preview: false,
+      clips: s.clips.map((c) => (c.id === s.activeClipId ? { ...c, tracks: {} } : c)),
+    })),
 
     setPlayhead: (playhead) => set((s) => {
       let t = Math.max(0, Math.min(s.duration, playhead));

@@ -133,6 +133,51 @@ export function updateJoint(jointId: any, patch: any) {
   );
 }
 
+// ── Joint profiles (shared "joint types" — Twist / Bend / …) ─────────────────────
+
+export function addJointProfile(profile: any) {
+  return command(
+    `Add ${profile.name}`,
+    (doc: any) => putEntity(doc, profile),
+    (doc: any) => removeFrom(doc, 'jointProfiles', profile.id),
+  );
+}
+
+/** Edit a shared joint profile — every joint referencing it inherits the change
+ *  (the analysis reads the actuator from the profile), so all joints of that type
+ *  stay in sync automatically. */
+export function updateJointProfile(profileId: any, patch: any) {
+  let prev: any = null;
+  return command(
+    'Update joint type',
+    (doc: any) => {
+      prev = doc.jointProfiles?.[profileId];
+      if (!prev) return doc;
+      return putEntity(doc, { ...prev, ...patch });
+    },
+    (doc: any) => (prev ? putEntity(doc, prev) : doc),
+  );
+}
+
+/** Atomically create a profile AND assign it to a joint (single undo step). */
+export function addJointProfileAndAssign(profile: any, jointId: any) {
+  let prevJoint: any = null;
+  return command(
+    `Add ${profile.name}`,
+    (doc: any) => {
+      prevJoint = getJoint(doc, jointId);
+      let d = putEntity(doc, profile);
+      if (prevJoint) d = putEntity(d, { ...prevJoint, profileId: profile.id });
+      return d;
+    },
+    (doc: any) => {
+      let d = removeFrom(doc, 'jointProfiles', profile.id);
+      if (prevJoint) d = putEntity(d, prevJoint);
+      return d;
+    },
+  );
+}
+
 /** Set many joint values at once (e.g. an IK solution) as one undoable step. */
 export function setJointValues(values: any) {
   const prev: Record<string, any> = {};
@@ -365,6 +410,35 @@ export function snapAndJoin(patches: [string, any][], joint: any) {
     (doc: any) => {
       let d = removeFrom(doc, 'joints', joint.id);
       for (const b of prevBodies) d = putEntity(d, b);
+      return d;
+    },
+  );
+}
+
+/** Reverse of snapAndJoin: remove a snap joint AND move the detached module to a
+ *  separated pose, as one undo step — so the two parts stay pulled apart instead
+ *  of snapping back to their mated authored transforms after the joint is gone. */
+export function detachAndSeparate(jointId: any, patches: [string, any][]) {
+  let prevJoint: any = null;
+  let prevBodies: any[] = [];
+  return command(
+    'Unlock connectors',
+    (doc: any) => {
+      prevJoint = doc.joints?.[jointId] ?? null;
+      let d = removeFrom(doc, 'joints', jointId);
+      prevBodies = [];
+      for (const [id, patch] of patches) {
+        const b = getBody(d, id);
+        if (!b) continue;
+        prevBodies.push(b);
+        d = putEntity(d, { ...b, ...patch });
+      }
+      return d;
+    },
+    (doc: any) => {
+      let d = doc;
+      for (const b of prevBodies) d = putEntity(d, b);
+      if (prevJoint) d = putEntity(d, prevJoint);
       return d;
     },
   );

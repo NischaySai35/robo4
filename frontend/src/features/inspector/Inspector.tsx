@@ -798,6 +798,19 @@ export default function Inspector() {
               </button>
             ))}
           </div>
+          <div className="in-multi-sub">Orient long axis to</div>
+          <div className="in-pivot-row">
+            {(['x', 'y', 'z'] as const).map((ax) => (
+              <button key={ax} className="in-pivot-btn"
+                title={`Rotate the whole connected module so its long axis points along world ${ax.toUpperCase()} (only when at home)`}
+                onClick={() => {
+                  const r = bridge.orientSelectionAxis?.(ax);
+                  if (r && !r.ok) alert(r.error);
+                }}>
+                {ax.toUpperCase()}{ax === 'x' ? ' ⇢' : ax === 'y' ? ' ⇡' : ' ⊙'}
+              </button>
+            ))}
+          </div>
           <div className="in-multi-hint">
             Editing the fields below changes the <strong>active</strong> body. Use M / R / S in
             the viewport to transform the whole group around the chosen pivot.

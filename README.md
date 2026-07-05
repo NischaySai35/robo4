@@ -1,4 +1,11 @@
-# TETROBOT — GUI-first Robotics Modeling, Simulation & Training Platform
+<div align="center">
+
+# ✴ TETROBOT
+
+### GUI-first Robotics Modeling, Simulation & Training Platform
+
+*Design, simulate, analyze, animate, train and drive any robot — including modular,*
+*shape-changing ones — **without writing a line of code.***
 
 ![License: Proprietary](https://img.shields.io/badge/license-Proprietary-red)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)
@@ -8,6 +15,8 @@
 ![Electron](https://img.shields.io/badge/Electron-desktop-47848F?logo=electron&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-desktop%20%7C%20web-informational)
 
+</div>
+
 Design any robot **without writing code** — including **modular robots** you
 assemble by snapping keyed connectors together. Simulate it (kinematics + physics),
 analyze it (mass, motor load, material stress, current), animate it, train intelligent
@@ -16,13 +25,21 @@ stack** (navigation, motion planning, perception, behaviour trees) — all in on
 No ROS, no middleware, no servers. Optionally drive real hardware
 (ESP32-C3 + ST3215 smart servos) over WiFi, in real time.
 
-> One rich model, many backends: a single JSON-serializable robot **document** is
+> **One rich model, many backends.** A single JSON-serializable robot **document** is
 > the source of truth; the 3D viewport, physics, analysis, animation, training,
 > exporters, hardware and autonomy are all *views* of it. The app is organized into
 > pages — **Editor · Analysis · Training · Animation · Motor Control** — that share
 > one live 3D scene.
 
 By **Nischay Sai D R** · Proprietary & confidential.
+
+---
+
+## Contents
+
+[Highlights](#highlights) · [Architecture](#architecture) · [Tech stack](#tech-stack) ·
+[Getting started](#getting-started) · [Using it](#using-it) ·
+[Hardware](#hardware-optional) · [License](#license)
 
 ---
 
@@ -47,6 +64,13 @@ By **Nischay Sai D R** · Proprietary & confidential.
   FABRIK). **Drag-from-tip IK**: grab any link and the chain solves to follow. A shared
   **Free / Rigid grounding** (with optional **Auto-ground to CoM**) picks the fixed base;
   the choice is consistent across Editor, Analysis and Animation.
+- **Closed-loop mechanisms (parallel linkages)** — lock connectors into a **loop** and it
+  behaves like a real parallel mechanism, not a tree that falls apart. A real-time
+  **cut-joint constraint projection** re-closes every loop after *any* edit (drag, gizmo,
+  animation) so locks never tear; **type-aware** closure keeps a revolute's hinge axis
+  aligned while its angle stays free. Levenberg–Marquardt IK with task-priority
+  **nullspace** resolution spreads the bend by least effort, and a **VSEPR-style spread
+  score** (a live on-screen number) opens the assembly out instead of letting it crumple.
 - **Physics** — live gravity simulation on Rapier with anchored roots, joint limits,
   servo-style holding motors, and a per-pair **self-collision** model (parts that are
   jointed or nest at rest pass through; everything else collides solidly).
@@ -84,7 +108,8 @@ By **Nischay Sai D R** · Proprietary & confidential.
   in one click, with walk / jump / wave / home actions for the humanoid.
 - **AI Copilot** — in-app assistant (Transformers.js) that can build/edit the model.
 - **Projects** — save/load self-contained, encrypted **`.nischay`** files (geometry +
-  embedded meshes + animation, all in one file). Export to OBJ / STL / GLB / URDF / IDL.
+  embedded meshes + animation, all in one file). Export geometry to **OBJ / STL / GLB**
+  and robot descriptions to **URDF / SDF / MJCF / IDL**.
 - **Desktop + web** — runs as an Electron desktop app or in the browser.
 - **Hardware control + real-time Sync** — a **Motor Control** page drives ST3215 servos
   via an ESP32-C3 (live telemetry, group control, sequences). A **Sync** toggle streams
@@ -104,49 +129,16 @@ By **Nischay Sai D R** · Proprietary & confidential.
          ▼              ▼              ▼               ▼               ▼              ▼             ▼
     Viewport        Physics        Kinematics       Analysis        Training       Autonomy      Exporters
 (Three.js render,  (Rapier sim,   (FK / IK /       (mass, motor    (ES/CMA-ES/BC  (nav, RRT,    (.nischay,
- gizmos, mating)    collisions)    FABRIK, gr'd)    load, stress)    + VLM cloud)  lidar, BT)   OBJ/STL/GLB/URDF)
+ gizmos, mating)    collisions)    FABRIK, gr'd)    load, stress)    + VLM cloud)  lidar, BT)   OBJ/STL/GLB,
+                                                                                                URDF/SDF/MJCF/IDL)
                                                                                                       │
                                                                                    Hardware ── ESP32-C3 ── ST3215 bus
 ```
 
-See [`frontend/ARCHITECTURE.md`](frontend/ARCHITECTURE.md) and
-[`ROADMAP.md`](ROADMAP.md) / [`ROADMAP_ROBOTICS.md`](ROADMAP_ROBOTICS.md) for details.
-
----
-
-## Project structure
-
-```
-robo4/
-├── frontend/                       # The app (100% TypeScript, strict)
-│   ├── electron/                   # Desktop shell (main.cjs, launch.cjs)
-│   └── src/
-│       ├── core/
-│       │   ├── model/              # entities + Document graph model (the "DDL")
-│       │   ├── commands/           # undoable command bus
-│       │   ├── factory/            # robotArm.ts, humanoid.ts generators
-│       │   └── serialization/      # .nischay codec, project I/O, exporters
-│       ├── kinematics/             # modelFK (graph FK + grounding), modelIK (DLS), fabrik,
-│       │                           #   analysis (mass/torque/motor load/material stress)
-│       ├── viewport/               # SceneManager, ModelEditor, PhysicsSim (Rapier), renderers
-│       ├── hardware/               # HardwareBridge (live sync), transports, ST3215 protocol
-│       ├── robotics/               # NATIVE autonomy + training stack
-│       │   ├── nav/                # occupancyGrid, astar, pathFollower, worldModel
-│       │   ├── planning/           # rrt.ts (joint-space motion planning)
-│       │   ├── collision.ts        # self/world collision model
-│       │   ├── sensors/            # lidar.ts (scene raycast)
-│       │   ├── rl/                 # ES, CMA-ES, BC trainers · policy · tasks ·
-│       │   │                       #   obsNormalizer · curriculum · topologyEncoder
-│       │   └── behavior/           # behaviorTree.ts engine
-│       ├── features/               # UI: panels, menus, assembly (mating), analysis,
-│       │                           #   animation, autonomy, training, motor control, AI, ...
-│       └── state/                  # Zustand stores (model, selection, workspace, hardware, ...)
-├── backend/                        # Optional FastAPI stub (proxy to ESP32)
-├── esp32/                          # ESP32-C3 firmware (WiFi API + ST3215 driver)
-├── tools/                          # Blender import add-on, helpers
-├── ROADMAP.md                      # Platform roadmap
-└── ROADMAP_ROBOTICS.md             # Native autonomy-stack roadmap
-```
+For the code-level layout and design details, see
+[`frontend/ARCHITECTURE.md`](frontend/ARCHITECTURE.md); roadmaps live in
+[`ROADMAP.md`](ROADMAP.md) / [`ROADMAP_ROBOTICS.md`](ROADMAP_ROBOTICS.md) /
+[`PLAN-INDUSTRIAL.md`](PLAN-INDUSTRIAL.md).
 
 ---
 
@@ -220,8 +212,8 @@ uvicorn main:app --reload --port 8000
 7. **Autonomy.** Add obstacles, build a LiDAR map, set a goal and **Navigate**; plan a
    collision-checked arm trajectory (**RRT**); or run a **Behaviour-Tree** mission.
 8. **Save / export.** **File ▸ Save Project As** writes a self-contained `.nischay`
-   (geometry + embedded meshes + all animation clips/groups, encrypted). Export OBJ / STL
-   / GLB / URDF.
+   (geometry + embedded meshes + all animation clips/groups, encrypted). Export geometry
+   (OBJ / STL / GLB) or a robot description (URDF / SDF / MJCF / IDL).
 
 ### Training algorithms
 

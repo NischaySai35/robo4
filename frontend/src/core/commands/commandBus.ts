@@ -23,6 +23,11 @@ export class CommandBus {
   _cap: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _listeners: Set<any>;
+  // Injected loop-closure stabilizer (doc→doc). Kept out of core so @/core stays framework- and
+  // feature-free; the app wires the real one (features/assembly) at startup. Applied after every
+  // FORWARD mutation so closed lock loops can never be left open by any edit path.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _stabilize: ((doc: any) => any) | null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   constructor(doc: any, { cap = DEFAULT_CAP }: { cap?: number } = {}) {
@@ -31,7 +36,14 @@ export class CommandBus {
     this._redo = [];
     this._cap = cap;
     this._listeners = new Set();
+    this._stabilize = null;
   }
+
+  /** Install the loop-closure stabilizer. Called once at app startup. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  setStabilizer(fn: ((doc: any) => any) | null) { this._stabilize = fn; }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _stabilized(doc: any) { return this._stabilize ? this._stabilize(doc) : doc; }
 
   get doc() { return this._doc; }
   get canUndo() { return this._undo.length > 0; }
@@ -48,7 +60,7 @@ export class CommandBus {
     if (!command || typeof command.redo !== 'function') {
       throw new Error('dispatch() requires a command with redo()/undo()');
     }
-    this._doc = command.redo(this._doc);
+    this._doc = this._stabilized(command.redo(this._doc));
     this._undo.push(command);
     if (this._undo.length > this._cap) this._undo.shift();
     this._redo.length = 0;
@@ -81,7 +93,7 @@ export class CommandBus {
    * settled pose afterwards.
    */
   applyTransient(fn: any) {
-    this._doc = fn(this._doc);
+    this._doc = this._stabilized(fn(this._doc));
     this._emit('transient', null);
     return this._doc;
   }

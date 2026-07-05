@@ -14,6 +14,29 @@ function easeInOut(t: number) {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 }
 
+/** True if the joint graph contains a CYCLE (e.g. two connectors locked into a ring).
+ *  Homing the revolute joints of such a loop can't satisfy the fixed loop closure, so it
+ *  would tear the module apart — we refuse instead. Union-find: a joint that connects two
+ *  already-connected bodies closes a loop. */
+function hasLockedLoop(doc: Document): boolean {
+  const parent = new Map<string, string>();
+  for (const id of Object.keys(doc.bodies)) parent.set(id, id);
+  const find = (x: string): string => {
+    let r = x;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    while (parent.get(x) !== r) { const n = parent.get(x)!; parent.set(x, r); x = n; }
+    return r;
+  };
+  for (const j of Object.values(doc.joints)) {
+    const a = j.parentBodyId as string, b = j.childBodyId as string;
+    if (!a || !b || !parent.has(a) || !parent.has(b)) continue;
+    const ra = find(a), rb = find(b);
+    if (ra === rb) return true;   // this joint closes a ring
+    parent.set(ra, rb);
+  }
+  return false;
+}
+
 export default function HomeButton() {
   const movableCount = useModelStore(
     (s) => Object.values(s.doc.joints).filter((j) => j.type !== 'fixed').length,
@@ -22,6 +45,10 @@ export default function HomeButton() {
 
   const home = () => {
     const { doc, applyTransient, dispatch } = useModelStore.getState();
+    if (hasLockedLoop(doc)) {
+      alert("Can't Home — this module has a locked connector loop (two connectors joined into a ring). Unlock one connector first; otherwise homing the joints would break the module apart.");
+      return;
+    }
     const startValues: Record<string, number> = {};
     for (const j of Object.values(doc.joints)) {
       if (j.type !== 'fixed') startValues[j.id] = (j as any).state?.value ?? 0;

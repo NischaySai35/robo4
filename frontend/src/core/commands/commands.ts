@@ -415,6 +415,35 @@ export function snapAndJoin(patches: [string, any][], joint: any) {
   );
 }
 
+/** Bend existing joints (IK solution) AND add one new joint as a single undo step —
+ *  used by the manual Assembly Mate when the two connectors are already connected
+ *  through the model, so we close the loop by articulating instead of teleporting a
+ *  component (which would tear the structure). */
+export function bendAndJoin(jointValues: Record<string, any>, joint: any) {
+  const prev: Record<string, any> = {};
+  return command(
+    joint.name ?? 'Snap (bend to connect)',
+    (doc: any) => {
+      let d = doc;
+      for (const [id, v] of Object.entries(jointValues)) {
+        const j = getJoint(d, id);
+        if (!j) continue;
+        prev[id] = j.state?.value ?? 0;
+        d = putEntity(d, { ...j, state: { ...j.state, value: v } });
+      }
+      return putEntity(d, joint);
+    },
+    (doc: any) => {
+      let d = removeFrom(doc, 'joints', joint.id);
+      for (const [id, v] of Object.entries(prev)) {
+        const j = getJoint(d, id);
+        if (j) d = putEntity(d, { ...j, state: { ...j.state, value: v } });
+      }
+      return d;
+    },
+  );
+}
+
 /** Reverse of snapAndJoin: remove a snap joint AND move the detached module to a
  *  separated pose, as one undo step — so the two parts stay pulled apart instead
  *  of snapping back to their mated authored transforms after the joint is gone. */
@@ -439,6 +468,63 @@ export function detachAndSeparate(jointId: any, patches: [string, any][]) {
       let d = doc;
       for (const b of prevBodies) d = putEntity(d, b);
       if (prevJoint) d = putEntity(d, prevJoint);
+      return d;
+    },
+  );
+}
+
+/** Remove MANY lock joints at once AND separate the moved bodies — one undo step. Used to
+ *  fully unlock two modules that are joined by more than one connector (a loop). */
+export function detachManyAndSeparate(jointIds: any[], patches: [string, any][]) {
+  let prevJoints: any[] = [];
+  let prevBodies: any[] = [];
+  return command(
+    'Unlock connectors',
+    (doc: any) => {
+      prevJoints = jointIds.map((id) => doc.joints?.[id]).filter(Boolean);
+      let d = doc;
+      for (const id of jointIds) d = removeFrom(d, 'joints', id);
+      prevBodies = [];
+      for (const [id, patch] of patches) {
+        const b = getBody(d, id);
+        if (!b) continue;
+        prevBodies.push(b);
+        d = putEntity(d, { ...b, ...patch });
+      }
+      return d;
+    },
+    (doc: any) => {
+      let d = doc;
+      for (const b of prevBodies) d = putEntity(d, b);
+      for (const j of prevJoints) d = putEntity(d, j);
+      return d;
+    },
+  );
+}
+
+/** Remove lock joint(s) AND bend the existing joints (IK solution) so the unlocked connector
+ *  separates while another lock still holds the modules — one undo step. */
+export function detachAndBend(jointIds: any[], jointValues: Record<string, any>) {
+  let prevJoints: any[] = [];
+  const prevVals: Record<string, any> = {};
+  return command(
+    'Unlock connectors',
+    (doc: any) => {
+      prevJoints = jointIds.map((id) => doc.joints?.[id]).filter(Boolean);
+      let d = doc;
+      for (const id of jointIds) d = removeFrom(d, 'joints', id);
+      for (const [id, v] of Object.entries(jointValues)) {
+        const j = getJoint(d, id);
+        if (!j) continue;
+        prevVals[id] = j.state?.value ?? 0;
+        d = putEntity(d, { ...j, state: { ...j.state, value: v } });
+      }
+      return d;
+    },
+    (doc: any) => {
+      let d = doc;
+      for (const [id, v] of Object.entries(prevVals)) { const j = getJoint(d, id); if (j) d = putEntity(d, { ...j, state: { ...j.state, value: v } }); }
+      for (const j of prevJoints) d = putEntity(d, j);
       return d;
     },
   );

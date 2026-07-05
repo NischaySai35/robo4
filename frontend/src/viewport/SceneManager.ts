@@ -129,6 +129,91 @@ export class SceneManager {
       }
     });
 
+    // ── Fusion-360-style smart orbit pivot + green-dot indicator ──────────────
+    // OrbitControls always looks at controls.target, so orbiting around an OFF-axis
+    // point by moving the target shifts the whole scene (three.js #18476). Instead we
+    // disable OrbitControls' rotate and orbit the camera RIG rigidly about a chosen
+    // pivot P — rotating both the camera position AND orientation about P keeps P
+    // pinned on screen with ZERO jump. Pan/zoom stay with OrbitControls.
+    //
+    // Pivot P is chosen like Fusion: (1) the geometry under the cursor, else (2) the
+    // model's bounding-box centre when the whole model is on-screen, else (3) the
+    // nearest geometry to the camera. A small green dot marks P while you orbit.
+    this.controls.enableRotate = false;
+    const _UP = new THREE.Vector3(0, 1, 0);
+    const _ray = new THREE.Raycaster();
+    const _tmpV = new THREE.Vector3();
+    const _fwd = new THREE.Vector3();
+    let _orbit: { px: number; py: number; P: THREE.Vector3; active: boolean } | null = null;
+
+    const ndcOf = (e: PointerEvent) => {
+      const r = canvas.getBoundingClientRect();
+      return { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 } as THREE.Vector2;
+    };
+    const modelHit = (ndc: THREE.Vector2): THREE.Vector3 | null => {
+      const grp = bridge.getModelGroup?.();
+      if (!grp) return null;
+      _ray.setFromCamera(ndc, this.camera);
+      for (const h of _ray.intersectObjects([grp], true)) {
+        const o = h.object as any;
+        if (o.visible && o.isMesh && !(o.material && o.material.depthTest === false)) return h.point.clone();
+      }
+      return null;
+    };
+    const pickPivot = (ndc: THREE.Vector2): THREE.Vector3 => {
+      const hit = modelHit(ndc);                              // 1) geometry under cursor
+      if (hit) return hit;
+      const box = bridge.getFitBox?.() as THREE.Box3 | null | undefined;
+      if (!box || box.isEmpty()) return this.controls.target.clone();
+      this.camera.updateMatrixWorld();
+      const frustum = new THREE.Frustum().setFromProjectionMatrix(
+        new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
+      if (frustum.containsPoint(box.min) && frustum.containsPoint(box.max))
+        return box.getCenter(new THREE.Vector3());           // 2) whole model on-screen → centre
+      return modelHit({ x: 0, y: 0 } as THREE.Vector2)       // 3a) nearest geometry ahead
+        ?? box.clampPoint(this.camera.position, new THREE.Vector3()); // 3b) nearest bbox point
+    };
+    const rotateRig = (q: THREE.Quaternion, P: THREE.Vector3) => {
+      this.camera.position.sub(P).applyQuaternion(q).add(P);
+      this.camera.quaternion.premultiply(q);
+      // Keep OrbitControls' target on the camera forward axis so its per-frame
+      // update()/lookAt(target) stays a no-op (no fight with the rig rotation).
+      this.camera.getWorldDirection(_fwd);
+      this.controls.target.copy(this.camera.position).addScaledVector(_fwd, this.camera.position.distanceTo(P));
+    };
+
+    this._onOrbitDown = (e: PointerEvent) => {
+      if (e.button !== 0 || !this.controls.enabled) return;
+      _orbit = { px: e.clientX, py: e.clientY, P: pickPivot(ndcOf(e)), active: false };
+    };
+    this._onOrbitMove = (e: PointerEvent) => {
+      if (!_orbit) return;
+      // A gizmo / IK "drag tip" grab disables the controls AFTER pointer-down — bail so
+      // the camera never orbits while you're actually dragging a body or a handle.
+      if (!this.controls.enabled) { if (_orbit.active) this._hidePivotDot(); _orbit = null; return; }
+      const dx = e.clientX - _orbit.px, dy = e.clientY - _orbit.py;
+      if (!_orbit.active) {
+        if (Math.hypot(e.clientX - _orbit.px, e.clientY - _orbit.py) < 4) return; // still a click
+        _orbit.active = true;
+        this._showPivotDot(_orbit.P);
+        canvas.setPointerCapture?.(e.pointerId);
+      }
+      const h = canvas.clientHeight || 1;
+      const az = (-2 * Math.PI * dx) / h, pol = (-2 * Math.PI * dy) / h;
+      const right = _tmpV.setFromMatrixColumn(this.camera.matrix, 0).normalize();
+      const q = new THREE.Quaternion().setFromAxisAngle(_UP, az)
+        .multiply(new THREE.Quaternion().setFromAxisAngle(right, pol));
+      rotateRig(q, _orbit.P);
+      _orbit.px = e.clientX; _orbit.py = e.clientY;
+    };
+    this._onOrbitUp = (e: PointerEvent) => {
+      if (_orbit?.active) { this._hidePivotDot(); canvas.releasePointerCapture?.(e.pointerId); }
+      _orbit = null;
+    };
+    canvas.addEventListener('pointerdown', this._onOrbitDown);
+    canvas.addEventListener('pointermove', this._onOrbitMove);
+    window.addEventListener('pointerup', this._onOrbitUp);
+
     // ── Post-processing ───────────────────────────────────────────────────────
     this._buildPostProcessing(w, h);
 
@@ -532,7 +617,7 @@ export class SceneManager {
   }
 
   /** Animate camera to a target position/lookAt over `ms` milliseconds. */
-  animateCameraTo(targetPos: any, targetLookAt: any, ms = 700) {
+  animateCameraTo(targetPos: any, targetLookAt: any, ms = 950) {
     const startPos = this.camera.position.clone();
     const startTarget = this.controls.target.clone();
     const endPos = new THREE.Vector3(...(Object.values(targetPos) as number[]));
@@ -673,8 +758,31 @@ export class SceneManager {
     }
   }
 
+  /** Show the green orbit-pivot dot at world point P, sized for ~constant screen size. */
+  _showPivotDot(P: any) {
+    if (!this._pivotDot) {
+      this._pivotDot = new THREE.Mesh(
+        new THREE.SphereGeometry(1, 20, 14),
+        new THREE.MeshBasicMaterial({ color: 0x27e36a, depthTest: false, transparent: true, opacity: 0.95 }),
+      );
+      this._pivotDot.renderOrder = 3000;
+      this.scene.add(this._pivotDot);
+    }
+    this._pivotDot.position.copy(P);
+    // Rig rotation keeps |camera − P| constant during the orbit, so this size holds.
+    const s = this.camera.position.distanceTo(P) * 0.011;
+    this._pivotDot.scale.setScalar(Math.max(1e-4, s));
+    this._pivotDot.visible = true;
+  }
+  _hidePivotDot() { if (this._pivotDot) this._pivotDot.visible = false; }
+
   dispose() {
     this._resizeObserver.disconnect();
+    if (this._onOrbitDown) this.canvas.removeEventListener('pointerdown', this._onOrbitDown);
+    if (this._onOrbitMove) this.canvas.removeEventListener('pointermove', this._onOrbitMove);
+    if (this._onOrbitUp) window.removeEventListener('pointerup', this._onOrbitUp);
+    this._pivotDot?.geometry?.dispose?.();
+    this._pivotDot?.material?.dispose?.();
     this._pathTracer?.dispose();
     this.renderer.dispose();
     this.composer.dispose();

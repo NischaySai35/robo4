@@ -41,6 +41,7 @@ function CommitNumber({ value, onCommit, min, max, step, int }: {
 }
 import { useAnimationStore, type ClipGroup } from '@/state/animationStore';
 import { useModelStore } from '@/state/modelStore';
+import { useWorkspaceStore } from '@/state/workspaceStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
 
@@ -203,12 +204,24 @@ function AnimationTab() {
   const keyTimes = useAnimationStore((s) => s.keyTimes)();
   const [clipDragOver, setClipDragOver] = useState<number | null>(null);
 
-  const addKey = () => {
+  // ── Keying: joint poses, the grounded base (foot-plant), and lock (connect) states. ──
+  const keyJoints = () => {
     const doc = useModelStore.getState().doc;
     const vals: Record<string, number> = {};
     for (const j of Object.values(doc.joints)) vals[j.id] = j.state?.value ?? 0;
     if (Object.keys(vals).length) a.addKeyframe(vals);
   };
+  const keyBase = () => {
+    const ws = useWorkspaceStore.getState();
+    a.addBaseKey(ws.bodyMode === 'rigid' ? ws.activeBodyId : null);
+  };
+  const keyConnections = () => {
+    for (const j of Object.values(useModelStore.getState().doc.joints) as any[]) {
+      if (j?.meta?.generatedFromConnector) a.addConnectionKey(j.id, !j.state?.disabled);
+    }
+  };
+  const addKey = () => { keyJoints(); keyBase(); keyConnections(); }; // ◆ Key = everything
+  const [keyMenu, setKeyMenu] = useState(false);
   const rename = (id: string, cur: string) => {
     const name = window.prompt('Clip name', cur);
     if (name) a.renameClip(id, name.trim());
@@ -258,7 +271,22 @@ function AnimationTab() {
         <button onClick={() => (a.playing ? a.pause() : a.play())} title="Play / pause this clip (loops)">{a.playing && !a.sequence ? '⏸' : '▶'}</button>
         <button onClick={() => a.playAll()} title="Play all clips in order">⏭ All</button>
         <button onClick={() => a.stop()} title="Stop">⏹</button>
-        <button className="tl-key" onClick={addKey} disabled={nJoints === 0} title="Keyframe current joint values at the playhead">◆ Key</button>
+        <div className="tl-key-split">
+          <button className="tl-key" onClick={addKey} disabled={nJoints === 0} title="Key everything at the playhead: joint poses + grounded base + lock states">◆ Key all</button>
+          <button className="tl-key-caret" onClick={() => setKeyMenu((v) => !v)} title="Choose what to key">▾</button>
+          {keyMenu && (
+            <>
+              <div className="tl-key-backdrop" onClick={() => setKeyMenu(false)} />
+              <div className="tl-key-menu">
+                <button onClick={() => { addKey(); setKeyMenu(false); }}>◆ Key ALL (poses + base + locks)</button>
+                <div className="tl-key-menu-sep" />
+                <button onClick={() => { keyJoints(); setKeyMenu(false); }}>◆ Joint poses only</button>
+                <button onClick={() => { keyBase(); setKeyMenu(false); }}>◆ Grounded base only (foot-plant)</button>
+                <button onClick={() => { keyConnections(); setKeyMenu(false); }}>◆ Lock states only (connect/disconnect)</button>
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Scrubber + keyframe ruler */}

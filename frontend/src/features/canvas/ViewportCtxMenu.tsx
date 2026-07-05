@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useModelStore } from '@/state/modelStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
+import { groundBody } from '@/features/rigid/groundBody';
 import { useAnimSceneStore } from '@/state/animSceneStore';
 import { useDockStore } from '@/state/dockStore';
 import { commands } from '@/core/commands/index';
@@ -107,12 +108,22 @@ export default function ViewportCtxMenu() {
         {isEditorPage && bodyMode === 'rigid' && (
           <button onClick={() => {
             const ws = useWorkspaceStore.getState();
-            ws.setActiveBodyId(ws.activeBodyId === menu.bodyId ? null : menu.bodyId);
+            groundBody(ws.activeBodyId === menu.bodyId ? null : menu.bodyId);
             close();
           }}>
             {activeBodyId === menu.bodyId ? '⬛ Unset Active Body' : '⬛ Set as Active Body'}
           </button>
         )}
+
+        {/* Super Rigid: pin this body in space — unaffected by gravity, immovable. Pins
+            the whole connected model. */}
+        <button onClick={() => {
+          const cur = !!(body.meta as any)?.superRigid;
+          dispatch(commands.updateBody(menu.bodyId, { meta: { ...body.meta, superRigid: !cur } }));
+          close();
+        }}>
+          {(body.meta as any)?.superRigid ? '🧷 Unset Super Rigid' : '🧷 Make Super Rigid (pin in space)'}
+        </button>
 
         {/* Animation: rigid mode toggle active */}
         {isAnimPage && rigidMode && (

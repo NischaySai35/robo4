@@ -65,7 +65,9 @@ function jointDOFMatrixInverse(joint: any) {
 export function buildChildJointMap(doc: Document) {
   const m = new Map();
   for (const j of Object.values(doc.joints)) {
-    if (j.childBodyId && !m.has(j.childBodyId)) m.set(j.childBodyId, j);
+    // Skip joints disabled by an animation connection keyframe (detached at this time) —
+    // the child then falls back to its authored transform (free).
+    if (j.childBodyId && !(j as any).state?.disabled && !m.has(j.childBodyId)) m.set(j.childBodyId, j);
   }
   return m;
 }
@@ -119,6 +121,7 @@ export function computeFKGraph(doc: any, rootBodyId: string) {
   const adj = new Map<string, { joint: any; neighborId: string }[]>();
   for (const id of Object.keys(doc.bodies)) adj.set(id, []);
   for (const j of Object.values(doc.joints) as any[]) {
+    if (j.state?.disabled) continue; // detached by an animation connection keyframe
     if (j.parentBodyId && j.childBodyId && doc.bodies[j.parentBodyId] && doc.bodies[j.childBodyId]) {
       adj.get(j.parentBodyId)!.push({ joint: j, neighborId: j.childBodyId });
       adj.get(j.childBodyId)!.push({ joint: j, neighborId: j.parentBodyId });
@@ -187,7 +190,14 @@ function pickDefaultRoot(doc: any): string | null {
 /** The body everything is measured/hung from: the grounded body in rigid mode,
  *  else a natural base. Shared by FK and the load analysis so "where it's
  *  grounded" consistently defines the load path. */
+// Animation "foot-plant" override: while a clip with a base track plays, FK roots at the
+// keyed grounded body for the current segment (not the workspace's grounded base). Set to a
+// bodyId during playback, cleared (null) when it stops.
+let _animRootOverride: string | null = null;
+export function setAnimRootOverride(id: string | null) { _animRootOverride = id; }
+
 export function resolveRoot(doc: any): string | null {
+  if (_animRootOverride && doc.bodies?.[_animRootOverride]) return _animRootOverride;
   const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
   if (bodyMode === 'rigid' && activeBodyId && doc.bodies?.[activeBodyId]) return activeBodyId;
   return pickDefaultRoot(doc);

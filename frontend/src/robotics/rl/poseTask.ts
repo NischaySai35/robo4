@@ -43,10 +43,10 @@ export class PoseTask implements Task {
     doc: Document,
     tipId: string,
     targetValues?: number[],
-    opts: { maxSteps?: number; weights?: RewardWeights } = {},
+    opts: { maxSteps?: number; weights?: RewardWeights; rigidRoot?: string | null } = {},
   ) {
     this.doc = doc; this.tipId = tipId;
-    this.chain = chainJoints(doc, tipId);
+    this.chain = chainJoints(doc, tipId, opts.rigidRoot ?? null);
     this.ids = this.chain.map((j) => j.id);
     this.bounds = this.chain.map((j) => [j.limit?.lower ?? -Math.PI, j.limit?.upper ?? Math.PI] as [number, number]);
     this.values = this.chain.map((j) => j.state?.value ?? 0);

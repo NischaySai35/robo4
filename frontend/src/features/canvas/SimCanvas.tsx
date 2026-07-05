@@ -11,6 +11,7 @@
 import { useEffect, useRef, Fragment } from 'react';
 import TransformHUD from '@/features/common/TransformHUD';
 import ViewportStats from './ViewportStats';
+import SpreadHud from './SpreadHud';
 import ViewportCtxMenu from './ViewportCtxMenu';
 import * as THREE from 'three';
 import { SceneManager } from '@/viewport/SceneManager';
@@ -30,6 +31,7 @@ import { useDocStore } from '@/state/docStore';
 import { useHistoryStore } from '@/state/historyStore';
 import { useModelStore } from '@/state/modelStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { useAnimSceneStore } from '@/state/animSceneStore';
 import { usePageStore } from '@/state/pageStore';
 import { useDockStore } from '@/state/dockStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
@@ -123,6 +125,9 @@ export default function SimCanvas() {
       // BodyRenderer material mode for clay / wireframe override.
       if (modelEditor?.bodyRenderer) modelEditor.bodyRenderer._engineMode = engine;
     };
+
+    // Model body group — used by the smart orbit-pivot raycast (bodies only, no grid/overlays).
+    bridge.getModelGroup = () => modelEditor.bodyRenderer?.group ?? null;
 
     // FIT bounding box over the model bodies.
     bridge.getFitBox = () => {
@@ -302,6 +307,16 @@ export default function SimCanvas() {
         if (ws.dockSplit !== undefined && ws.dockSplit !== dock.split) dock.toggleSplit();
         if (ws.dockSecondary) dock.setSecondary(ws.dockSecondary);
         if (ws.cameraState) bridge.applyCameraState?.(ws.cameraState);
+      }
+      // Restore transient UI toggles (gravity switch + A/B lock-connector picks), skipped
+      // during undo/redo (those snapshots carry no `ui`).
+      if (!opts.skipWorkspace && (scene as any).ui) {
+        const ui = (scene as any).ui;
+        useAnimSceneStore.setState({
+          gravityOn: !!ui.gravityOn,
+          mateSlotA: ui.mateSlotA ?? null,
+          mateSlotB: ui.mateSlotB ?? null,
+        });
       }
       if (opts.fit !== false) setTimeout(() => bridge.fitCamera?.(), 60);
       return { ok: true };
@@ -484,6 +499,7 @@ export default function SimCanvas() {
       <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
       <TransformHUD />
       <ViewportStats />
+      <SpreadHud />
       <ViewportCtxMenu />
     </Fragment>
   );

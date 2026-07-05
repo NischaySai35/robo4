@@ -6,6 +6,7 @@ import { useEditorStore } from '@/state/editorStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useDockStore } from '@/state/dockStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
+import { groundBody } from '@/features/rigid/groundBody';
 import { commands } from '@/core/commands/index';
 import {
   makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin, makeComponent, uid,
@@ -829,7 +830,7 @@ export default function LeftPanel({ style }: any) {
                 <div className="px-ctx-header">{ctxBody?.name ?? '—'}</div>
                 <div className="px-ctx-sep" />
                 {bodyMode === 'rigid' && (
-                  <button onClick={() => { setActiveBodyId(activeBodyId === ctxMenu.bodyId ? null : ctxMenu.bodyId); closeCtx(); }}>
+                  <button onClick={() => { groundBody(activeBodyId === ctxMenu.bodyId ? null : ctxMenu.bodyId); closeCtx(); }}>
                     {activeBodyId === ctxMenu.bodyId ? '⬛ Unset Active Body' : '⬛ Set as Active Body'}
                   </button>
                 )}

@@ -15,7 +15,9 @@
  * bonus, upright, energy…). Editing those weights is how you tell the robot what
  * "good" means — the whole skill of RL. Pure & node-testable.
  */
-export interface StepOutcome { reward: number; done: boolean; info?: Record<string, number> }
+// `info` carries scalar diagnostics (dist, x, …) plus optional structured fields a
+// task may surface for logging — e.g. `terms` (raw per-term reward) and `collided`.
+export interface StepOutcome { reward: number; done: boolean; info?: Record<string, any> }
 
 export interface Task {
   readonly obsDim: number;

@@ -1,18 +1,22 @@
 import './AnimLeftPanel.css';
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import * as THREE from 'three';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useAnimSceneStore } from '@/state/animSceneStore';
+import { useAnimationStore } from '@/state/animationStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
+import { groundBody } from '@/features/rigid/groundBody';
 import { commands } from '@/core/commands/index';
 import { uid } from '@/core/model/index';
 import type { Connector, AssemblyMate } from '@/core/model/index';
-import { findBestSnapCandidate, computeSnapPatches, getConnectorWorld } from '@/features/assembly/connectorSnap';
+import { findBestSnapCandidate, computeSnapPatches, getConnectorWorld, bodiesConnected, computeMateBend, computeUnlockBend } from '@/features/assembly/connectorSnap';
 import { mateBridge } from '@/features/assembly/mateBridge';
 import { connectorHighlight } from '@/features/assembly/connectorHighlight';
 import { computeFK } from '@/kinematics/modelFK';
+import { bridge } from '@/viewport/cameraBridge';
+import { withJointValues } from '@/control/motionRuntime';
 import { useAutoGround } from '@/features/rigid/useAutoGround';
 
 // ── Global Rotate helper ──────────────────────────────────────────────────────
@@ -56,6 +60,17 @@ function ConnectorPicker({ value, bodies, onPick, onHover }: {
   onHover: (bodyId: string | null, connectorId: string | null) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  // Close on click-outside / Escape (NOT on mouse-leave — the menu extends below the
+  // button's box, so leave-to-close made it vanish before you could reach an item).
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => { if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('pointerdown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [open]);
   const items: ConnItem[] = [];
   for (const b of bodies) {
     const conns: Connector[] = (b.meta?.connectors as Connector[] | undefined) ?? [];
@@ -66,7 +81,7 @@ function ConnectorPicker({ value, bodies, onPick, onHover }: {
   }
   const current = items.find((it) => `${it.bodyId}::${it.connectorId}` === value) ?? null;
   return (
-    <div className="alp-conn-picker" onMouseLeave={() => { onHover(null, null); setOpen(false); }}>
+    <div className="alp-conn-picker" ref={rootRef} onMouseLeave={() => onHover(null, null)}>
       <button type="button" className="alp-mate-select alp-conn-btn" onClick={() => setOpen((o) => !o)}>
         <span>{current ? `${current.body} · ${current.face}` : 'Connector…'}</span>
         <span className="alp-conn-caret">▾</span>
@@ -155,10 +170,61 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   const closeCtx = useCallback(() => setCtxMenu(null), []);
   const [snapStatus, setSnapStatus] = useState<string | null>(null);
 
+  // Collapsible panel sections (persisted). Click a section title to fold it away.
+  const [collapsed, setCollapsed] = useState<Set<string>>(
+    () => { try { return new Set(JSON.parse(localStorage.getItem('alp:collapsed') || '[]')); } catch { return new Set(); } });
+  const toggleSec = (key: string) => setCollapsed((s) => {
+    const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key);
+    localStorage.setItem('alp:collapsed', JSON.stringify([...n]));
+    return n;
+  });
+  const secTitle = (key: string, label: React.ReactNode) => (
+    <div className={`alp-section-title alp-section-title--toggle${collapsed.has(key) ? ' alp-section-title--collapsed' : ''}`}
+      onClick={() => toggleSec(key)}>
+      <span className="alp-sec-chevron">▶</span>{label}
+    </div>
+  );
+
   // Play the approach → align → insert → latch motion in the viewport, then run
   // `commit`. Falls back to an instant commit if no viewport is registered. Shared
   // by Auto-Snap and the manual Assembly Mate so both animate identically (manual
   // just commits repositioning instead of a joint).
+  // Animate the existing joints bending from their current values to the IK-solved
+  // "closed loop" values (approach → align → seat), then commit the locking joint. Uses
+  // transient joint-value updates each frame so it plays live without spamming undo.
+  const bendRafRef = useRef<number | null>(null);
+  /** Animate the joints through an ordered list of waypoint poses (each a jointId→value
+   *  map) starting from the current live pose, then run `commit`. Used for the mate's
+   *  approach→align (to the standoff pose) then insert (to the seated pose), mirroring
+   *  Auto-Snap. Transient updates each frame so it plays live without spamming undo. */
+  const animateBend = (segments: { vals: Record<string, number>; ms: number }[], commit: () => void) => {
+    if (bendRafRef.current != null) cancelAnimationFrame(bendRafRef.current);
+    if (segments.length === 0) { commit(); return; }
+    const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2); // easeInOutCubic
+    const d0 = useModelStore.getState().doc;
+    let fromVals: Record<string, number> = {};
+    const allIds = new Set<string>();
+    segments.forEach((s) => Object.keys(s.vals).forEach((id) => allIds.add(id)));
+    for (const id of allIds) fromVals[id] = d0.joints[id]?.state?.value ?? 0;
+    let seg = 0;
+    let t0 = performance.now();
+    const step = () => {
+      const s = segments[seg];
+      const p = Math.min(1, (performance.now() - t0) / s.ms);
+      const k = ease(p);
+      const vals: Record<string, number> = {};
+      for (const id of allIds) vals[id] = fromVals[id] + ((s.vals[id] ?? fromVals[id]) - fromVals[id]) * k;
+      useModelStore.getState().applyTransient((d) => withJointValues(d, vals));
+      if (p < 1) { bendRafRef.current = requestAnimationFrame(step); return; }
+      // Segment done → advance (its end pose becomes the next segment's start).
+      fromVals = { ...vals };
+      seg++;
+      if (seg < segments.length) { t0 = performance.now(); bendRafRef.current = requestAnimationFrame(step); }
+      else { bendRafRef.current = null; commit(); }
+    };
+    bendRafRef.current = requestAnimationFrame(step);
+  };
+
   const playMate = (patches: [string, any][], axisNormal: THREE.Vector3, partnerId: string, commit: () => void) => {
     if (!mateBridge.play) { commit(); return; }
     const bodies_ = patches.map(([id, p]) => ({ id, goalPos: p.transform.position, goalQuat: p.transform.quaternion }));
@@ -181,12 +247,12 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   const autoSnapConnectors = () => {
     const fk = computeFK(doc); // live world poses, so posed/rotated modules mate where they appear
     const candidate = findBestSnapCandidate(doc, fk);
-    if (!candidate) { setSnapStatus('No connectors close enough to snap.'); return; }
+    if (!candidate) { setSnapStatus('No connectors close enough to lock.'); return; }
     const { patches, joint } = computeSnapPatches(doc, candidate, fk);
     playMate(patches as [string, any][], candidate.worldA.normal, candidate.a.bodyId, () => dispatch(commands.snapAndJoin(patches, joint)));
     const nameA = doc.bodies[candidate.a.bodyId]?.name ?? '?';
     const nameB = doc.bodies[candidate.b.bodyId]?.name ?? '?';
-    setSnapStatus(`Snapped ${nameA} ↔ ${nameB} (${(candidate.distance * 1000).toFixed(1)} mm apart)`);
+    setSnapStatus(`Locked ${nameA} ↔ ${nameB} (${(candidate.distance * 1000).toFixed(1)} mm apart)`);
   };
 
   // True for joints created by connector snapping (they can be unlocked/detached).
@@ -202,22 +268,56 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
     const worldA = getConnectorWorld(doc, joint.parentBodyId, String(joint.meta?.connectorA ?? ''), fk);
     const axis = (worldA ? worldA.normal.clone() : new THREE.Vector3(0, 1, 0)).normalize();
     const childBody = doc.bodies[joint.childBodyId];
+    const pA = joint.parentBodyId, pB = joint.childBodyId;
+    // Remove ONLY lock joints between the SAME two bodies as the clicked one — so two
+    // connectors doubled on this exact pair both release, but OTHER connections (e.g. a
+    // different lock between other bodies of the same components) are left intact.
+    const jointIds = Object.values(doc.joints)
+      .filter((j: any) => j.meta?.generatedFromConnector
+        && ((j.parentBodyId === pA && j.childBodyId === pB) || (j.parentBodyId === pB && j.childBodyId === pA)))
+      .map((j: any) => j.id);
+    if (!jointIds.includes(jointId)) jointIds.push(jointId);
+
+    const SEP = 0.02; // 20 mm — matches the lock's standoff, so unlock is its mirror image
+
+    // If the two modules stay connected through ANOTHER lock after removing these, a rigid
+    // slide would fight that lock and snap back — instead BEND the joints so the unlocked
+    // connector opens a small gap while the other lock stays intact.
+    const stillConnected = bodiesConnected(
+      { ...doc, joints: Object.fromEntries(Object.entries(doc.joints).filter(([id]) => !jointIds.includes(id))) } as any,
+      pA, pB);
+    if (stillConnected) {
+      const rigidRoot = rigidMode ? activeBodyId : null;
+      const seatConn = String(joint.meta?.connectorA ?? '');
+      const childConn = String(joint.meta?.connectorB ?? joint.meta?.connectorA ?? '');
+      const bendVals = computeUnlockBend(
+        doc, jointIds,
+        { bodyId: pA, connectorId: seatConn },
+        { bodyId: pB, connectorId: childConn },
+        SEP, rigidRoot);
+      if (bendVals && Object.keys(bendVals).length) {
+        animateBend([{ vals: bendVals, ms: 600 }], () => dispatch(commands.detachAndBend(jointIds, bendVals)));
+        setSnapStatus('Unlocked — bent to separate (other lock kept).');
+        return;
+      }
+      // Couldn't bend (no movable chain) → fall through to rigid slide.
+    }
+
+    // Slide out the child's module (whole component if assigned) for the detach animation.
     const movedIds = childBody?.componentId
-      ? Object.values(doc.bodies).filter((b) => b.componentId === childBody.componentId).map((b) => b.id)
+      ? Object.values(doc.bodies).filter((x) => x.componentId === childBody.componentId).map((x) => x.id)
       : [joint.childBodyId];
-    const SEP = 0.04; // slide-out distance (world units)
     const patches: [string, any][] = movedIds.map((id) => {
       const w = fk.get(id);
       const p = (w?.position ?? doc.bodies[id].transform.position) as [number, number, number];
       const q = (w?.quaternion ?? doc.bodies[id].transform.quaternion) as [number, number, number, number];
       return [id, { transform: { ...doc.bodies[id].transform, position: [p[0] + axis.x * SEP, p[1] + axis.y * SEP, p[2] + axis.z * SEP], quaternion: q } }];
     });
-    const commit = () => dispatch(commands.detachAndSeparate(jointId, patches));
+    const commit = () => dispatch(commands.detachManyAndSeparate(jointIds, patches));
     const animBodies = patches.map(([id, p]) => ({ id, goalPos: p.transform.position, goalQuat: p.transform.quaternion }));
-    // Moving apart, so no collision guard needed; gap 0 = a single straight slide-out.
     if (mateBridge.play) mateBridge.play({ bodies: animBodies, axis: [axis.x, axis.y, axis.z], gap: 0, commit, ignoreIds: movedIds });
     else commit();
-    setSnapStatus('Unlocked.');
+    setSnapStatus(jointIds.length > 1 ? `Unlocked (${jointIds.length} locks removed).` : 'Unlocked.');
   };
 
   const addConnector = (bodyId: string) => {
@@ -305,7 +405,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
     if (rigidMode) {
       if (selIds.includes(bodyId)) {
         // Already selected → toggle it as THE grounded/active body (single, like Editor)
-        setActiveBodyId(activeBodyId === bodyId ? null : bodyId);
+        groundBody(activeBodyId === bodyId ? null : bodyId);
       } else {
         select(bodyId, 'body');
       }
@@ -386,7 +486,16 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
               <div
                 className="alp-comp-hdr"
                 onClick={() => {
-                  setSelectedComp(isSelected ? null : comp.id);
+                  const nowSelected = !isSelected;
+                  setSelectedComp(nowSelected ? comp.id : null);
+                  // Select the component's bodies as a group (kind 'body') so the
+                  // gizmo + M/R/S transform shortcuts act on the whole component —
+                  // same behaviour as the Editor's Project Explorer.
+                  if (nowSelected && compBodies.length) {
+                    useSelectionStore.getState().selectMany(compBodies.map((b) => b.id), 'body');
+                  } else {
+                    useSelectionStore.getState().clear();
+                  }
                   setCollapsedComps((s) => {
                     const next = new Set(s);
                     next.has(comp.id) ? next.delete(comp.id) : next.add(comp.id);
@@ -476,10 +585,40 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
     return { patches: patches as [string, any][], joint, axisNormal: wA.normal, partnerId: aRef.bodyId };
   };
 
+  /** Mate two connectors. If they're already connected through the model, BEND the
+   *  existing joints to close the loop (holding A fixed) instead of rigidly moving a
+   *  component — which would tear the connected structure apart. If the joints can't
+   *  reach, refuse and leave everything in place. Separate modules use the rigid snap. */
+  const doMate = (aRef: { bodyId: string; connectorId: string }, bRef: { bodyId: string; connectorId: string }) => {
+    if (bodiesConnected(doc, aRef.bodyId, bRef.bodyId)) {
+      const bend = computeMateBend(doc, aRef, bRef, rigidMode ? activeBodyId : null);
+      if (!bend) {
+        alert('These connectors are already linked through the model, but there\'s no movable joint chain between them to bend. Nothing moved.');
+        return;
+      }
+      if (bend.residual > 0.03) {
+        alert(
+          `Can't fully close: nearest the joints can get is a ${(bend.residual * 100).toFixed(1)} cm gap ` +
+          `(started ${(bend.startGap * 100).toFixed(1)} cm, ${bend.chainLen} movable joint${bend.chainLen === 1 ? '' : 's'} between them). ` +
+          `The modules stay where they are.`);
+        return;
+      }
+      // Approach & align to the standoff pose, then insert & lock — like Auto-Snap.
+      animateBend(
+        [{ vals: bend.standoffValues, ms: 850 }, { vals: bend.jointValues, ms: 530 }],
+        () => dispatch(commands.bendAndJoin(bend.jointValues, bend.joint)),
+      );
+      clearMateSlots();
+      return;
+    }
+    // Separate modules → align rigidly and join (the original behaviour).
+    const m = mkMatePatches(aRef, bRef);
+    if (m) playMate(m.patches, m.axisNormal, m.partnerId, () => dispatch(commands.snapAndJoin(m.patches, m.joint)));
+  };
+
   const snapMate = () => {
     if (!mateSlotA || !mateSlotB) return;
-    const m = mkMatePatches(mateSlotA, mateSlotB);
-    if (m) playMate(m.patches, m.axisNormal, m.partnerId, () => dispatch(commands.snapAndJoin(m.patches, m.joint)));
+    doMate(mateSlotA, mateSlotB);
   };
 
   const saveMate = () => {
@@ -495,11 +634,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   };
 
   const reapplyMate = (mate: AssemblyMate) => {
-    setMateSlotA(mate.a);
-    setMateSlotB(mate.b);
-    const m = mkMatePatches(mate.a, mate.b); // snap immediately using captured slots
-    if (m) playMate(m.patches, m.axisNormal, m.partnerId, () => dispatch(commands.snapAndJoin(m.patches, m.joint)));
-    clearMateSlots();
+    doMate(mate.a, mate.b); // same smart path: bend if connected, rigid-snap if separate
   };
 
   // ── Center of Mass ─────────────────────────────────────────────────────────
@@ -542,7 +677,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
 
       {/* ── Rigid Mode (shared with Editor's BODY MODE) ── */}
       <div className="alp-section">
-        <div className="alp-section-title">RIGID MODE · shared with Editor</div>
+        {secTitle('rigid', 'RIGID MODE · shared with Editor')}
         <button
           className={`alp-toggle-btn${rigidMode ? ' alp-toggle-btn--on' : ''}`}
           onClick={() => setBodyMode(rigidMode ? 'free' : 'rigid')}
@@ -577,7 +712,16 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
 
       {/* ── Global Rotate ── */}
       <div className="alp-section">
-        <div className="alp-section-title">GLOBAL ROTATE</div>
+        {secTitle('grotate', 'GLOBAL ROTATE')}
+        {/* Orient the selected module's long axis to a world axis (whole connected group
+            follows; only when the module is at home). Same as the Editor's Inspector. */}
+        <div className="alp-comp-hint">Orient selected module's long axis to:</div>
+        <div className="alp-axis-row">
+          {(['x', 'y', 'z'] as const).map((ax) => (
+            <AxisBtn key={`orient-${ax}`} axis={ax} active={false}
+              onClick={() => { const r = bridge.orientSelectionAxis?.(ax); if (r && !r.ok) alert(r.error); }} />
+          ))}
+        </div>
         {selectedCompId && (doc.components ?? {})[selectedCompId] && (
           <div className="alp-comp-hint">
             Component: <strong>{(doc.components ?? {})[selectedCompId].name}</strong>
@@ -636,20 +780,20 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
 
       {/* ── Auto-Snap Connectors ── */}
       <div className="alp-section">
-        <div className="alp-section-title">AUTO-SNAP CONNECTORS</div>
+        {secTitle('autolock', 'AUTO-LOCK CONNECTORS')}
         <div className="alp-snap-hint">
-          Drag two modules' connectors close together (facing each other), then click Auto-Snap —
+          Drag two modules' connectors close together (facing each other), then click Auto-Lock —
           it aligns them and adds a real joint linking the two modules.
         </div>
         <button className="alp-apply-btn" onClick={autoSnapConnectors} title="Find the closest facing pair of connectors and join them">
-          ⚡ Auto-Snap Nearby Connectors
+          ⚡ Auto-Lock Nearby Connectors
         </button>
         {snapStatus && <div className="alp-snap-status">{snapStatus}</div>}
       </div>
 
       {/* ── Assembly Mates ── */}
       <div className="alp-section">
-        <div className="alp-section-title">ASSEMBLY MATES</div>
+        {secTitle('mates', 'ASSEMBLY MATES')}
 
         {/* Slot pickers */}
         <div className="alp-mate-slots">
@@ -677,9 +821,9 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
             className="alp-apply-btn"
             disabled={!mateSlotA?.connectorId || !mateSlotB?.connectorId}
             onClick={snapMate}
-            title="Snap component B so its connector aligns with connector A"
+            title="Lock component B so its connector aligns with connector A"
           >
-            Snap
+            Lock
           </button>
           <button
             className="alp-apply-btn alp-apply-btn--save"
@@ -687,7 +831,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
             onClick={saveMate}
             title="Save this mate relationship for later re-application"
           >
-            Save Mate
+            Save Lock
           </button>
           {(mateSlotA || mateSlotB) && (
             <button className="alp-link" onClick={clearMateSlots}>clear</button>
@@ -712,7 +856,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
 
       {/* ── Center of Mass ── */}
       <div className="alp-section">
-        <div className="alp-section-title">CENTER OF MASS</div>
+        {secTitle('com', 'CENTER OF MASS')}
         <button
           className={`alp-toggle-btn${gravityOn ? ' alp-toggle-btn--on' : ''}`}
           onClick={toggleGravity}
@@ -739,7 +883,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
 
       {/* ── Controls hint ── */}
       <div className="alp-section alp-section--controls">
-        <div className="alp-section-title">ANIMATION CONTROLS</div>
+        {secTitle('animctrl', 'ANIMATION CONTROLS')}
         <div className="alp-ctrl-grid">
           <kbd>Click body</kbd>    <span>select in 3D</span>
           <kbd>Rigid + click×2</kbd> <span>activate for dragging</span>
@@ -799,6 +943,12 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
                 <div className="px-ctx-sep" />
                 <button onClick={() => { select(jointCtx.jointId, 'joint'); close(); }}>✎ Select</button>
                 {isSnapJoint(j) && <button onClick={() => { unlockSnapJoint(jointCtx.jointId); close(); }}>⇋ Unlock (detach)</button>}
+                {/* Animatable connect/disconnect: key this joint's attach state at the playhead. */}
+                <div className="px-ctx-sep" />
+                <div className="px-ctx-section">Animate connection</div>
+                <button onClick={() => { useAnimationStore.getState().addConnectionKey(jointCtx.jointId, true); close(); }}>◆ Key CONNECTED here</button>
+                <button onClick={() => { useAnimationStore.getState().addConnectionKey(jointCtx.jointId, false); close(); }}>◆ Key DISCONNECTED here</button>
+                <div className="px-ctx-sep" />
                 <button className="danger" onClick={() => { dispatch(commands.removeJoint(jointCtx.jointId)); close(); }}>✕ Delete joint</button>
               </div>
             </>

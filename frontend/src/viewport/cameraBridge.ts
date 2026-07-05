@@ -36,6 +36,8 @@ export interface CameraBridge {
   cancelPivotPick?: () => void;
   // Set later by SimCanvas; optional so reads are type-safe before assignment.
   getFitBox?: (...args: any[]) => any;
+  getModelGroup?: (...args: any[]) => any;
+  orientSelectionAxis?: (axis: 'x' | 'y' | 'z') => { ok: boolean; error?: string };
   loadScene?: (data: any, opts?: any) => { ok: boolean; error?: string } | void;
   exportModel?: (fmt: any) => { ok: boolean; error?: string } | void;
   undo?: () => void;

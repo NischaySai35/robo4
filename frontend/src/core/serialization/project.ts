@@ -9,6 +9,7 @@
 
 import { useModelStore } from '@/state/modelStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { useAnimSceneStore } from '@/state/animSceneStore';
 import { usePageStore } from '@/state/pageStore';
 import { useDockStore } from '@/state/dockStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
@@ -36,6 +37,13 @@ export function serializeProject() {
       dockSplit:     dock.split,
       dockSecondary: dock.secondary,
       cameraState:   bridge.getCameraState?.() ?? null,
+    },
+    // Transient UI toggles that aren't part of the model/workspace but the user still wants
+    // round-tripped: gravity switch + the A/B lock-connector picks.
+    ui: {
+      gravityOn: useAnimSceneStore.getState().gravityOn,
+      mateSlotA: useAnimSceneStore.getState().mateSlotA,
+      mateSlotB: useAnimSceneStore.getState().mateSlotB,
     },
   };
 }
@@ -106,5 +114,6 @@ export function parseProject(obj: any) {
     : { duration: 4, tracks: {} };
 
   const workspace = (obj.workspace && typeof obj.workspace === 'object') ? obj.workspace : {};
-  return { modules, welds, activeModuleId, nextId, model, animation, workspace };
+  const ui = (obj.ui && typeof obj.ui === 'object') ? obj.ui : {};
+  return { modules, welds, activeModuleId, nextId, model, animation, workspace, ui };
 }

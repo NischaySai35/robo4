@@ -20,7 +20,7 @@ import { physicsBridge } from '@/viewport/physicsBridge';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer';
 import { JointRenderer } from '@/viewport/renderers/JointRenderer';
 import { ConnectorRenderer } from '@/viewport/renderers/ConnectorRenderer';
-import { getConnectorWorld } from '@/features/assembly/connectorSnap';
+import { getConnectorWorld, hasLockLoop, solveDragWithLoops, debugWorstJoint } from '@/features/assembly/connectorSnap';
 import { EditModeController } from '@/viewport/EditModeController';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
@@ -31,7 +31,8 @@ import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { useAnimSceneStore } from '@/state/animSceneStore';
 import { commands } from '@/core/commands/index';
-import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild } from '@/kinematics/modelFK';
+import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild, setAnimRootOverride } from '@/kinematics/modelFK';
+import { RigidTumbleSim } from '@/features/gravity/rigidDrop';
 import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
 import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
 import { PivotPickTool } from '@/viewport/PivotPickTool';
@@ -40,6 +41,7 @@ import { useTransformHudStore } from '@/state/transformHudStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { mateBridge, type MateAnimRequest } from '@/features/assembly/mateBridge';
 import { useWorkspaceStore } from '@/state/workspaceStore';
+import { groundBody } from '@/features/rigid/groundBody';
 import { jointLoads, centerOfMass, bodyStressField } from '@/kinematics/analysis';
 // PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
 // Play, so it stays out of the initial bundle and the app starts up fast.
@@ -64,6 +66,7 @@ export class ModelEditor {
     // commit the real patches+joint at the end (see _startMateAnim/_tickMateAnim).
     this._mateAnim = null;
     mateBridge.play = (req: MateAnimRequest) => this._startMateAnim(req);
+    bridge.orientSelectionAxis = (axis: 'x' | 'y' | 'z') => this._orientSelectionToAxis(axis);
 
     this.transform = new TransformControls(camera, domElement);
     this.transform.setSize(1.1);
@@ -279,7 +282,7 @@ export class ModelEditor {
       if (bodyMode === 'rigid' && (page === 'editor' || page === 'animation' || page === 'analysis')) {
         // Quick-set the grounded/active body without a popup, on any page that
         // uses rigid grounding — shared state keeps them all in sync.
-        useWorkspaceStore.getState().setActiveBodyId(hitId);
+        groundBody(hitId);
         this.bodyRenderer.setActiveBody(hitId);
         this._syncModel(useModelStore.getState().doc);
         return;
@@ -381,10 +384,14 @@ export class ModelEditor {
     this._animRigidMode   = false;
     this._animActiveBodyIds = new Set<string>();
     this._unsubAnimScene = useAnimSceneStore.subscribe((s) => {
+      const wasGravity = this._animGravityOn;
       this._animGravityOn    = s.gravityOn;
       this._animRigidMode    = s.rigidMode;
       this._animActiveBodyIds = s.activeBodyIds;
       if (this._doc) this._updateCOM(this._doc);
+      // Gravity ON → tumble the robot to the floor; OFF → rise it back up (symmetric).
+      if (!wasGravity && s.gravityOn) this._runGravityTumble();
+      else if (wasGravity && !s.gravityOn) this._runGravityRise();
     });
 
     // Initial paint.
@@ -714,7 +721,7 @@ export class ModelEditor {
       if (c) obstacles.push({ id, box: new THREE.Box3().setFromObject(c) });
     }
     this._mateAnim = {
-      bodies, t: 0, approachDur: 0.5, insertDur: 0.4,
+      bodies, t: 0, approachDur: 0.7, insertDur: 0.55,
       commit: req.commit, onBlocked: req.onBlocked, obstacles,
     };
   }
@@ -771,6 +778,146 @@ export class ModelEditor {
   }
 
   /** Called every render frame by SimCanvas: physics sim, else animation preview. */
+  /** True if any body is pinned "super rigid" — the whole model then ignores gravity. */
+  _hasSuperRigid(doc: Document): boolean {
+    return Object.values(doc.bodies).some((b: any) => b?.meta?.superRigid);
+  }
+
+  /** Gravity ON: fuse the robot into one rigid body and run a LIVE physics tumble (real fall,
+   *  bounce, tumble). Skipped when a body is super-rigid (pinned). */
+  _runGravityTumble() {
+    const doc: Document = this._doc ?? useModelStore.getState().doc;
+    if (this._hasSuperRigid(doc)) return; // pinned — gravity can't move it
+    if (Object.keys(doc.bodies).length === 0) return;
+    const fk = this._fk ?? computeFK(doc);
+    // Remember the pre-fall (standing) transforms so turning gravity OFF rises back to them —
+    // so "up" matches "down" instead of only floating 1 cm.
+    this._preGravityTransforms = Object.fromEntries(
+      Object.entries(doc.bodies).map(([id, b]: any) => [id, { ...b.transform }]));
+    // Snapshot each body's start WORLD pose — we apply the sim's live delta to these.
+    this._gravStarts = Object.keys(doc.bodies).map((id) => {
+      const w = fk.get(id); const t = doc.bodies[id].transform;
+      return {
+        id,
+        m: new THREE.Matrix4().compose(
+          new THREE.Vector3(...(w?.position ?? t.position)),
+          new THREE.Quaternion(...(w?.quaternion ?? t.quaternion)),
+          new THREE.Vector3(1, 1, 1)),
+        scale: [...t.scale] as number[],
+      };
+    });
+    // Floor just below the model's current bounding box (undo the visual float offset).
+    this.bodyRenderer.group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(this.bodyRenderer.group);
+    const groundY = (box.isEmpty() ? 0 : box.min.y - this._gravityY) - 0.01;
+    this._gravSim?.dispose();
+    this._gravSim = 'loading';
+    RigidTumbleSim.create(doc as any, fk as any, groundY, (id: string) => this._meshHullPoints(id)).then((sim) => {
+      // Discard if gravity was turned back off before physics finished initialising.
+      if (sim && this._animGravityOn) this._gravSim = sim;
+      else { sim?.dispose(); if (this._gravSim === 'loading') this._gravSim = null; }
+    }).catch((e) => { console.warn('gravity tumble failed:', e); this._gravSim = null; });
+  }
+
+  /** Steps the live tumble each frame, applying its world delta to every body. Commits the
+   *  settled pose (one undo step) when it comes to rest. Called from tick(). */
+  _tickGravityTumble(dt: number) {
+    const sim = this._gravSim;
+    if (!sim || sim === 'loading' || !this._gravStarts) return;
+    if (!this._animGravityOn) { this._endGravityTumble(true); return; } // OFF mid-fall → keep pose
+    const delta: THREE.Matrix4 = sim.step(dt);
+    const vals: Record<string, any> = {};
+    const np = new THREE.Vector3(), nq = new THREE.Quaternion(), ns = new THREE.Vector3();
+    for (const s of this._gravStarts) {
+      delta.clone().multiply(s.m).decompose(np, nq, ns);
+      vals[s.id] = { position: [np.x, np.y, np.z], quaternion: [nq.x, nq.y, nq.z, nq.w], scale: s.scale };
+    }
+    this._gravLastVals = vals;
+    useModelStore.getState().applyTransient((d: any) => {
+      const jb: any = { ...d.bodies };
+      for (const [id, v] of Object.entries(vals)) { const b = jb[id]; if (b) jb[id] = { ...b, transform: { ...b.transform, ...v } }; }
+      return { ...d, bodies: jb };
+    });
+    if (sim.settled()) this._endGravityTumble(true);
+  }
+
+  _endGravityTumble(commit: boolean) {
+    const sim = this._gravSim;
+    if (sim && sim !== 'loading') sim.dispose();
+    this._gravSim = null;
+    if (commit && this._gravLastVals) {
+      const doc: Document = this._doc ?? useModelStore.getState().doc;
+      const patches: [string, any][] = Object.entries(this._gravLastVals).map(([id, v]) => [id, { transform: { ...doc.bodies[id].transform, ...(v as any) } }]);
+      if (patches.length) useModelStore.getState().dispatch(commands.updateBodies(patches));
+    }
+    this._gravLastVals = null;
+    this._gravStarts = null;
+  }
+
+  /** Gravity OFF: smoothly rise the robot back to its pre-fall (standing) transforms — so the
+   *  up matches the down. Joint values are untouched (kept). Skipped if we never fell. */
+  _runGravityRise() {
+    // Stop any in-flight tumble first (commit its current pose, then rise from there).
+    if (this._gravSim && this._gravSim !== 'loading') this._endGravityTumble(false);
+    this._gravSim = null;
+    const targets = this._preGravityTransforms;
+    if (!targets) return;
+    const doc: Document = this._doc ?? useModelStore.getState().doc;
+    const starts: Record<string, any> = {};
+    for (const id of Object.keys(targets)) { const b = doc.bodies[id]; if (b) starts[id] = { ...b.transform }; }
+    const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
+    const t0 = performance.now(); const DUR = 800;
+    if (this._gravRaf) cancelAnimationFrame(this._gravRaf);
+    const qA = new THREE.Quaternion(), qB = new THREE.Quaternion(), qO = new THREE.Quaternion();
+    const step = () => {
+      const u = Math.min(1, (performance.now() - t0) / DUR);
+      const e = u < 0.5 ? 2 * u * u : -1 + (4 - 2 * u) * u; // easeInOut
+      const vals: Record<string, any> = {};
+      for (const [id, tgt] of Object.entries(targets)) {
+        const s = starts[id]; if (!s) continue;
+        qA.set(...(s.quaternion as [number, number, number, number]));
+        qB.set(...((tgt as any).quaternion as [number, number, number, number]));
+        qO.copy(qA).slerp(qB, e);
+        vals[id] = {
+          position: [lerp(s.position[0], (tgt as any).position[0], e), lerp(s.position[1], (tgt as any).position[1], e), lerp(s.position[2], (tgt as any).position[2], e)],
+          quaternion: [qO.x, qO.y, qO.z, qO.w],
+          scale: (tgt as any).scale,
+        };
+      }
+      useModelStore.getState().applyTransient((d: any) => {
+        const jb: any = { ...d.bodies };
+        for (const [id, v] of Object.entries(vals)) { const b = jb[id]; if (b) jb[id] = { ...b, transform: { ...b.transform, ...(v as any) } }; }
+        return { ...d, bodies: jb };
+      });
+      if (u < 1) { this._gravRaf = requestAnimationFrame(step); }
+      else {
+        this._gravRaf = null;
+        const patches: [string, any][] = Object.entries(targets).map(([id, v]) => [id, { transform: v }]);
+        if (patches.length) useModelStore.getState().dispatch(commands.updateBodies(patches));
+      }
+    };
+    this._gravRaf = requestAnimationFrame(step);
+  }
+
+  /**
+   * Gravity feel: the WHOLE model rides a small vertical offset applied to the render
+   * groups (no doc edit). Gravity OFF → floats 1 cm up; ON → drops to rest (the "floor").
+   * A super-rigid body pins the model (offset locked at 0). Purely visual — smooth lerp.
+   */
+  _tickGravityFloat() {
+    const FLOAT = 0.01; // 1 cm
+    const gravityOn = this._animGravityOn;
+    const pinned = this._doc ? this._hasSuperRigid(this._doc) : false;
+    const target = (gravityOn || pinned) ? 0 : FLOAT;
+    if (this._gravityY === undefined) this._gravityY = target;
+    // Smooth approach; snap when close to avoid endless tiny updates.
+    this._gravityY += (target - this._gravityY) * 0.18;
+    if (Math.abs(target - this._gravityY) < 1e-5) this._gravityY = target;
+    for (const g of [this.bodyRenderer?.group, this.jointRenderer?.group, this.connectorRenderer?.group]) {
+      if (g) g.position.y = this._gravityY;
+    }
+  }
+
   tick() {
     // Always call: when active it syncs the overlay; when inactive it tears down
     // any lingering overlay (defensive against a missed enter/leave transition).
@@ -782,6 +929,8 @@ export class ModelEditor {
     this._lastFrameTime = nowF;
     this._tickFallingBoxes(frameDt);
     this._tickMateAnim(frameDt);
+    this._tickGravityTumble(frameDt);
+    this._tickGravityFloat();
 
     if (this._sim) {
       // Advance by real elapsed time at a FIXED internal timestep, so the simulation
@@ -814,11 +963,33 @@ export class ModelEditor {
       // alone, so live edits (IK drag, gizmo) are visible and can be keyframed —
       // otherwise the clip sample would overwrite them every frame. Samples are
       // written into the doc (transient) so render + analysis stay in sync.
+      // On the first playback frame, remember the user's real workspace grounding so we
+      // can restore it when playback stops (we mirror the keyed base into it below so the
+      // Rigid ON/OFF + base buttons visibly update as the clip plays).
+      const hasBaseTrack = !!(anim.baseByClip && anim.baseByClip[anim.activeClipId]?.length);
+      if (!this._animActive && hasBaseTrack) {
+        const ws0 = useWorkspaceStore.getState();
+        this._animWsOriginal = { bodyMode: ws0.bodyMode, activeBodyId: ws0.activeBodyId };
+        this._animBaseApplied = undefined;
+      }
       if (anim.playing || anim.playhead !== this._lastPlayhead) {
         this._lastPlayhead = anim.playhead;
         const values = anim.sample(anim.playhead);
-        if (Object.keys(values).length) {
-          useModelStore.getState().applyTransient((d: any) => this._withJointValues(d, values));
+        const conns = anim.sampleConnections?.(anim.playhead) ?? {};
+        // Foot-plant: root FK at the keyed grounded base for this segment (null = use the
+        // workspace base). Set BEFORE applyTransient so _syncModel's computeFK uses it.
+        const base = anim.sampleBase?.(anim.playhead) ?? null;
+        setAnimRootOverride(base);
+        // Reflect the keyed base in the UI toggles (Rigid ON/OFF + active base) — only on
+        // change, via setState (no localStorage churn). FK already uses the override above.
+        if (hasBaseTrack && base !== this._animBaseApplied) {
+          this._animBaseApplied = base;
+          useWorkspaceStore.setState(base
+            ? { bodyMode: 'rigid', activeBodyId: base }
+            : { bodyMode: 'free', activeBodyId: null });
+        }
+        if (Object.keys(values).length || Object.keys(conns).length) {
+          useModelStore.getState().applyTransient((d: any) => this._withAnimState(d, values, conns));
           // The model-store subscription runs _syncModel → renders & analyses the doc.
         }
       }
@@ -827,6 +998,8 @@ export class ModelEditor {
       this._animActive = false;
       this._lastPlayhead = -1;
       this._lastAnimTime = 0;
+      setAnimRootOverride(null); // hand FK rooting back to the workspace base
+      if (this._animWsOriginal) { useWorkspaceStore.setState(this._animWsOriginal); this._animWsOriginal = null; }
       this._syncModel(this._doc); // restore model pose
     }
   }
@@ -847,6 +1020,24 @@ export class ModelEditor {
       const j = joints[id];
       if (!j) continue;
       joints[id] = { ...j, state: { ...j.state, value: v } };
+      changed = true;
+    }
+    return changed ? { ...doc, joints } : doc;
+  }
+
+  /** Doc with animation joint VALUES + CONNECTION state applied. A joint keyed OFF gets
+   *  state.disabled = true so FK detaches it (module swings free); ON clears it. */
+  _withAnimState(doc: Document, values: any, conns: Record<string, boolean>) {
+    const joints: Record<string, any> = { ...doc.joints };
+    let changed = false;
+    for (const [id, v] of Object.entries(values)) {
+      const j = joints[id]; if (!j) continue;
+      joints[id] = { ...j, state: { ...j.state, value: v } };
+      changed = true;
+    }
+    for (const [id, on] of Object.entries(conns)) {
+      const j = joints[id]; if (!j) continue;
+      joints[id] = { ...j, state: { ...j.state, disabled: !on } };
       changed = true;
     }
     return changed ? { ...doc, joints } : doc;
@@ -903,8 +1094,16 @@ export class ModelEditor {
     if (!this._ikRay.ray.intersectPlane(this._ikPlane, target)) return;
     const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
     const rigidRoot = bodyMode === 'rigid' ? activeBodyId : null;
-    const values = solveModelIK(this._doc, this._ikTip, [target.x, target.y, target.z], {}, rigidRoot);
+    // With a closed lock loop, plain tip-IK would freely pull a redundant lock apart (FK never
+    // enforces loop-closing edges). Solve WITH loop closure so every lock stays shut as you drag.
+    const values = hasLockLoop(this._doc)
+      ? solveDragWithLoops(this._doc, this._ikTip, [target.x, target.y, target.z], rigidRoot)
+      : solveModelIK(this._doc, this._ikTip, [target.x, target.y, target.z], {}, rigidRoot);
     if (values) useModelStore.getState().dispatch(commands.setJointValues(values));
+    const worst = debugWorstJoint(useModelStore.getState().doc);
+    // Only shout when something is actually torn (> 5 mm) — otherwise stay silent.
+    // eslint-disable-next-line no-console
+    if (worst.gapMM > 5) console.warn('[JOINTDBG] TORN', worst);
   }
 
   _endIK() {
@@ -1189,8 +1388,10 @@ export class ModelEditor {
       if (s.showGizmo) this._attachToMulti(bodyIds); else this._attachTo(null);
     } else {
       if (s.gizmoMode) this.transform.setMode(s.gizmoMode);
-      // Body gizmo only appears once revealed (second click / Move-Rotate-Scale).
-      this._attachTo(s.showGizmo ? bodyId : null);
+      // Body gizmo only appears once revealed. A CONNECTED single body drives its whole
+      // cluster rigidly (connected modules follow instead of tearing); an isolated body
+      // falls back to the direct mesh gizmo inside _attachToMulti.
+      if (s.showGizmo && bodyId) this._attachToMulti([bodyId]); else this._attachTo(null);
     }
   }
 
@@ -1201,32 +1402,115 @@ export class ModelEditor {
   // own origin instead of the shared pivot.
   _groupPivot(ids: string[], doc: Document) {
     const sel = useSelectionStore.getState();
-    if (sel.pivotMode === 'active') {
-      const a = doc.bodies[sel.selectedId as string];
-      if (a) return new THREE.Vector3(...a.transform.position);
+    // Use FK world positions (where bodies actually appear in rigid/posed mode), not the
+    // stored rest transforms — otherwise the pivot sits at the wrong place.
+    const worldPos = (id: string) => {
+      const w = this._fk?.get(id)?.position;
+      return w ? new THREE.Vector3(w[0], w[1], w[2]) : new THREE.Vector3(...(doc.bodies[id]?.transform.position ?? [0, 0, 0]));
+    };
+    if (sel.pivotMode === 'active' && sel.selectedId && doc.bodies[sel.selectedId as string]) {
+      return worldPos(sel.selectedId as string);
     }
     const c = new THREE.Vector3();
     let n = 0;
     for (const id of ids) {
-      const b = doc.bodies[id];
-      if (b) { c.add(new THREE.Vector3(...b.transform.position)); n++; }
+      if (doc.bodies[id]) { c.add(worldPos(id)); n++; }
     }
     if (n) c.multiplyScalar(1 / n);
     return c;
   }
 
+  /**
+   * Orient the selected component so its LONG axis points along world X/Y/Z, moving the
+   * whole connected cluster rigidly. Only acts when the module is at home (all its joints
+   * at 0). One undo step. Returns { ok, error? } for the caller to surface.
+   */
+  _orientSelectionToAxis(axis: 'x' | 'y' | 'z'): { ok: boolean; error?: string } {
+    const doc: Document = this._doc ?? useModelStore.getState().doc;
+    const sel = useSelectionStore.getState();
+    const seed = sel.kind === 'body'
+      ? (sel.ids?.length ? sel.ids : (sel.selectedId ? [sel.selectedId] : []))
+      : [];
+    if (!seed.length) return { ok: false, error: 'Select a component (module) first.' };
+    const cluster = this._connectedCluster(doc, seed);
+    if (cluster.length < 2) return { ok: false, error: 'Select a connected module with more than one body.' };
+
+    // Home check: every articulated joint inside the cluster must be at ~0.
+    const inSet = new Set(cluster);
+    const bent = (Object.values(doc.joints) as any[]).find((j) =>
+      inSet.has(j.parentBodyId) && inSet.has(j.childBodyId)
+      && (j.type === 'revolute' || j.type === 'prismatic' || j.type === 'continuous')
+      && Math.abs(j.state?.value ?? 0) > 1e-3);
+    if (bent) return { ok: false, error: `Not at home — “${bent.name}” is bent. Reset joints to 0 first.` };
+
+    const fk = this._fk ?? computeFK(doc);
+    // Long axis + pivot come from the SELECTED module's bodies only (not the whole connected
+    // assembly); the rotation is then applied to the whole cluster so everything follows.
+    const seedLive = seed.filter((id) => doc.bodies[id]);
+    const pts = (seedLive.length >= 2 ? seedLive : cluster).map((id) => {
+      const w = fk.get(id)?.position ?? doc.bodies[id].transform.position;
+      return new THREE.Vector3(w[0], w[1], w[2]);
+    });
+    // Long axis = direction between the two farthest bodies (robust for module chains).
+    let bi = 0, bj = 1, bd = -1;
+    for (let i = 0; i < pts.length; i++) for (let k = i + 1; k < pts.length; k++) {
+      const d = pts[i].distanceToSquared(pts[k]); if (d > bd) { bd = d; bi = i; bj = k; }
+    }
+    const L = pts[bj].clone().sub(pts[bi]);
+    if (L.lengthSq() < 1e-9) return { ok: false, error: 'Module has no clear long axis.' };
+    L.normalize();
+    const A = axis === 'x' ? new THREE.Vector3(1, 0, 0) : axis === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+    const Ls = L.dot(A) >= 0 ? L : L.clone().negate(); // shortest arc — don't flip 180°
+    const R = new THREE.Quaternion().setFromUnitVectors(Ls, A);
+    const pivot = new THREE.Vector3();
+    for (const p of pts) pivot.add(p);
+    pivot.multiplyScalar(1 / pts.length);
+
+    // Rotate every cluster body's WORLD pose about the pivot, write back to transforms
+    // (FK reproduces it from the root). Single undoable step.
+    const patches: [string, any][] = [];
+    for (const id of cluster) {
+      const w = fk.get(id); const t = doc.bodies[id].transform;
+      const wp = w ? new THREE.Vector3(w.position[0], w.position[1], w.position[2]) : new THREE.Vector3(...t.position);
+      const wq = w ? new THREE.Quaternion(w.quaternion[0], w.quaternion[1], w.quaternion[2], w.quaternion[3]) : new THREE.Quaternion(...t.quaternion);
+      const np = wp.sub(pivot).applyQuaternion(R).add(pivot);
+      const nq = R.clone().multiply(wq);
+      patches.push([id, { transform: { position: [np.x, np.y, np.z], quaternion: [nq.x, nq.y, nq.z, nq.w], scale: [...t.scale] } }]);
+    }
+    useModelStore.getState().dispatch(commands.updateBodies(patches));
+    return { ok: true };
+  }
+
+  /** Every body connected to the seed set through the joint graph (any joint type). */
+  _connectedCluster(doc: Document, seedIds: string[]): string[] {
+    const adj = new Map<string, string[]>();
+    const link = (a: string, b: string) => { const l = adj.get(a); if (l) l.push(b); else adj.set(a, [b]); };
+    for (const j of Object.values(doc.joints) as any[]) {
+      if (j.parentBodyId && j.childBodyId) { link(j.parentBodyId, j.childBodyId); link(j.childBodyId, j.parentBodyId); }
+    }
+    const seen = new Set(seedIds);
+    const q = [...seedIds];
+    while (q.length) { const cur = q.shift()!; for (const n of adj.get(cur) ?? []) if (!seen.has(n)) { seen.add(n); q.push(n); } }
+    return [...seen].filter((id) => doc.bodies[id]);
+  }
+
   _attachToMulti(ids: string[]) {
     const doc: Document = this._doc ?? useModelStore.getState().doc;
-    const live = ids.filter((id) => doc.bodies[id]);
-    if (live.length < 2) { this._attachTo(live[0] ?? null); return; }
-    this._multiIds = live;
+    const selLive = ids.filter((id) => doc.bodies[id]);
+    if (selLive.length === 0) { this._attachTo(null); return; }
+    // Move the WHOLE connected cluster rigidly (so connected modules follow instead of
+    // tearing apart), but pivot around the SELECTED bodies you grabbed.
+    const cluster = this._connectedCluster(doc, selLive);
+    if (cluster.length < 2) { this._multiIds = null; this._multiSelIds = null; this._attachTo(selLive[0] ?? null); return; }
+    this._multiSelIds = ids;      // remember the actual selection (for re-seating the pivot)
+    this._multiIds = cluster;     // the bodies that actually move
     this._multiProxy ??= (() => {
       const o = new THREE.Object3D();
       o.name = 'multi-pivot-proxy';
       this._scene.add(o);
       return o;
     })();
-    const pivot = this._groupPivot(live, doc);
+    const pivot = this._groupPivot(selLive, doc);
     this._multiProxy.position.copy(pivot);
     this._multiProxy.quaternion.identity();
     this._multiProxy.scale.set(1, 1, 1);
@@ -1250,10 +1534,13 @@ export class ModelEditor {
         .filter((id: string) => doc.bodies[id])
         .map((id: string) => {
           const t = doc.bodies[id].transform;
+          // Snapshot the FK WORLD pose (where the body actually appears), so the live drag
+          // preview moves the whole cluster rigidly instead of scattering from rest poses.
+          const w = this._fk?.get(id);
           return {
             id,
-            pos: new THREE.Vector3(...t.position),
-            quat: new THREE.Quaternion(...t.quaternion),
+            pos: w ? new THREE.Vector3(w.position[0], w.position[1], w.position[2]) : new THREE.Vector3(...t.position),
+            quat: w ? new THREE.Quaternion(w.quaternion[0], w.quaternion[1], w.quaternion[2], w.quaternion[3]) : new THREE.Quaternion(...t.quaternion),
             scale: [...t.scale] as number[],
           };
         }),
@@ -1262,6 +1549,9 @@ export class ModelEditor {
 
   _applyMultiDrag() {
     if (!this._multiStart) return;
+    // Super-rigid pins the whole connected model — refuse to move a cluster containing one.
+    const doc0: Document = this._doc ?? useModelStore.getState().doc;
+    if (this._multiStart.bodies.some((b: any) => (doc0.bodies[b.id] as any)?.meta?.superRigid)) return;
     const mode = useSelectionStore.getState().gizmoMode;
     const individual = useSelectionStore.getState().pivotMode === 'individual';
     this._multiProxy.updateMatrixWorld(true);
@@ -1321,8 +1611,9 @@ export class ModelEditor {
     } else {
       for (const [id, patch] of patches) dispatch(commands.updateBody(id, patch));
     }
-    // Re-seat the proxy at the new group pivot.
-    if (this._multiIds) this._attachToMulti(this._multiIds);
+    // Re-seat the proxy at the new group pivot (using the SELECTION, not the whole cluster,
+    // so the pivot stays on the module you grabbed).
+    if (this._multiSelIds) this._attachToMulti(this._multiSelIds);
   }
 
   /** Place the proxy at the joint's pivot world transform and attach the gizmo. */
@@ -1410,14 +1701,11 @@ export class ModelEditor {
   _reattach() {
     if (this.transform.dragging) return;
     const sel = useSelectionStore.getState();
-    if (this._multiIds && sel.kind === 'body' && sel.showGizmo && (sel.ids?.length ?? 0) > 1) {
-      this._attachToMulti(sel.ids); // keep the proxy at the (possibly moved) group pivot
-      return;
-    }
     if (sel.kind === 'body' && sel.selectedId) {
       if (!sel.showGizmo) return; // gizmo not revealed yet
-      const mesh = this.bodyRenderer.getMesh(sel.selectedId);
-      if (mesh && this.transform.object !== mesh) this.transform.attach(mesh);
+      // Route through the cluster logic (multi selection OR a connected single body → move
+      // the whole connected assembly rigidly; an isolated body → direct mesh gizmo).
+      this._attachToMulti(sel.ids && sel.ids.length > 1 ? sel.ids : [sel.selectedId]);
     } else if (sel.kind === 'joint' && sel.selectedId) {
       // Keep the pivot proxy glued to the (possibly moved) joint pivot.
       this._attachToJoint(sel.selectedId);

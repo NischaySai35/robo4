@@ -124,6 +124,22 @@
   border-radius: 6px; padding: 6px 8px; line-height: 1.4; word-break: break-word;
 }
 
+/* ── Reward diagnostics ──────────────────────────────────────────────────────── */
+.tr-diag {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; height: 170px; flex: 0 0 auto; overflow: auto;
+  font-family: ui-monospace, "Cascadia Code", Menlo, Consolas, monospace;
+}
+.tr-diag-head {
+  font-size: 9.5px; letter-spacing: 0.04em; color: var(--text-dim);
+  text-transform: uppercase; margin-bottom: 4px; position: sticky; top: -6px;
+  background: var(--bg); padding: 2px 0;
+}
+.tr-diag-line {
+  font-size: 10.5px; line-height: 1.5; color: var(--text); white-space: pre-wrap; word-break: break-word;
+}
+.tr-diag-line:nth-child(even) { color: var(--text-bright); }
+
 /* ── Demo cards ──────────────────────────────────────────────────────────────── */
 .tr-demo-card {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 7px;

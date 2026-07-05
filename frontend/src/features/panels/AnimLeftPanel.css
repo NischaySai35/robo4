@@ -35,6 +35,14 @@
   text-transform: uppercase;
   margin-bottom: 7px;
 }
+/* Collapsible section header: click to fold. A collapsed title hides all its following
+   siblings (the section body) via the ~ selector, so no JSX wrapping is needed. */
+.alp-section-title--toggle { cursor: pointer; display: flex; align-items: center; gap: 6px; user-select: none; }
+.alp-section-title--toggle:hover { color: var(--text); }
+.alp-sec-chevron { display: inline-block; font-size: 8px; color: var(--accent); transition: transform 0.15s; transform: rotate(90deg); }
+.alp-section-title--collapsed { margin-bottom: 0; }
+.alp-section-title--collapsed .alp-sec-chevron { transform: rotate(0deg); }
+.alp-section-title--collapsed ~ * { display: none !important; }
 
 /* ── Resizable divider ── */
 .alp-vdivider {

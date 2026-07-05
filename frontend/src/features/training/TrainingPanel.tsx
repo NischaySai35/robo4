@@ -23,6 +23,7 @@ import 'uplot/dist/uPlot.min.css';
 import './TrainingPanel.css';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
+import { useWorkspaceStore } from '@/state/workspaceStore';
 import { useTrainingStore } from '@/state/trainingStore';
 import { chainJoints } from '@/kinematics/modelIK';
 import { computeFK } from '@/kinematics/modelFK';
@@ -146,6 +147,10 @@ const ALGO_INFO: Record<AlgoType, { label: string; desc: string; badge: string }
 export default function TrainingPanel() {
   const selectedId = useSelectionStore((s) => s.kind === 'body' ? s.selectedId : null);
   const doc = useModelStore((s) => s.doc);
+  // When the workspace is grounded (rigid mode), the reach/pose chain must span the
+  // GRAPH from the grounded base to the tip — otherwise only the tip's tree-ancestors
+  // (often just the top joints) move.
+  const rigidRoot = useWorkspaceStore((s) => (s.bodyMode === 'rigid' ? s.activeBodyId : null));
   const target = useTrainingStore((s) => s.target);
   const picking = useTrainingStore((s) => s.picking);
   const running = useTrainingStore((s) => s.running);
@@ -169,6 +174,7 @@ export default function TrainingPanel() {
   const [training, setTraining] = useState(false);
   const [stat, setStat] = useState<{ gen: number; ret: number; best: number } | null>(null);
   const [log, setLog] = useState('');
+  const [diag, setDiag] = useState<string[]>([]); // rolling per-term reward breakdown
   const [hasSkill, setHasSkill] = useState(false);
 
   // Demo state
@@ -208,9 +214,10 @@ export default function TrainingPanel() {
   const importRef = useRef<HTMLInputElement | null>(null);
   const normRef   = useRef<ObsNormalizer | null>(null);
   const currRef   = useRef<CurriculumScheduler | null>(null);
+  const trainedTipRef = useRef<string | null>(null); // tip body used at train time (survives deselection)
 
   // Derived
-  const tipId = selectedId && chainJoints(doc, selectedId).length ? selectedId : null;
+  const tipId = selectedId && chainJoints(doc, selectedId, rigidRoot).length ? selectedId : null;
   const tipName = tipId ? doc.bodies[tipId]?.name : null;
   const joints = Object.values(doc.joints);
   const assembleModules = Object.values(doc.components ?? {}).filter((c) =>
@@ -233,6 +240,15 @@ export default function TrainingPanel() {
 
   useEffect(() => () => { stopAll(); }, []);
 
+  // The TRAIN tab content unmounts when you switch tabs. On returning, re-attach the
+  // uPlot chart to the fresh host div so a previously-recorded training curve reappears
+  // (rather than an empty gap). Runs after the tab's DOM has mounted.
+  useEffect(() => {
+    if (tab !== 'train') return;
+    const id = requestAnimationFrame(() => { ensurePlot(); plotRef.current?.setData(curveRef.current as any); });
+    return () => cancelAnimationFrame(id);
+  }, [tab]);
+
   // ── Task factory ─────────────────────────────────────────────────────────────
 
   const TASK_CURRICULA = {
@@ -245,10 +261,10 @@ export default function TrainingPanel() {
     const curr = currRef.current;
     const navR = curr ? curr.current().arenaRadius : 2.5;
     switch (taskType) {
-      case 'reach':    return new ModelReachTask(doc, tipId!, { weights: w });
+      case 'reach':    return new ModelReachTask(doc, tipId!, { weights: w, rigidRoot });
       case 'locomote': return new ModelLocomotionTask(doc, { weights: w });
       case 'navigate': return new NavigationTask({ weights: w, arenaRadius: navR });
-      case 'pose':     return new PoseTask(doc, tipId!, undefined, { weights: w });
+      case 'pose':     return new PoseTask(doc, tipId!, undefined, { weights: w, rigidRoot });
       case 'assemble': return new AssembleTask(doc, {
         weights: w, goalShape: assembleShape,
         moduleComponentIds: assembleModules.map((c) => c.id),
@@ -265,6 +281,19 @@ export default function TrainingPanel() {
     return task;
   }
 
+  /** Wrap a freshly-built base task with the SAME observation enhancers that were
+   *  active during training (TopoObs + ObsNorm), so a trained policy receives
+   *  observations in the exact distribution it learned on. Without this, a policy
+   *  trained with ObsNorm (on by default) gets raw, out-of-distribution obs at watch
+   *  time and produces near-zero actions → "nothing moves". We keep the base task
+   *  reference for reading joint/pose state; only the policy's obs flow through here. */
+  function wrapForPolicy(base: Task): Task {
+    let t: Task = base;
+    if (useTopoObs) t = new TopologyAwareTask(t, doc);
+    if (useObsNorm && normRef.current) t = new NormalizedObsTask(t, normRef.current);
+    return t;
+  }
+
   function makePolicy(task: Task): Policy {
     const hidden = ARCH_HIDDEN[arch];
     if (hidden.length === 0) return new LinearPolicy(task.obsDim, task.actionDim);
@@ -279,8 +308,16 @@ export default function TrainingPanel() {
 
   function ensurePlot() {
     const host = hostRef.current;
-    if (!host || plotRef.current) return;
-    curveRef.current = [[], []];
+    if (!host) return;
+    // If a plot already lives inside the CURRENT host div, keep it. Otherwise the
+    // old instance is orphaned in a destroyed DOM node (happens after switching
+    // tabs away from TRAIN and back, since the tab content unmounts) — rebuild it
+    // in the fresh host and restore whatever curve we have so far.
+    if (plotRef.current) {
+      if (host.contains(plotRef.current.root)) return;
+      plotRef.current.destroy();
+      plotRef.current = null;
+    }
     plotRef.current = new uPlot(
       {
         width: host.clientWidth || 280, height: 120,
@@ -304,6 +341,8 @@ export default function TrainingPanel() {
   async function startTraining() {
     if (!ready) { setLog(_notReadyMsg()); return; }
     stopAll();
+    setDiag([]); // fresh diagnostics for this run
+    trainedTipRef.current = tipId; // remember the tip so Diagnose/Watch work after deselect
 
     if (taskType === 'locomote') { setLog('Initialising physics…'); await initPhysics(); }
     if (algo === 'bc') { startBC(); return; }
@@ -331,6 +370,8 @@ export default function TrainingPanel() {
     function handleGenResult(r: { evalReturn: number; best: number }, gen: number, done: () => void) {
       setStat({ gen, ret: r.evalReturn, best: r.best });
       pushCurve(gen, r.evalReturn);
+      // Capture a per-term reward breakdown periodically so the stuck score is explainable.
+      if (gen === 1 || gen % 10 === 0) pushDiag(diagnose(`g${gen}`));
       // Curriculum update
       const curr = currRef.current;
       if (curr) {
@@ -449,27 +490,43 @@ export default function TrainingPanel() {
   function watchReach(policy: Policy) {
     const useTip = tipId ?? getSkill(doc as any, 'reach')?.robotId;
     if (!useTip) { setLog('Select the arm tip body.'); return; }
-    const task = taskType === 'pose'
-      ? new PoseTask(doc, useTip, undefined, { weights })
-      : new ModelReachTask(doc, useTip, { weights });
-    if (policy.actionDim !== task.actionDim) {
-      setLog(`Policy has ${policy.actionDim} joints; selected chain has ${task.actionDim}.`);
+    const base = taskType === 'pose'
+      ? new PoseTask(doc, useTip, undefined, { weights, rigidRoot })
+      : new ModelReachTask(doc, useTip, { weights, rigidRoot });
+    if (policy.actionDim !== base.actionDim) {
+      setLog(`Policy has ${policy.actionDim} joints; selected chain has ${base.actionDim}.`);
       return;
     }
-    task.reset(makeRng(Date.now() & 0xffff), { randomizeStart: false } as any);
-    const ids = (task as ModelReachTask).jointIds?.() ?? (task as PoseTask).jointIds?.();
+    // Use the target the user PLACED (reach task) — clamped into the arm's reachable
+    // sphere so a far point becomes "reach as far toward it as you physically can",
+    // instead of leaving Watch to chase an invisible random target.
+    const placed = useTrainingStore.getState().target;
+    let fixedTarget: [number, number, number] | undefined;
+    if (placed && base instanceof ModelReachTask) {
+      const c = base.workspaceCenter(), R = base.reachRadius() * 0.98;
+      const dx = placed[0] - c[0], dy = placed[1] - c[1], dz = placed[2] - c[2];
+      const d = Math.hypot(dx, dy, dz) || 1;
+      fixedTarget = d <= R ? [placed[0], placed[1], placed[2]]
+        : [c[0] + dx / d * R, c[1] + dy / d * R, c[2] + dz / d * R];
+    }
+    base.reset(makeRng(Date.now() & 0xffff), { randomizeStart: false, target: fixedTarget } as any);
+    const task = wrapForPolicy(base);           // policy sees the same obs it trained on
+    const ids = (base as ModelReachTask).jointIds?.() ?? (base as PoseTask).jointIds?.();
     let obs = task.observe(), step = 0;
+    setLog(fixedTarget ? 'Reaching toward your placed target…' : 'Reaching a random target (place one in Setup to aim it)…');
     const tick = () => {
       const out = task.act(policy.forward(obs));
       obs = task.observe();
       const vals: Record<string, number> = {};
-      ids?.forEach((id: string, i: number) => {
-        const cv = (task as any).currentValues?.();
-        if (cv) vals[id] = cv[i];
-      });
+      const cv = (base as any).currentValues?.();
+      ids?.forEach((id: string, i: number) => { if (cv) vals[id] = cv[i]; });
       if (ids) useModelStore.getState().applyTransient((d) => withJointValues(d, vals));
       step++;
-      if (out.done || step > 250) { setLog(`Done in ${step} steps.`); return; }
+      // Reaching a fixed target: keep holding at the closest pose (don't stop at maxSteps)
+      // so you can see where it settled; stop only on success or a long safety cap.
+      const dist = (base as ModelReachTask).tipDistance?.() ?? 0;
+      if (out.done && dist < 0.06) { setLog(`Reached · ${(dist * 100).toFixed(1)} cm from target.`); return; }
+      if (step > (fixedTarget ? 600 : 250)) { setLog(`Closest it got: ${(dist * 100).toFixed(1)} cm from target.`); return; }
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -477,13 +534,14 @@ export default function TrainingPanel() {
 
   function watchLoco(policy: Policy) {
     initPhysics().then(() => {
-      const task = new ModelLocomotionTask(doc, { weights });
-      task.reset(makeRng(Date.now() & 0xffff));
-      const baseId = task.baseBodyId(); const ids = task.jointIds();
+      const locoTask = new ModelLocomotionTask(doc, { weights });
+      locoTask.reset(makeRng(Date.now() & 0xffff));
+      const task = wrapForPolicy(locoTask);       // policy sees the same obs it trained on
+      const baseId = locoTask.baseBodyId(); const ids = locoTask.jointIds();
       let obs = task.observe(), step = 0;
       const tick = () => {
         const out = task.act(policy.forward(obs)); obs = task.observe();
-        const base = task.basePose(); const tv = task.jointTargets();
+        const base = locoTask.basePose(); const tv = locoTask.jointTargets();
         const vals: Record<string, number> = {};
         ids.forEach((id, i) => { vals[id] = tv[i]; });
         useModelStore.getState().applyTransient((d) => {
@@ -493,7 +551,7 @@ export default function TrainingPanel() {
           return nd;
         });
         step++;
-        if (out.done || step > 400) { setLog(`Walked to x=${out.info?.x?.toFixed(2)} m`); task.dispose(); return; }
+        if (out.done || step > 400) { setLog(`Walked to x=${out.info?.x?.toFixed(2)} m`); locoTask.dispose(); return; }
         rafRef.current = requestAnimationFrame(tick);
       };
       rafRef.current = requestAnimationFrame(tick);
@@ -506,15 +564,16 @@ export default function TrainingPanel() {
     const rootId = Object.keys(doc.bodies).find(id => !parentBodyIds.has(id));
     if (!rootId) { setLog('No root body (chassis) found.'); return; }
 
-    const task = new NavigationTask({ weights });
-    task.reset(makeRng(Date.now() & 0xffff));
-    const goal = task.currentGoal();
+    const navTask = new NavigationTask({ weights });
+    navTask.reset(makeRng(Date.now() & 0xffff));
+    const task = wrapForPolicy(navTask);         // policy sees the same obs it trained on
+    const goal = navTask.currentGoal();
     let obs = task.observe(), step = 0;
     setLog(`Navigating to (${goal.x.toFixed(2)}, ${goal.y.toFixed(2)}) m…`);
 
     const tick = () => {
       const out = task.act(policy.forward(obs)); obs = task.observe();
-      const pose = task.currentPose();
+      const pose = navTask.currentPose();
       useModelStore.getState().applyTransient((d) => {
         const body = d.bodies[rootId];
         if (!body) return d;
@@ -539,6 +598,54 @@ export default function TrainingPanel() {
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
+  }
+
+  // ── Diagnostics: per-term reward breakdown ──────────────────────────────────────
+  /** Replay ONE deterministic episode with the current best policy and sum each
+   *  reward term's WEIGHTED contribution, so you can see exactly what's pushing the
+   *  score down (e.g. collision penalty vs. lack of progress). Returns a log line. */
+  function diagnose(tag = ''): string | null {
+    const p = getTrainedPolicy();
+    if (!p) return `${tag}  — no trained policy yet. Click ▶ Train first.`;
+    // Only reach/pose expose per-term info today (that's what surfaces `terms`).
+    if (taskType !== 'reach' && taskType !== 'pose') {
+      return `${tag}  — per-term breakdown is available for reach/pose tasks only.`;
+    }
+    const useTip = tipId ?? trainedTipRef.current ?? getSkill(doc as any, 'reach')?.robotId;
+    if (!useTip) return `${tag}  — no tip body. Select the arm-tip body in the 3D view, then Diagnose.`;
+    const base = taskType === 'pose'
+      ? new PoseTask(doc, useTip, undefined, { weights, rigidRoot })
+      : new ModelReachTask(doc, useTip, { weights, rigidRoot });
+    if (p.actionDim !== base.actionDim) {
+      return `${tag}  — joint mismatch: policy has ${p.actionDim}, this chain has ${base.actionDim}. Re-train on this body.`;
+    }
+    base.reset(makeRng(20260704), { randomizeStart: false } as any); // fixed seed → comparable across gens
+    const task = wrapForPolicy(base);
+    let obs = task.observe();
+    const acc: Record<string, number> = {};
+    let steps = 0, collided = 0, total = 0, done = false, lastDist = 0;
+    for (let s = 0; s < base.maxSteps; s++) {
+      const out = task.act(p.forward(obs));
+      obs = task.observe();
+      total += out.reward; steps++;
+      const t = (out.info as any)?.terms as Record<string, number> | undefined;
+      if (t) for (const k of Object.keys(t)) acc[k] = (acc[k] ?? 0) + (weights[k] ?? 0) * t[k];
+      if ((out.info as any)?.collided) collided++;
+      lastDist = (out.info as any)?.dist ?? lastDist;
+      if (out.done) { done = true; break; }
+    }
+    const parts = Object.entries(acc)
+      .sort((a, b) => a[1] - b[1]) // most-negative (biggest drag) first
+      .map(([k, v]) => `${k} ${v >= 0 ? '+' : ''}${v.toFixed(1)}`)
+      .join('  ');
+    const g = trainerRef.current?.gen ?? 0;
+    const reached = done && lastDist < 0.06; // done can also mean "ran out of steps"
+    return `${tag || `g${g}`}  Σ${total.toFixed(1)}  [${parts}]  collide ${collided}/${steps}${reached ? ' ✓reached' : ''}  end ${lastDist.toFixed(3)}m`;
+  }
+
+  function pushDiag(line: string | null) {
+    if (!line) return;
+    setDiag((d) => [...d.slice(-49), line]); // keep last 50 lines
   }
 
   // ── Save / load skill ─────────────────────────────────────────────────────────
@@ -584,22 +691,23 @@ export default function TrainingPanel() {
     if (!p) { setLog('Train a reach brain first.'); return; }
     const useTip = tipId ?? getSkill(doc as any, 'reach')?.robotId;
     if (!useTip) { setLog('Select the arm tip.'); return; }
-    const task = new ModelReachTask(doc, useTip, { weights });
-    if (p.actionDim !== task.actionDim) { setLog(`Mismatch: ${p.actionDim} vs ${task.actionDim} joints.`); return; }
+    const base = new ModelReachTask(doc, useTip, { weights, rigidRoot });
+    if (p.actionDim !== base.actionDim) { setLog(`Mismatch: ${p.actionDim} vs ${base.actionDim} joints.`); return; }
     stopAll();
-    task.reset(makeRng(1), { randomizeStart: false, target: tgt } as any);
-    const ids = task.jointIds();
+    base.reset(makeRng(1), { randomizeStart: false, target: tgt } as any);
+    const task = wrapForPolicy(base);            // policy sees the same obs it trained on
+    const ids = base.jointIds();
     useTrainingStore.getState().setRunning(true);
     let frame = 0;
     const tick = () => {
       const st = useTrainingStore.getState();
       if (!st.running || !st.target) { useTrainingStore.getState().setRunning(false); return; }
-      task.setTarget(st.target);
+      base.setTarget(st.target);
       task.act(p.forward(task.observe()));
       const vals: Record<string, number> = {};
-      ids.forEach((id, i) => { vals[id] = task.currentValues()[i]; });
+      ids.forEach((id, i) => { vals[id] = base.currentValues()[i]; });
       useModelStore.getState().applyTransient((d) => withJointValues(d, vals));
-      if (++frame % 12 === 0) setLog(`Tracking · tip ${task.tipDistance().toFixed(3)} m away`);
+      if (++frame % 12 === 0) setLog(`Tracking · tip ${base.tipDistance().toFixed(3)} m away`);
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
@@ -612,7 +720,7 @@ export default function TrainingPanel() {
     if (!tipId) { setLog('Select a tip body first.'); return; }
     if (!target) { setLog('Set a reach target first (REACH TO A POINT section).'); return; }
     const fk = computeFK(doc);
-    const chain = chainJoints(doc, tipId);
+    const chain = chainJoints(doc, tipId, rigidRoot);
     if (chain.length === 0) { setLog('No joint chain found.'); return; }
 
     const startVals = chain.map((j: any) => j.state?.value ?? 0);
@@ -1206,6 +1314,19 @@ print("  Then: Training page → Cloud tab → Import trained policy")
           <button onClick={() => watch()} disabled={!getTrainedPolicy() || training}>Watch</button>
           <button onClick={saveSkill} disabled={!getTrainedPolicy() || training}>Save</button>
         </div>
+        <div className="tr-btns">
+          <button onClick={() => pushDiag(diagnose('now'))} disabled={!getTrainedPolicy()}
+            title="Replay one episode with the best policy and break the score into its reward terms.">
+            🔍 Diagnose reward
+          </button>
+          {diag.length > 0 && <button onClick={() => setDiag([])} title="Clear the breakdown log">Clear</button>}
+        </div>
+        {diag.length > 0 && (
+          <div className="tr-diag">
+            <div className="tr-diag-head">REWARD BREAKDOWN · weighted per-term totals (most-negative first)</div>
+            {diag.map((line, i) => <div key={i} className="tr-diag-line">{line}</div>)}
+          </div>
+        )}
 
         {stat && (
           <div className="tr-stat-row">

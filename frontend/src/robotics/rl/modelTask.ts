@@ -37,15 +37,20 @@ export class ModelReachTask implements Task {
   private rng: () => number = Math.random;
   private cm: CollisionModel;
 
-  constructor(doc: Document, tipId: string, opts: { maxSteps?: number; weights?: RewardWeights } = {}) {
+  constructor(doc: Document, tipId: string, opts: { maxSteps?: number; weights?: RewardWeights; rigidRoot?: string | null } = {}) {
     this.doc = doc;
     this.tipId = tipId;
-    this.chain = chainJoints(doc, tipId);
+    // With a rigid grounding, walk the GRAPH from the grounded base to the tip so the
+    // chain spans every joint in between (not just the tip's tree-ancestors — which,
+    // when the base is grounded far from the tree root, would move only the top joints).
+    this.chain = chainJoints(doc, tipId, opts.rigidRoot ?? null);
     this.ids = this.chain.map((j) => j.id);
     this.bounds = this.chain.map((j) => [j.limit?.lower ?? -Math.PI, j.limit?.upper ?? Math.PI] as [number, number]);
     this.values = this.chain.map((j) => j.state?.value ?? 0);
     // Self/world collision so motion is RIGID — the arm can't fold through itself.
-    this.cm = new CollisionModel(doc, 0);
+    // Self-collision only — no world floor. A reach arm rests ON the ground (base
+    // below y=0), so a floor check would report collision in every pose and freeze it.
+    this.cm = new CollisionModel(doc, 0, { floor: false });
     this.actionDim = this.chain.length;
     this.obsDim = this.chain.length + 3;
     this.maxSteps = opts.maxSteps ?? 80;
@@ -62,6 +67,10 @@ export class ModelReachTask implements Task {
 
   setWeights(w: RewardWeights) { this.weights = w; }
   jointIds() { return this.ids; }
+  /** Workspace centre (root of the chain) and approximate max reach, so callers can
+   *  clamp a user-placed target into the arm's physically reachable sphere. */
+  workspaceCenter(): [number, number, number] { return this.base; }
+  reachRadius(): number { return this.reach; }
   currentTarget() { return this.target; }
   currentValues() { return this.values; }
   /** Override the goal (used by interactive "reach to this point" runs). */
@@ -144,6 +153,8 @@ export class ModelReachTask implements Task {
       collision: hit ? 1 : 0,
     };
     this.prevDist = d;
-    return { reward: weightedReward(terms, this.weights), done: success || this.step >= this.maxSteps, info: { dist: d } };
+    // `terms` (raw) + `collided` are surfaced so the Training panel can log a
+    // per-term reward breakdown and see WHICH term dominates the score.
+    return { reward: weightedReward(terms, this.weights), done: success || this.step >= this.maxSteps, info: { dist: d, terms, collided: hit } };
   }
 }

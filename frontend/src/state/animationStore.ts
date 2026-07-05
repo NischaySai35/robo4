@@ -68,6 +68,20 @@ interface AnimationState {
   advance: (dt: number) => void;
   sample: (t: number) => Record<string, number>;
 
+  // Connection (snap/unlock) keyframes: per clip → per joint → step keys of {t, on}.
+  // Lets a snap joint attach/detach at keyed times during the animation. Joints are
+  // CONNECTED by default (before their first key), so keying only marks the changes.
+  connectionsByClip: Record<string, Record<string, { t: number; on: boolean }[]>>;
+  addConnectionKey: (jointId: string, on: boolean) => void;
+  sampleConnections: (t: number) => Record<string, boolean>;
+
+  // Grounded-base keyframes (foot-plant): per clip → step keys of {t, bodyId}. Playback
+  // roots FK at the keyed body for each segment, so switching the base mid-clip changes
+  // which body stays planted (like planting one foot then the other).
+  baseByClip: Record<string, { t: number; bodyId: string | null }[]>;
+  addBaseKey: (bodyId: string | null) => void;
+  sampleBase: (t: number) => string | null;
+
   // group management
   addGroup: () => void;
   deleteGroup: (id: string) => void;
@@ -277,6 +291,47 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
       return out;
     },
 
+    connectionsByClip: {},
+
+    addConnectionKey: (jointId, on) => set((s) => {
+      const t = s.snap ? Math.round(s.playhead * s.fps) / s.fps : s.playhead;
+      const forClip = { ...(s.connectionsByClip[s.activeClipId] ?? {}) };
+      const keys = (forClip[jointId] ? [...forClip[jointId]] : []).filter((k) => Math.abs(k.t - t) > 1e-4);
+      keys.push({ t, on });
+      keys.sort((a, b) => a.t - b.t);
+      forClip[jointId] = keys;
+      return { connectionsByClip: { ...s.connectionsByClip, [s.activeClipId]: forClip } };
+    }),
+
+    sampleConnections: (t) => {
+      const forClip = get().connectionsByClip[get().activeClipId] ?? {};
+      const out: Record<string, boolean> = {};
+      for (const [jid, keys] of Object.entries(forClip)) {
+        let on = true; // connected by default (before the first key)
+        for (const k of keys) { if (k.t <= t + 1e-6) on = k.on; else break; }
+        out[jid] = on;
+      }
+      return out;
+    },
+
+    baseByClip: {},
+
+    addBaseKey: (bodyId) => set((s) => {
+      const t = s.snap ? Math.round(s.playhead * s.fps) / s.fps : s.playhead;
+      const keys = (s.baseByClip[s.activeClipId] ? [...s.baseByClip[s.activeClipId]] : []).filter((k) => Math.abs(k.t - t) > 1e-4);
+      keys.push({ t, bodyId });
+      keys.sort((a, b) => a.t - b.t);
+      return { baseByClip: { ...s.baseByClip, [s.activeClipId]: keys } };
+    }),
+
+    sampleBase: (t) => {
+      const keys = get().baseByClip[get().activeClipId];
+      if (!keys || !keys.length) return null;
+      let base: string | null = null;
+      for (const k of keys) { if (k.t <= t + 1e-6) base = k.bodyId; else break; }
+      return base;
+    },
+
     // ── group management ───────────────────────────────────────────────────────
     addGroup: () => set((s) => {
       const g = newGroup(`Group ${s.groups.length + 1}`);
@@ -350,7 +405,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
 
     exportClip: () => {
       const s = get();
-      return { version: 3, fps: s.fps, activeClipId: s.activeClipId, clips: syncActive(s), groups: s.groups };
+      return { version: 3, fps: s.fps, activeClipId: s.activeClipId, clips: syncActive(s), groups: s.groups, connectionsByClip: s.connectionsByClip, baseByClip: s.baseByClip };
     },
     loadClip: (data) => set(() => {
       // v3 multi-clip + groups format
@@ -362,6 +417,8 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
           tracks: active.tracks, duration: active.duration,
           playhead: 0, playing: false, preview: false, sequence: false,
           groups: Array.isArray(data.groups) ? data.groups : [],
+          connectionsByClip: (data.connectionsByClip && typeof data.connectionsByClip === 'object') ? data.connectionsByClip : {},
+          baseByClip: (data.baseByClip && typeof data.baseByClip === 'object') ? data.baseByClip : {},
           playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
         };
       }
@@ -371,7 +428,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
       return {
         clips: [c], activeClipId: c.id, fps: 30, tracks: c.tracks, duration: c.duration,
         playhead: 0, playing: false, preview: false, sequence: false,
-        groups: [], playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
+        groups: [], connectionsByClip: {}, baseByClip: {}, playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
       };
     }),
   };

@@ -16,6 +16,8 @@ import { useDockStore } from '@/state/dockStore';
 import { commands } from '@/core/commands/index';
 import { uid } from '@/core/model/index';
 import type { Connector } from '@/core/model/index';
+import SpinControls from '@/features/motor/SpinControls';
+import { isEndBody, connectorClass } from '@/features/motor/endBody';
 
 function smartPos(x: number, y: number) {
   const vw = window.innerWidth, vh = window.innerHeight;
@@ -52,6 +54,14 @@ export default function ViewportCtxMenu() {
   if (!body) return null;
 
   const connectors: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
+  // Spinnable ("motor") joints attached to this body — surface CW/CCW/Stop here so
+  // an end module can be driven straight from its right-click menu.
+  // CW/CCW is an END-body action only (endlock / endlock2). Middle links don't get it.
+  const motorJoints = isEndBody(body)
+    ? Object.values(doc.joints).filter((j: any) =>
+        (j.type === 'revolute' || j.type === 'continuous')
+        && (j.parentBodyId === menu.bodyId || j.childBodyId === menu.bodyId))
+    : [];
   const pos = smartPos(menu.x, menu.y);
   const isAnimPage = menu.page === 'animation';
   const isEditorPage = menu.page === 'editor';
@@ -104,14 +114,15 @@ export default function ViewportCtxMenu() {
           </button>
         )}
 
-        {/* Editor rigid mode: toggle active body */}
-        {isEditorPage && bodyMode === 'rigid' && (
+        {/* Rigid mode: make this body the grounded base (the "green" rigid anchor). Works
+            on every page that shares the workspace rigid grounding (editor/analysis/animation). */}
+        {bodyMode === 'rigid' && (
           <button onClick={() => {
             const ws = useWorkspaceStore.getState();
             groundBody(ws.activeBodyId === menu.bodyId ? null : menu.bodyId);
             close();
           }}>
-            {activeBodyId === menu.bodyId ? '⬛ Unset Active Body' : '⬛ Set as Active Body'}
+            {activeBodyId === menu.bodyId ? '⬛ Unset Rigid Base' : '🟢 Make Rigid Base (ground here)'}
           </button>
         )}
 
@@ -134,10 +145,24 @@ export default function ViewportCtxMenu() {
           </button>
         )}
 
+        {/* Motor — end-lock bodies drive their joint continuously. CW / CCW / Stop directly. */}
+        {motorJoints.length > 0 && (
+          <>
+            <div className="px-ctx-sep" />
+            <div className="px-ctx-section">Motor</div>
+            {motorJoints.map((j: any) => (
+              <div key={j.id} className="px-ctx-spin" onClick={(e) => e.stopPropagation()} style={{ padding: '2px 10px 6px' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-dim)', marginBottom: 4 }}>{j.name}</div>
+                <SpinControls jointId={j.id} showRpm compact />
+              </div>
+            ))}
+          </>
+        )}
+
         <div className="px-ctx-sep" />
 
-        {/* Connectors */}
-        <div className="px-ctx-section">Connectors</div>
+        {/* Connectors — labelled END (on end-lock bodies) or SIDE (on mid bodies). */}
+        <div className="px-ctx-section">Connectors · {connectorClass(body) === 'end' ? 'END' : 'SIDE'}</div>
         {connectors.length === 0 && (
           <div style={{ padding: '3px 11px 5px', fontSize: 11, color: 'var(--text-dim)' }}>
             No connectors yet

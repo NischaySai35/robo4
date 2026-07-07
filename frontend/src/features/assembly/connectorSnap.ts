@@ -763,6 +763,39 @@ export function solveDragWithLoops(
  * are coincident + keyed again. This is the cut-joint constraint-projection formulation for closed
  * kinematic loops. Pure/idempotent: a config that's already consistent passes through untouched.
  */
+/**
+ * solveHome — the pose to animate to when Home is pressed. Every movable joint is pulled
+ * toward rest (0); for a module with locked connector loops that all-zero target is then
+ * PROJECTED onto the loop-closure manifold (minimum deviation from 0) so every lock stays
+ * shut. `ok` is false ONLY when even the best closed pose can't close the loops (> tol) —
+ * i.e. the module genuinely can't return to a rest-like pose without breaking a lock. That
+ * is the sole case Home should refuse; a mere loop existing is NOT a reason (rest is the
+ * pose the locks were formed in, so it almost always closes).
+ */
+export function solveHome(doc: Document): { values: Record<string, number>; ok: boolean } {
+  const movable = (Object.values(doc.joints) as any[]).filter(
+    (j) => MOVABLE_TYPES.has(j.type) && !j.state?.disabled && doc.bodies[j.parentBodyId] && doc.bodies[j.childBodyId],
+  );
+  const values: Record<string, number> = {};
+  movable.forEach((j: any) => { values[j.id] = 0; }); // aim for rest
+
+  const redundant = redundantJoints(doc);
+  if (redundant.length === 0 || movable.length === 0) return { values, ok: true }; // no loops → plain home
+
+  const errorFn = (vals: Record<string, number>): number[] => {
+    const w = withJointVals(doc, vals);
+    const f = computeFK(w) as FKMap;
+    const out: number[] = [];
+    for (const j of redundant) out.push(...jointLoopResidual(w, j, f));
+    return out;
+  };
+  // Project all-zeros onto the closed-loop manifold, staying as near rest as the locks allow.
+  const solved = lmSolveGeneric(movable, values, errorFn, { iterations: 80, tol: 1e-4, maxStep: 0.3 });
+  reconcileRedundantAngles(doc, solved, redundant);
+  const gap = worstLoopGap(withJointVals(doc, solved), redundant, computeFK(withJointVals(doc, solved)) as FKMap);
+  return { values: solved, ok: gap < 0.005 }; // < 5 mm residual → the module can rest closed
+}
+
 export function stabilizeLoops(doc: Document): Document {
   try {
     const redundant = redundantJoints(doc);

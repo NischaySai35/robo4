@@ -247,6 +247,30 @@ export class PhysicsSim {
     }
   }
 
+  /**
+   * Drive selected joints as continuously-spinning WHEELS: a velocity motor turns each
+   * at `radPerSec`, so friction against the ground actually propels the model (the
+   * "motor" CW/CCW feature under gravity). Call every sim frame with the currently
+   * spinning set. Joints that were spinning but are now absent are braked to a stop.
+   * Revolute limits are lifted while spinning so a wheel can turn past ±180°.
+   */
+  setJointVelocities(vels: Record<string, number>) {
+    this._spinning ??= new Set<string>();
+    for (const [id, w] of Object.entries(vels)) {
+      const entry = this.joints.get(id);
+      if (!entry) continue;
+      entry.joint.configureMotorModel?.(RAPIER.MotorModel.AccelerationBased);
+      if (entry.type === 'revolute') entry.joint.setLimits?.(-1e30, 1e30); // wheel: no clamp
+      entry.joint.configureMotorVelocity?.(w, this._motorDamping);
+      this._spinning.add(id);
+    }
+    for (const id of [...this._spinning]) {
+      if (id in vels) continue;                 // still spinning — leave it
+      this._spinning.delete(id);
+      this.joints.get(id)?.joint.configureMotorVelocity?.(0, this._motorDamping); // brake
+    }
+  }
+
   /** Advance exactly one fixed timestep (deterministic). */
   step() { this.world.step(this._events, this._hooks); }
 

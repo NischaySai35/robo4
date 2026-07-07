@@ -21,6 +21,9 @@ import { solveModelIK, chainJoints } from '@/kinematics/modelIK';
 import { useState, useCallback } from 'react';
 import { getAllDrivers, saveCustomDriver, type DriverDef } from '@/features/driver/DriverRegistry';
 import { bridge } from '@/viewport/cameraBridge';
+import SpinControls from '@/features/motor/SpinControls';
+import { stopSpin } from '@/features/motor/spinEngine';
+import { isMotorJoint } from '@/features/motor/endBody';
 
 const r3 = (v: any) => Math.round((v ?? 0) * 1000) / 1000;
 const clamp01 = (v: any) => Math.max(0, Math.min(1, v));
@@ -631,6 +634,17 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
         </>
       )}
 
+      {isMotorJoint(doc, joint) && (
+        <>
+          <div className="in-group">MOTOR · continuous rotation (end-lock joint)</div>
+          <SpinControls jointId={id} />
+          <div className="in-servo-hint">
+            CW / CCW rotate this motor continuously, ignoring the −180…180 limits below.
+            Click the active direction again, or <strong>Stop</strong> / <strong>Home</strong>, to halt.
+          </div>
+        </>
+      )}
+
       {hasLimits && (
         <>
           <div className="in-group">LIMITS {joint.type === 'prismatic' ? '(mm)' : '(°)'}</div>
@@ -659,6 +673,16 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
       {!isFixed && (
         <>
           <div className="in-group">DYNAMICS</div>
+          <label className="in-check">
+            <input type="checkbox" checked={!!meta.free}
+              onChange={(e) => upMeta({ free: e.target.checked })} />
+            <span>Free joint (sags/sways under gravity — chain / ragdoll)</span>
+          </label>
+          <div className="in-servo-hint">
+            {meta.free
+              ? 'Under gravity this joint swings freely (like a chain link).'
+              : 'Under gravity this joint stays rigid (holds its pose). Motorised joints always drive.'}
+          </div>
           <div className="in-row2">
             <Num label="Damping" value={dyn.damping} onChange={(v: any) => up({ dynamics: { ...dyn, damping: v } })} step={0.01} />
             <Num label="Friction" value={dyn.friction} onChange={(v: any) => up({ dynamics: { ...dyn, friction: v } })} step={0.01} />
@@ -702,7 +726,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
       {joint.type !== 'fixed' && (
         <div className="in-ops in-jog">
           {hasLimits && <button onClick={() => setValue(lim.lower)} title="Go to lower limit">⤓ Min</button>}
-          <button onClick={() => setValue(0)} title="Go to home / default (0)">⌂ Home</button>
+          <button onClick={() => { stopSpin(id); setValue(0); }} title="Stop spin and go to home / default (0)">⌂ Home</button>
           {hasLimits && <button onClick={() => setValue(lim.upper)} title="Go to upper limit">⤒ Max</button>}
         </div>
       )}

@@ -5,11 +5,16 @@
  * contacts instead of teleporting. ModelEditor sets/clears `sim` on sim start/stop.
  */
 export const physicsBridge: {
-  sim: { setJointTargets: (v: Record<string, number>) => void } | null;
+  sim: {
+    setJointTargets: (v: Record<string, number>) => void;
+    setJointVelocities: (v: Record<string, number>) => void;
+  } | null;
   active: () => boolean;
   setJointTargets: (v: Record<string, number>) => void;
+  setJointVelocities: (v: Record<string, number>) => void;
 } = {
   sim: null,
   active() { return this.sim != null; },
   setJointTargets(v) { this.sim?.setJointTargets(v); },
+  setJointVelocities(v) { this.sim?.setJointVelocities(v); },
 };

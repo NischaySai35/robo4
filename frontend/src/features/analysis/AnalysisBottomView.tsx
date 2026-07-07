@@ -26,11 +26,13 @@ export default function AnalysisBottomView() {
   const [synced, setSynced] = useState(true);
   const syncRef   = useRef(true);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const requestDrawRef = useRef<(n?: number) => void>(() => {});
 
   // Keep ref in sync with React state (readable inside the RAF loop)
   useEffect(() => {
     syncRef.current = synced;
     if (controlsRef.current) controlsRef.current.enabled = !synced;
+    requestDrawRef.current(2); // mode changed → redraw so the pane updates immediately
   }, [synced]);
 
   useEffect(() => {
@@ -42,7 +44,9 @@ export default function AnalysisBottomView() {
     host.appendChild(canvas);
 
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // Cap DPR at 1.5 here (vs 2 on the main view): this is a secondary reference pane,
+    // and pixel count is the dominant GPU cost of the extra render pass.
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 
     const cam = new THREE.PerspectiveCamera(45, 1, 0.01, 5000);
 
@@ -52,6 +56,17 @@ export default function AnalysisBottomView() {
     controls.dampingFactor = 0.08;
     controls.enabled = false; // sync ON by default
     controlsRef.current = controls;
+
+    // ── On-demand rendering (like the main viewport / Blender) ─────────────────
+    // A static scene must NOT keep re-rendering. We draw only when something that
+    // affects THIS pane changed: the top camera moved (synced), the user orbited
+    // this pane (free), or the model changed. Idle ⇒ zero GPU/CPU here.
+    let dirty = 3; // draw the first few frames to appear immediately
+    const requestDraw = (n = 2) => { dirty = Math.max(dirty, n); };
+    controls.addEventListener('change', () => requestDraw(2));         // free-orbit / damping
+    const unsubModel = useModelStore.subscribe(() => requestDraw(2));  // geometry/pose/material change
+    requestDrawRef.current = requestDraw;                              // let the sync toggle force a redraw
+    let lastCamKey = '';
 
     // Material cache: real-colour solid materials (no vertex colour = no heatmap)
     const matCache = new Map<string, THREE.MeshStandardMaterial>();
@@ -78,6 +93,7 @@ export default function AnalysisBottomView() {
       renderer.setSize(w, h, false);
       cam.aspect = w / h;
       cam.updateProjectionMatrix();
+      requestDraw(2);
     };
     const ro = new ResizeObserver(resize);
     ro.observe(host);
@@ -85,14 +101,26 @@ export default function AnalysisBottomView() {
 
     let raf = 0;
     let lastRender = 0;
-    const FRAME_MS = 1000 / 15; // 15fps cap — the material-swap + render is O(n_meshes)
+    const FRAME_MS = 1000 / 30; // ceiling only — actual draws are gated by `dirty`
     const tick = (now: number) => {
       raf = requestAnimationFrame(tick);
-      if (now - lastRender < FRAME_MS) return;
-      lastRender = now;
       const scene = bridge.scene as THREE.Scene | undefined;
       const main  = bridge.camera as THREE.PerspectiveCamera | undefined;
       if (!scene || !main) return;
+
+      // Synced: redraw when the top camera pose changed. Cheap string key compare.
+      if (syncRef.current) {
+        const p = main.position, q = main.quaternion;
+        const key = `${p.x.toFixed(4)},${p.y.toFixed(4)},${p.z.toFixed(4)},${q.x.toFixed(4)},${q.y.toFixed(4)},${q.z.toFixed(4)},${main.fov}`;
+        if (key !== lastCamKey) { lastCamKey = key; requestDraw(2); }
+      } else {
+        controls.update(); // emits 'change' while damping → sets dirty itself
+      }
+
+      if (dirty <= 0) return;           // nothing changed → GPU/CPU rest
+      if (now - lastRender < FRAME_MS) return;
+      lastRender = now;
+      dirty--;
 
       if (syncRef.current) {
         // Mirror the top camera exactly
@@ -104,8 +132,6 @@ export default function AnalysisBottomView() {
         cam.updateProjectionMatrix();
         // Reset orbit target so it's ready when user switches to free mode
         controls.target.copy((main as any).target ?? _zeroV);
-      } else {
-        controls.update();
       }
 
       // Swap each body mesh to its solid real-colour material, render, then restore —
@@ -126,6 +152,7 @@ export default function AnalysisBottomView() {
 
     return () => {
       cancelAnimationFrame(raf);
+      unsubModel();
       ro.disconnect();
       controls.dispose();
       controlsRef.current = null;

@@ -18,6 +18,9 @@ import { SceneManager } from '@/viewport/SceneManager';
 import { ModelEditor } from '@/viewport/ModelEditor';
 import { MeasureTool } from '@/viewport/MeasureTool';
 import { startMemoryMonitor } from '@/viewport/memoryMonitor';
+import { createFrameProfiler } from '@/viewport/frameProfiler';
+import { startMagnetEngine } from '@/features/magnets/magnetEngine';
+import { startEspPoll } from '@/features/servo/espPoll';
 import { useThemeStore } from '@/state/themeStore';
 import { useEditorStore } from '@/state/editorStore';
 import { bridge } from '@/viewport/cameraBridge';
@@ -30,6 +33,7 @@ import { downloadBlob, writeProjectToHandle } from '@/core/serialization/fileIO'
 import { useDocStore } from '@/state/docStore';
 import { useHistoryStore } from '@/state/historyStore';
 import { useModelStore } from '@/state/modelStore';
+import { useSelectionStore } from '@/state/selectionStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { useAnimSceneStore } from '@/state/animSceneStore';
 import { usePageStore } from '@/state/pageStore';
@@ -279,12 +283,28 @@ export default function SimCanvas() {
       else measureTool.disable();
     });
 
-    // ── Render loop ───────────────────────────────────────────────────────────
+    // ── Render loop (ON-DEMAND, like Blender) ─────────────────────────────────
+    // tick() always runs (steps physics/animation cheaply). We only actually DRAW when something
+    // changed: an active animation (tick returns true), or a queued render request (camera move,
+    // model/selection change, resize, hover). Idle scene ⇒ no draw ⇒ GPU rests.
+    const unsubRender = useModelStore.subscribe(() => sceneMgr.requestRender(2));
+    const unsubSelRender = useSelectionStore.subscribe(() => sceneMgr.requestRender(2));
+    // Any store that changes what's on screen also requests a redraw (theme, wireframe, hidden
+    // bodies, rigid mode, animation state) so UI toggles show instantly, not only on mouse-move.
+    const unsubR2 = useWorkspaceStore.subscribe(() => sceneMgr.requestRender(2));
+    const unsubR3 = useEditorStore.subscribe(() => sceneMgr.requestRender(3));
+    const unsubR4 = useThemeStore.subscribe(() => sceneMgr.requestRender(3));
+    const unsubR5 = useAnimationStore.subscribe(() => sceneMgr.requestRender(2));
     let raf: any = null;
+    const prof = createFrameProfiler(); // opt-in (?profile or localStorage.robo_profile=1); no-op otherwise
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      modelEditor.tick();   // physics step / animation preview when active
-      sceneMgr.render();
+      prof.frameStart();
+      const active = modelEditor.tick();   // physics step / animation preview when active
+      prof.mark('tick');
+      if (active) sceneMgr.requestRender(2);
+      if (sceneMgr.shouldRender()) { sceneMgr.render(); prof.mark('render'); }
+      prof.frameEnd();
     };
     raf = requestAnimationFrame(loop);
 
@@ -466,9 +486,16 @@ export default function SimCanvas() {
     loadAutosave().then(saved => { if (saved) bridge.loadScene?.(saved); }).catch(() => {});
     const fitTimer = setTimeout(() => { bridge.fitCamera?.(); bridge.updateCameraLimits?.(); }, 300);
     const stopMemoryMonitor = startMemoryMonitor(() => modelEditor._doc);
+    // Master control loop for the end-lock electromagnets (energize on lock, grab→hold profile).
+    const stopMagnetEngine = startMagnetEngine();
+    // Continuous multi-ESP telemetry polling (all module boards at once).
+    const stopEspPoll = startEspPoll();
 
     return () => {
       cancelAnimationFrame(raf);
+      prof.dispose();
+      stopMagnetEngine();
+      stopEspPoll();
       clearTimeout(saveTimer);
       clearTimeout(fitTimer);
       stopMemoryMonitor();
@@ -481,6 +508,9 @@ export default function SimCanvas() {
       unsubAnimSave();
       unsubAuto();
       unsubReach();
+      unsubRender();
+      unsubSelRender();
+      unsubR2(); unsubR3(); unsubR4(); unsubR5();
       canvas.removeEventListener('pointerdown', onGoalClick);
       canvas.removeEventListener('pointerdown', onReachPick);
       clearAuto();

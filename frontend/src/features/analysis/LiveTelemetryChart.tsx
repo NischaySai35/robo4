@@ -122,8 +122,13 @@ export default function LiveTelemetryChart() {
     const plot = new uPlot({
       width:  host.clientWidth || 280,
       height: CHART_H,
-      // Normalised to each series' own peak → a stable 0..100% vertical scale.
-      scales: { x: { time: false }, y: { auto: false, range: [0, 1.06] } },
+      // Normalised to each series' PHYSICAL LIMIT (motor stall torque/current,
+      // thermal max, no-load speed) → 100% = at the rated limit. Overloads read
+      // ABOVE 100% intentionally, so the top auto-expands past the 100% gridline.
+      scales: {
+        x: { time: false },
+        y: { auto: true, range: (_u: any, _min: number, max: number) => [0, Math.max(1.06, (max ?? 1) * 1.08)] },
+      },
       legend: { show: false },
       cursor: { drag: { x: true, y: false }, points: { show: false } },
       series: [
@@ -304,13 +309,14 @@ export default function LiveTelemetryChart() {
       // Peak single-servo — base + impact torque combined per joint, then max across joints.
       // Torque uses per-joint motor spec for correct stall current and Kt.
       let tor = 0, cur = 0, peakStall = ST3215.stallTorque;
+      let gov = getMotorSpec(null); // governing motor = the peak-torque joint's spec
       for (const j of set) {
         const motor    = getMotorSpec((d.joints[j.id] as any)?.meta?.motorType);
         const baseTor  = Math.abs(loads.get(j.id)?.torque ?? 0);
         const impact   = Math.abs(extraContactTorques.get(j.id) ?? 0);
         const totalTor = baseTor + impact;
         const totalCur = motor.noLoadCurrent + totalTor / motor.Kt;
-        if (totalTor > tor) { tor = totalTor; peakStall = motor.stallTorque; }
+        if (totalTor > tor) { tor = totalTor; peakStall = motor.stallTorque; gov = motor; }
         if (totalCur > cur)   cur = totalCur;
 
         // Advance thermal model with current draw
@@ -319,7 +325,8 @@ export default function LiveTelemetryChart() {
       tor = Math.max(0, tor);
       cur = Math.max(0, Math.min(cur, peakStall / (ST3215.Kt / ST3215.stallCurrent)));
 
-      const stress = Math.min(1, tor / peakStall) * 100;
+      // Stress = torque as a fraction of stall, UNCLAMPED so an overload shows >100%.
+      const stress = peakStall > 0 ? (tor / peakStall) * 100 : 0;
 
       if (mode === 'real') {
         cur = (useIntegrationStore.getState().totalCurrentMA ?? 0) / 1000;
@@ -335,12 +342,23 @@ export default function LiveTelemetryChart() {
       for (let i = 0; i < SERIES.length; i++) real[i + 1].push(vals[i]);
       if (real[0].length > WINDOW) for (const col of real) col.shift();
 
+      // Per-series denominator = the physical LIMIT (1.0 = at the rating). null =
+      // no hard limit (acceleration) → fall back to the rolling-window peak so it
+      // still shows relative shape. Values are NOT clamped: an overload reads >1.0.
+      const denom: (number | null)[] = [
+        Math.max(1e-6, gov.maxSpeed * RAD2DEG), // velocity     °/s  (no-load speed limit)
+        null,                                    // acceleration      (no rated limit)
+        Math.max(1e-6, gov.stallTorque),         // torque       N·m  (stall)
+        Math.max(1e-6, gov.stallCurrent),        // current      A    (stall)
+        100,                                     // stress       %    (already % of stall)
+        Math.max(1e-6, gov.maxTemp),             // temperature  °C   (winding max)
+      ];
       data[0] = real[0];
       for (let i = 0; i < SERIES.length; i++) {
-        const col  = real[i + 1];
-        let peak   = 1e-9;
-        for (const v of col) peak = Math.max(peak, Math.abs(v));
-        data[i + 1] = col.map((v: number) => v / peak);
+        const col = real[i + 1];
+        let d = denom[i];
+        if (d == null) { let peak = 1e-9; for (const v of col) peak = Math.max(peak, Math.abs(v)); d = peak; }
+        data[i + 1] = col.map((v: number) => Math.abs(v) / (d as number));
       }
       plot.setData(data);
 
@@ -375,7 +393,7 @@ export default function LiveTelemetryChart() {
   return (
     <div className="an-chart">
       <div className="an-chart-head">
-        <span className="an-chart-title">{selName ? `${selName} · normalised` : 'Peak servo · normalised'}</span>
+        <span className="an-chart-title">{selName ? `${selName} · % of limit` : 'Peak servo · % of limit'}</span>
         <select className="an-chart-mode" value={mode} onChange={(e) => setMode(e.target.value as 'virtual' | 'real')}
           title="Virtual = computed from the model · Real = measured from hardware">
           <option value="virtual">Virtual</option>

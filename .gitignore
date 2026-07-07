@@ -90,3 +90,6 @@ esp32/build/
 
 # Rust RT Core build artifacts
 rtcore/target/
+
+# Firmware sketch — kept local, not on GitHub (per request)
+esp32/firmware.ino

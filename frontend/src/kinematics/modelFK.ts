@@ -130,41 +130,60 @@ export function computeFKGraph(doc: any, rootBodyId: string) {
 
   const worldM = new Map<string, THREE.Matrix4>();
   const visited = new Set<string>();
-  // Active body is the "ground" — uses its authored transform as the world anchor.
+
+  const bfs = (start: string) => {
+    const queue: string[] = [start];
+    while (queue.length > 0) {
+      const bodyId = queue.shift()!;
+      const parentM = worldM.get(bodyId)!;
+      for (const { joint: j, neighborId } of adj.get(bodyId) ?? []) {
+        if (visited.has(neighborId)) continue;
+        visited.add(neighborId);
+        let M: THREE.Matrix4;
+        if (j.parentBodyId === bodyId) {
+          // Forward: parent → child
+          M = parentM.clone()
+            .multiply(originMat(j.origin))
+            .multiply(jointDOFMatrix(j))
+            .multiply(originMat(j.childRest));
+        } else {
+          // Reverse: arrived from child side, solve for the parent
+          // child_world = parent_world × origin × DOF × childRest
+          // → parent_world = child_world × childRest⁻¹ × DOF⁻¹ × origin⁻¹
+          M = parentM.clone()
+            .multiply(originMat(j.childRest).invert())
+            .multiply(jointDOFMatrixInverse(j))
+            .multiply(originMat(j.origin).invert());
+        }
+        worldM.set(neighborId, M);
+        queue.push(neighborId);
+      }
+    }
+  };
+
+  // Primary component: the active/grounded body is the world anchor (its authored transform).
   worldM.set(rootBodyId, mat(doc.bodies[rootBodyId].transform));
   visited.add(rootBodyId);
+  bfs(rootBodyId);
 
-  const queue: string[] = [rootBodyId];
-  while (queue.length > 0) {
-    const bodyId = queue.shift()!;
-    const parentM = worldM.get(bodyId)!;
-    for (const { joint: j, neighborId } of adj.get(bodyId) ?? []) {
-      if (visited.has(neighborId)) continue;
-      visited.add(neighborId);
-      let M: THREE.Matrix4;
-      if (j.parentBodyId === bodyId) {
-        // Forward: parent → child
-        M = parentM.clone()
-          .multiply(originMat(j.origin))
-          .multiply(jointDOFMatrix(j))
-          .multiply(originMat(j.childRest));
-      } else {
-        // Reverse: arrived from child side, solve for the parent
-        // child_world = parent_world × origin × DOF × childRest
-        // → parent_world = child_world × childRest⁻¹ × DOF⁻¹ × origin⁻¹
-        M = parentM.clone()
-          .multiply(originMat(j.childRest).invert())
-          .multiply(jointDOFMatrixInverse(j))
-          .multiply(originMat(j.origin).invert());
-      }
-      worldM.set(neighborId, M);
-      queue.push(neighborId);
+  // Pose EVERY OTHER connected component too, each anchored at its own natural base — so a module
+  // that got disconnected (e.g. after unlocking a bridge lock) is still posed by ITS joints and
+  // responds to Home, instead of freezing at its authored transform.
+  const hasEnabledParent = new Set<string>();
+  for (const j of Object.values(doc.joints) as any[]) {
+    if (j.state?.disabled) continue;
+    if (j.parentBodyId && j.childBodyId && doc.bodies[j.parentBodyId] && doc.bodies[j.childBodyId]) {
+      hasEnabledParent.add(j.childBodyId);
     }
   }
-
-  // Bodies not reachable from root use their authored transform.
-  for (const id of Object.keys(doc.bodies)) {
-    if (!worldM.has(id)) worldM.set(id, mat(doc.bodies[id].transform));
+  const ids = Object.keys(doc.bodies);
+  // Natural bases first (chain roots → Home reproduces the rest assembly), then any leftover
+  // (a cyclic component with no base) so nothing is missed.
+  for (const id of [...ids.filter((i) => !hasEnabledParent.has(i)), ...ids]) {
+    if (visited.has(id)) continue;
+    worldM.set(id, mat(doc.bodies[id].transform));
+    visited.add(id);
+    bfs(id);
   }
 
   const out = new Map<string, any>();

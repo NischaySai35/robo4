@@ -75,6 +75,13 @@ interface AnimationState {
   addConnectionKey: (jointId: string, on: boolean) => void;
   sampleConnections: (t: number) => Record<string, boolean>;
 
+  // Spin (motor) keyframes: per clip → per joint → step keys of {t, dir} where dir is
+  // -1 (CCW) / 0 (stopped) / 1 (CW). During playback a joint with dir≠0 rotates
+  // continuously from the key time at its meta.spinRpm speed. Stopped by default.
+  spinByClip: Record<string, Record<string, { t: number; dir: number }[]>>;
+  addSpinKey: (jointId: string, dir: number) => void;
+  sampleSpins: (t: number) => Record<string, { dir: number; since: number }>;
+
   // Grounded-base keyframes (foot-plant): per clip → step keys of {t, bodyId}. Playback
   // roots FK at the keyed body for each segment, so switching the base mid-clip changes
   // which body stays planted (like planting one foot then the other).
@@ -314,6 +321,29 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
       return out;
     },
 
+    spinByClip: {},
+
+    addSpinKey: (jointId, dir) => set((s) => {
+      const t = s.snap ? Math.round(s.playhead * s.fps) / s.fps : s.playhead;
+      const forClip = { ...(s.spinByClip[s.activeClipId] ?? {}) };
+      const keys = (forClip[jointId] ? [...forClip[jointId]] : []).filter((k) => Math.abs(k.t - t) > 1e-4);
+      keys.push({ t, dir });
+      keys.sort((a, b) => a.t - b.t);
+      forClip[jointId] = keys;
+      return { spinByClip: { ...s.spinByClip, [s.activeClipId]: forClip } };
+    }),
+
+    sampleSpins: (t) => {
+      const forClip = get().spinByClip[get().activeClipId] ?? {};
+      const out: Record<string, { dir: number; since: number }> = {};
+      for (const [jid, keys] of Object.entries(forClip)) {
+        let dir = 0, since = 0;
+        for (const k of keys) { if (k.t <= t + 1e-6) { dir = k.dir; since = k.t; } else break; }
+        out[jid] = { dir, since };
+      }
+      return out;
+    },
+
     baseByClip: {},
 
     addBaseKey: (bodyId) => set((s) => {
@@ -405,7 +435,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
 
     exportClip: () => {
       const s = get();
-      return { version: 3, fps: s.fps, activeClipId: s.activeClipId, clips: syncActive(s), groups: s.groups, connectionsByClip: s.connectionsByClip, baseByClip: s.baseByClip };
+      return { version: 3, fps: s.fps, activeClipId: s.activeClipId, clips: syncActive(s), groups: s.groups, connectionsByClip: s.connectionsByClip, baseByClip: s.baseByClip, spinByClip: s.spinByClip };
     },
     loadClip: (data) => set(() => {
       // v3 multi-clip + groups format
@@ -419,6 +449,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
           groups: Array.isArray(data.groups) ? data.groups : [],
           connectionsByClip: (data.connectionsByClip && typeof data.connectionsByClip === 'object') ? data.connectionsByClip : {},
           baseByClip: (data.baseByClip && typeof data.baseByClip === 'object') ? data.baseByClip : {},
+          spinByClip: (data.spinByClip && typeof data.spinByClip === 'object') ? data.spinByClip : {},
           playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
         };
       }
@@ -428,7 +459,7 @@ export const useAnimationStore = create<AnimationState>((set, get) => {
       return {
         clips: [c], activeClipId: c.id, fps: 30, tracks: c.tracks, duration: c.duration,
         playhead: 0, playing: false, preview: false, sequence: false,
-        groups: [], connectionsByClip: {}, baseByClip: {}, playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
+        groups: [], connectionsByClip: {}, baseByClip: {}, spinByClip: {}, playingGroupId: null, playingGroupEntryIdx: 0, groupDelayCountdown: 0,
       };
     }),
   };

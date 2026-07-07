@@ -8,6 +8,7 @@ import { useAnimSceneStore } from '@/state/animSceneStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { groundBody } from '@/features/rigid/groundBody';
+import { setBodyModePreservingPose } from '@/features/rigid/bodyModeAction';
 import { commands } from '@/core/commands/index';
 import { uid } from '@/core/model/index';
 import type { Connector, AssemblyMate } from '@/core/model/index';
@@ -18,6 +19,7 @@ import { computeFK } from '@/kinematics/modelFK';
 import { bridge } from '@/viewport/cameraBridge';
 import { withJointValues } from '@/control/motionRuntime';
 import { useAutoGround } from '@/features/rigid/useAutoGround';
+import MagnetControls from '@/features/magnets/MagnetControls';
 
 // ── Global Rotate helper ──────────────────────────────────────────────────────
 function rotateVec3AroundAxis(v: THREE.Vector3, axis: 'x' | 'y' | 'z', angleDeg: number) {
@@ -140,7 +142,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   const bodyMode           = useWorkspaceStore((s) => s.bodyMode);
   const rigidMode          = bodyMode === 'rigid';
   const activeBodyId       = useWorkspaceStore((s) => s.activeBodyId);
-  const setBodyMode        = useWorkspaceStore((s) => s.setBodyMode);
   const setActiveBodyId    = useWorkspaceStore((s) => s.setActiveBodyId);
   const selectedCompId     = useAnimSceneStore((s) => s.selectedCompId);
   const globalRotateActive = useAnimSceneStore((s) => s.globalRotateActive);
@@ -680,7 +681,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
         {secTitle('rigid', 'RIGID MODE · shared with Editor')}
         <button
           className={`alp-toggle-btn${rigidMode ? ' alp-toggle-btn--on' : ''}`}
-          onClick={() => setBodyMode(rigidMode ? 'free' : 'rigid')}
+          onClick={() => setBodyModePreservingPose(rigidMode ? 'free' : 'rigid')}
           title="Rigid mode grounds one body as the fixed base; graph FK propagates outward. This is the SAME toggle as the Editor's Free Float / Rigid."
         >
           {rigidMode ? '⬤ Rigid Mode ON' : '○ Rigid Mode OFF'}
@@ -851,6 +852,20 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
               </div>
             ))}
           </div>
+        )}
+      </div>
+
+      {/* ── Magnets (electromagnet locks) ── */}
+      <div className="alp-section">
+        {secTitle('magnets', 'MAGNETS')}
+        {!collapsed.has('magnets') && (
+          <>
+            <div className="alp-snap-hint">
+              End-lock electromagnets. AUTO energizes a magnet when its connector locks
+              (100% grab → 40% hold). Switch to ON/OFF for manual control.
+            </div>
+            <MagnetControls variant="compact" />
+          </>
         )}
       </div>
 

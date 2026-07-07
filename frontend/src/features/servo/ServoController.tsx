@@ -4,6 +4,9 @@ import type { Document } from '@/core/model/index';
 import { useIntegrationStore } from '@/state/integrationStore';
 import { useThemeStore } from '@/state/themeStore';
 import { useModelStore } from '@/state/modelStore';
+import { useEspNodesStore } from '@/state/espNodesStore';
+import { servoRouting, sendServoCmd, sendServoBatch, estopAllNodes } from './servoLink';
+import MagnetControls from '@/features/magnets/MagnetControls';
 import './ServoController.css';
 
 // ── Dynamic servo definitions (derived from the simulator's joints) ────────────
@@ -46,16 +49,30 @@ function gaugeBounds(kind: any, limit: any) {
   return { lo, hi };
 }
 
-/** Build the dynamic servo defs from the model document's joints. */
+/** Build the dynamic servo defs from the model document's joints.
+ *  MULTI-ESP: `id` is the jointId (unique across all boards) and is the state key +
+ *  routing key; `servoId` is the LOCAL 1..7 id on that joint's module ESP (repeats
+ *  across boards). `moduleId` is the component the servo's board drives. */
 function servoDefsFromDoc(doc?: Document | null) {
   const joints = Object.values(doc?.joints ?? {}).filter((j) => j.type !== 'fixed');
+  const seqByModule = new Map<string | null, number>();
   return joints.map((j, i) => {
     const kind = jointKind(j.type);
     const { lo, hi } = gaugeBounds(kind, j.limit);
+    const moduleId = (j.componentId
+      ?? doc?.bodies[j.parentBodyId!]?.componentId
+      ?? doc?.bodies[j.childBodyId!]?.componentId
+      ?? null);
+    const seq = (seqByModule.get(moduleId) ?? 0) + 1;
+    seqByModule.set(moduleId, seq);
     const assigned = Number(j.meta?.servoId);
+    const servoId = Number.isFinite(assigned) && assigned > 0 ? assigned : seq;
     return {
-      id: Number.isFinite(assigned) && assigned > 0 ? assigned : i + 1,
+      id: j.id,          // unique key (jointId) — state + command routing
       jointId: j.id,
+      servoId,           // local id on the module ESP (for display + firmware)
+      moduleId,
+      moduleName: (moduleId && doc?.components?.[moduleId]?.name) || 'Unassigned',
       label: `J${i + 1}`,
       name: (j.name ?? `Joint ${i + 1}`).toUpperCase(),
       type: kind,
@@ -67,26 +84,7 @@ function servoDefsFromDoc(doc?: Document | null) {
   });
 }
 
-// Per-id type + within-type ordinal (twist: 1,2,3…  bend: 1,2,3…), used for the
-// header overcurrent label. Recomputed whenever the defs change.
-function servoTypeNumMap(defs: any) {
-  const map: Record<string, any> = {};
-  let t = 0, b = 0;
-  for (const d of defs) {
-    if (d.type === 'twist') map[d.id] = { type: 'twist', num: ++t };
-    else                    map[d.id] = { type: 'bend',  num: ++b };
-  }
-  return map;
-}
-
-const MAX_HISTORY  = 120;
-const POLL_MS      = 50;     // full-speed telemetry poll — ONLY runs once the ESP
-                            // has answered (see the probe state machine below)
-const PROBE_MS         = 300;   // attempt cadence while probing for the ESP
-const PROBE_WINDOW_MS  = 5000;  // give up probing after 5s of silence
-const MAX_LIVE_FAILS   = 10;    // consecutive live-poll failures (~0.5s) before
-                                // declaring the link dead and stopping the loop
-const DEFAULT_URL  = 'http://nischaylap.local';
+const MAX_HISTORY  = 120;   // telemetry is polled continuously by the espPoll engine
 const TEMP_WARN    = 55;
 const SERVO_MA_MAX = 2000;
 const TOTAL_MA_MAX = 8000;
@@ -102,12 +100,6 @@ function pushH(arr: any, val: any) {
   const next = [...arr, val];
   if (next.length > MAX_HISTORY) next.shift();
   return next;
-}
-
-function initServoState(defs: any) {
-  const s: Record<string, any> = {};
-  for (const d of defs) s[d.id] = { history: { current: [], load: [] } };
-  return s;
 }
 
 function totalCurrentmA(defs: any, servos: any) {
@@ -813,7 +805,6 @@ export default function ServoController() {
   // ── Dynamic servo defs (mirror the simulator's joints) ─────────────────────
   const doc  = useModelStore(s => s.doc);
   const defs = useMemo(() => servoDefsFromDoc(doc), [doc]);
-  const typeNumMap = useMemo(() => servoTypeNumMap(defs), [defs]);
   const motorSummary = useMemo(() => {
     if (defs.length === 0) return 'Smart Servo';
     const counts: Record<string, number> = {};
@@ -827,246 +818,88 @@ export default function ServoController() {
   // being re-created on every joint edit.
   const defsRef = useRef(defs);
   useEffect(() => { defsRef.current = defs; }, [defs]);
-  const typeNumRef = useRef(typeNumMap);
-  useEffect(() => { typeNumRef.current = typeNumMap; }, [typeNumMap]);
 
-  // ── Integration store ─────────────────────────────────────────────────────
-  const intEspUrl       = useIntegrationStore(s => s.espUrl);
-  const pushCtrlLog     = useIntegrationStore(s => s.pushCtrlLog);
-  const clearCtrlLog    = useIntegrationStore(s => s.clearCtrlLog);
-  const ctrlLog         = useIntegrationStore(s => s.ctrlLog);
-  const pendingAngles   = useIntegrationStore(s => s.pendingAngles);
-  const consumeAngles   = useIntegrationStore(s => s.consumeAngles);
-  const markSent        = useIntegrationStore(s => s.markSent);
-  const simSent         = useIntegrationStore(s => s.simSent);
-  const simFailed       = useIntegrationStore(s => s.simFailed);
-  const simOffline      = useIntegrationStore(s => s.simOffline);
-  const setIntConnected      = useIntegrationStore(s => s.setConnected);
-  const setIntEspUrl         = useIntegrationStore(s => s.setEspUrl);
-  const setServoOnlineCount  = useIntegrationStore(s => s.setServoOnlineCount);
-  const setAvgVoltage        = useIntegrationStore(s => s.setAvgVoltage);
-  const setTotalCurrentMA    = useIntegrationStore(s => s.setTotalCurrentMA);
-  const setOvercurrentServos = useIntegrationStore(s => s.setOvercurrentServos);
+  // ── Integration store (logs + sim relay) ──────────────────────────────────
+  const pushCtrlLog   = useIntegrationStore(s => s.pushCtrlLog);
+  const clearCtrlLog  = useIntegrationStore(s => s.clearCtrlLog);
+  const ctrlLog       = useIntegrationStore(s => s.ctrlLog);
+  const pendingAngles = useIntegrationStore(s => s.pendingAngles);
+  const consumeAngles = useIntegrationStore(s => s.consumeAngles);
+  const markSent      = useIntegrationStore(s => s.markSent);
+  const simSent       = useIntegrationStore(s => s.simSent);
+  const simFailed     = useIntegrationStore(s => s.simFailed);
+  const simOffline    = useIntegrationStore(s => s.simOffline);
 
-  const [espUrl,       setEspUrl]       = useState(intEspUrl);
-  const [inputUrl,     setInputUrl]     = useState(intEspUrl);
-  const [connected,    setConnected]    = useState(false);
-  // Link lifecycle: 'probing' (looking for the ESP, max 5s) → 'live' (full-speed
-  // 50ms polling) or 'stopped' (no requests at all until the user hits Connect).
-  const [linkState,    setLinkState]    = useState('probing');
-  const [probeNonce,   setProbeNonce]   = useState(0); // bump to restart probing
-  const [latencyMs,    setLatencyMs]    = useState<any>(null);
-  const [lastUpdateStr, setLastUpdateStr] = useState('—');
-  const [servos,       setServos]       = useState(() => initServoState(defs));
-  const [wifiInfo,     setWifiInfo]     = useState<any>(null);
-  const [alerts,       setAlerts]       = useState<any[]>([]);
+  // ── Multi-ESP node registry (each module = its own ESP32-C3) ───────────────
+  // The espPoll engine keeps EVERY board polled; here we just read the results.
+  const nodes = useEspNodesStore(s => s.nodes);
+  const addNode = useEspNodesStore(s => s.addNode);
 
-  const pollRef    = useRef<any>(null);
-  const busyRef    = useRef(false);
+  const [alerts, setAlerts] = useState<any[]>([]);
   const dismissRef = useRef(new Set());
-  const connectedRef = useRef(false);
-  const espUrlRef    = useRef(espUrl);
-  const linkStateRef    = useRef('probing');
-  const probeDeadlineRef = useRef(0);
-  const failCountRef     = useRef(0);
-  useEffect(() => { linkStateRef.current = linkState; }, [linkState]);
+  const histRef = useRef<Record<string, { current: number[]; load: number[] }>>({});
 
-  // Keep refs current for use inside async callbacks
-  useEffect(() => { connectedRef.current = connected; }, [connected]);
-  useEffect(() => { espUrlRef.current    = espUrl;    }, [espUrl]);
+  const nodeById = useMemo(() => new Map(nodes.map(n => [n.id, n])), [nodes]);
+  const routing  = useMemo(() => servoRouting(doc), [doc, nodes]);
 
-  const addLog = useCallback((msg: any, kind = 'cmd', src = 'USER') => {
-    pushCtrlLog(kind, src, msg);
-  }, [pushCtrlLog]);
-
-  // ── Poll ────────────────────────────────────────────────────────────────────
-  const poll = useCallback(async () => {
-    if (busyRef.current) return connectedRef.current; // skipped, not a failure
-    busyRef.current = true;
-    const t0 = Date.now();
-    try {
-      const res  = await fetch(`${espUrl}/api/telemetry`, { cache: 'no-store', signal: AbortSignal.timeout(8000) });
-      const data = await res.json();
-      const lat  = Date.now() - t0;
-      setLatencyMs(lat);
-
-      if (data?.ok) {
-        if (!connectedRef.current) {
-          pushCtrlLog('ok', 'SYS', `ESP connected — ${espUrl} (${lat}ms)`);
-        }
-        setConnected(true);
-        setIntConnected(true, lat);
-        setLastUpdateStr(new Date().toLocaleTimeString());
-        if (data.wifi) setWifiInfo(data.wifi);
-
-        // Compute totalMA directly from raw response — NOT inside setServos, whose
-        // updater runs lazily and would leave totalMA=0 when read immediately after.
-        const totalMA = (data.servos ?? []).reduce((sum: any, sv: any) => sum + (sv.currentmA ?? 0), 0);
-
-        setServos(prev => {
-          const next = { ...prev };
-          for (const sv of (data.servos ?? [])) {
-            const old = prev[sv.id] || { history: { current: [], load: [] } };
-            next[sv.id] = {
-              ...sv,
-              history: {
-                current: sv.currentmA != null ? pushH(old.history.current, sv.currentmA) : old.history.current,
-                load:    sv.loadAbs    != null ? pushH(old.history.load,    sv.loadAbs)   : old.history.load,
-              },
-            };
-          }
-          return next;
-        });
-
-        const newAlerts = computeAlerts(
-          defsRef.current,
-          Object.fromEntries((data.servos ?? []).map((sv: any) => [sv.id, sv])),
-          totalMA
-        ).filter(a => !dismissRef.current.has(a.id));
-        setAlerts(newAlerts);
-
-        const onCnt = (data.servos ?? []).filter((s: any) => s.connected).length;
-        setServoOnlineCount(onCnt);
-
-        // Push average voltage + total current for header indicators
-        const voltageSamples = (data.servos ?? []).filter((s: any) => s.connected && s.voltageV != null);
-        if (voltageSamples.length > 0) {
-          const avg = voltageSamples.reduce((sum: any, s: any) => sum + s.voltageV, 0) / voltageSamples.length;
-          setAvgVoltage(avg);
-        }
-        if (onCnt > 0) setTotalCurrentMA(totalMA);
-
-        // Track per-servo overcurrent (> 700 mA) for header warning
-        const oc = (data.servos ?? [])
-          .filter((s: any) => s.connected && s.currentmA != null && s.currentmA > 700)
-          .map((s: any) => {
-            const tn = typeNumRef.current[s.id] ?? { type: 'twist', num: s.id };
-            return { id: s.id, label: s.label ?? `J${s.id}`, type: tn.type, typeNum: tn.num, currentmA: s.currentmA };
-          });
-        setOvercurrentServos(oc);
-
-        // Log poll summary every ~4s (every 16th poll at 250ms)
-        if (Math.random() < 0.063) {
-          const hottest = (data.servos ?? []).reduce((m: any, s: any) => s.tempC > m ? s.tempC : m, 0);
-          pushCtrlLog('info', 'POLL', `${onCnt}/${defsRef.current.length} online · ${lat}ms · ${(totalMA/1000).toFixed(2)}A · ${hottest}°C`);
-        }
-      }
-      return true; // ESP answered — reachable
-    } catch (err) {
-      if (connectedRef.current) {
-        pushCtrlLog('error', 'SYS', `ESP lost — ${err.message}`);
-      }
-      setConnected(false);
-      setIntConnected(false, null);
-      setServoOnlineCount(0);
-      return false; // unreachable
-    } finally {
-      busyRef.current = false;
+  // Per-JOINT live data, assembled from each joint's module ESP telemetry. Local
+  // servo ids repeat across boards, so each joint is looked up by (node → localId).
+  const servos = useMemo(() => {
+    const out: Record<string, any> = {};
+    for (const def of defs) {
+      const r = routing.get(def.id);
+      const node = r?.nodeId ? nodeById.get(r.nodeId) : undefined;
+      const sv = (node?.telemetry as any)?.servos?.find((s: any) => s.id === r?.localId);
+      out[def.id] = { ...(sv ?? {}), _node: node, history: histRef.current[def.id] ?? { current: [], load: [] } };
     }
-  }, [espUrl, pushCtrlLog, setIntConnected]);
+    return out;
+  }, [defs, routing, nodeById]);
+  const servosRef = useRef(servos);
+  useEffect(() => { servosRef.current = servos; }, [servos]);
 
-  // Connection-aware poll loop. Three phases, one request in flight at a time:
-  //   probing — try every PROBE_MS for up to 5s. First success → 'live'.
-  //   live    — poll at full speed (POLL_MS). Stop after MAX_LIVE_FAILS in a row.
-  //   stopped — no requests at all. The user must hit Connect/Try again to retry.
-  // This means an offline ESP generates ZERO network traffic (no busy cursor),
-  // while a present one is polled at the full 50ms.
+  // Accumulate per-joint history + recompute alerts whenever any board's telemetry updates.
   useEffect(() => {
-    let cancelled = false;
-    probeDeadlineRef.current = Date.now() + PROBE_WINDOW_MS;
-    failCountRef.current = 0;
-    setLinkState('probing');
-    linkStateRef.current = 'probing';
+    for (const def of defs) {
+      const r = routing.get(def.id);
+      const node = r?.nodeId ? nodeById.get(r.nodeId) : undefined;
+      const sv = (node?.telemetry as any)?.servos?.find((s: any) => s.id === r?.localId);
+      if (!sv) continue;
+      const h = histRef.current[def.id] ?? (histRef.current[def.id] = { current: [], load: [] });
+      if (sv.currentmA != null) h.current = pushH(h.current, sv.currentmA);
+      if (sv.loadAbs != null) h.load = pushH(h.load, sv.loadAbs);
+    }
+    const flat: Record<string, any> = {};
+    for (const def of defs) flat[def.id] = servosRef.current[def.id];
+    const totalMA = Object.values(flat).reduce((s: number, sv: any) => s + (sv?.currentmA ?? 0), 0);
+    setAlerts(computeAlerts(defs, flat, totalMA).filter(a => !dismissRef.current.has(a.id)));
+  }, [nodes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const tick = async () => {
-      if (cancelled) return;
-      const ok = await poll();
-      if (cancelled) return;
+  const connectedNodes = nodes.filter(n => n.connected).length;
 
-      if (ok) {
-        failCountRef.current = 0;
-        if (linkStateRef.current !== 'live') { linkStateRef.current = 'live'; setLinkState('live'); }
-        pollRef.current = setTimeout(tick, POLL_MS);
-        return;
-      }
-
-      // Poll failed —
-      if (linkStateRef.current === 'live') {
-        failCountRef.current += 1;
-        if (failCountRef.current >= MAX_LIVE_FAILS) {
-          pushCtrlLog('error', 'SYS', 'ESP unreachable — polling stopped. Press Connect to retry.');
-          linkStateRef.current = 'stopped'; setLinkState('stopped');
-          return; // halt the loop entirely
-        }
-        pollRef.current = setTimeout(tick, POLL_MS);
-        return;
-      }
-
-      // Still probing —
-      if (Date.now() < probeDeadlineRef.current) {
-        pollRef.current = setTimeout(tick, PROBE_MS);
-      } else {
-        pushCtrlLog('offline', 'OFF', `No ESP at ${espUrlRef.current} after 5s — polling off. Press Connect to retry.`);
-        linkStateRef.current = 'stopped'; setLinkState('stopped');
-      }
-    };
-    tick();
-    return () => { cancelled = true; clearTimeout(pollRef.current); };
-  }, [poll, probeNonce, pushCtrlLog]);
-
-  // ── Commands ────────────────────────────────────────────────────────────────
-  const sendCmd = useCallback(async (servoId: any, cmd: any, extra: any = {}, src = 'USER') => {
-    // Smooth ease-in/out for position commands >= 2°.
-    // acc scales down with distance so the servo ramps up and down gradually.
-    // Formula: acc = max(6, 40 / (1 + dist/15))
-    //   2°→35  5°→30  10°→24  20°→17  45°→10  90°→6
-    // Continuous sim-streaming (tiny steps every 50ms) bypasses this via /api/batch, not sendCmd.
+  // ── Commands (routed per module ESP by servoLink) ─────────────────────────
+  const sendCmd = useCallback(async (jointId: any, cmd: any, extra: any = {}, src = 'USER') => {
+    // Smooth ease-in/out for position commands >= 2° (acc scales down with distance).
     if (cmd === 'pos' && extra.angle != null) {
-      const currentAngle = servos[servoId]?.currentAngle;
+      const currentAngle = servosRef.current[jointId]?.currentAngle;
       if (currentAngle != null) {
         const dist = Math.abs(Number(extra.angle) - currentAngle);
-        if (dist >= 2) {
-          const smoothAcc = Math.max(6, Math.round(40 / (1 + dist / 15)));
-          extra = { ...extra, acc: smoothAcc };
-        }
+        if (dist >= 2) extra = { ...extra, acc: Math.max(6, Math.round(40 / (1 + dist / 15))) };
       }
     }
-
-    const label = defsRef.current.find(d => d.id === servoId)?.label ?? servoId;
+    const label = defsRef.current.find(d => d.id === jointId)?.label ?? jointId;
     const desc  = `${label} → ${cmd}${extra.angle !== undefined ? ` ${Number(extra.angle).toFixed(1)}°` : ''}`;
     pushCtrlLog('cmd', src, desc);
-    const qs = new URLSearchParams({ servo: String(servoId), cmd, ...extra });
-    try {
-      const t0  = Date.now();
-      const res = await fetch(`${espUrlRef.current}/api/command?${qs}`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) throw new Error(res.statusText);
-      pushCtrlLog('ok', 'ESP', `${desc} ✓ (${Date.now()-t0}ms)`);
-    } catch (err) {
-      pushCtrlLog('error', 'ERR', `${desc} — ${err.message}`);
-    }
-  }, [pushCtrlLog, servos]);
+    const { ok, detail } = await sendServoCmd(doc, jointId, cmd, extra);
+    pushCtrlLog(ok ? 'ok' : 'error', ok ? 'ESP' : 'ERR', `${desc} — ${detail}`);
+  }, [pushCtrlLog, doc]);
 
   const estopAll = useCallback(async () => {
-    pushCtrlLog('error', 'SYS', '⚡ EMERGENCY STOP ALL — killing torque on all servos');
-    try {
-      await fetch(`${espUrlRef.current}/api/command?servo=all&cmd=estop`, { signal: AbortSignal.timeout(5000) });
-      pushCtrlLog('ok', 'ESP', 'E-STOP acknowledged');
-    } catch (err) {
-      pushCtrlLog('error', 'ERR', `E-STOP failed — ${err.message}`);
-    }
-  }, [pushCtrlLog]);
+    pushCtrlLog('error', 'SYS', '⚡ EMERGENCY STOP ALL — killing torque on every board');
+    await estopAllNodes();
+    pushCtrlLog('ok', 'ESP', `E-STOP sent to ${nodes.length} board(s)`);
+  }, [pushCtrlLog, nodes.length]);
 
-  const handleConnect = () => {
-    const url = inputUrl.trim();
-    const finalUrl = url.startsWith('http') ? url : `http://${url}`;
-    setEspUrl(finalUrl);
-    setIntEspUrl(finalUrl);
-    pushCtrlLog('info', 'SYS', `Probing ${finalUrl} (5s)…`);
-    // Restart the probe loop even if the URL is unchanged ("Try again").
-    setProbeNonce(n => n + 1);
-  };
-
-  // ── Consume pending angles from sim ────────────────────────────────────────
+  // ── Consume pending angles from the sim stream (legacy servo-id keyed) ──────
   useEffect(() => {
     if (!pendingAngles) return;
     const angles = pendingAngles;
@@ -1076,36 +909,22 @@ export default function ServoController() {
       .sort(([a],[b]) => Number(a)-Number(b))
       .map(([id, d]) => `J${id}→${Number(d).toFixed(1)}°`)
       .join(' ');
-
     pushCtrlLog('queued', 'SIM', `Received from Page 1: ${summary}`);
 
-    if (!connectedRef.current) {
-      pushCtrlLog('offline', 'OFF', `Cannot relay — ESP offline (${espUrlRef.current})`);
+    if (connectedNodes === 0) {
+      pushCtrlLog('offline', 'OFF', 'Cannot relay — no ESP board online');
       simOffline(summary);
       return;
     }
 
-    // Send as a single batch request to /api/batch
-    const qs = new URLSearchParams({ speed: '5', acc: '20' });
-    Object.entries(angles).forEach(([id, deg]) => qs.append(id, Number(deg).toFixed(2)));
-
-    pushCtrlLog('cmd', 'ESP', `Sending batch → /api/batch?${qs.toString().slice(0,60)}…`);
-
-    const t0 = Date.now();
-    fetch(`${espUrlRef.current}/api/batch?${qs}`, { signal: AbortSignal.timeout(5000) })
-      .then(async r => {
-        if (!r.ok) throw new Error(r.statusText);
-        const body = await r.json();
-        const lat = Date.now() - t0;
-        pushCtrlLog('ok', 'ESP', `Batch OK — ${body.sent ?? '?'} servos updated (${lat}ms)`);
-        simSent(summary);
-        markSent(angles);
-      })
-      .catch(err => {
-        pushCtrlLog('error', 'ERR', `Batch failed — ${err.message}`);
-        simFailed(`${summary} — ${err.message}`);
-      });
-  }, [pendingAngles]);
+    // Map the sim's local-servo-id keys → jointIds, then batch per module ESP.
+    const byJoint: Record<string, number> = {};
+    for (const def of defsRef.current) { const v = (angles as any)[def.servoId]; if (v != null) byJoint[def.id] = v; }
+    sendServoBatch(doc, byJoint, { speed: 5, acc: 20 }).then((r) => {
+      if (r.errors.length) { pushCtrlLog('error', 'ERR', `Batch: ${r.errors.join('; ')}`); simFailed(summary); }
+      else { pushCtrlLog('ok', 'ESP', `Batch OK — ${r.sent} servo(s) across ${r.nodes} board(s)`); simSent(summary); markSent(angles); }
+    });
+  }, [pendingAngles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const applyPreset = useCallback((snapshot: any) => {
     pushCtrlLog('ok', 'USER', `Applying preset — ${snapshot.length} servos`);
@@ -1136,27 +955,25 @@ export default function ServoController() {
             </p>
           </div>
           <div className="sc-topbar-space" />
-          <div className="sc-url-row">
-            <input className="sc-url-input"
-              value={inputUrl}
-              onChange={e => setInputUrl(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleConnect()}
-              placeholder="http://nischaylap.local"
-            />
-            <button className="sc-btn" onClick={handleConnect}>
-              {linkState === 'stopped' ? 'Try again' : 'Connect'}
-            </button>
+          {/* Per-board status — each module's ESP32-C3 is polled continuously. */}
+          <div className="sc-nodes-strip">
+            {nodes.map((nd) => (
+              <div key={nd.id} className="sc-node-pill" title={`${nd.url}${nd.componentId ? '' : ' · unbound'}`}>
+                <span className={`sc-dot ${nd.connected ? 'ok' : 'bad'}`} />
+                {nd.name}{nd.latencyMs != null ? ` · ${nd.latencyMs}ms` : ''}
+              </div>
+            ))}
+            <button className="sc-btn sc-btn-sm" onClick={() => addNode()} title="Add another module board">+ Board</button>
           </div>
           <div className="sc-topbar-sep" />
           <div className="sc-pill">
-            <span className={`sc-dot ${linkState === 'live' ? 'ok' : linkState === 'probing' ? 'warn' : 'bad'}`} />
-            {linkState === 'live' ? 'Live' : linkState === 'probing' ? 'Connecting…' : 'Offline (paused)'}
+            <span className={`sc-dot ${connectedNodes === nodes.length && nodes.length > 0 ? 'ok' : connectedNodes > 0 ? 'warn' : 'bad'}`} />
+            {connectedNodes}/{nodes.length} boards
           </div>
           <div className="sc-pill">
             <span className={`sc-dot ${defs.length > 0 && onlineCnt === defs.length ? 'ok' : onlineCnt > 0 ? 'warn' : 'bad'}`} />
-            {onlineCnt} / {defs.length}
+            {onlineCnt} / {defs.length} servos
           </div>
-          {latencyMs != null && <div className="sc-pill">{latencyMs} ms</div>}
           <button className="sc-estop" onClick={estopAll}>⚡ E-STOP ALL</button>
         </div>
 
@@ -1194,21 +1011,10 @@ export default function ServoController() {
             <span className="sc-ls-k">HOT</span>
             <span className="sc-ls-v">{hottest}</span>
           </div>
-          {wifiInfo && <>
-            <div className="sc-ls-sep" />
-            <div className="sc-ls-stat">
-              <span className="sc-ls-k">ESP32</span>
-              <span className="sc-ls-v">{wifiInfo.ip} · {wifiInfo.hostname}.local</span>
-            </div>
-            <div className="sc-ls-stat">
-              <span className="sc-ls-k">SSID</span>
-              <span className="sc-ls-v">{wifiInfo.ssid}</span>
-            </div>
-          </>}
           <div className="sc-ls-sep" />
           <div className="sc-ls-stat">
-            <span className="sc-ls-k">UPDATED</span>
-            <span className="sc-ls-v">{lastUpdateStr}</span>
+            <span className="sc-ls-k">BOARDS</span>
+            <span className="sc-ls-v">{connectedNodes}/{nodes.length} online</span>
           </div>
         </div>
 
@@ -1232,6 +1038,15 @@ export default function ServoController() {
             ))}
           </div>
         )}
+
+        {/* ── Electromagnet locks (per-module ESP32 + DRV8833) ── */}
+        <div className="sc-magnets">
+          <div className="sc-magnets-hdr">
+            <span>⬢ Electromagnet Locks</span>
+            <span className="sc-magnets-sub">multi-ESP · no feedback (commanded state)</span>
+          </div>
+          <MagnetControls variant="full" />
+        </div>
 
         {/* ── Sequence recorder ── */}
         <SequenceRecorder defs={defs} servos={servos} onCmd={sendCmd} />

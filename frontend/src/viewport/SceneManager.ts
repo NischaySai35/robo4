@@ -124,10 +124,18 @@ export class SceneManager {
     // Reset Cycles accumulation whenever the camera changes.
     // OrbitControls fires 'change' on every drag/zoom/pan/damping frame.
     this.controls.addEventListener('change', () => {
+      this.requestRender(2); // on-demand: camera moved → draw
       if (this._engineMode === 'cycles' && this._pathTracer) {
         this._pathTracer.updateCamera();
       }
     });
+    // On-demand rendering (like Blender): only draw when something changed, so an idle scene
+    // uses ~0 GPU. Any interaction with the canvas requests a burst that also covers damping.
+    for (const ev of ['pointerdown', 'pointermove', 'wheel']) {
+      canvas.addEventListener(ev, () => this.requestRender(30), { passive: true });
+    }
+    window.addEventListener('pointerup', () => this.requestRender(90)); // let orbit inertia settle
+    this._renderReq = 30; // draw the first frames on startup
 
     // ── Fusion-360-style smart orbit pivot + green-dot indicator ──────────────
     // OrbitControls always looks at controls.target, so orbiting around an OFF-axis
@@ -227,6 +235,7 @@ export class SceneManager {
     bridge.animateTo = (pos, lookAt, ms) => this.animateCameraTo(pos, lookAt, ms);
     bridge.fitCamera = () => this.fitCamera();
     bridge.updateCameraLimits = () => this.updateCameraLimits();
+    bridge.requestRender = (n?: number) => this.requestRender(n ?? 4); // any UI change → redraw
 
     // Camera Settings panel: read current lens/control state…
     bridge.getCameraState = () => ({
@@ -609,6 +618,7 @@ export class SceneManager {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
+    this.requestRender(3);
   }
 
   /** Enable or disable orbit controls (disabled while dragging). */
@@ -720,6 +730,14 @@ export class SceneManager {
       { x: newPos.x, y: newPos.y, z: newPos.z },
       { x: center.x, y: center.y, z: center.z }
     );
+  }
+
+  /** On-demand render bookkeeping: request N frames of drawing (covers transitions/damping). */
+  requestRender(n = 2) { this._renderReq = Math.max(this._renderReq ?? 0, n); }
+  /** True if a draw is owed this frame (consumes one). Idle → false → GPU rests. */
+  shouldRender(): boolean {
+    if ((this._renderReq ?? 0) > 0) { this._renderReq--; return true; }
+    return false;
   }
 
   render() {

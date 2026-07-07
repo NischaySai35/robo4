@@ -14,6 +14,7 @@ import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { useAutoGround } from '@/features/rigid/useAutoGround';
+import { setBodyModePreservingPose } from '@/features/rigid/bodyModeAction';
 import { bodiesOfComponent, jointsOfComponent } from '@/core/model/index';
 
 /** Free/Rigid grounding + Auto-ground — the SAME shared state as the Editor and
@@ -22,7 +23,6 @@ import { bodiesOfComponent, jointsOfComponent } from '@/core/model/index';
 function GroundingControls() {
   const doc = useModelStore((s) => s.doc);
   const bodyMode = useWorkspaceStore((s) => s.bodyMode);
-  const setBodyMode = useWorkspaceStore((s) => s.setBodyMode);
   const activeBodyId = useWorkspaceStore((s) => s.activeBodyId);
   const autoBase = useWorkspaceStore((s) => s.autoBase);
   const setAutoBase = useWorkspaceStore((s) => s.setAutoBase);
@@ -33,8 +33,8 @@ function GroundingControls() {
       <div className="an-ground-hdr">
         <span className="an-rigid-label">Grounding</span>
         <div className="an-ground-seg">
-          <button className={!rigid ? 'on' : ''} onClick={() => setBodyMode('free')} title="Free float — no fixed base">Free</button>
-          <button className={rigid ? 'on' : ''} onClick={() => setBodyMode('rigid')} title="Rigid — ground a base body (right-click one in 3D)">Rigid</button>
+          <button className={!rigid ? 'on' : ''} onClick={() => setBodyModePreservingPose('free')} title="Free float — no fixed base">Free</button>
+          <button className={rigid ? 'on' : ''} onClick={() => setBodyModePreservingPose('rigid')} title="Rigid — ground a base body (right-click one in 3D)">Rigid</button>
         </div>
       </div>
       {rigid && (

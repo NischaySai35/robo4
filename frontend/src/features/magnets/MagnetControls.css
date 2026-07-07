@@ -1,0 +1,45 @@
+.mag-controls { display: flex; flex-direction: column; gap: 10px; }
+.mag-controls--full { gap: 14px; }
+
+.mag-empty { font-size: 11px; color: var(--text-dim); padding: 6px 2px; line-height: 1.4; }
+
+.mag-master { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); cursor: pointer; }
+
+.mag-module { display: flex; flex-direction: column; gap: 6px; }
+.mag-module-title { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); }
+
+.mag-row { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--bg-card, rgba(128,128,128,0.05)); }
+.mag-row-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.mag-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mag-mode { font-size: 10px; font-weight: 700; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 5px; border: 1px solid var(--border); cursor: pointer; background: transparent; }
+.mag-mode--auto { color: #3b82f6; border-color: #3b82f688; }
+.mag-mode--on   { color: #fff; background: #22c55e; border-color: #22c55e; }
+.mag-mode--off  { color: #ef4444; border-color: #ef444488; }
+
+.mag-bar { position: relative; height: 14px; border-radius: 4px; overflow: hidden; background: rgba(128,128,128,0.18); }
+.mag-bar-fill { position: absolute; inset: 0 auto 0 0; transition: width 0.12s linear; }
+.mag-bar-txt { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 0 3px rgba(0,0,0,0.6); }
+
+.mag-slider-row { display: flex; align-items: center; gap: 6px; }
+.mag-slider-row input[type="range"] { flex: 1; }
+.mag-slider-lbl { font-size: 10px; color: var(--text-dim); }
+.mag-slider-val { font-size: 10px; font-weight: 700; min-width: 30px; text-align: right; }
+
+.mag-profile { display: flex; gap: 8px; flex-wrap: wrap; }
+.mag-profile label { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-dim); }
+.mag-profile input { width: 46px; font-size: 10px; padding: 1px 3px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; }
+
+/* ── Node registry ── */
+.mag-nodes { display: flex; flex-direction: column; gap: 6px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.mag-nodes-head { display: flex; align-items: center; justify-content: space-between; font-size: 10px; font-weight: 700; letter-spacing: 0.05em; color: var(--text-dim); }
+.mag-btn { font-size: 10px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: inherit; cursor: pointer; }
+.mag-node { display: flex; align-items: center; gap: 5px; }
+.mag-node-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.mag-node-dot.ok { background: #22c55e; box-shadow: 0 0 5px #22c55e; }
+.mag-node-dot.bad { background: #6b7280; }
+.mag-node-name { width: 74px; font-size: 11px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; }
+.mag-node-url { flex: 1; min-width: 90px; font-size: 11px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; }
+.mag-node-comp { font-size: 11px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 4px; background: transparent; color: inherit; }
+.mag-node-lat { font-size: 9px; color: var(--text-dim); min-width: 34px; text-align: right; }
+.mag-node-del { font-size: 11px; border: none; background: transparent; color: #ef4444; cursor: pointer; }

@@ -29,10 +29,12 @@ import { usePageStore } from '@/state/pageStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
+import { stopAllSpins, getActiveSpins } from '@/features/motor/spinEngine';
+import { canJointSpin } from '@/features/motor/spinFreedom';
+import { DynamicSim } from '@/features/gravity/dynamicSim';
 import { useAnimSceneStore } from '@/state/animSceneStore';
 import { commands } from '@/core/commands/index';
 import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild, setAnimRootOverride } from '@/kinematics/modelFK';
-import { RigidTumbleSim } from '@/features/gravity/rigidDrop';
 import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
 import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
 import { PivotPickTool } from '@/viewport/PivotPickTool';
@@ -41,7 +43,6 @@ import { useTransformHudStore } from '@/state/transformHudStore';
 import { bridge } from '@/viewport/cameraBridge';
 import { mateBridge, type MateAnimRequest } from '@/features/assembly/mateBridge';
 import { useWorkspaceStore } from '@/state/workspaceStore';
-import { groundBody } from '@/features/rigid/groundBody';
 import { jointLoads, centerOfMass, bodyStressField } from '@/kinematics/analysis';
 // PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
 // Play, so it stays out of the initial bundle and the app starts up fast.
@@ -278,15 +279,9 @@ export class ModelEditor {
       if (!hitId) return; // missed all bodies — let browser show default menu
       e.preventDefault();
       const page = usePageStore.getState().page;
-      const { bodyMode } = useWorkspaceStore.getState();
-      if (bodyMode === 'rigid' && (page === 'editor' || page === 'animation' || page === 'analysis')) {
-        // Quick-set the grounded/active body without a popup, on any page that
-        // uses rigid grounding — shared state keeps them all in sync.
-        groundBody(hitId);
-        this.bodyRenderer.setActiveBody(hitId);
-        this._syncModel(useModelStore.getState().doc);
-        return;
-      }
+      // Always open the context menu — even in rigid mode. Rigid grounding is now an
+      // explicit "Set as Active Body" button inside the menu (right-click used to
+      // silently ground, which was confusing and hid the motor CW/CCW/Stop controls).
       useSelectionStore.getState().setVpCtxMenu({ x: e.clientX, y: e.clientY, bodyId: hitId, page });
     };
     domElement.addEventListener('contextmenu', this._onContextMenu);
@@ -303,6 +298,15 @@ export class ModelEditor {
     // React to model + selection changes.
     this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
+    // While gravity is ON, a USER edit (drag release, gizmo, shape/graph change — action
+    // 'dispatch'/'undo'/'redo', NOT the sim's own 'transient' writes) rebuilds the physics sim
+    // from the new state, so it reacts and tumbles from wherever you left it. Debounced.
+    this._unsubBus = useModelStore.getState().bus.subscribe((e: any) => {
+      if (!this._animGravityOn || !this._gravSim || this._gravSim === 'loading') return;
+      if (e.action === 'transient' || e.action === 'reset') return;
+      if (this._gravRebuildT) clearTimeout(this._gravRebuildT);
+      this._gravRebuildT = setTimeout(() => { this._gravRebuildT = null; if (this._animGravityOn) this._runGravityTumble(true); }, 120);
+    });
 
     // Recompute FK and update active-body highlight when body mode / active ID changes.
     this._unsubWorkspace = useWorkspaceStore.subscribe((s) => {
@@ -313,6 +317,7 @@ export class ModelEditor {
     // Gizmo snapping (Phase 3) + physics sim (Phase 7) + mate tool (assembly).
     this._sim = null;
     this._startingSim = false;
+    this._physDebugOn = false; // physics collider wireframe overlay (debug only; FPS-heavy)
     this._lastPlayhead = -1; // last animation playhead we wrote into the doc
     this._showAnalysis = useEditorStore.getState().showAnalysis;
     this._analysisMode = useEditorStore.getState().analysisMode;
@@ -389,7 +394,8 @@ export class ModelEditor {
       this._animRigidMode    = s.rigidMode;
       this._animActiveBodyIds = s.activeBodyIds;
       if (this._doc) this._updateCOM(this._doc);
-      // Gravity ON → tumble the robot to the floor; OFF → rise it back up (symmetric).
+      // Gravity ON → tumble the robot to the floor (whole-body, shape preserved);
+      // OFF → rise it back up (symmetric).
       if (!wasGravity && s.gravityOn) this._runGravityTumble();
       else if (wasGravity && !s.gravityOn) this._runGravityRise();
     });
@@ -531,7 +537,21 @@ export class ModelEditor {
     if (!g || g.type !== GeometryType.MESH) return null;
     this._hullCache ??= new Map<string, Float32Array | null>();
     if (this._hullCache.has(id)) return this._hullCache.get(id)!;
+    const positions = this._meshPositions(id);
+    const hull = positions ? convexHullPoints(positions) : null;
+    this._hullCache.set(id, hull);
+    return hull;
+  }
 
+  /** ALL local mesh vertices (unscaled) for a mesh body — for computing a TRUE enclosing box
+   *  (the convex hull is stride-decimated and can miss the exact lowest vertex → tiny floor poke;
+   *  the raw AABB never does). Cached per sim run. Null for non-mesh bodies. */
+  _meshPositions(id: string): Float32Array | null {
+    const body: any = this._doc.bodies[id];
+    const g = body?.visual?.geometry;
+    if (!g || g.type !== GeometryType.MESH) return null;
+    this._posCache ??= new Map<string, Float32Array | null>();
+    if (this._posCache.has(id)) return this._posCache.get(id)!;
     let positions: ArrayLike<number> | null = g.editMesh?.positions?.length ? g.editMesh.positions : null;
     if (!positions) {
       const assetId = g.assetId ?? body.assetId;
@@ -544,9 +564,9 @@ export class ModelEditor {
       });
       positions = pts.length ? pts : null;
     }
-    const hull = positions ? convexHullPoints(positions) : null;
-    this._hullCache.set(id, hull);
-    return hull;
+    const out = positions ? (positions instanceof Float32Array ? positions : new Float32Array(positions)) : null;
+    this._posCache.set(id, out);
+    return out;
   }
 
   _startSim() {
@@ -783,54 +803,56 @@ export class ModelEditor {
     return Object.values(doc.bodies).some((b: any) => b?.meta?.superRigid);
   }
 
-  /** Gravity ON: fuse the robot into one rigid body and run a LIVE physics tumble (real fall,
-   *  bounce, tumble). Skipped when a body is super-rigid (pinned). */
-  _runGravityTumble() {
-    const doc: Document = this._doc ?? useModelStore.getState().doc;
-    if (this._hasSuperRigid(doc)) return; // pinned — gravity can't move it
+  /** Gravity ON: run the GENERAL dynamic sim — rigidly-connected bodies fuse into rigid clusters;
+   *  Free joints sag/sway, Motor joints drive; real floor, gravity, friction. Non-destructive.
+   *  Skipped when a body is super-rigid at the whole-model level (handled per-cluster inside). */
+  _runGravityTumble(isRebuild = false) {
+    const doc: Document = useModelStore.getState().doc; // freshest (rebuild fires from bus edits)
     if (Object.keys(doc.bodies).length === 0) return;
-    const fk = this._fk ?? computeFK(doc);
-    // Remember the pre-fall (standing) transforms so turning gravity OFF rises back to them —
-    // so "up" matches "down" instead of only floating 1 cm.
-    this._preGravityTransforms = Object.fromEntries(
-      Object.entries(doc.bodies).map(([id, b]: any) => [id, { ...b.transform }]));
-    // Snapshot each body's start WORLD pose — we apply the sim's live delta to these.
-    this._gravStarts = Object.keys(doc.bodies).map((id) => {
-      const w = fk.get(id); const t = doc.bodies[id].transform;
-      return {
-        id,
-        m: new THREE.Matrix4().compose(
-          new THREE.Vector3(...(w?.position ?? t.position)),
-          new THREE.Quaternion(...(w?.quaternion ?? t.quaternion)),
-          new THREE.Vector3(1, 1, 1)),
-        scale: [...t.scale] as number[],
-      };
-    });
-    // Floor just below the model's current bounding box (undo the visual float offset).
-    this.bodyRenderer.group.updateMatrixWorld(true);
-    const box = new THREE.Box3().setFromObject(this.bodyRenderer.group);
-    const groundY = (box.isEmpty() ? 0 : box.min.y - this._gravityY) - 0.01;
+    const fk = computeFK(doc);
+    // Remember the pre-fall transforms so turning gravity OFF rises back to them — only on the
+    // FIRST gravity-on, not on rebuilds (rebuilds keep the original standing pose as the target).
+    if (!isRebuild) {
+      this._preGravityTransforms = Object.fromEntries(
+        Object.entries(doc.bodies).map(([id, b]: any) => [id, { ...b.transform }]));
+    }
+    this._gravScales = Object.fromEntries(Object.entries(doc.bodies).map(([id, b]: any) => [id, [...b.transform.scale]]));
+    this._gravStarts = []; // marker that a sim is active (poses come per-body from the sim)
+
+    // Physics runs on a FLAT ground plane (like a Gazebo world's ground_plane). A bumpy heightfield
+    // makes rigid bodies rock on the bumps and never settle → the perpetual shaking. The rough road
+    // stays as a VISUAL only. Pass null so DynamicSim builds a flat floor at groundY.
+    this._ensureTerrainFloor();
+    const groundY = this._floorY ?? 0;
+    this._posCache = null; // recompute mesh bounds per run (geometry may have changed)
     this._gravSim?.dispose();
     this._gravSim = 'loading';
-    RigidTumbleSim.create(doc as any, fk as any, groundY, (id: string) => this._meshHullPoints(id)).then((sim) => {
-      // Discard if gravity was turned back off before physics finished initialising.
+    DynamicSim.create(doc as any, fk as any, groundY, (id: string) => this._meshPositions(id), null).then((sim) => {
       if (sim && this._animGravityOn) this._gravSim = sim;
       else { sim?.dispose(); if (this._gravSim === 'loading') this._gravSim = null; }
-    }).catch((e) => { console.warn('gravity tumble failed:', e); this._gravSim = null; });
+    }).catch((e) => { console.warn('gravity dynamic sim failed:', e); this._gravSim = null; });
   }
 
-  /** Steps the live tumble each frame, applying its world delta to every body. Commits the
-   *  settled pose (one undo step) when it comes to rest. Called from tick(). */
+  /** Steps the dynamic sim each frame and writes every body's solved pose. Non-destructive
+   *  (no undo commit) — turning gravity OFF rises back to the standing pose. Called from tick(). */
   _tickGravityTumble(dt: number) {
     const sim = this._gravSim;
     if (!sim || sim === 'loading' || !this._gravStarts) return;
-    if (!this._animGravityOn) { this._endGravityTumble(true); return; } // OFF mid-fall → keep pose
-    const delta: THREE.Matrix4 = sim.step(dt);
+    if (!this._animGravityOn) { this._endGravityTumble(false); return; }
+    // Feed each motor joint its live spin command (rad/s).
+    const spins = getActiveSpins();
+    const jointsDoc: any = (this._doc ?? useModelStore.getState().doc).joints;
+    const driveOf = (jid: string) => {
+      const dir = (spins as any)[jid];
+      if (!dir) return 0;
+      const rpm = jointsDoc[jid]?.meta?.spinRpm ?? 30;
+      return dir * rpm * Math.PI / 30;
+    };
+    const poses = sim.step(dt, driveOf) as Map<string, { position: number[]; quaternion: number[] }>;
+
     const vals: Record<string, any> = {};
-    const np = new THREE.Vector3(), nq = new THREE.Quaternion(), ns = new THREE.Vector3();
-    for (const s of this._gravStarts) {
-      delta.clone().multiply(s.m).decompose(np, nq, ns);
-      vals[s.id] = { position: [np.x, np.y, np.z], quaternion: [nq.x, nq.y, nq.z, nq.w], scale: s.scale };
+    for (const [id, pose] of poses) {
+      vals[id] = { position: pose.position, quaternion: pose.quaternion, scale: this._gravScales?.[id] ?? [1, 1, 1] };
     }
     this._gravLastVals = vals;
     useModelStore.getState().applyTransient((d: any) => {
@@ -838,13 +860,64 @@ export class ModelEditor {
       for (const [id, v] of Object.entries(vals)) { const b = jb[id]; if (b) jb[id] = { ...b, transform: { ...b.transform, ...v } }; }
       return { ...d, bodies: jb };
     });
-    if (sim.settled()) this._endGravityTumble(true);
+    this._updatePhysicsDebug(sim);
+    this._penetrationReport();
+  }
+
+  /** DEBUG: count how many mesh vertices are below the floor (sampled) + the worst depth, so we
+   *  have hard numbers on penetration. Logs to the console every ~20 frames while gravity is on. */
+  _penetrationReport() {
+    if (!this._physDebugOn) return;
+    this._penFrame = (this._penFrame ?? 0) + 1;
+    if (this._penFrame % 20 !== 0) return;
+    const doc = this._doc ?? useModelStore.getState().doc;
+    let minY = Infinity, count = 0, total = 0, worst = '';
+    const p = new THREE.Vector3(), q = new THREE.Quaternion(), sv = new THREE.Vector3();
+    const M = new THREE.Matrix4();
+    const floorY = this._floorY ?? 0;
+    for (const [id, b] of Object.entries(doc.bodies) as any[]) {
+      const verts = this._meshPositions(id); if (!verts) continue;
+      const t = b.transform;
+      M.compose(p.set(t.position[0], t.position[1], t.position[2]),
+        q.set(t.quaternion[0], t.quaternion[1], t.quaternion[2], t.quaternion[3]),
+        sv.set(t.scale[0], t.scale[1], t.scale[2]));
+      for (let i = 0; i < verts.length; i += 60) { // sample every 20th vertex
+        total++;
+        p.set(verts[i], verts[i + 1], verts[i + 2]).applyMatrix4(M);
+        if (p.y < floorY) { count++; if (p.y < minY) { minY = p.y; worst = id; } }
+      }
+    }
+    const depth = isFinite(minY) ? ((floorY - minY) * 1000).toFixed(1) : '0';
+    // eslint-disable-next-line no-console
+    console.log(`[PEN] ${count}/${total} sampled verts below floor · max depth ${depth}mm · worst=${doc.bodies[worst]?.name ?? '-'}`);
+  }
+
+  /** DEBUG overlay: draw Rapier's actual collider wireframe (boxes, wheel cylinders, terrain) so
+   *  we can SEE where the physics really is vs the visual mesh. Toggle with `_physDebugOn`. */
+  _updatePhysicsDebug(sim: any) {
+    if (!this._physDebugOn) { if (this._physDebug) this._physDebug.visible = false; return; }
+    if (!this._physDebug) {
+      this._physDebug = new THREE.LineSegments(
+        new THREE.BufferGeometry(),
+        new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false }),
+      );
+      this._physDebug.renderOrder = 999;
+      this._scene.add(this._physDebug);
+    }
+    const { vertices, colors } = sim.debugRender();
+    const g = this._physDebug.geometry as THREE.BufferGeometry;
+    g.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+    g.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+    g.attributes.position.needsUpdate = true;
+    this._physDebug.visible = true;
   }
 
   _endGravityTumble(commit: boolean) {
     const sim = this._gravSim;
     if (sim && sim !== 'loading') sim.dispose();
     this._gravSim = null;
+    if (this._physDebug) this._physDebug.visible = false; // hide the physics debug wireframe
+    // Keep the terrain floor (it's persistent on the Animation page) — do NOT hide it here.
     if (commit && this._gravLastVals) {
       const doc: Document = this._doc ?? useModelStore.getState().doc;
       const patches: [string, any][] = Object.entries(this._gravLastVals).map(([id, v]) => [id, { transform: { ...doc.bodies[id].transform, ...(v as any) } }]);
@@ -852,6 +925,46 @@ export class ModelEditor {
     }
     this._gravLastVals = null;
     this._gravStarts = null;
+    this._driveWheelIds = null;
+  }
+
+  // ── Rough terrain floor — a PERSISTENT fixed rough road on the Animation page (gravity on OR
+  //    off). The SAME terrain is used by the physics sim so what you see is what you collide with. ──
+  _ensureTerrainFloor() {
+    if (this._floor) return;
+    const doc = this._doc ?? useModelStore.getState().doc;
+    if (!doc || Object.keys(doc.bodies).length === 0) return;
+    this.bodyRenderer.group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(this.bodyRenderer.group);
+    if (box.isEmpty()) return;
+    const sizeV = new THREE.Vector3(); box.getSize(sizeV);
+    const span = Math.max(sizeV.x, sizeV.z, 0.2) * 8;
+    this._floorY = box.min.y - this._gravityY - 0.01;
+    // FLAT floor: rigid bodies settle dead-still on a flat surface (a rough one makes them rock
+    // forever → the vibration + flickering penetration). Physics uses a flat cuboid (terrainTri
+    // = null); wheels still grip via friction. A subtle grid shows where the ground is.
+    this._terrainTri = null;
+    const g = new THREE.Group();
+    const plane = new THREE.Mesh(
+      new THREE.PlaneGeometry(span, span),
+      new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: 1, metalness: 0 }),
+    );
+    plane.rotation.x = -Math.PI / 2;
+    plane.receiveShadow = true;
+    const grid = new THREE.GridHelper(span, 48, 0x3a4a66, 0x28324a);
+    g.add(plane); g.add(grid);
+    g.position.y = this._floorY;
+    this._scene.add(g);
+    this._floor = g;
+  }
+  _hideFloor() {
+    if (this._floor) {
+      this._scene.remove(this._floor);
+      (this._floor as any).geometry?.dispose?.();
+      (this._floor as any).material?.dispose?.();
+      this._floor = null;
+    }
+    this._terrain = null;
   }
 
   /** Gravity OFF: smoothly rise the robot back to its pre-fall (standing) transforms — so the
@@ -912,10 +1025,16 @@ export class ModelEditor {
     if (this._gravityY === undefined) this._gravityY = target;
     // Smooth approach; snap when close to avoid endless tiny updates.
     this._gravityY += (target - this._gravityY) * 0.18;
-    if (Math.abs(target - this._gravityY) < 1e-5) this._gravityY = target;
+    this._gravFloatMoving = Math.abs(target - this._gravityY) >= 1e-5;
+    if (!this._gravFloatMoving) this._gravityY = target;
     for (const g of [this.bodyRenderer?.group, this.jointRenderer?.group, this.connectorRenderer?.group]) {
       if (g) g.position.y = this._gravityY;
     }
+    // Persistent rough floor: present on the Animation page whether gravity is on or off; removed
+    // on other pages.
+    const onAnim = usePageStore.getState().page === 'animation';
+    if (onAnim) { this._ensureTerrainFloor(); if (this._floor) this._floor.visible = true; }
+    else if (this._floor) this._hideFloor();
   }
 
   tick() {
@@ -933,6 +1052,17 @@ export class ModelEditor {
     this._tickGravityFloat();
 
     if (this._sim) {
+      // Motor spin under gravity: drive each spinning wheel joint with a velocity motor
+      // so friction against the ground actually propels the model (turn gravity on,
+      // click CW → it drives). Only free (non-loop-trapped) joints are driven.
+      const active = getActiveSpins();
+      const vels: Record<string, number> = {};
+      for (const jid in active) {
+        if (!canJointSpin(this._doc, jid)) continue;
+        const rpm = (this._doc.joints as any)[jid]?.meta?.spinRpm ?? 30;
+        vels[jid] = active[jid] * rpm * Math.PI / 30; // rad/s
+      }
+      this._sim.setJointVelocities(vels);
       // Advance by real elapsed time at a FIXED internal timestep, so the simulation
       // runs at the same speed and produces the same trajectory on any frame rate.
       const now = performance.now();
@@ -943,11 +1073,14 @@ export class ModelEditor {
       this.bodyRenderer.sync(this._doc, poses);
       this.jointRenderer.sync(this._doc, poses);
       if (this._showAnalysis) this.bodyRenderer.applyStress(bodyStressField(this._doc, poses));
-      return;
+      return true; // physics sim is live → keep drawing
     }
 
     const anim = useAnimationStore.getState();
     if (anim.preview) {
+      // Playback drives spin from recorded keys — halt any live (hand-driven) spins so
+      // the two don't fight over the same joint value.
+      if (anim.playing && !this._animActive) stopAllSpins();
       if (anim.playing) {
         // Advance by REAL elapsed time so a 4 s clip takes 4 s regardless of frame
         // rate (was a fixed 1/60 step → slow on heavy scenes).
@@ -976,6 +1109,33 @@ export class ModelEditor {
         this._lastPlayhead = anim.playhead;
         const values = anim.sample(anim.playhead);
         const conns = anim.sampleConnections?.(anim.playhead) ?? {};
+        // Motor spin: a joint keyed spinning rotates continuously. The angle ACCUMULATES
+        // across all spin segments up to the playhead — each segment continues from where
+        // the previous one left off (seeded by the joint's pose at the first key), instead
+        // of snapping back to 0 at each key. Stop segments (dir 0) hold the angle. Purely a
+        // function of the keys + elapsed time, so scrubbing and replay stay reproducible.
+        const spinKeys = (anim.spinByClip?.[anim.activeClipId] ?? {}) as Record<string, { t: number; dir: number }[]>;
+        // A joint counts as detached at this time if a connection key turned it off.
+        const isDetachedAtT = (jid: string) => {
+          const c = (conns as any)[jid];
+          if (c === false) return true;
+          if (c === true) return false;
+          return !!(this._doc.joints as any)[jid]?.state?.disabled;
+        };
+        const t = anim.playhead;
+        const TWO_PI = Math.PI * 2;
+        for (const jid in spinKeys) {
+          const keys = spinKeys[jid];
+          if (!keys?.length || keys[0].t > t) continue;                 // no spin yet at this time
+          if (!canJointSpin(this._doc, jid, isDetachedAtT)) continue;   // trapped in a rigid loop
+          const omega = ((this._doc.joints as any)[jid]?.meta?.spinRpm ?? 30) * Math.PI / 30;
+          let ang = anim.sample(keys[0].t)?.[jid] ?? 0;                 // continue from the pose it had when spin began
+          for (let i = 0; i < keys.length && keys[i].t <= t; i++) {
+            const segEnd = (i + 1 < keys.length) ? Math.min(keys[i + 1].t, t) : t;
+            ang += keys[i].dir * omega * Math.max(0, segEnd - keys[i].t);
+          }
+          values[jid] = ((ang + Math.PI) % TWO_PI + TWO_PI) % TWO_PI - Math.PI; // wrap (−π,π]
+        }
         // Foot-plant: root FK at the keyed grounded base for this segment (null = use the
         // workspace base). Set BEFORE applyTransient so _syncModel's computeFK uses it.
         const base = anim.sampleBase?.(anim.playhead) ?? null;
@@ -1001,7 +1161,10 @@ export class ModelEditor {
       setAnimRootOverride(null); // hand FK rooting back to the workspace base
       if (this._animWsOriginal) { useWorkspaceStore.setState(this._animWsOriginal); this._animWsOriginal = null; }
       this._syncModel(this._doc); // restore model pose
+      return true; // one more draw to show the restored pose
     }
+    // Live-animating (autonomous, not driven by a user event) → keep drawing.
+    return anim.preview || !!this._gravSim || !!this._fallingBoxes || !!this._gravFloatMoving;
   }
 
   _fkWithOverrides(doc: Document, values: any) {
@@ -2078,6 +2241,7 @@ export class ModelEditor {
     this._unsubEdit?.();
     this._unsubModel?.();
     this._unsubSel?.();
+    this._unsubBus?.();
     this._unsubEditor?.();
     this._unsubAnimScene?.();
     this.domElement?.removeEventListener('pointerdown', this._onPointerDown);

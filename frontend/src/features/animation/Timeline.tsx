@@ -40,6 +40,8 @@ function CommitNumber({ value, onCommit, min, max, step, int }: {
   );
 }
 import { useAnimationStore, type ClipGroup } from '@/state/animationStore';
+import { getSpin } from '@/features/motor/spinEngine';
+import { isMotorJoint } from '@/features/motor/endBody';
 import { useModelStore } from '@/state/modelStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { bridge } from '@/viewport/cameraBridge';
@@ -220,7 +222,15 @@ function AnimationTab() {
       if (j?.meta?.generatedFromConnector) a.addConnectionKey(j.id, !j.state?.disabled);
     }
   };
-  const addKey = () => { keyJoints(); keyBase(); keyConnections(); }; // ◆ Key = everything
+  // Record each spinnable motor's CURRENT live spin direction (from the spin engine)
+  // as a step key, so playback starts/stops the continuous rotation at this time.
+  const keySpins = () => {
+    const doc = useModelStore.getState().doc;
+    for (const j of Object.values(doc.joints) as any[]) {
+      if (isMotorJoint(doc, j)) a.addSpinKey(j.id, getSpin(j.id));
+    }
+  };
+  const addKey = () => { keyJoints(); keyBase(); keyConnections(); keySpins(); }; // ◆ Key = everything
   const [keyMenu, setKeyMenu] = useState(false);
   const rename = (id: string, cur: string) => {
     const name = window.prompt('Clip name', cur);
@@ -283,6 +293,7 @@ function AnimationTab() {
                 <button onClick={() => { keyJoints(); setKeyMenu(false); }}>◆ Joint poses only</button>
                 <button onClick={() => { keyBase(); setKeyMenu(false); }}>◆ Grounded base only (foot-plant)</button>
                 <button onClick={() => { keyConnections(); setKeyMenu(false); }}>◆ Lock states only (connect/disconnect)</button>
+                <button onClick={() => { keySpins(); setKeyMenu(false); }}>◆ Motor spin states only (CW/CCW/stop)</button>
               </div>
             </>
           )}

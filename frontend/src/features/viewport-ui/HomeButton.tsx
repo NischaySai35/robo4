@@ -7,34 +7,13 @@ import './HomeButton.css';
 import { useModelStore } from '@/state/modelStore';
 import { commands } from '@/core/commands/index';
 import type { Document } from '@/core/model/index';
+import { stopAllSpins } from '@/features/motor/spinEngine';
+import { solveHome } from '@/features/assembly/connectorSnap';
 
 const DURATION = 500;
 
 function easeInOut(t: number) {
   return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
-}
-
-/** True if the joint graph contains a CYCLE (e.g. two connectors locked into a ring).
- *  Homing the revolute joints of such a loop can't satisfy the fixed loop closure, so it
- *  would tear the module apart — we refuse instead. Union-find: a joint that connects two
- *  already-connected bodies closes a loop. */
-function hasLockedLoop(doc: Document): boolean {
-  const parent = new Map<string, string>();
-  for (const id of Object.keys(doc.bodies)) parent.set(id, id);
-  const find = (x: string): string => {
-    let r = x;
-    while (parent.get(r) !== r) r = parent.get(r)!;
-    while (parent.get(x) !== r) { const n = parent.get(x)!; parent.set(x, r); x = n; }
-    return r;
-  };
-  for (const j of Object.values(doc.joints)) {
-    const a = j.parentBodyId as string, b = j.childBodyId as string;
-    if (!a || !b || !parent.has(a) || !parent.has(b)) continue;
-    const ra = find(a), rb = find(b);
-    if (ra === rb) return true;   // this joint closes a ring
-    parent.set(ra, rb);
-  }
-  return false;
 }
 
 export default function HomeButton() {
@@ -44,11 +23,19 @@ export default function HomeButton() {
   if (movableCount === 0) return null;
 
   const home = () => {
+    stopAllSpins(); // halt any continuous motors so they don't fight the reset
     const { doc, applyTransient, dispatch } = useModelStore.getState();
-    if (hasLockedLoop(doc)) {
-      alert("Can't Home — this module has a locked connector loop (two connectors joined into a ring). Unlock one connector first; otherwise homing the joints would break the module apart.");
+
+    // Try to home: pull every joint to rest, projecting locked loops back onto their
+    // closure manifold so the connectors stay shut. We only refuse if the module truly
+    // CAN'T rest closed (the projected pose can't close the loop) — not merely because a
+    // loop exists. Rest is where the locks were formed, so this normally just works.
+    const { values: target, ok } = solveHome(doc);
+    if (!ok) {
+      alert("Can't Home — this module can't return to rest without pulling a locked connector apart (the loop won't close at the home pose). Unlock one connector to free it.");
       return;
     }
+
     const startValues: Record<string, number> = {};
     for (const j of Object.values(doc.joints)) {
       if (j.type !== 'fixed') startValues[j.id] = (j as any).state?.value ?? 0;
@@ -65,7 +52,8 @@ export default function HomeButton() {
         for (const id of ids) {
           const j = (next.joints as any)[id];
           if (!j) continue;
-          const v = startValues[id] * (1 - ease);
+          const goal = target[id] ?? 0; // closed-loop home target (0 for non-loop joints)
+          const v = startValues[id] * (1 - ease) + goal * ease;
           next = { ...next, joints: { ...next.joints, [id]: { ...j, state: { ...j.state, value: v } } } };
         }
         return next;
@@ -75,7 +63,7 @@ export default function HomeButton() {
       } else {
         // Commit a single undoable step at the end so Ctrl+Z restores the pre-home pose.
         const map: Record<string, number> = {};
-        for (const id of ids) map[id] = 0;
+        for (const id of ids) map[id] = target[id] ?? 0;
         dispatch(commands.setJointValues(map));
       }
     };

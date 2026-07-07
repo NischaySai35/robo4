@@ -496,7 +496,14 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: any) => {
       const tag = e.target?.tagName;
-      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable;
+      // Also consult document.activeElement — if a rename/text box is focused, the
+      // global editor shortcuts must never fire (they'd swallow character keys and leave
+      // only Backspace working). Belt-and-suspenders alongside the input's own
+      // stopPropagation, in case an event ever reaches window some other way.
+      const ae: any = typeof document !== 'undefined' ? document.activeElement : null;
+      const aeTag = ae?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || e.target?.isContentEditable
+        || aeTag === 'INPUT' || aeTag === 'TEXTAREA' || ae?.isContentEditable;
 
       if (e.ctrlKey || e.metaKey) {
         const k = e.key.toLowerCase();
@@ -518,7 +525,7 @@ export default function App() {
         return;
       }
 
-      if (e.key === '?' || e.key === '/') { e.preventDefault(); setHelpOpen(v => !v); return; }
+      if (!typing && (e.key === '?' || e.key === '/')) { e.preventDefault(); setHelpOpen(v => !v); return; }
       if (typing || page === 'motor') return; // editing shortcuts work on all 3D pages
       const k = e.key.toLowerCase();
       const { selectedId, kind } = useSelectionStore.getState();

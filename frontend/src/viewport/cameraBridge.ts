@@ -31,6 +31,8 @@ export interface CameraBridge {
   scanLidar?: (origin?: [number, number, number]) => any;
   // Recompute camera min/max zoom limits from current model bounding sphere.
   updateCameraLimits?: () => void;
+  // On-demand rendering: request the viewport to draw the next few frames (idle scene rests).
+  requestRender?: (n?: number) => void;
   // Joint pivot "click to place" — activates the PivotPickTool in the viewport.
   startPivotPick?: (opts: { onPick: (result: import('@/viewport/PivotPickTool').PivotPickResult) => void; onCancel: () => void }) => void;
   cancelPivotPick?: () => void;

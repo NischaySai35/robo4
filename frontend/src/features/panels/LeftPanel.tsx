@@ -7,6 +7,7 @@ import { useEditModeStore } from '@/state/editModeStore';
 import { useDockStore } from '@/state/dockStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { groundBody } from '@/features/rigid/groundBody';
+import { setBodyModePreservingPose } from '@/features/rigid/bodyModeAction';
 import { commands } from '@/core/commands/index';
 import {
   makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin, makeComponent, uid,
@@ -74,7 +75,6 @@ export default function LeftPanel({ style }: any) {
   const hiddenSet = new Set(hiddenBodyIds);
   const bodyMode        = useWorkspaceStore((s) => s.bodyMode);
   const activeBodyId    = useWorkspaceStore((s) => s.activeBodyId);
-  const setBodyMode     = useWorkspaceStore((s) => s.setBodyMode);
   const setActiveBodyId = useWorkspaceStore((s) => s.setActiveBodyId);
   const hoveredBodyId   = useSelectionStore((s) => s.hoveredBodyId);
 
@@ -248,11 +248,42 @@ export default function LeftPanel({ style }: any) {
   // ── Project explorer actions ─────────────────────────────────────────────────
   const openInspectorFor = (id: any, kind: any) => { select(id, kind); openPanel('inspector'); };
 
+  // The rename box is an UNCONTROLLED input read via this ref on commit. A controlled
+  // input dropped keystrokes here: the panel re-renders on unrelated store changes
+  // (hover, doc updates) and React kept re-applying the stale `value`, wiping whatever
+  // was typed — only Backspace appeared to "work". Uncontrolled = React never resets it.
+  const renameRef = useRef<HTMLInputElement | null>(null);
+  const attachRename = (el: HTMLInputElement | null) => {
+    renameRef.current = el;
+    if (el && document.activeElement !== el) { el.focus(); el.select(); }
+  };
+
+  // A body/joint name must be unique within its component; a component name unique
+  // among components. Returns true if `name` collides with a *different* sibling.
+  const isDuplicateName = (id: any, kind: any, name: string) => {
+    const lc = name.toLowerCase();
+    if (kind === 'component') {
+      return comps.some((c: any) => c.id !== id && (c.name ?? '').toLowerCase() === lc);
+    }
+    const list: any[] = kind === 'body' ? bodies : joints;
+    const self = list.find((e) => e.id === id);
+    const compId = self?.componentId ?? null;
+    return list.some((e) => e.id !== id
+      && (e.componentId ?? null) === compId
+      && (e.name ?? '').toLowerCase() === lc);
+  };
+
   const startRename = (id: any, kind: any, name: any) => setEditing({ id, kind, text: name });
   const commitRename = () => {
     if (!editing) return;
-    const name = editing.text.trim();
+    const name = (renameRef.current?.value ?? editing.text).trim();
     if (name) {
+      if (isDuplicateName(editing.id, editing.kind, name)) {
+        // eslint-disable-next-line no-restricted-globals, no-alert
+        alert(`A ${editing.kind} named "${name}" already exists here. Keeping the previous name.`);
+        setEditing(null);
+        return;
+      }
       if (editing.kind === 'component') {
         dispatch(commands.renameComponent(editing.id, name));
       } else {
@@ -378,10 +409,11 @@ export default function LeftPanel({ style }: any) {
         {isEditing ? (
           <input
             className="px-rename"
-            ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+            key={editing.id}
+            ref={attachRename}
             draggable={false}
-            value={editing.text}
-            onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+            defaultValue={editing.text}
+            onChange={(e) => { const v = e.target.value; setEditing((prev: any) => (prev ? { ...prev, text: v } : prev)); }}
             onBlur={commitRename}
             onMouseDown={(e) => e.stopPropagation()}
             onPointerDown={(e) => e.stopPropagation()}
@@ -468,10 +500,11 @@ export default function LeftPanel({ style }: any) {
                 {isEditingComp ? (
                   <input
                     className="px-rename"
-                    ref={(el) => { if (el && document.activeElement !== el) { el.focus(); el.select(); } }}
+                    key={editing.id}
+                    ref={attachRename}
                     draggable={false}
-                    value={editing.text}
-                    onChange={(e) => setEditing({ ...editing, text: e.target.value })}
+                    defaultValue={editing.text}
+                    onChange={(e) => { const v = e.target.value; setEditing((prev: any) => (prev ? { ...prev, text: v } : prev)); }}
                     onBlur={commitRename}
                     onMouseDown={(e) => e.stopPropagation()}
                     onPointerDown={(e) => e.stopPropagation()}
@@ -484,9 +517,16 @@ export default function LeftPanel({ style }: any) {
                     title="Click to select the whole component (move/rotate/copy as one rigid group)"
                     onClick={(e) => {
                       e.stopPropagation();
-                      if (compBodies.length) {
-                        useSelectionStore.getState().selectMany(compBodies.map((b) => b.id), 'body');
-                      }
+                      if (!compBodies.length) return;
+                      const sel = useSelectionStore.getState();
+                      const compIds = compBodies.map((b) => b.id);
+                      // Toggle: if this component's bodies are already exactly the current
+                      // selection, clicking again deselects. Otherwise select them all.
+                      const already = sel.kind === 'body'
+                        && sel.ids.length === compIds.length
+                        && compIds.every((id) => sel.ids.includes(id));
+                      if (already) sel.clear();
+                      else sel.selectMany(compIds, 'body');
                     }}
                   >
                     {comp.name}
@@ -616,13 +656,13 @@ export default function LeftPanel({ style }: any) {
         <div className="lp-mode-toggle">
           <button
             className={`lp-mode-btn ${bodyMode === 'free' ? 'lp-mode-btn--on' : ''}`}
-            onClick={() => setBodyMode('free')}
+            onClick={() => setBodyModePreservingPose('free')}
             title="Free Float — no grounded body; FK uses first-wins tree">
             Free Float
           </button>
           <button
             className={`lp-mode-btn lp-mode-btn--rigid ${bodyMode === 'rigid' ? 'lp-mode-btn--on' : ''}`}
-            onClick={() => setBodyMode('rigid')}
+            onClick={() => setBodyModePreservingPose('rigid')}
             title="Rigid — right-click any body to set it as the fixed base; graph FK propagates outward">
             Rigid
           </button>

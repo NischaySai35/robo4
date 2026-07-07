@@ -15,6 +15,11 @@ import type { Document } from '@/core/model/index';
 
 export type FK = Map<string, { position: number[]; quaternion: number[] }>;
 
+/** A drivable wheel: the end-lock body acting as a wheel, its spin axle, and cylinder size. */
+export interface WheelDesc { jointId: string; bodyId: string; axis: [number, number, number]; radius: number; halfLen: number }
+/** Live spin lookup: signed angular speed (rad/s) for a wheel joint, 0 if not spinning. */
+export type DriveOf = (jointId: string) => number;
+
 // Gentler than real 9.81 m/s² — the modules are small, so full gravity looks too fast/snappy.
 // Raise toward 9.81 for a heavier feel, lower for a floatier, slower fall.
 const GRAVITY = 4.0;

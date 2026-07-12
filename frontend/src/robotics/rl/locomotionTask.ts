@@ -1,11 +1,11 @@
 /**
  * locomotionTask — train ANY assembly (modular / shape-changing robot) to LOCOMOTE,
- * i.e. drive its centre of mass forward (+X) by actuating its joints, over real Rapier
+ * i.e. drive its centre of mass forward (+X) by actuating its joints, over real Jolt
  * physics. This is the generic, any-morphology task: the policy sees joint state + the
  * base's tilt + COM velocity, and outputs per-joint target deltas. Reward shapes a gait:
  *   forward (move +X)  +  upright (don't tip)  −  energy  −  fell (big penalty)
  *
- * Requires `await initPhysics()` once before constructing tasks (Rapier WASM init).
+ * Requires `await initPhysics()` once before constructing tasks (Jolt WASM load).
  */
 import { computeFK } from '@/kinematics/modelFK';
 import { RLPhysicsWorld } from './physicsWorld';
@@ -43,7 +43,7 @@ export class ModelLocomotionTask implements Task {
   poses() { return this.world.poses(); }
   basePose() { return this.world.basePose(); }
   baseBodyId() { return this.world.baseId_(); }
-  jointIds() { return this.world.joints.map((j) => j.id); }
+  jointIds() { return this.world.joints.map((j) => j.jointId); }
   jointTargets() { return this.world.jointValues; }
   dispose() { this.world.dispose(); }
 

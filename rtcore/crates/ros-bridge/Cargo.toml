@@ -1,9 +1,0 @@
-[package]
-name = "ros-bridge"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-[dependencies]
-rt-bus = { path = "../rt-bus" }
-rt-control = { path = "../rt-control" }

@@ -1,0 +1,566 @@
+<!doctype html>
+<title>Physics &amp; Architecture Review — TETROBOT</title>
+<style>
+  :root {
+    --bg: #10131a;
+    --surface: #171b24;
+    --surface-2: #1d222d;
+    --line: #2a3040;
+    --text: #e7e9ef;
+    --text-dim: #9aa2b4;
+    --text-faint: #626b80;
+    --accent: #e8934a;
+    --accent-dim: #a8672f;
+    --cyan: #6ccbdb;
+    --good: #6fbf8b;
+    --bad: #d9705f;
+    --warn: #d9b35f;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    --sans: -apple-system, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --radius: 3px;
+  }
+  :root[data-theme="light"] {
+    --bg: #f6f4ef;
+    --surface: #ffffff;
+    --surface-2: #efece4;
+    --line: #ddd8cb;
+    --text: #1c1f26;
+    --text-dim: #565f70;
+    --text-faint: #8b8f7f;
+    --accent: #b85f22;
+    --accent-dim: #d98a4a;
+    --cyan: #1a7e8f;
+    --good: #2f8556;
+    --bad: #b23f2f;
+    --warn: #96741a;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f6f4ef;
+      --surface: #ffffff;
+      --surface-2: #efece4;
+      --line: #ddd8cb;
+      --text: #1c1f26;
+      --text-dim: #565f70;
+      --text-faint: #8b8f7f;
+      --accent: #b85f22;
+      --accent-dim: #d98a4a;
+      --cyan: #1a7e8f;
+      --good: #2f8556;
+      --bad: #b23f2f;
+      --warn: #96741a;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent); color: #10131a; }
+
+  .page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 4rem 1.75rem 8rem;
+  }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  header.doc-head {
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 2rem;
+    margin-bottom: 3rem;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 0.9rem;
+  }
+  h1 {
+    font-size: 2.35rem;
+    line-height: 1.12;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.6rem;
+    font-weight: 700;
+    text-wrap: balance;
+  }
+  .doc-sub {
+    color: var(--text-dim);
+    font-size: 1.08rem;
+    max-width: 62ch;
+    text-wrap: balance;
+    margin: 0 0 1.4rem;
+  }
+  .doc-meta {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-faint);
+  }
+  .doc-meta b { color: var(--text-dim); font-weight: 500; }
+
+  /* ── Structure ──────────────────────────────────────────── */
+  section { margin-bottom: 3.4rem; }
+  .sec-label {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7rem;
+    margin-bottom: 1.1rem;
+  }
+  .sec-num {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    min-width: 1.6rem;
+  }
+  h2 {
+    font-size: 1.36rem;
+    margin: 0;
+    letter-spacing: -0.005em;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: 1.03rem;
+    margin: 1.6rem 0 0.7rem;
+    color: var(--text);
+  }
+  p { max-width: 68ch; margin: 0 0 1rem; }
+  p.wide { max-width: none; }
+  ul, ol { max-width: 68ch; padding-left: 1.3rem; margin: 0 0 1rem; }
+  li { margin-bottom: 0.45rem; }
+  a { color: var(--cyan); }
+  code {
+    font-family: var(--mono);
+    font-size: 0.85em;
+    background: var(--surface-2);
+    padding: 0.1em 0.4em;
+    border-radius: var(--radius);
+  }
+  strong { font-weight: 650; }
+
+  /* ── Verdict callout ────────────────────────────────────── */
+  .verdict {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 1.3rem 1.5rem;
+    margin: 0 0 2.6rem;
+  }
+  .verdict .eyebrow { margin-bottom: 0.5rem; }
+  .verdict p:last-child { margin-bottom: 0; }
+  .verdict p { max-width: none; }
+
+  /* ── Cards / grid ───────────────────────────────────────── */
+  .grid2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1rem;
+    margin: 1.2rem 0;
+  }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.1rem 1.25rem;
+  }
+  .card h4 {
+    margin: 0 0 0.5rem;
+    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .card p { margin: 0; font-size: 0.92rem; color: var(--text-dim); max-width: none; }
+  .tag {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.15em 0.5em;
+    border-radius: 2px;
+    border: 1px solid currentColor;
+  }
+  .tag.good { color: var(--good); }
+  .tag.bad { color: var(--bad); }
+  .tag.warn { color: var(--warn); }
+
+  /* ── Tables ─────────────────────────────────────────────── */
+  .table-wrap { overflow-x: auto; margin: 1.2rem 0; border: 1px solid var(--line); border-radius: var(--radius); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.87rem; min-width: 640px; }
+  th, td { text-align: left; padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th {
+    font-family: var(--mono);
+    font-size: 0.7rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    background: var(--surface-2);
+    font-weight: 500;
+  }
+  tr:last-child td { border-bottom: none; }
+  td.rec { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .cell-good { color: var(--good); }
+  .cell-bad { color: var(--bad); }
+  .cell-warn { color: var(--warn); }
+  .row-title { font-weight: 600; white-space: nowrap; }
+  .row-title .sub { display: block; font-weight: 400; color: var(--text-faint); font-size: 0.78rem; font-family: var(--mono); }
+
+  /* ── Diagram blocks ─────────────────────────────────────── */
+  .diagram {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1.4rem;
+    margin: 1.2rem 0;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    overflow-x: auto;
+  }
+  .diagram pre { margin: 0; white-space: pre; color: var(--text-dim); line-height: 1.55; }
+  .diagram .hl { color: var(--accent); }
+  .diagram .hl2 { color: var(--cyan); }
+
+  /* ── Phase list ─────────────────────────────────────────── */
+  .phase {
+    display: grid;
+    grid-template-columns: 2.4rem 1fr;
+    gap: 1rem;
+    padding: 1.1rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .phase:last-child { border-bottom: none; }
+  .phase-num {
+    font-family: var(--mono);
+    font-size: 1.15rem;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .phase h4 { margin: 0 0 0.35rem; font-size: 1rem; }
+  .phase p { margin: 0 0 0.5rem; font-size: 0.92rem; color: var(--text-dim); max-width: none; }
+  .phase .deliv { font-family: var(--mono); font-size: 0.78rem; color: var(--text-faint); }
+
+  /* ── Decision list ──────────────────────────────────────── */
+  .decision {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 1rem 1.25rem;
+    margin-bottom: 0.9rem;
+  }
+  .decision .q { font-weight: 600; margin-bottom: 0.4rem; }
+  .decision .opts { font-size: 0.9rem; color: var(--text-dim); }
+  .decision .opts b { color: var(--text); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    font-size: 0.82rem;
+    color: var(--text-faint);
+  }
+  footer a { color: var(--text-faint); }
+  footer ul { padding-left: 1.1rem; max-width: none; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    section { animation: rise 0.4s ease-out backwards; }
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+</style>
+
+<div class="page">
+
+  <header class="doc-head">
+    <div class="eyebrow">Architecture Review — Physics &amp; Simulation Core</div>
+    <h1>Your graph has loops. Your engine assumed it doesn't.</h1>
+    <p class="doc-sub">Why MuJoCo kept fighting you, what Blender/Unity/Gazebo/Isaac actually do under the hood, and a concrete plan for a physics core that treats an arbitrary body/joint graph — cycles included — as the normal case instead of a workaround.</p>
+    <div class="doc-meta">
+      <span><b>Scope</b> simulation &amp; physics core only</span>
+      <span><b>GUI/editor</b> unaffected</span>
+      <span><b>Status</b> plan for review — nothing implemented</span>
+    </div>
+  </header>
+
+  <div class="verdict">
+    <div class="eyebrow">Direct answers first</div>
+    <p><strong>Your code is not Java</strong> — it's TypeScript/JavaScript. <strong>Yes, C/C++ is possible</strong> and you already have a native C++ MuJoCo core sitting unused in <code>native/</code>. But a full rewrite is the wrong move: your GUI isn't the bottleneck, your <em>physics engine's assumptions</em> are. The fix is swapping the physics core to one built for graphs with loops — <strong>Jolt Physics</strong> — not rewriting the app.</p>
+  </div>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">01</span><h2>What actually went wrong</h2></div>
+    <p>Rapier wasn't broken. Reading your own codebase's history: the "shaking" problem you remembered was caused by a specific bad pattern — a chassis body floating with no ground contact of its own, held up entirely by wheel joints. That was diagnosed and fixed <em>inside</em> Rapier, before MuJoCo ever entered the picture. The fix (rigid clustering + proper multibody joints + real ground contact on every body) is documented in your own <code>dynamicSim.ts</code> history as already resolved.</p>
+    <p>MuJoCo was reached for on the belief that "more advanced" meant "more correct" everywhere. It's true for one narrow thing — pure joint-stability accuracy on a fixed tree — and false for almost everything else you actually need:</p>
+    <div class="grid2">
+      <div class="card">
+        <h4>MuJoCo's actual design center <span class="tag bad">mismatch</span></h4>
+        <p>A research tool for training RL policies on a <em>known, fixed, tree-shaped</em> robot, run for millions of steps offline. It compiles one static model and reuses it forever. Great fit for that job.</p>
+      </div>
+      <div class="card">
+        <h4>What you're actually building <span class="tag good">the real spec</span></h4>
+        <p>An interactive editor where the topology itself changes live — bodies, loops, arbitrary graphs, any number of wheels in any orientation — and has to feel instant while you build.</p>
+      </div>
+    </div>
+    <p>Every symptom you hit traces back to that mismatch: the duplicate-name crash (MJCF requires a strict tree; your data model doesn't), the UI freeze on load (MJCF compiles synchronously, blocking the one thread your UI also runs on), and the NaN spam (a workaround for tree-only structure left real overlaps unhandled). These weren't bugs to patch one at a time — they're the same root cause wearing different hats.</p>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">02</span><h2>The actual fork: maximal vs. reduced coordinates</h2></div>
+    <p>Every rigid-body engine picks one of two ways to represent a robot. This single choice is what determines whether "graph with loops" is your default case or your edge case.</p>
+    <div class="diagram">
+<pre><span class="hl">REDUCED COORDINATES</span>  (MuJoCo, DART, Drake, Simbody)
+  Each joint removes degrees of freedom from a parent-child <span class="hl2">tree</span>.
+  Fast, numerically pristine for a chain — but a loop or a second
+  parent isn't representable. It gets bolted on afterward as a
+  soft "equality constraint," an approximation, not a real joint.
+
+<span class="hl">MAXIMAL COORDINATES</span>   (Jolt, PhysX, Bullet, Rapier, Chrono)
+  Every body is independently free (6 DOF); joints are just
+  constraints between bodies. A <span class="hl2">loop is two more constraints</span> —
+  no special case, no approximation, no tree requirement at all.
+  This is the family every general-purpose game/robotics engine
+  outside pure RL research actually uses.</pre>
+    </div>
+    <p>Your stated requirements — dynamic topology, closed loops, any wheel count/orientation, structures that aren't trees — <strong>only exist natively in the maximal-coordinate family.</strong> MuJoCo is, for your use case, the wrong family, not just a wrong implementation detail.</p>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">03</span><h2>How the reference tools actually do it</h2></div>
+    <p>You named Blender, Unity, Gazebo, and Isaac. Here's what's really under each hood, not the marketing version:</p>
+    <div class="grid2">
+      <div class="card">
+        <h4>Gazebo <span class="tag good">graph-native</span></h4>
+        <p>Describes robots in <strong>SDF</strong>, not URDF — URDF's spec explicitly forbids loops ("only tree structures... ruling out all parallel robots"). SDF references links by name with no tree requirement, so loops are first-class. Default physics is DART (reduced-coordinate, tree-based — loops via constraint), but Gazebo also ships a full Bullet backend specifically because DART's tree assumption doesn't cover everything.</p>
+      </div>
+      <div class="card">
+        <h4>Isaac Sim <span class="tag good">graph-native</span></h4>
+        <p>PhysX 5 (maximal-coordinate, GPU-accelerated) plus USD for scene description. Every body is a real actor; joints are constraints. This is NVIDIA's answer to exactly your problem, at a scale far beyond what you need — worth knowing the pattern, not adopting the whole stack.</p>
+      </div>
+      <div class="card">
+        <h4>Blender <span class="tag warn">different problem</span></h4>
+        <p>Its dependency graph is a generic DAG for scene/animation evaluation (what depends on what to redraw), not a physics topology — it doesn't have your loop problem because it isn't solving your problem. Worth borrowing one idea: recompute only the subgraph that actually changed, not the whole scene, which is the fix for your "recompiles everything on every toggle" cost.</p>
+      </div>
+      <div class="card">
+        <h4>Unity DOTS/ECS <span class="tag warn">different problem</span></h4>
+        <p>Entities/components/systems is a data-layout pattern for CPU cache efficiency at scale (thousands of objects), separate from physics topology. Unity's own physics (Havok-based) is maximal-coordinate. Not something to adopt wholesale at your scale, but the "keep hot data flat and cache-friendly" principle is worth applying to whatever engine you land on.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">04</span><h2>Engine comparison</h2></div>
+    <p class="wide">Narrowed to engines that are open-source, actively maintained, and have a real path into your Electron app.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Engine</th><th>Coordinates</th><th>Loops</th><th>Runtime topology change</th><th>Real-time fit</th><th>Browser/WASM</th><th>Maturity</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="row-title">Jolt Physics<span class="sub">jrouwe, MIT</span></td>
+            <td>Maximal</td>
+            <td class="cell-good">Native</td>
+            <td class="cell-good">Cheap</td>
+            <td class="cell-good">Built for it</td>
+            <td class="cell-good">Official WASM + SIMD + multithread</td>
+            <td>Ships in Horizon Forbidden West, Death Stranding 2</td>
+          </tr>
+          <tr>
+            <td class="row-title">Rapier<span class="sub">what you started with</span></td>
+            <td>Maximal</td>
+            <td class="cell-good">Native</td>
+            <td class="cell-good">Cheap</td>
+            <td class="cell-good">Built for it</td>
+            <td class="cell-good">Official WASM (Rust)</td>
+            <td>Mature, was already stable for you</td>
+          </tr>
+          <tr>
+            <td class="row-title">PhysX 5<span class="sub">NVIDIA, Isaac Sim's engine</span></td>
+            <td>Maximal</td>
+            <td class="cell-good">Native</td>
+            <td class="cell-good">Cheap</td>
+            <td class="cell-good">Built for it</td>
+            <td class="cell-warn">Community WASM only, unofficial</td>
+            <td>Industry-standard, heavier SDK</td>
+          </tr>
+          <tr>
+            <td class="row-title">MuJoCo<span class="sub">what you're on now</span></td>
+            <td>Reduced</td>
+            <td class="cell-bad">Constraint hack only</td>
+            <td class="cell-bad">Full recompile</td>
+            <td class="cell-bad">Not the design goal</td>
+            <td class="cell-warn">Official WASM, sync/blocking</td>
+            <td>Gold standard for RL research on fixed trees</td>
+          </tr>
+          <tr>
+            <td class="row-title">Genesis<span class="sub">new, 2024–2026</span></td>
+            <td>Mixed</td>
+            <td class="cell-warn">Partial</td>
+            <td class="cell-bad">Not designed for it</td>
+            <td class="cell-good">Extremely fast (GPU)</td>
+            <td class="cell-bad">Python-only, no browser path</td>
+            <td>Very new, research-grade, huge raw speed</td>
+          </tr>
+          <tr>
+            <td class="row-title">Project Chrono<span class="sub">engineering-grade</span></td>
+            <td>Maximal</td>
+            <td class="cell-good">Native</td>
+            <td class="cell-warn">Possible, heavier</td>
+            <td class="cell-warn">Not game-tuned</td>
+            <td class="cell-bad">No practical WASM path</td>
+            <td>Academic/engineering, less ergonomic</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">05</span><h2>Recommendation: Jolt Physics</h2></div>
+    <p>Rapier would also genuinely work — it already did. Jolt is the recommendation over going back to Rapier for one reason: it's the only option in this table with real <strong>multithreading inside the WASM build itself</strong> (SharedArrayBuffer-backed worker threads), which directly attacks the "compiling/stepping blocks the UI thread" problem that's hit you twice now with MuJoCo. Rapier's WASM is single-threaded, same limitation MuJoCo has, just less severe. Jolt is also the physics engine actually shipping in current AAA titles at real scale (Horizon Forbidden West, Death Stranding 2) — proven, not experimental.</p>
+    <div class="card">
+      <h4>What moving to Jolt actually fixes</h4>
+      <p>Loops and arbitrary graphs become the default case, not a special case you engineer around. Adding/removing a body or joint while the user drags things around is a cheap native operation again, like Rapier was — no MJCF recompile, no compile-on-every-toggle stall. Physics can run off the main thread, so a heavy step never blocks a click.</p>
+    </div>
+    <h3>What happens to the MuJoCo work already built</h3>
+    <p>Not wasted. <code>native/tetrobot_core</code> (real C++ MuJoCo, not WASM) stays as an optional <strong>offline training/export backend</strong> — exactly where MuJoCo's actual strength lives: batch RL training on a finished, fixed-topology design, disconnected from the live interactive editor. The editor and Jolt don't need it; a future "train this design" feature could.</p>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">06</span><h2>Stack: C, C++, Rust, or stay TypeScript?</h2></div>
+    <p>Your GUI (React, Three.js, the drag/drop editor) is not where your slowness comes from — it was never the bottleneck, and a benchmark or profile would show that clearly if it's ever in doubt. Rewriting it in C buys you nothing and costs months. The bottleneck is specifically the physics core's execution model.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Layer</th><th>Stay / change</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td class="row-title">Editor UI, panels, viewport</td><td class="cell-good">Stay TypeScript/React/Three.js</td><td>Already works, not the bottleneck, huge rewrite risk for zero benefit</td></tr>
+          <tr><td class="row-title">Model/graph data structure</td><td class="cell-warn">Restructure in place</td><td>Needs to be a true graph (adjacency, cycles allowed) at the data-model level, not just patched at the physics-export step — see §7</td></tr>
+          <tr><td class="row-title">Physics core</td><td class="cell-bad">Replace</td><td>Jolt via its official WASM build first; native C++ later only if profiling proves WASM is the ceiling</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p><strong>C specifically:</strong> possible, not advisable. Jolt and PhysX are C++, not C — there's no serious modern physics engine written in plain C anymore; the ecosystem moved on decades ago. If you ever do go native (Electron native addon instead of WASM), it'll be C++, and Jolt's own source is what you'd bind to — the exact code already proven in shipping games.</p>
+    <p><strong>Rust:</strong> only relevant if you were starting from zero. Rapier is Rust, and it was already fine. Not a reason to switch again on top of switching engines.</p>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">07</span><h2>Proposed architecture</h2></div>
+    <div class="diagram">
+<pre>┌─────────────────────────────────────────────────────┐
+│  <span class="hl">EDITOR UI</span>  — React + Three.js + Zustand           │
+│  unchanged: panels, viewport, drag/drop, undo         │
+└───────────────────────┬───────────────────────────────┘
+                         │
+┌───────────────────────▼───────────────────────────────┐
+│  <span class="hl">MODEL GRAPH</span>  — restructured                       │
+│  bodies = nodes, joints = edges, cycles allowed        │
+│  no "pick one parent" workaround; multi-parent is       │
+│  just... a graph, same as ROS calls it in your head    │
+└───────────────────────┬───────────────────────────────┘
+                         │  live diff, not full rebuild
+┌───────────────────────▼───────────────────────────────┐
+│  <span class="hl2">PHYSICS BRIDGE</span>  — new, thin                       │
+│  translates graph edits → Jolt body/constraint calls   │
+│  incremental: add one body ≠ recompile everything      │
+└───────────────────────┬───────────────────────────────┘
+                         │
+┌───────────────────────▼───────────────────────────────┐
+│  <span class="hl2">JOLT PHYSICS</span>  — WASM, worker thread              │
+│  maximal-coordinate, native loops, multithreaded        │
+└─────────────────────────────────────────────────────────┘
+
+   optional, offline only, not in this critical path:
+┌─────────────────────────────────────────────────────┐
+│  native/tetrobot_core — real MuJoCo C++ (already built)│
+│  batch RL training / export on a FINISHED design        │
+└─────────────────────────────────────────────────────┘</pre>
+    </div>
+    <p>The key shift from what you have now: the physics bridge becomes <strong>incremental</strong> (add/remove one body, don't rebuild the world) instead of <strong>compile-from-scratch</strong> (regenerate the whole XML document and reload it) every time anything changes. That single change is what makes interaction feel instant again.</p>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">08</span><h2>Phased plan</h2></div>
+    <div class="phase">
+      <div class="phase-num">1</div>
+      <div>
+        <h4>Data model → true graph</h4>
+        <p>Replace the "each body has one parent joint" assumption with real adjacency: a body can have any number of incoming/outgoing joint edges. This is the foundation everything else sits on — get it right once instead of patching around it per-engine like the last two rounds.</p>
+        <div class="deliv">deliverable: graph data structure + cycle-safe traversal, unit tested against a deliberately looped fixture</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-num">2</div>
+      <div>
+        <h4>Jolt WASM integration, one sim first</h4>
+        <p>Stand up Jolt exactly where <code>PhysicsSim</code> lives today — same public API surface, internals swapped — so it's a controlled, testable replacement rather than a big-bang rewrite. Verify with real physics tests, the same discipline used throughout this project.</p>
+        <div class="deliv">deliverable: PhysicsSim on Jolt, passing the existing determinism/motor/box-pool test suite</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-num">3</div>
+      <div>
+        <h4>Incremental physics bridge</h4>
+        <p>Replace "rebuild the whole world" with "diff the graph, apply just the changed bodies/joints to the live Jolt world." This is the piece that actually kills the lag — not a bigger engine, a smarter update path.</p>
+        <div class="deliv">deliverable: adding/removing one body no longer triggers a full-model reload</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-num">4</div>
+      <div>
+        <h4>Move physics off the main thread</h4>
+        <p>Jolt's WASM build supports real worker-thread execution. Physics stepping happens off the thread your clicks and animations run on, so a heavy scene never freezes the UI again — structurally, not just via workarounds.</p>
+        <div class="deliv">deliverable: gravity/drag interactions stay responsive under a large, physics-heavy model</div>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-num">5</div>
+      <div>
+        <h4>Migrate the remaining sims</h4>
+        <p>DynamicSim, RigidTumbleSim, BoxWorld, RL training — same pattern as phase 2, one at a time, each with its own passing test suite before moving to the next.</p>
+        <div class="deliv">deliverable: nothing left depending on the MJCF-compile-per-toggle pattern</div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-label"><span class="sec-num">09</span><h2>Decisions only you can make</h2></div>
+    <div class="decision">
+      <div class="q">Jolt now, or one more attempt at tuning MuJoCo first?</div>
+      <div class="opts"><b>Recommended: Jolt.</b> MuJoCo's blocking-compile behavior is architectural, not a tuning problem — no amount of parameter adjustment removes a synchronous WASM call on the main thread.</div>
+    </div>
+    <div class="decision">
+      <div class="q">Keep the native MuJoCo C++ core at all?</div>
+      <div class="opts"><b>Recommended: keep it</b>, repurposed as an optional offline export/training path. It's already built and tested — deleting it recovers nothing.</div>
+    </div>
+    <div class="decision">
+      <div class="q">Data model rewrite scope — minimal patch or real graph structure?</div>
+      <div class="opts"><b>Recommended: real graph structure now.</b> This is the third time a "just make the tree-walker not crash" patch has been needed. Fixing the actual data model once is less total work than a fourth patch later.</div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Sources consulted for this review:</p>
+    <ul>
+      <li><a href="https://github.com/jrouwe/JoltPhysics">jrouwe/JoltPhysics</a> — engine source, used in Horizon Forbidden West &amp; Death Stranding 2</li>
+      <li><a href="https://github.com/jrouwe/JoltPhysics.js">jrouwe/JoltPhysics.js</a> — official WASM/emscripten port</li>
+      <li><a href="https://gazebosim.org/api/physics/5/introduction.html">Gazebo Physics — Introduction</a></li>
+      <li><a href="http://classic.gazebosim.org/tutorials?tut=kinematic_loop">Gazebo: modeling a 4-bar linkage (closed loop) in SDFormat vs URDF</a></li>
+      <li><a href="https://developer.nvidia.com/isaac/sim">NVIDIA Isaac Sim</a> — PhysX 5 + USD architecture</li>
+      <li><a href="https://developer.blender.org/docs/features/core/depsgraph/">Blender Developer Docs — Dependency Graph</a></li>
+      <li><a href="https://leggedrobotics.github.io/SimBenchmark/">SimBenchmark — RaiSim vs Bullet vs ODE vs MuJoCo vs DartSim</a></li>
+      <li><a href="https://arxiv.org/html/2411.19753v1">URDF+: An Enhanced URDF for Robots with Kinematic Loops</a></li>
+      <li><a href="https://genesis-world.readthedocs.io/">Genesis World documentation</a></li>
+    </ul>
+  </footer>
+
+</div>

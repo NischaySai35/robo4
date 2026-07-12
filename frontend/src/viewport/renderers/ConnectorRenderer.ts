@@ -56,11 +56,25 @@ export class ConnectorRenderer {
   sync(doc: Document, fk?: any) {
     this._lastDoc = doc;
     this._lastFk = fk;
-    for (const c of [...this.group.children]) {
-      this.group.remove(c);
-      c.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
+    if (!this._visible) {
+      for (const c of [...this.group.children]) {
+        this.group.remove(c);
+        c.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
+      }
+      this._nodes?.clear();
+      return;
     }
-    if (!this._visible) return;
+
+    // Was: dispose + rebuild EVERY marker (sphere + crosshair + roll line + arrow, each
+    // its own geometry/material) on every single sync() call — and sync() runs on every
+    // model-store change, including every physics-sim frame while a sim is live. That's
+    // real, measured GC/GPU churn (heap swings, degraded frame time over a session,
+    // eventually observed as a WebGL "context lost" event). Now: nodes are cached by
+    // body+connector key and only rebuilt when their SHAPE actually changes (color/size);
+    // a pure pose update (the common case, every frame) just repositions the existing node
+    // — matches the pattern BodyRenderer already uses via its sig-cache.
+    this._nodes ??= new Map<string, { node: any; sig: string }>();
+    const seen = new Set<string>();
 
     for (const ref of listConnectors(doc)) {
       const body = doc.bodies[ref.bodyId];
@@ -76,6 +90,21 @@ export class ConnectorRenderer {
       const isSelected = this._selectedBodyId === ref.bodyId && ref.connectorId === this._selectedId;
       const isHighlighted = (this._highlightPairs as ConnPair[]).some((p) => p.bodyId === ref.bodyId && p.connectorId === ref.connectorId);
       const color = isSelected || isHighlighted ? SEL_COLOR : COLOR;
+
+      const key = `${ref.bodyId}::${ref.connectorId}`;
+      seen.add(key);
+      const sig = `${aLen.toFixed(4)}|${color}|${world.roll ? 1 : 0}`;
+      const cached = this._nodes.get(key);
+      if (cached && cached.sig === sig) {
+        // Shape unchanged — just move it (position + orientation can change every frame).
+        cached.node.position.copy(world.position);
+        this._orientNode(cached.node, world);
+        continue;
+      }
+      if (cached) {
+        this.group.remove(cached.node);
+        cached.node.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
+      }
 
       const node = new THREE.Group();
       node.position.copy(world.position);
@@ -118,6 +147,8 @@ export class ConnectorRenderer {
           new THREE.LineBasicMaterial({ color: 0x00e5ff, depthTest: false }),
         );
         rollLine.renderOrder = 1000;
+        rollLine.userData.isRollLine = true;
+        rollLine.userData.armLen = arm * 1.6;
         node.add(rollLine);
       }
 
@@ -132,7 +163,31 @@ export class ConnectorRenderer {
         if (o.isMesh || o.isLine) constantScreenSize(o, node, 0, aLen, CON_HEIGHT_FRAC);
       });
 
+      this._nodes.set(key, { node, sig });
       this.group.add(node);
+    }
+
+    for (const [key, { node }] of this._nodes) {
+      if (seen.has(key)) continue;
+      this.group.remove(node);
+      node.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
+      this._nodes.delete(key);
+    }
+  }
+
+  /** Fast path for a connector whose shape (size/color/roll) hasn't changed, only its
+   *  world orientation (e.g. its body rotated) — update the direction-dependent children
+   *  in place instead of rebuilding the node. */
+  _orientNode(node: any, world: any) {
+    for (const child of node.children) {
+      if (child.userData?.isRollLine && world.roll) {
+        const pos = child.geometry.attributes.position;
+        const end = world.roll.clone().multiplyScalar(child.userData.armLen);
+        pos.setXYZ(1, end.x, end.y, end.z);
+        pos.needsUpdate = true;
+      } else if (child.isArrowHelper) {
+        child.setDirection(world.normal);
+      }
     }
   }
 

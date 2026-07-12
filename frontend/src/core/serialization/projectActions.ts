@@ -5,7 +5,7 @@
 
 import { serializeProject } from './project';
 import { saveProjectToFile, openProjectFromFile, writeProjectToHandle } from './fileIO';
-import { putProject, getProjectData, listProjects, removeProject } from './projectLibrary';
+import { putProject, getProjectData, listProjects, removeProject, saveHandle, getSavedHandle } from './projectLibrary';
 // Note: all projectLibrary functions are async (IndexedDB-backed).
 import { useDocStore } from '@/state/docStore';
 import { bridge } from '@/viewport/cameraBridge';
@@ -104,6 +104,7 @@ export async function saveProject() {
       useDocStore.getState().setStatus('saving');
       await writeProjectToHandle(handle, serializeProject());
       useDocStore.getState().setDoc(name, handle);
+      await saveHandle(name ?? 'untitled.nischay', handle); // survive the next reload — see docStore.reconnect()
       await saveCurrentToLibrary(name ?? undefined); // await so library commits before app can close
       useDocStore.getState().setStatus('saved');
       return;
@@ -153,6 +154,7 @@ export async function saveProjectAs() {
   if (res) {
     useDocStore.getState().setDoc(res.name, res.handle);
     useDocStore.getState().setLibraryId(null); // force a fresh library entry for the new file
+    if (res.handle) await saveHandle(res.name, res.handle); // survive the next reload
     await saveCurrentToLibrary(res.name);
   }
 }
@@ -178,9 +180,39 @@ export async function openProject() {
 
     useDocStore.getState().setDoc(res.name, res.handle);
     useDocStore.getState().setLibraryId(matchedId);
+    if (res.handle) await saveHandle(res.name, res.handle); // survive the next reload
   } catch (e) {
     alert(`Could not open file: ${(e as any).message}`);
   }
+}
+
+/**
+ * Call once at app boot: try to silently regain write access to whatever file
+ * was open last session. If the browser already remembers a 'granted'
+ * permission for that handle, this reconnects with NO prompt — the same file
+ * handle only went stale in memory, not in the browser's permission store, so
+ * this is the fix for "reload loses the connection to the real file, and
+ * Ctrl+S silently starts writing to the internal library instead without any
+ * warning." If the browser needs a fresh user gesture to re-grant (its own
+ * security rule, not something this app can bypass), this instead exposes a
+ * `pendingReconnectName` for a one-click "Reconnect" UI to call
+ * `useDocStore.getState().reconnect()` from.
+ */
+export async function tryRestoreFileHandle(): Promise<void> {
+  const saved = await getSavedHandle();
+  if (!saved?.handle) return;
+  // Don't clobber a handle already acquired this session (e.g. just opened a file).
+  if (useDocStore.getState().handle) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const h: any = saved.handle;
+    const perm = await h.queryPermission?.({ mode: 'readwrite' });
+    if (perm === 'granted') {
+      useDocStore.getState().setDoc(saved.name, h);
+    } else {
+      useDocStore.getState().setPendingReconnect(saved.name, h);
+    }
+  } catch { /* stale/invalid handle — ignore, user can re-open manually */ }
 }
 
 /** Save a snapshot of the current project into the local library (IndexedDB).

@@ -1,9 +1,0 @@
-[package]
-name = "fieldbus"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
-# Fieldbus protocol logic (CANopen CiA 402 drive profile, PDO/SDO models). Pure & testable
-# with no hardware — this is the brain that the future EtherCAT master binding drives.
-[dependencies]

@@ -14,6 +14,7 @@ import { usePageStore } from '@/state/pageStore';
 import { useDockStore } from '@/state/dockStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { bridge } from '@/viewport/cameraBridge';
+import { getActiveSpins } from '@/features/motor/spinEngine';
 import { makeDocument } from '../model/index';
 
 export const PROJECT_FORMAT  = 'tetrobot-project';
@@ -39,11 +40,15 @@ export function serializeProject() {
       cameraState:   bridge.getCameraState?.() ?? null,
     },
     // Transient UI toggles that aren't part of the model/workspace but the user still wants
-    // round-tripped: gravity switch + the A/B lock-connector picks.
+    // round-tripped: gravity switch, rigid-mode + which bodies are active in it, the A/B
+    // lock-connector picks, and which joints are mid-spin (CW/CCW) with what direction.
     ui: {
       gravityOn: useAnimSceneStore.getState().gravityOn,
+      rigidMode: useAnimSceneStore.getState().rigidMode,
+      activeBodyIds: [...useAnimSceneStore.getState().activeBodyIds],
       mateSlotA: useAnimSceneStore.getState().mateSlotA,
       mateSlotB: useAnimSceneStore.getState().mateSlotB,
+      activeSpins: getActiveSpins(),
     },
   };
 }

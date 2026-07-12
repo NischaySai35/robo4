@@ -14,7 +14,7 @@
  */
 
 const DB_NAME    = 'tetrobot-library';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 /* ── shared DB handle (lazy, singleton) ────────────────────────────────── */
 
@@ -29,8 +29,14 @@ function openDB(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains('index')) db.createObjectStore('index', { keyPath: 'id' });
-      if (!db.objectStoreNames.contains('data'))  db.createObjectStore('data',  { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('index'))   db.createObjectStore('index',   { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('data'))    db.createObjectStore('data',    { keyPath: 'id' });
+      // A real FileSystemFileHandle is structured-clone-able and CAN survive in
+      // IndexedDB across reloads (unlike localStorage/memory) — this is what was
+      // missing: without it, every reload silently lost write access to the real
+      // file on disk and Ctrl+S redirected to an internal library entry instead,
+      // with no visible warning. See docStore.ts for the read/restore side.
+      if (!db.objectStoreNames.contains('handles')) db.createObjectStore('handles', { keyPath: 'id' });
     };
     req.onsuccess = () => { _db = req.result; resolve(_db!); };
     req.onerror   = () => reject(req.error);
@@ -190,6 +196,42 @@ export async function removeProject(id: string): Promise<void> {
   tx.objectStore('index').delete(id);
   tx.objectStore('data').delete(id);
   await txDone(tx);
+}
+
+/* ── persisted file handle (survives reload — see DB_VERSION=2 note above) ── */
+
+const CURRENT_HANDLE_ID = 'current';
+
+/** Remember the real OS file handle for the currently-open project, so a page
+ *  reload can try to silently regain write access instead of losing it. */
+export async function saveHandle(name: string, handle: unknown): Promise<void> {
+  try {
+    const db = await ensureDB();
+    const tx = db.transaction('handles', 'readwrite');
+    tx.objectStore('handles').put({ id: CURRENT_HANDLE_ID, name, handle });
+    await txDone(tx);
+  } catch (e) { console.warn('saveHandle failed (non-fatal):', e); }
+}
+
+/** The last-remembered file handle + name, or null if none / read failed. */
+export async function getSavedHandle(): Promise<{ name: string; handle: unknown } | null> {
+  try {
+    const db = await ensureDB();
+    const tx = db.transaction('handles', 'readonly');
+    const row = await idbReq<{ id: string; name: string; handle: unknown } | undefined>(
+      tx.objectStore('handles').get(CURRENT_HANDLE_ID),
+    );
+    return row ? { name: row.name, handle: row.handle } : null;
+  } catch { return null; }
+}
+
+export async function clearSavedHandle(): Promise<void> {
+  try {
+    const db = await ensureDB();
+    const tx = db.transaction('handles', 'readwrite');
+    tx.objectStore('handles').delete(CURRENT_HANDLE_ID);
+    await txDone(tx);
+  } catch { /* non-fatal */ }
 }
 
 export async function renameProject(id: string, name: string): Promise<void> {

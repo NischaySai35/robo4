@@ -15,7 +15,7 @@ import { getMotorSpec } from '@/kinematics/motorDatabase';
 import { updateThermal, getTemp } from '@/kinematics/thermalModel';
 
 const RAD2DEG  = 180 / Math.PI;
-const SAMPLE_MS = 50;
+const SAMPLE_MS = 100; // was 50 (20Hz): halves the unconditional per-tick computeFK+jointLoads cost; still smooth for this chart
 const WINDOW    = 600;
 const ANGULAR   = new Set(['revolute', 'continuous']);
 const SVG_NS    = 'http://www.w3.org/2000/svg';

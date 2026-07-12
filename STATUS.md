@@ -38,16 +38,18 @@ both sides (TS `rtExport.ts`/`rtStatus.ts` ↔ Rust `traj-io`), so a schema chan
 | Jerk-limited (S-curve) + corner-blended trajectories | `frontend` trajectory | cap/blend tests |
 | URDF round-trip fidelity | `frontend` exporters/importers | round-trip tests |
 | Reproducible RL training | `frontend` policy (seeded) | training test |
-| 1 kHz control loop + PID + controller manager | `rt-control` | PID/traj/hold tests |
-| Software safety: limits, soft end-stops, e-stop | `rt-control` safety | clamp/block/estop tests |
-| CiA 402 drive state machine + sim EtherCAT drives | `fieldbus`, `rt-ethercat` | bring-up + drive tests |
-| Bidirectional live link (telemetry out, commands in) | `rt-telemetry` | real-socket integration tests |
-| Operator console (send move / e-stop, live readout) | `frontend` RtCoreReadout | verified live end-to-end |
+| 1 kHz control loop + PID + controller manager | `native/include/rt_control.h` | PID/traj/hold tests |
+| Software safety: limits, soft end-stops, e-stop | `rt_control.h` SafetyMonitor | clamp/block/estop tests |
+| CiA 402 drive state machine + sim EtherCAT drives | `cia402.h`, `ethercat_hardware.h` | bring-up + drive tests |
+| Bidirectional live link (telemetry out, commands in) | `rt_telemetry.h` | native_core_tests |
+| Operator console (send move / e-stop, live readout) | `frontend` RtCoreReadout | same `ws://127.0.0.1:8088` contract, unchanged |
 
 **Quality:** Studio 75 tests (TypeScript strict, typecheck clean, production build OK);
-RT Core 44 tests across 9 crates (clean build, no warnings). Contract drift-protected both sides.
+native core ported to C++ (see `native/MIGRATION.md`) with a parity test suite
+(`native/tests/`) mirroring the former Rust crate tests — **not yet compiled/run**
+in this environment (no MuJoCo/Zenoh/vcpkg toolchain installed here).
 
-## Pending (hardware / dependency / certification-bound) — see `rtcore/PHASE2-PLAN.md`
+## Pending (hardware / dependency / certification-bound) — see `native/MIGRATION.md`
 
 | Item | Why it's not done in sim | Slots in at |
 |---|---|---|
@@ -63,13 +65,15 @@ not the loop. Sub-100 µs requires PREEMPT_RT (the architecture targets it).
 
 1. **Studio** — `cd frontend && npm run dev`. Build/load a robot; toggle **IK** and drag the
    tip; enable **Gravity**; open **Analysis** for the stress heatmap.
-2. **RT Core** — `cd rtcore && cargo run -p rtcored --release -- --ethercat`. Watch 3 CiA 402
-   axes brought up → Operation Enabled, then a trajectory executed to target.
-3. **Live operator console** — run `cargo run -p rtcored --release -- --serve`, then in the
-   Studio open **Runtime ▸ RT Core**, click **Connect**, and use **Send sample move** /
-   **E-STOP** / **Reset**. The progress bar + per-joint tracking error update live.
+2. **RT Core** — build `native/` (needs MuJoCo, Zenoh, nlohmann_json, IXWebSocket — see
+   `native/MIGRATION.md`), then `./rtcored --ethercat`. Watch 3 CiA 402 axes brought up →
+   Operation Enabled, then a trajectory executed to target.
+3. **Live operator console** — run `./rtcored --serve`, then in the Studio open
+   **Runtime ▸ RT Core**, click **Connect**, and use **Send sample move** / **E-STOP** /
+   **Reset**. The progress bar + per-joint tracking error update live (same
+   `ws://127.0.0.1:8088` contract as before — frontend code is unchanged).
 4. **Tests** — `cd frontend && npm run typecheck && npx tsx --test "src/**/*.test.ts"` and
-   `cd rtcore && cargo test`.
+   the `native/tests` parity suite (`native_core_tests`, once built via CMake).
 
 ## Talking points (honest)
 - **Strength:** one source-of-truth model with many views; a tested native RT core with the

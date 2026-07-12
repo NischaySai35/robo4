@@ -28,6 +28,13 @@ export class CommandBus {
   // FORWARD mutation so closed lock loops can never be left open by any edit path.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _stabilize: ((doc: any) => any) | null;
+  // Separate, cheaper stabilizer for applyTransient's 60Hz hot path (spin/physics/IK-drag/
+  // animation) — falls back to _stabilize if not set. dispatch() always uses _stabilize: a
+  // discrete, user-driven edit can afford a full, robust solve; a per-frame transient update
+  // can't afford to re-run the same expensive solve every single frame. See stabilizeLoops's
+  // own doc comment (features/assembly/connectorSnap.ts) for why this split exists.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _stabilizeTransient: ((doc: any) => any) | null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   constructor(doc: any, { cap = DEFAULT_CAP }: { cap?: number } = {}) {
@@ -37,13 +44,23 @@ export class CommandBus {
     this._cap = cap;
     this._listeners = new Set();
     this._stabilize = null;
+    this._stabilizeTransient = null;
   }
 
-  /** Install the loop-closure stabilizer. Called once at app startup. */
+  /** Install the loop-closure stabilizer used by dispatch(). Called once at app startup. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setStabilizer(fn: ((doc: any) => any) | null) { this._stabilize = fn; }
+  /** Install the (cheaper) stabilizer used by applyTransient()'s 60Hz hot path. Optional —
+   *  falls back to the main stabilizer if not set. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  setTransientStabilizer(fn: ((doc: any) => any) | null) { this._stabilizeTransient = fn; }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _stabilized(doc: any) { return this._stabilize ? this._stabilize(doc) : doc; }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _stabilizedTransient(doc: any) {
+    const fn = this._stabilizeTransient ?? this._stabilize;
+    return fn ? fn(doc) : doc;
+  }
 
   get doc() { return this._doc; }
   get canUndo() { return this._undo.length > 0; }
@@ -93,7 +110,7 @@ export class CommandBus {
    * settled pose afterwards.
    */
   applyTransient(fn: any) {
-    this._doc = this._stabilized(fn(this._doc));
+    this._doc = this._stabilizedTransient(fn(this._doc));
     this._emit('transient', null);
     return this._doc;
   }

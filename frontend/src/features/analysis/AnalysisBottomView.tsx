@@ -43,7 +43,11 @@ export default function AnalysisBottomView() {
     canvas.style.cssText = 'width:100%;height:100%;display:block;';
     host.appendChild(canvas);
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    // antialias: false — see SceneManager.ts's constructor note: MSAA is a known-bad,
+    // measured-slow path on Intel integrated GPUs. This pane already doubles the app's
+    // total render cost (a second full scene pass every frame); MSAA on top of that is
+    // the last thing a weak iGPU needs. Was `true`.
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, alpha: true });
     // Cap DPR at 1.5 here (vs 2 on the main view): this is a secondary reference pane,
     // and pixel count is the dominant GPU cost of the extra render pass.
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));

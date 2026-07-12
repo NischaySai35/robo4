@@ -46,10 +46,13 @@ test('two identical runs produce bit-for-bit identical trajectories', async () =
 });
 
 test('the pinned fixed timestep is in effect', async () => {
+  // step() always advances by exactly FIXED_DT (Jolt's Step(dt, 1) call
+  // uses it directly, unlike a compiled model's own opt.timestep field) —
+  // verify via stepFor: N seconds of real time must produce
+  // floor(N / FIXED_DT) fixed steps, proving the pinned rate is in effect.
   const sim = await PhysicsSim.create(buildArm(), null);
-  // Rapier stores dt as f32, so compare within tolerance, not bit-exact.
-  assert.ok(Math.abs(sim.world.integrationParameters.dt - FIXED_DT) < 1e-6,
-    `dt ${sim.world.integrationParameters.dt} ~= ${FIXED_DT}`);
+  const steps = sim.stepFor(FIXED_DT * 10);
+  assert.equal(steps, 10, `stepFor(10*FIXED_DT) should take exactly 10 steps, took ${steps}`);
   sim.dispose();
 });
 

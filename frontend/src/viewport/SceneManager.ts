@@ -28,15 +28,27 @@ export class SceneManager {
     const h = canvas.clientHeight;
 
     // ── Renderer ─────────────────────────────────────────────────────────────
+    // antialias: false — MSAA is explicitly flagged by Chromium's own driver bug list as
+    // unacceptably slow on Intel integrated GPUs (chrome://gpu: "On Intel GPUs MSAA
+    // performance is not acceptable for GPU rasterization", workaround `msaa_is_slow`).
+    // Measured live on an Intel UHD 620: an 80-draw-call, 323K-triangle scene (trivial by
+    // any real GPU's standard) was taking 100-200ms/frame — this was the dominant cost,
+    // not triangle count or shadow quality. Was `true`.
     this.renderer = new THREE.WebGLRenderer({
       canvas,
-      antialias: true,
+      antialias: false,
       powerPreference: 'high-performance',
     });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(w, h, false);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Was PCFSoftShadowMap: soft shadows do several taps per fragment sampling the shadow
+    // map, on top of a full extra geometry pass (the light-perspective depth render) every
+    // frame — measured (frameProfiler) at ~90-180ms/frame render time on a 324K-triangle
+    // model, the dominant cost by ~10x over physics tick time. PCFShadowMap is a single
+    // hardware-filtered tap, visually close enough for this app's flat lighting, at a
+    // fraction of the fragment cost.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.95;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -85,8 +97,11 @@ export class SceneManager {
     this.sun = sun;
     sun.position.set(5, 12, 7);
     sun.castShadow = true;
-    sun.shadow.mapSize.width = 2048;
-    sun.shadow.mapSize.height = 2048;
+    // Was 2048x2048: 4x the shadow-map texels to rasterize AND sample every frame for a cost
+    // most models here don't need — halving it cuts that pass's fragment work by 4x. See the
+    // shadowMap.type note above for the measured render-time breakdown.
+    sun.shadow.mapSize.width = 1024;
+    sun.shadow.mapSize.height = 1024;
     sun.shadow.camera.near = 0.5;
     sun.shadow.camera.far = 50;
     sun.shadow.camera.left = -10;
@@ -491,7 +506,11 @@ export class SceneManager {
 
     switch (mode) {
       case 'eevee':
-        r.shadowMap.type       = THREE.PCFSoftShadowMap;
+        // PCFShadowMap, not PCFSoftShadowMap — see the constructor's note: soft shadows'
+        // multi-tap filtering was the single biggest render-time cost (frameProfiler showed
+        // render ~10x tick on a 324K-tri model). This mode is selected by default on load
+        // (ViewControls.tsx), so it was the actual default experience, not an opt-in.
+        r.shadowMap.type       = THREE.PCFShadowMap;
         r.toneMapping          = THREE.ACESFilmicToneMapping;
         r.toneMappingExposure  = 0.95;
         // Subtle bloom — only very bright highlights (threshold=0.92), narrow spread.
@@ -761,6 +780,26 @@ export class SceneManager {
       // outside that path; it evicts cached material properties and retries once.
       try {
         this.renderer.render(this.scene, this.camera);
+        // TEMP DIAGNOSTIC (same opt-in flag as frameProfiler): render() alone was ~100-150ms/frame
+        // even with gravity off and physics idle, and switching shadow map type/size barely moved
+        // it — so the cost isn't (only) shadow filtering. Dump renderer.info once a second to see
+        // whether it's draw-call count (CPU/state-change bound) or triangle/geometry count
+        // (fill-rate/vertex bound) that's actually dominating.
+        try {
+          if (localStorage.getItem('robo_profile') === '1') {
+            const now = performance.now();
+            if (!this._lastInfoLog || now - this._lastInfoLog > 1000) {
+              this._lastInfoLog = now;
+              const i = this.renderer.info;
+              // eslint-disable-next-line no-console
+              console.info(
+                `[renderInfo] calls=${i.render.calls} triangles=${i.render.triangles} ` +
+                `points=${i.render.points} lines=${i.render.lines} ` +
+                `geometries=${i.memory.geometries} textures=${i.memory.textures}`,
+              );
+            }
+          }
+        } catch { /* diagnostic only */ }
       } catch {
         this.renderer.resetState();
         const props: any = (this.renderer as any).properties;

@@ -20,6 +20,14 @@ const bus = new CommandBus(makeDocument({ name: 'Untitled' }));
 // animation), the bus re-projects the config so every lock stays shut. Graph FK is a spanning
 // tree that drops loop-closing edges, so without this any edit could silently open a loop.
 bus.setStabilizer(stabilizeLoops);
+// applyTransient() is the 60Hz hot path (motor spin, physics, IK-drag, animation playback) —
+// stabilizeLoops's full solve (up to 40 LM iterations, each costing several full FK passes) is
+// fine for a rare discrete dispatch() but was running unconditionally on every transient frame,
+// which is what turned "spin one wheel" into 30fps and "spin two" into 3-4fps (confirmed via
+// frameProfiler + code trace, not a guess). A transient call's doc is already near-converged
+// frame to frame, so a few iterations closes normal per-frame drift fine; once under
+// stabilizeLoops's own 2mm threshold, later frames skip the solve entirely.
+bus.setTransientStabilizer((doc) => stabilizeLoops(doc, { iterations: 4 }));
 
 interface ModelState {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

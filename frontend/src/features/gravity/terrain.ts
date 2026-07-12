@@ -2,12 +2,15 @@
  * terrain — a rough, stony "road" heightfield shared by physics and rendering.
  *
  * The wheels were slipping on a glass-flat floor. A bumpy heightfield gives them geometry to
- * grip/catch on (real traction). We generate one height grid and use it for BOTH:
- *  • the Rapier `heightfield` collider (so the physics surface is the bumps), and
- *  • a matching THREE mesh (so what you see IS what you collide with).
+ * grip/catch on (real traction). Generates one height grid meant to back BOTH a physics
+ * heightfield collider (so the physics surface is the bumps) and a matching THREE mesh (so
+ * what you see IS what you collide with) — the collider side isn't wired up yet (DynamicSim
+ * still falls back to a flat ground plane, see its KNOWN GAP note); this module only produces
+ * the data + the visual mesh today.
  *
- * Index convention matches Rapier + the Threlte example so mesh and collider align exactly:
- *  collider heights[y + (n+1)*x]  ↔  mesh vertex (x + (n+1)*y).  (a deliberate transpose)
+ * Index convention: collider heights[y + (n+1)*x] <-> mesh vertex (x + (n+1)*y), a deliberate
+ * transpose — kept stable so whichever physics engine eventually consumes this data doesn't
+ * need the mesh side to change.
  */
 import * as THREE from 'three';
 

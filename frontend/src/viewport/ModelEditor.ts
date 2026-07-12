@@ -27,6 +27,7 @@ import { useSelectionStore } from '@/state/selectionStore';
 import { useDockStore } from '@/state/dockStore';
 import { usePageStore } from '@/state/pageStore';
 import { useEditorStore } from '@/state/editorStore';
+import { useDragWarningStore } from '@/state/dragWarningStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { stopAllSpins, getActiveSpins } from '@/features/motor/spinEngine';
@@ -295,8 +296,17 @@ export class ModelEditor {
     bridge.startPivotPick  = (opts: any) => this._pivotPickTool.start(opts.onPick, opts.onCancel);
     bridge.cancelPivotPick = ()          => this._pivotPickTool.stop();
 
-    // React to model + selection changes.
-    this._unsubModel = useModelStore.subscribe((s) => this._syncModel(s.doc));
+    // React to model + selection changes. NOT a direct `_syncModel` call: spinEngine (and
+    // physics/IK/animation) call applyTransient() from THEIR OWN independent requestAnimationFrame
+    // loops, not from SimCanvas's — so a synchronous call here runs the full _syncModel cascade
+    // (FK + 3 renderer syncs + CoM) once per THEIR frame, entirely outside SimCanvas's measured,
+    // paced loop (frameProfiler's tick/render marks never see it — confirmed live: tick stayed
+    // ~0.1-0.3ms while fps collapsed with a spinning wheel, because the real cost was happening in
+    // a callback the profiler doesn't touch). Just record the pending doc here (cheap); tick()
+    // performs the actual sync once per SimCanvas-driven frame — one controlled place, one budget,
+    // and multiple store writes within the same frame collapse into a single sync instead of one
+    // per write.
+    this._unsubModel = useModelStore.subscribe((s) => { this._pendingDoc = s.doc; });
     this._unsubSel = useSelectionStore.subscribe((s) => this._onSelection(s));
     // While gravity is ON, a USER edit (drag release, gizmo, shape/graph change — action
     // 'dispatch'/'undo'/'redo', NOT the sim's own 'transient' writes) rebuilds the physics sim
@@ -396,8 +406,18 @@ export class ModelEditor {
       if (this._doc) this._updateCOM(this._doc);
       // Gravity ON → tumble the robot to the floor (whole-body, shape preserved);
       // OFF → rise it back up (symmetric).
-      if (!wasGravity && s.gravityOn) this._runGravityTumble();
-      else if (wasGravity && !s.gravityOn) this._runGravityRise();
+      if (!wasGravity && s.gravityOn) {
+        // Deferred to a macrotask, NOT called synchronously: DynamicSim.create()
+        // compiles an MJCF model via a blocking WASM call (mj_loadXML has no
+        // async/Worker path), which can stall the main thread for hundreds of
+        // ms on a model with many bodies/meshes. If gravity was already ON in
+        // a saved project, this subscription fires the instant the project
+        // loads at app boot — exactly when IntroOverlay's own dismiss timer
+        // and click-to-skip handler are competing for the same main thread,
+        // which is what made the app look permanently frozen on the splash
+        // screen rather than just briefly janky.
+        setTimeout(() => { if (this._animGravityOn) this._runGravityTumble(); }, 0);
+      } else if (wasGravity && !s.gravityOn) this._runGravityRise();
     });
 
     // Initial paint.
@@ -406,12 +426,33 @@ export class ModelEditor {
   }
 
   _syncModel(doc: any) {
+    // TEMP DIAGNOSTIC (same opt-in flag as frameProfiler/renderInfo): _syncModel runs
+    // synchronously on EVERY store notification — including every applyTransient() from
+    // spinEngine's own independent rAF loop, which frameProfiler's tick/render marks (scoped to
+    // SimCanvas's loop) never see at all. This breaks down where the time actually goes so we
+    // stop guessing.
+    const _diag = (() => { try { return localStorage.getItem('robo_profile') === '1'; } catch { return false; } })();
+    const _t = _diag ? performance.now() : 0;
+    const _mark = (label: string, acc: Record<string, number>) => {
+      if (!_diag) return 0;
+      const now = performance.now();
+      acc[label] = (acc[label] ?? 0) + (now - (acc.__last ?? _t));
+      acc.__last = now;
+      return now;
+    };
+    const _acc: Record<string, number> = { __last: _t };
+
     this._doc = doc;
     this._fk = computeFK(doc);
+    _mark('fk', _acc);
     this.bodyRenderer.sync(doc, this._fk);
+    _mark('bodyRenderer', _acc);
     const loads = this._showAnalysis ? jointLoads(doc, this._fk) : null;
+    _mark('jointLoads', _acc);
     this.jointRenderer.sync(doc, this._fk, loads);
+    _mark('jointRenderer', _acc);
     this.connectorRenderer.sync(doc, this._fk);
+    _mark('connectorRenderer', _acc);
     // Recoloring the whole mesh (bodyStressField + applyStress uploads ~300K vertex
     // colors to the GPU) is far too heavy to run on every IK-drag frame — it drops
     // the app to a few FPS. Throttle it to ~12 Hz, with a trailing update so the
@@ -434,8 +475,11 @@ export class ModelEditor {
         }, 90);
       }
     }
+    _mark('stress', _acc);
     this._updateCOM(doc);
+    _mark('updateCOM', _acc);
     this._reattach(); // mesh may have been (re)created
+    _mark('reattach', _acc);
     if (this.editMode?.active) this.editMode.onModelSynced();
     // Keep box-world collision geometry in sync whenever the arm moves
     if (this._boxWorld) this._boxWorld.updateRobotPose(this._fk);
@@ -446,6 +490,22 @@ export class ModelEditor {
     // via applyTransient, so we must not fight it while it's running.
     if (!this._ikActive) {
       this.controls.enabled = true;
+    }
+    if (_diag) {
+      const total = performance.now() - _t;
+      this._syncDiagAcc ??= {};
+      this._syncDiagN = (this._syncDiagN ?? 0) + 1;
+      this._syncDiagTotal = (this._syncDiagTotal ?? 0) + total;
+      for (const k of Object.keys(_acc)) { if (k !== '__last') this._syncDiagAcc[k] = (this._syncDiagAcc[k] ?? 0) + _acc[k]; }
+      const now = performance.now();
+      if (!this._syncDiagAt || now - this._syncDiagAt > 1000) {
+        this._syncDiagAt = now;
+        const n = this._syncDiagN || 1;
+        const parts = Object.entries(this._syncDiagAcc).map(([k, v]) => `${k}=${((v as number) / n).toFixed(2)}`).join(' ');
+        // eslint-disable-next-line no-console
+        console.info(`[_syncModel] calls/s=${n} avgTotal=${(this._syncDiagTotal / n).toFixed(2)}ms  ${parts}`);
+        this._syncDiagAcc = {}; this._syncDiagN = 0; this._syncDiagTotal = 0;
+      }
     }
   }
 
@@ -540,6 +600,28 @@ export class ModelEditor {
     const positions = this._meshPositions(id);
     const hull = positions ? convexHullPoints(positions) : null;
     this._hullCache.set(id, hull);
+    return hull;
+  }
+
+  /** Same idea as _meshHullPoints, but for DynamicSim/Jolt (gravity tumble), NOT Rapier —
+   *  a much tighter point budget. This isn't just a one-time build cost: every hull vertex
+   *  fed in becomes (roughly) a face on the resulting Jolt ConvexHullShape, and Jolt has to
+   *  run narrow-phase collision against that shape on EVERY physics substep for as long as
+   *  gravity stays on (up to MAX_SUBSTEPS times per rendered frame) — a lower-poly hull here
+   *  directly buys back steady-state fps, not just a faster gravity-on click. A robot part's
+   *  true convex hull only needs a few hundred candidate points to come out looking identical;
+   *  the Rapier/Editor path's 4000-point budget was tuned for visual fidelity, not per-substep
+   *  physics cost, so it's kept separate (own cache) rather than shared.
+   */
+  _meshHullPointsPhysics(id: string): Float32Array | null {
+    const body: any = this._doc.bodies[id];
+    const g = body?.visual?.geometry;
+    if (!g || g.type !== GeometryType.MESH) return null;
+    this._hullCachePhysics ??= new Map<string, Float32Array | null>();
+    if (this._hullCachePhysics.has(id)) return this._hullCachePhysics.get(id)!;
+    const positions = this._meshPositions(id);
+    const hull = positions ? convexHullPoints(positions, 400) : null;
+    this._hullCachePhysics.set(id, hull);
     return hull;
   }
 
@@ -824,10 +906,32 @@ export class ModelEditor {
     // stays as a VISUAL only. Pass null so DynamicSim builds a flat floor at groundY.
     this._ensureTerrainFloor();
     const groundY = this._floorY ?? 0;
-    this._posCache = null; // recompute mesh bounds per run (geometry may have changed)
+    // _meshPositions() walks EVERY raw vertex of every mesh body (tens of thousands of
+    // points for a model this size, one push() at a time) and feeds them straight to Jolt's
+    // convex-hull builder — genuinely expensive. This used to be wiped and fully recomputed
+    // on every single gravity toggle, even though joint angles/poses (the only thing that
+    // changes between toggles) don't affect a body's own LOCAL mesh vertex data at all —
+    // that's almost entirely what was behind the 2-3s delay on every gravity-on click. Only
+    // invalidate when the doc's asset data itself has actually changed (import/edit-mesh),
+    // tracked by reference — cheap, and the only thing that can actually change vertex data.
+    if (this._gravAssetsAtLastBuild !== (doc as any).assets) {
+      this._posCache = null;
+      this._hullCache = null;
+      this._hullCachePhysics = null;
+      this._gravAssetsAtLastBuild = (doc as any).assets;
+    }
     this._gravSim?.dispose();
     this._gravSim = 'loading';
-    DynamicSim.create(doc as any, fk as any, groundY, (id: string) => this._meshPositions(id), null).then((sim) => {
+    // Feed the physics collider builder a decimated convex HULL (400 input points, hull output
+    // typically a couple dozen faces), not raw _meshPositions() — DynamicSim.create's meshVerts
+    // callback goes straight into Jolt's ConvexHullShapeSettings.mPoints, one push_back per point
+    // across the WASM boundary, AND every point roughly becomes a face Jolt has to narrow-phase
+    // test against the ground on every physics substep for as long as gravity stays on. Passing
+    // the full undecimated vertex cloud (tens of thousands of points for a model this size) is
+    // what caused both the multi-second freeze on every gravity-on click AND the sustained low
+    // fps afterward. Uses _meshHullPointsPhysics (own tighter budget), not _meshHullPoints (the
+    // Rapier/Editor path's 4000-point budget, tuned for visual fidelity, not per-substep cost).
+    DynamicSim.create(doc as any, fk as any, groundY, (id: string) => this._meshHullPointsPhysics(id), null).then((sim) => {
       if (sim && this._animGravityOn) this._gravSim = sim;
       else { sim?.dispose(); if (this._gravSim === 'loading') this._gravSim = null; }
     }).catch((e) => { console.warn('gravity dynamic sim failed:', e); this._gravSim = null; });
@@ -839,6 +943,15 @@ export class ModelEditor {
     const sim = this._gravSim;
     if (!sim || sim === 'loading' || !this._gravStarts) return;
     if (!this._animGravityOn) { this._endGravityTumble(false); return; }
+    // An IK drag (Animation-page "Drag tip to move") writes real joint-value
+    // dispatches straight into the doc every pointermove. The physics sim is a
+    // SEPARATE, frozen Jolt world that has no idea the drag happened — if we kept
+    // stepping+overwriting the doc here too, the two write paths would fight every
+    // frame (dispatch sets the dragged pose, this then stomps it with the stale
+    // physics pose), which is exactly the "floating / sinking through the floor
+    // while dragging" the drag felt like. Freeze physics output for the duration
+    // of the drag so the IK pose is the only thing driving the doc.
+    if (this._ikActive) return;
     // Feed each motor joint its live spin command (rad/s).
     const spins = getActiveSpins();
     const jointsDoc: any = (this._doc ?? useModelStore.getState().doc).joints;
@@ -1014,13 +1127,35 @@ export class ModelEditor {
 
   /**
    * Gravity feel: the WHOLE model rides a small vertical offset applied to the render
-   * groups (no doc edit). Gravity OFF → floats 1 cm up; ON → drops to rest (the "floor").
+   * groups (no doc edit). Gravity OFF → floats up; ON → drops to rest (the "floor").
    * A super-rigid body pins the model (offset locked at 0). Purely visual — smooth lerp.
+   * The float height scales with the model's own size (a fixed 1cm looked right for the
+   * original demo model but reads as either invisible or absurdly large once the user
+   * drags the model into a much smaller or much bigger shape) — recomputed from the
+   * current bounding box each time gravity toggles, not cached from whatever shape existed
+   * when the page first loaded.
    */
   _tickGravityFloat() {
-    const FLOAT = 0.01; // 1 cm
     const gravityOn = this._animGravityOn;
     const pinned = this._doc ? this._hasSuperRigid(this._doc) : false;
+    // Recomputed every tick WHILE gravity is off (including mid-drag, per the user's
+    // explicit ask) so the float height always reflects the model's CURRENT size/shape, not
+    // a value frozen from whenever gravity last turned off. Only runs in the off state —
+    // gravity-on is the performance-sensitive path (physics stepping every frame) and the
+    // float height is irrelevant there anyway (target is always 0).
+    if (!gravityOn) {
+      this.bodyRenderer?.group.updateMatrixWorld(true);
+      const box = this.bodyRenderer ? new THREE.Box3().setFromObject(this.bodyRenderer.group) : null;
+      const sizeV = new THREE.Vector3();
+      if (box && !box.isEmpty()) box.getSize(sizeV);
+      const span = Math.max(sizeV.x, sizeV.y, sizeV.z, 0.01);
+      // ~30% of the model's largest dimension — a clearly visible "floating" gap (the user
+      // specifically wanted this obvious, not a subtle few millimeters), clamped so a tiny
+      // single connector still floats a visible minimum and a huge assembly doesn't fly off
+      // absurdly far.
+      this._gravityFloatHeight = Math.min(0.6, Math.max(0.05, span * 0.3));
+    }
+    const FLOAT = this._gravityFloatHeight ?? 0.05;
     const target = (gravityOn || pinned) ? 0 : FLOAT;
     if (this._gravityY === undefined) this._gravityY = target;
     // Smooth approach; snap when close to avoid endless tiny updates.
@@ -1038,6 +1173,13 @@ export class ModelEditor {
   }
 
   tick() {
+    // Perform the actual model sync here — once per SimCanvas-driven frame — instead of
+    // synchronously inside the useModelStore subscription (see that subscribe call's comment).
+    // Coalesces multiple applyTransient() writes from other rAF loops (spin/physics/IK) within
+    // the same frame into a single sync, and brings the cost inside frameProfiler's measured
+    // 'tick' section instead of being invisible to it.
+    if (this._pendingDoc !== undefined && this._pendingDoc !== this._doc) this._syncModel(this._pendingDoc);
+
     // Always call: when active it syncs the overlay; when inactive it tears down
     // any lingering overlay (defensive against a missed enter/leave transition).
     this.editMode?.syncTransform();
@@ -1241,6 +1383,12 @@ export class ModelEditor {
     if (chainJoints(this._doc, hitId, rigidRoot).length === 0) return; // not articulated → let normal click handle it
     const w = this._fk?.get(hitId);
     const p = new THREE.Vector3(...(w?.position ?? [0, 0, 0]));
+    // The body's FK position is doc-space (un-offset), but while gravity is off the whole
+    // model renders visually shifted up by _gravityY (see _tickGravityFloat) — position the
+    // drag plane where the body actually APPEARS, not its underlying doc position, or the
+    // plane would sit wherever the (now often 10s of cm) float offset leaves it, badly
+    // misaligning the raycast from where the user is actually clicking.
+    p.y += this._gravityY ?? 0;
     const n = new THREE.Vector3();
     this.camera.getWorldDirection(n);
     this._ikPlane.setFromNormalAndCoplanarPoint(n, p);
@@ -1255,6 +1403,22 @@ export class ModelEditor {
     this._ikRay.setFromCamera(this._ndc(e), this.camera);
     const target = new THREE.Vector3();
     if (!this._ikRay.ray.intersectPlane(this._ikPlane, target)) return;
+    // `target` is in VISUAL space here (the plane was positioned including the current
+    // _gravityY float offset — see _tryStartIK), matching whatever the user is actually
+    // looking at and clicking on. Physics is frozen during a drag (see _tickGravityTumble's
+    // comment on why), so nothing else was stopping the dragged tip from being placed below
+    // the floor — clamp it here, in the same visual space the floor mesh itself renders in,
+    // so it stops exactly where it looks like it should stop.
+    if (this._floorY !== undefined && usePageStore.getState().page === 'animation') {
+      if (target.y < this._floorY + 0.01) {
+        useDragWarningStore.getState().setMessage("Can't go further — hit the floor. Try dragging a different direction.");
+      }
+      target.y = Math.max(target.y, this._floorY + 0.01);
+    }
+    // Convert back to DOC space (subtract the same visual float offset added when the plane
+    // was positioned) before solving — the IK solver and the doc itself are un-offset;
+    // _gravityY is a purely visual effect applied only to the render groups.
+    target.y -= this._gravityY ?? 0;
     const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
     const rigidRoot = bodyMode === 'rigid' ? activeBodyId : null;
     // With a closed lock loop, plain tip-IK would freely pull a redundant lock apart (FK never
@@ -1270,10 +1434,15 @@ export class ModelEditor {
   }
 
   _endIK() {
+    const wasAnimDrag = this._ikActive && this._animGravityOn;
     this._ikActive = false;
     this._ikTip = null;
     this._downPos = null;
     this.controls.enabled = true;
+    // Physics was frozen (see _tickGravityTumble) while dragging under gravity — the
+    // Jolt world never saw the new joint pose. Rebuild it from where the drag left the
+    // model so it settles from there instead of snapping back to the pre-drag pose.
+    if (wasAnimDrag) this._runGravityTumble(true);
   }
 
   // ── Animation-page IK drag ────────────────────────────────────────────────
@@ -1293,6 +1462,10 @@ export class ModelEditor {
     if (chainJoints(this._doc, hitId).length === 0) return; // not articulated
     const w = this._fk?.get(hitId);
     const p = new THREE.Vector3(...(w?.position ?? [0, 0, 0]));
+    // See _tryStartIK's identical line — this path requires gravity ON to trigger (so the
+    // offset is currently always 0 here), but matching it keeps both drag entry points
+    // consistent if that ever changes.
+    p.y += this._gravityY ?? 0;
     const n = new THREE.Vector3();
     this.camera.getWorldDirection(n);
     this._ikPlane.setFromNormalAndCoplanarPoint(n, p);

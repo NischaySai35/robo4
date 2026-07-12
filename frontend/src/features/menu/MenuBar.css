@@ -115,7 +115,15 @@
 .menubar-doc-name { color: var(--text); font-weight: 700; letter-spacing: 0.2px; }
 .menubar-doc-status { font-size: 10.5px; font-weight: 600; }
 .menubar-doc-saved   { color: var(--success, #22c55e); }
+.menubar-doc-warn    { color: var(--warning, #f59e0b); }
 .menubar-doc-dim     { color: var(--text-dim); opacity: 0.8; }
+.menubar-doc-reconnect {
+  border: 1px solid var(--warning, #f59e0b);
+  background: color-mix(in srgb, var(--warning, #f59e0b) 12%, transparent);
+  cursor: pointer;
+  font: inherit;
+}
+.menubar-doc-reconnect:hover { background: color-mix(in srgb, var(--warning, #f59e0b) 22%, transparent); }
 .menubar-doc-loading { color: var(--accent, #60a5fa); animation: menubar-pulse 0.9s ease-in-out infinite; }
 @keyframes menubar-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
 

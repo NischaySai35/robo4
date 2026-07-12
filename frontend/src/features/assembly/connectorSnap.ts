@@ -796,7 +796,7 @@ export function solveHome(doc: Document): { values: Record<string, number>; ok: 
   return { values: solved, ok: gap < 0.005 }; // < 5 mm residual → the module can rest closed
 }
 
-export function stabilizeLoops(doc: Document): Document {
+export function stabilizeLoops(doc: Document, opts: { iterations?: number } = {}): Document {
   try {
     const redundant = redundantJoints(doc);
     if (redundant.length === 0) return doc;
@@ -822,7 +822,16 @@ export function stabilizeLoops(doc: Document): Document {
 
     // Minimum-deviation projection: lmSolveGeneric takes min-norm steps from the current values,
     // so it stays as close as possible to what the user set while closing every loop joint.
-    const solved = lmSolveGeneric(movable, values, errorFn, { iterations: 40, tol: 1e-4, maxStep: 0.3 });
+    // iterations is caller-tunable: each outer iteration costs a numerical Jacobian (one
+    // computeFK-calling errorFn() per movable joint) plus up to 6 line-search steps (each
+    // another errorFn()) — roughly (7 + movable.length) full FK passes per iteration. At the
+    // default 40 that's 300-600+ FK evaluations per call, fine for a rare, discrete edit
+    // (dispatch) but far too expensive to run every frame from a 60Hz hot path (applyTransient
+    // — spin/physics/IK-drag/animation). The transient stabilizer (modelStore.ts) passes a much
+    // lower budget instead: the incoming doc there is already near-converged frame to frame, so
+    // a handful of iterations closes a small per-frame drift fine, and once under the 2mm
+    // threshold above, subsequent frames skip the solve entirely.
+    const solved = lmSolveGeneric(movable, values, errorFn, { iterations: opts.iterations ?? 40, tol: 1e-4, maxStep: 0.3 });
     reconcileRedundantAngles(doc, solved, redundant); // keep redundant hinge angles self-consistent
     return withJointVals(doc, solved);
   } catch {

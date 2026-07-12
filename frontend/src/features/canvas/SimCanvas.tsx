@@ -12,6 +12,7 @@ import { useEffect, useRef, Fragment } from 'react';
 import TransformHUD from '@/features/common/TransformHUD';
 import ViewportStats from './ViewportStats';
 import SpreadHud from './SpreadHud';
+import DragWarningHud from './DragWarningHud';
 import ViewportCtxMenu from './ViewportCtxMenu';
 import * as THREE from 'three';
 import { SceneManager } from '@/viewport/SceneManager';
@@ -29,6 +30,7 @@ import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { serializeProject, parseProject } from '@/core/serialization/project';
 import { saveAutosave, loadAutosave } from '@/core/serialization/storage';
+import { tryRestoreFileHandle } from '@/core/serialization/projectActions';
 import { downloadBlob, writeProjectToHandle } from '@/core/serialization/fileIO';
 import { useDocStore } from '@/state/docStore';
 import { useHistoryStore } from '@/state/historyStore';
@@ -44,6 +46,7 @@ import { useTrainingStore } from '@/state/trainingStore';
 import { scan2D } from '@/robotics/sensors/lidar';
 import { computeFK } from '@/kinematics/modelFK';
 import { robotBaseXZ } from '@/robotics/nav/worldModel';
+import { toggleSpin, stopAllSpins } from '@/features/motor/spinEngine';
 
 export default function SimCanvas() {
   const canvasRef = useRef<any>(null);
@@ -53,6 +56,14 @@ export default function SimCanvas() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
+    // Fire-and-forget: start fetching + instantiating the Jolt Physics WASM
+    // module now, in the background, so its network/instantiation cost
+    // overlaps with the intro animation instead of stacking onto the first
+    // time gravity/physics actually runs. Never awaited here — errors are
+    // swallowed because the real load attempt (with real error handling)
+    // happens later when physics is actually used; this is purely a warm-up.
+    import('@/viewport/joltLoader').then((m) => m.ensureJolt()).catch(() => {});
 
     // Scene + theme.
     const sceneMgr = new SceneManager(canvas);
@@ -328,15 +339,23 @@ export default function SimCanvas() {
         if (ws.dockSecondary) dock.setSecondary(ws.dockSecondary);
         if (ws.cameraState) bridge.applyCameraState?.(ws.cameraState);
       }
-      // Restore transient UI toggles (gravity switch + A/B lock-connector picks), skipped
-      // during undo/redo (those snapshots carry no `ui`).
+      // Restore transient UI toggles (gravity switch, rigid mode + active bodies, A/B
+      // lock-connector picks, mid-spin joints), skipped during undo/redo (those snapshots
+      // carry no `ui`).
       if (!opts.skipWorkspace && (scene as any).ui) {
         const ui = (scene as any).ui;
         useAnimSceneStore.setState({
           gravityOn: !!ui.gravityOn,
+          rigidMode: !!ui.rigidMode,
+          activeBodyIds: new Set(Array.isArray(ui.activeBodyIds) ? ui.activeBodyIds : []),
           mateSlotA: ui.mateSlotA ?? null,
           mateSlotB: ui.mateSlotB ?? null,
         });
+        stopAllSpins();
+        const activeSpins = ui.activeSpins && typeof ui.activeSpins === 'object' ? ui.activeSpins : {};
+        for (const [jointId, dir] of Object.entries(activeSpins)) {
+          if (dir === 1 || dir === -1) toggleSpin(jointId, dir);
+        }
       }
       if (opts.fit !== false) setTimeout(() => bridge.fitCamera?.(), 60);
       return { ok: true };
@@ -484,6 +503,7 @@ export default function SimCanvas() {
     // loadAutosave is async (IndexedDB). Restore takes <50ms; fitCamera fires
     // 300ms later so the scene will be ready regardless.
     loadAutosave().then(saved => { if (saved) bridge.loadScene?.(saved); }).catch(() => {});
+    tryRestoreFileHandle().catch(() => {}); // regain write access to last session's real file, if the browser still allows it silently
     const fitTimer = setTimeout(() => { bridge.fitCamera?.(); bridge.updateCameraLimits?.(); }, 300);
     const stopMemoryMonitor = startMemoryMonitor(() => modelEditor._doc);
     // Master control loop for the end-lock electromagnets (energize on lock, grab→hold profile).
@@ -530,6 +550,7 @@ export default function SimCanvas() {
       <TransformHUD />
       <ViewportStats />
       <SpreadHud />
+      <DragWarningHud />
       <ViewportCtxMenu />
     </Fragment>
   );

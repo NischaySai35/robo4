@@ -983,7 +983,7 @@ def run_episode(theta, seed=None):
             if d < 0.05*math.sqrt(n_joints): total += w.get("arrive", 10); break
         return total
 
-    else:   # locomote (simplified, no Rapier in Python here)
+    else:   # locomote (simplified, no physics engine in this exported Python)
         total = 0
         for step in range(40):
             obs = np.concatenate([joints, [0,1,0,0,0]])[:obs_dim]
@@ -1646,7 +1646,7 @@ const taskLabels: Record<TaskType, string> = { reach: 'Reach', navigate: 'Naviga
 const taskHints:  Record<TaskType, string> = {
   reach: 'Move the arm tip to a 3D target point. Works for any robot arm or manipulator.',
   navigate: 'Drive a wheeled/car robot to a 2D goal position. Uses differential-drive kinematics.',
-  locomote: 'Walk the robot forward (+X) using full physics simulation (Rapier). For legged/modular robots.',
+  locomote: 'Walk the robot forward (+X) using full physics simulation (Jolt). For legged/modular robots.',
   pose: 'Drive the robot to a target joint configuration. Good for keyframe following or "hold pose" skills.',
   assemble: 'Move whole modules so their connectors snap together into a target shape (chain or star). First slice of shape-changing training — see PLAN Phase 5.',
 };

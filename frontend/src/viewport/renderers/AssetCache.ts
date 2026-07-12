@@ -8,6 +8,7 @@
  */
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { USDZLoader } from 'three/examples/jsm/loaders/USDZLoader.js';
@@ -55,7 +56,17 @@ function parseSync(asset: any): THREE.Object3D | null {
   const fmt = (asset.format || '').toLowerCase();
 
   if (fmt === 'stl') {
-    const geo = _stl.parse(bytes.buffer);
+    // STLLoader always returns unindexed "triangle soup" (every triangle owns 3 private
+    // vertices, none shared) — that's inherent to the STL format, which has no concept of
+    // vertex sharing. Left as-is, the GPU vertex shader runs 3x more often than the actual
+    // vertex count needs, doubled again by the shadow-map pass — a measured, real cost on
+    // weak/integrated GPUs (frameProfiler showed render dominating frame time on an Intel
+    // UHD 620 even with MSAA/shadow-map size already cut). mergeVertices welds coincident
+    // positions into a real indexed geometry; recomputing normals afterward gives smooth
+    // per-vertex shading (a strict visual improvement over STL's inherent flat-only look)
+    // as a side effect of the same fix.
+    let geo = _stl.parse(bytes.buffer);
+    geo = mergeVertices(geo);
     geo.computeVertexNormals();
     geo.center();
     return new THREE.Mesh(geo, new THREE.MeshStandardMaterial());

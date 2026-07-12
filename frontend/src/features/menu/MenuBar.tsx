@@ -18,19 +18,49 @@ const SEP = { sep: true };
 function DocIndicator() {
   const name   = useDocStore(s => s.name);
   const status = useDocStore(s => s.status);
+  const handle = useDocStore(s => s.handle);
+  const pendingReconnectName = useDocStore(s => s.pendingReconnectName);
+  const reconnect = useDocStore(s => s.reconnect);
   const display = name ?? 'untitled';
+  // A previous session's real file handle is remembered but needs a fresh click to
+  // re-grant write access (the browser's own security rule) — without this, Ctrl+S
+  // would silently redirect to the internal library with no warning, which is
+  // exactly the bug this whole indicator exists to prevent.
+  if (pendingReconnectName) {
+    return (
+      <button
+        className="menubar-doc menubar-doc-reconnect"
+        title={`Click to reconnect to ${pendingReconnectName} on disk — otherwise Ctrl+S will only save to this browser's internal library, not the real file.`}
+        onClick={() => { reconnect(); }}
+      >
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
+        </svg>
+        <span className="menubar-doc-name">{pendingReconnectName}</span>
+        <span className="menubar-doc-status menubar-doc-warn">reconnect to disk ▸</span>
+      </button>
+    );
+  }
+  // Ctrl+S with no live OS file handle silently redirects to an internal (per-browser-
+  // profile) library entry instead of the real file on disk — a save that "succeeds" but
+  // isn't where the user thinks it is. Surface that distinction instead of always saying
+  // just "saved", which was actively misleading.
+  const onDisk = !!handle;
   return (
-    <div className="menubar-doc" title={name
-      ? `Auto-saving changes to ${name}`
-      : 'Not saved to a file yet — changes are kept locally. Use File ▸ Save Project to create a file.'}>
+    <div className="menubar-doc" title={
+      !name ? 'Not saved to a file yet — changes are kept locally. Use File ▸ Save Project to create a file.'
+      : onDisk ? `Auto-saving changes to ${name} on disk`
+      : `NOT connected to ${name} on disk right now — changes are only being saved to this browser/app's internal library. Use File ▸ Save Project As to reconnect and write to the real file.`
+    }>
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
         <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" strokeWidth="1.4" strokeLinejoin="round"/>
       </svg>
       <span className="menubar-doc-name">{display}</span>
-      {status === 'loading'           && <span className="menubar-doc-status menubar-doc-loading">loading…</span>}
-      {name && status === 'saving'  && <span className="menubar-doc-status">saving…</span>}
-      {name && status === 'saved'   && <span className="menubar-doc-status menubar-doc-saved">saved</span>}
-      {!name && status !== 'loading' && <span className="menubar-doc-status menubar-doc-dim">local only</span>}
+      {status === 'loading'                    && <span className="menubar-doc-status menubar-doc-loading">loading…</span>}
+      {name && status === 'saving'              && <span className="menubar-doc-status">saving…</span>}
+      {name && status === 'saved' && onDisk      && <span className="menubar-doc-status menubar-doc-saved">saved</span>}
+      {name && status === 'saved' && !onDisk     && <span className="menubar-doc-status menubar-doc-warn" title="Saved to internal library only — NOT written to the file on disk">saved (not on disk!)</span>}
+      {!name && status !== 'loading'             && <span className="menubar-doc-status menubar-doc-dim">local only</span>}
     </div>
   );
 }

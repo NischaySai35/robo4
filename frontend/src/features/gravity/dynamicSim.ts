@@ -463,6 +463,18 @@ export class DynamicSim {
         m.constraint.SetTargetAngularVelocity?.(v);
         m.constraint.SetTargetVelocity?.(v);
         m.last = v;
+        // Jolt puts near-stationary bodies to SLEEP to save CPU — changing a sleeping body's
+        // motor target does NOT wake it back up on its own in this binding, so a wheel spun
+        // up AFTER the robot had already settled under gravity would silently never move
+        // (matches the live report: "spin wheel then turn gravity on" worked because the
+        // body was never asleep yet, but "gravity on, wait, then spin" didn't, because by
+        // then it had gone to sleep). Explicitly reactivate both bodies this motor connects
+        // whenever we actually change its target, regardless of current sleep state.
+        if (v !== 0) {
+          const b1 = m.constraint.GetBody1?.(), b2 = m.constraint.GetBody2?.();
+          if (b1 && !b1.IsActive()) this.world!.bodyInterface.ActivateBody(b1.GetID());
+          if (b2 && !b2.IsActive()) this.world!.bodyInterface.ActivateBody(b2.GetID());
+        }
       }
     }
 

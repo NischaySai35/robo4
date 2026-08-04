@@ -34,7 +34,7 @@ import { stopAllSpins, getActiveSpins } from '@/features/motor/spinEngine';
 import { canJointSpin } from '@/features/motor/spinFreedom';
 import { DynamicSim } from '@/features/gravity/dynamicSim';
 import { useAnimSceneStore } from '@/state/animSceneStore';
-import { commands } from '@/core/commands/index';
+import { commands, command } from '@/core/commands/index';
 import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild, setAnimRootOverride } from '@/kinematics/modelFK';
 import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
 import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
@@ -1396,6 +1396,18 @@ export class ModelEditor {
     this._ikActive = true;
     this.controls.enabled = false;
     this._attachTo(null); // no gizmo while pulling
+    this._captureIKStartValues();
+  }
+
+  /** Snapshot every joint's CURRENT value before a drag begins — applyTransient (used for the
+   *  live drag itself) mutates the doc continuously, so by drag-end the live doc no longer
+   *  reflects the true starting pose; the undo command built in _endIK() needs this snapshot
+   *  to know what to restore, not whatever the doc happens to say once the drag is over. */
+  _captureIKStartValues() {
+    const doc = this._doc ?? useModelStore.getState().doc;
+    this._ikStartValues = Object.fromEntries(
+      Object.entries(doc.joints).map(([id, j]: any) => [id, j.state?.value ?? 0]),
+    );
   }
 
   _dragIK(e: any) {
@@ -1426,11 +1438,34 @@ export class ModelEditor {
     const values = hasLockLoop(this._doc)
       ? solveDragWithLoops(this._doc, this._ikTip, [target.x, target.y, target.z], rigidRoot)
       : solveModelIK(this._doc, this._ikTip, [target.x, target.y, target.z], {}, rigidRoot);
-    if (values) useModelStore.getState().dispatch(commands.setJointValues(values));
-    const worst = debugWorstJoint(useModelStore.getState().doc);
-    // Only shout when something is actually torn (> 5 mm) — otherwise stay silent.
-    // eslint-disable-next-line no-console
-    if (worst.gapMM > 5) console.warn('[JOINTDBG] TORN', worst);
+    // applyTransient, not dispatch: dispatch() pushes a full undoable command — doing that
+    // on EVERY pointermove during a drag (which can fire far more than 60x/sec) was creating
+    // a new undo-history entry per mouse-move, exactly the "dragging tanks FPS from 60 to 15"
+    // symptom. applyTransient is the existing, cheap, no-history live-update path already used
+    // for motor spin/physics/animation playback for this same reason — the final pose gets
+    // committed as ONE real undoable dispatch at drag-end instead (see _endIK/_lastIKValues).
+    if (values) {
+      this._lastIKValues = values;
+      useModelStore.getState().applyTransient((d: Document) => {
+        let next = d;
+        for (const [id, v] of Object.entries(values)) {
+          const j: any = (next.joints as any)[id];
+          if (!j) continue;
+          next = { ...next, joints: { ...next.joints, [id]: { ...j, state: { ...j.state, value: v } } } };
+        }
+        return next;
+      });
+    }
+    // debugWorstJoint() was ALSO running a full document scan every pointermove purely for a
+    // debug console warning — moved to a throttled check so it doesn't cost anything during
+    // normal dragging (still catches genuinely torn joints, just not on every single frame).
+    const now = performance.now();
+    if (now - (this._lastJointDebugAt ?? 0) > 250) {
+      this._lastJointDebugAt = now;
+      const worst = debugWorstJoint(useModelStore.getState().doc);
+      // eslint-disable-next-line no-console
+      if (worst.gapMM > 5) console.warn('[JOINTDBG] TORN', worst);
+    }
   }
 
   _endIK() {
@@ -1439,6 +1474,30 @@ export class ModelEditor {
     this._ikTip = null;
     this._downPos = null;
     this.controls.enabled = true;
+    // The live drag only ever wrote transient (non-undoable) updates — see _dragIK's comment
+    // on why. Commit the FINAL pose as exactly one real, undoable dispatch now that the drag
+    // is actually done, so Ctrl+Z still undoes "the whole drag" in a single step, matching
+    // the pre-existing behavior from the caller's point of view.
+    // NOT commands.setJointValues(...): that command captures "previous value" by reading the
+    // LIVE doc at dispatch time — but applyTransient already mutated the live doc throughout
+    // the drag, so by now it already equals the final values, which would make undo a no-op.
+    // Build the command explicitly from the values captured before the drag began instead.
+    if (this._lastIKValues && this._ikStartValues) {
+      const next = this._lastIKValues, prev = this._ikStartValues;
+      useModelStore.getState().dispatch(command(
+        'Drag',
+        (doc: any) => Object.entries(next).reduce((d, [id, v]) => {
+          const j = (d.joints as any)[id];
+          return j ? { ...d, joints: { ...d.joints, [id]: { ...j, state: { ...j.state, value: v } } } } : d;
+        }, doc),
+        (doc: any) => Object.entries(prev).reduce((d, [id, v]) => {
+          const j = (d.joints as any)[id];
+          return j ? { ...d, joints: { ...d.joints, [id]: { ...j, state: { ...j.state, value: v } } } } : d;
+        }, doc),
+      ));
+      this._lastIKValues = null;
+      this._ikStartValues = null;
+    }
     // Physics was frozen (see _tickGravityTumble) while dragging under gravity — the
     // Jolt world never saw the new joint pose. Rebuild it from where the drag left the
     // model so it settles from there instead of snapping back to the pre-drag pose.
@@ -1473,6 +1532,7 @@ export class ModelEditor {
     this._ikActive = true;
     this.controls.enabled = false;
     this._attachTo(null);
+    this._captureIKStartValues();
   }
 
   _handlePick(e: any) {

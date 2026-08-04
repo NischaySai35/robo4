@@ -45,17 +45,40 @@ export function computeWheelGeometry(doc: Document, worldMat: (id: string) => TH
     const scale = doc.bodies[bid]?.transform?.scale ?? [1, 1, 1];
     const verts = meshVerts?.(bid) ?? null;
     const tmp = new THREE.Vector3();
-    const mn = new THREE.Vector3(Infinity, Infinity, Infinity), mx = new THREE.Vector3(-Infinity, -Infinity, -Infinity);
-    if (verts) for (let i = 0; i < verts.length; i += 3) {
-      tmp.set(verts[i] * scale[0], verts[i + 1] * scale[1], verts[i + 2] * scale[2]).applyMatrix4(M).sub(bodyOrigin);
-      mn.min(tmp); mx.max(tmp);
+    const centre = new THREE.Vector3();
+    // Robust centre estimate: mean of all vertices, not the bounding-box midpoint — the bbox
+    // center shifts toward whichever single extreme vertex happens to stick out furthest,
+    // which made otherwise-identical wheel instances (same asset, different mesh sampling/
+    // instancing) estimate slightly DIFFERENT centres. That's exactly the kind of few-mm
+    // inconsistency that leaves some wheels resting a hair lower than others — the chassis
+    // settles tilted, with only the "taller" wheels touching and the rest floating just above
+    // the ground, even though nothing about gravity/contact itself is behaving incorrectly.
+    let vertCount = 0;
+    if (verts) {
+      for (let i = 0; i < verts.length; i += 3) {
+        tmp.set(verts[i] * scale[0], verts[i + 1] * scale[1], verts[i + 2] * scale[2]).applyMatrix4(M).sub(bodyOrigin);
+        centre.add(tmp);
+        vertCount++;
+      }
+      if (vertCount > 0) centre.multiplyScalar(1 / vertCount);
     }
-    const centre = mn.clone().add(mx).multiplyScalar(0.5);
     let radius = 0, aMin = Infinity, aMax = -Infinity;
-    if (verts && isFinite(centre.x)) for (let i = 0; i < verts.length; i += 3) {
+    const radii: number[] = [];
+    if (verts && vertCount > 0) for (let i = 0; i < verts.length; i += 3) {
       tmp.set(verts[i] * scale[0], verts[i + 1] * scale[1], verts[i + 2] * scale[2]).applyMatrix4(M).sub(bodyOrigin).sub(centre);
       const ax = tmp.dot(axisW); const rad = Math.sqrt(Math.max(0, tmp.lengthSq() - ax * ax));
-      if (rad > radius) radius = rad; if (ax < aMin) aMin = ax; if (ax > aMax) aMax = ax;
+      radii.push(rad);
+      if (ax < aMin) aMin = ax; if (ax > aMax) aMax = ax;
+    }
+    if (radii.length > 0) {
+      // 95th-percentile radius, not the raw max — a single stray/outlier vertex (a seam, a
+      // rounding artifact) could inflate the raw max differently between two otherwise-
+      // identical wheel meshes; the 95th percentile is far more stable/repeatable while still
+      // comfortably containing nearly the entire wheel (only the mm-padding below needs to
+      // cover the remaining few outliers, not the whole gap a raw max vs. typical-radius
+      // mismatch would leave).
+      radii.sort((a, b) => a - b);
+      radius = radii[Math.min(radii.length - 1, Math.floor(radii.length * 0.95))];
     }
     if (!(radius > 0)) { const g: any = doc.bodies[bid]?.visual?.geometry ?? {}; const s = Math.max(...scale.map(Math.abs)) || 1; radius = (g.radius ?? 0.04) * s; aMin = -(g.length ?? 0.06) * s / 2; aMax = -aMin; centre.set(0, 0, 0); }
     const axialMid = (aMin + aMax) / 2;

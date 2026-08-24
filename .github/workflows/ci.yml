@@ -1,0 +1,46 @@
+name: CI
+
+# The repo had issue and PR templates but no workflow at all, so nothing ever ran the
+# typecheck, the 128 tests, or the layer rules. Every check below already passes locally;
+# this is what stops them silently rotting.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  studio:
+    name: studio (typecheck · test · build · layers)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # --legacy-peer-deps is required, not preference: three-gpu-pathtracer@0.0.24 declares
+      # a peer of three>=0.180.0 while postprocessing caps three at <0.170.0, so a strict
+      # install cannot resolve. That conflict predates this workflow and is unrelated to it.
+      - name: Install (root tooling)
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Install (studio)
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+        working-directory: apps/studio
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # Fails only on NEW boundary violations. The 16 pre-existing ones are recorded in
+      # apps/studio/.dependency-cruiser-known-violations.json and are Phase 3 work; see
+      # apps/studio/.dependency-cruiser.cjs for what the layers mean.
+      - name: Layer boundaries
+        run: npm run depcruise
+
+      - name: Build
+        run: npm run build

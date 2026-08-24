@@ -1,0 +1,146 @@
+[
+  {
+    "type": "dependency",
+    "from": "src/control/motionRuntime.ts",
+    "to": "src/state/modelStore.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-stores"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/hardware/HardwareBridge.ts",
+    "to": "src/state/hardwareStore.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-stores"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/hardware/HardwareBridge.ts",
+    "to": "src/state/modelStore.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-stores"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/kinematics/modelFK.ts",
+    "to": "src/state/workspaceStore.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-stores"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/robotics/runtime/rtSocket.test.ts",
+    "to": "src/state/rtStatusStore.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-stores"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/robotics/runtime/rtSocket.ts",
+    "to": "src/state/rtStatusStore.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-stores"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/control/motionRuntime.ts",
+    "to": "src/viewport/physicsBridge.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/core/serialization/project.ts",
+    "to": "src/features/motor/spinEngine.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/core/serialization/project.ts",
+    "to": "src/viewport/cameraBridge.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/core/serialization/projectActions.ts",
+    "to": "src/viewport/cameraBridge.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/robotics/rl/assembleTask.ts",
+    "to": "src/features/assembly/connectorSnap.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/robotics/rl/physicsWorld.ts",
+    "to": "src/viewport/joltJoints.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/robotics/rl/physicsWorld.ts",
+    "to": "src/viewport/joltLoader.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/robotics/rl/physicsWorld.ts",
+    "to": "src/viewport/joltShapes.ts",
+    "rule": {
+      "severity": "error",
+      "name": "engine-must-not-import-ui"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/features/animation/Timeline.tsx",
+    "to": "✖",
+    "rule": {
+      "severity": "error",
+      "name": "not-to-unresolvable"
+    }
+  },
+  {
+    "type": "dependency",
+    "from": "src/features/outliner/Outliner.tsx",
+    "to": "✖",
+    "rule": {
+      "severity": "error",
+      "name": "not-to-unresolvable"
+    }
+  }
+]

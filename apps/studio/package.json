@@ -16,7 +16,8 @@
     "electron:build": "vite build && electron-builder",
     "release": "vite build && electron-builder --publish always",
     "dist": "vite build && electron-builder --dir",
-    "icons": "node scripts/make-icons.cjs"
+    "icons": "node scripts/make-icons.cjs",
+    "test": "tsx --test \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
@@ -43,6 +44,7 @@
     "electron-builder": "^25.1.8",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.35.1",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "vite": "^5.3.4",
     "wait-on": "^8.0.1"

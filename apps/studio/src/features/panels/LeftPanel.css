@@ -1,0 +1,1187 @@
+/* ── Export format chooser ───────────────────────────────────────────────────── */
+
+.export-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(20, 30, 50, 0.35);
+  backdrop-filter: blur(2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.export-modal {
+  width: 290px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  box-shadow: 0 16px 48px rgba(20, 30, 50, 0.3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+.export-modal-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+
+.export-opt {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 11px 14px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+  text-align: left;
+}
+
+.export-opt small {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+}
+
+.export-opt:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.export-opt:hover small { color: var(--accent); }
+
+.export-opt--soft { opacity: 0.65; }
+
+.export-cancel {
+  margin-top: 4px;
+  padding: 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.export-cancel:hover { border-color: var(--danger); color: var(--danger); }
+
+/* ── Icon button rows (project / module actions) ─────────────────────────────── */
+
+.lp-icon-row {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.lp-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.lp-icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--bg-card-hover);
+}
+.lp-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--text-dim);
+}
+.lp-icon-btn:disabled:hover { border-color: var(--border); background: var(--bg-card); color: var(--text-dim); }
+
+.lp-icon-btn--active {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.lp-icon-btn--danger:hover { border-color: var(--danger); color: var(--danger); }
+.lp-icon-btn--danger.lp-icon-btn--active {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.lp-icon-btn--accent {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.lp-summary {
+  display: flex;
+  gap: 12px;
+  padding: 4px 2px 8px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.lp-summary strong { color: var(--text-bright); font-size: 14px; }
+
+/* ── Collapsible section header ──────────────────────────────────────────────── */
+
+.section-collapse {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+.section-collapse .section-title { margin-bottom: 0; }
+.collapse-arrow {
+  color: var(--text-dim);
+  font-size: 11px;
+  transition: transform 0.18s;
+}
+.collapse-arrow.open { transform: rotate(90deg); }
+
+/* ── Fixed-root chips (responsive grid) ──────────────────────────────────────── */
+
+.root-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.root-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 9px;
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warn) 42%, transparent);
+  border-radius: 6px;
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  letter-spacing: 1px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.root-chip:hover { background: color-mix(in srgb, var(--warn) 18%, transparent); border-color: var(--warn); }
+.root-chip--active { border-color: var(--warn); box-shadow: 0 0 0 2px color-mix(in srgb, var(--warn) 28%, transparent); }
+.root-chip-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--text-dim); flex-shrink: 0;
+}
+.root-chip--active .root-chip-dot {
+  background: var(--warn);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--warn) 50%, transparent);
+}
+
+/* ── Left Panel ──────────────────────────────────────────────────────────────── */
+
+.left-panel {
+  width: 100%;   /* width controlled by parent wrapper in App.jsx */
+  height: 100%;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+  /* The panel is a control surface, not a document — don't let Ctrl+A / drags
+     paint everything blue with a text selection. Inputs re-enable below. */
+  user-select: none;
+}
+.left-panel input,
+.left-panel textarea { user-select: text; }
+
+.left-panel::-webkit-scrollbar { width: 4px; }
+.left-panel::-webkit-scrollbar-track { background: transparent; }
+.left-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 16px 14px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(160deg, #f8faff 0%, #ffffff 100%);
+  box-shadow: 0 1px 0 var(--border);
+}
+
+.panel-logo {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.logo-main {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 4px;
+  background: linear-gradient(135deg, #0077dd 0%, #9922ff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.logo-sub {
+  font-size: 10px;
+  letter-spacing: 3px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+
+.panel-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  box-shadow: 0 0 8px var(--success);
+  animation: dotPulse 2s ease-in-out infinite alternate;
+}
+
+/* ── Sections ─────────────────────────────────────────────────────────────────── */
+
+.section {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.section-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 2.5px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 7px;
+}
+
+.section-title--toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding-right: 2px;
+}
+.section-title--toggle:hover { color: var(--text); }
+
+.section-chevron {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--text-dim);
+  transition: transform 0.15s;
+}
+.section-chevron--open { transform: rotate(90deg); }
+
+/* ── Root Info ───────────────────────────────────────────────────────────────── */
+
+.root-info {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.root-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: #fff8ee;
+  border: 1px solid #e8d0a0;
+  border-radius: 6px;
+}
+
+.root-glow-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 10px var(--warn), 0 0 20px #ff880044;
+  animation: dotPulse 1.2s ease-in-out infinite alternate;
+  flex-shrink: 0;
+}
+
+.root-name {
+  font-family: var(--font-mono);
+  font-size: 16px;
+  color: var(--warn);
+  letter-spacing: 2px;
+  flex: 1;
+}
+
+.root-badge {
+  font-size: 9px;
+  letter-spacing: 2px;
+  color: #7a4e00;
+  background: #fff0cc;
+  border: 1px solid #e0c060;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.root-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+/* ── Mode Toggle ─────────────────────────────────────────────────────────────── */
+
+.mode-toggle-wrap {
+  display: flex;
+  gap: 6px;
+}
+
+.mode-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--border-bright);
+  color: var(--text);
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, #e8f4ff 0%, #f0e8ff 100%);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 2px 12px var(--accent-glow);
+}
+
+/* ── Instructions ─────────────────────────────────────────────────────────────── */
+
+.instructions {
+  padding: 7px 10px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.ctrl-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  align-items: center;
+}
+
+.ctrl-grid kbd {
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.ctrl-grid span {
+  font-size: 10px;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.ctrl-grid span kbd {
+  font-size: 9px;
+}
+
+/* ── Panel Footer ─────────────────────────────────────────────────────────────── */
+
+.panel-footer {
+  margin-top: auto;
+  padding: 10px 14px;
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Home Button ──────────────────────────────────────────────────────────────── */
+
+.home-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 14px;
+  background: var(--bg-card);
+  border: 1.5px solid var(--border);
+  border-radius: 7px;
+  color: var(--text-dim);
+  font-family: var(--font-ui);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  cursor: pointer;
+  transition: all 0.18s;
+}
+
+.home-btn:hover {
+  background: var(--bg-card-hover);
+  border-color: var(--accent);
+  color: var(--accent);
+  box-shadow: 0 0 10px var(--accent-glow);
+}
+
+.home-btn:active {
+  transform: scale(0.97);
+  box-shadow: none;
+}
+
+/* ── Multi-module controls ───────────────────────────────────────────────────── */
+
+.module-select {
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+}
+.module-select:hover { border-color: var(--accent); }
+.module-select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+
+.module-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-module-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.add-module-btn:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.connect-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.connect-btn:hover { background: var(--bg-card-hover); border-color: var(--border-bright); }
+.connect-btn--active {
+  background: #fff3e0;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.connect-btn--active:hover { background: #ffe8c4; }
+
+/* Connect-mode status panel */
+.connect-status { border-left: 2px solid var(--warn); padding-left: 10px; }
+
+.connect-hint {
+  font-size: 10px;
+  color: var(--text-dim);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.face-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.face-slot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+.face-slot--1.face-slot--set { border-color: #00cc77; background: #edfff5; }
+.face-slot--2.face-slot--set { border-color: #dd8800; background: #fff8ec; }
+
+.face-slot-label {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  min-width: 42px;
+}
+.face-slot--1.face-slot--set .face-slot-label { color: #009955; }
+.face-slot--2.face-slot--set .face-slot-label { color: #cc7700; }
+
+.face-slot-value {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connect-error {
+  font-size: 10px;
+  color: var(--danger);
+  background: #fff0f0;
+  border: 1px solid #ffcccc;
+  border-radius: 4px;
+  padding: 5px 8px;
+  margin-bottom: 6px;
+}
+
+.clear-faces-btn {
+  width: 100%;
+  padding: 5px 0;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: border-color .12s, color .12s;
+}
+.clear-faces-btn:hover { border-color: var(--danger); color: var(--danger); }
+
+/* disconnect button — red-toned variant */
+.disconnect-btn { }
+.disconnect-btn--active {
+  background: #fff0f0;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.disconnect-btn--active:hover { background: #ffe0e0; }
+.disconnect-status { border-left-color: var(--danger); }
+
+/* delete module button */
+.delete-module-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 11px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--danger);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.delete-module-btn:hover {
+  background: #fff0f0;
+  border-color: var(--danger);
+}
+
+.delete-module-btn:disabled {
+  color: var(--text-dim);
+  border-color: var(--border);
+  background: var(--bg-card);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.delete-module-btn:disabled:hover {
+  background: var(--bg-card);
+  border-color: var(--border);
+}
+
+.delete-module-btn--active {
+  background: #fff0f0;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.delete-module-btn--active:hover {
+  background: #ffe0e0;
+  border-color: var(--danger);
+}
+
+@keyframes dotPulse {
+  from { opacity: 0.5; }
+  to   { opacity: 1; }
+}
+
+/* ── Add-mesh popover ─────────────────────────────────────────────────────────── */
+.lp-add-wrap { position: relative; }
+.lp-add-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 120;
+  width: 196px;
+  padding: 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgba(20, 30, 50, 0.24);
+  animation: fadeIn 0.12s ease-out;
+}
+.lp-add-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.lp-add-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.lp-add-item {
+  padding: 8px 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.lp-add-item:hover {
+  background: var(--accent-glow);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.lp-add-item--module {
+  grid-column: 1 / -1;
+  border-color: var(--accent);
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+/* ── Project Explorer ─────────────────────────────────────────────────────────── */
+.px-section { display: flex; flex-direction: column; min-height: 0; }
+.px-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  /* height is set inline (resizable via the divider below); falls back to 240px */
+  height: 240px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Draggable divider between the Project Explorer and the Controls. */
+.lp-vdivider {
+  height: 8px;
+  margin: 2px 0;
+  cursor: row-resize;
+  border-radius: 3px;
+  background: transparent;
+  position: relative;
+  flex-shrink: 0;
+}
+.lp-vdivider::before {
+  content: '';
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: 28px; height: 3px;
+  border-radius: 2px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.lp-vdivider:hover::before { background: var(--accent); }
+.px-group {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin: 8px 0 3px;
+}
+.px-empty { font-size: 11.5px; color: var(--text-dim); padding: 2px 0 4px; line-height: 1.4; }
+
+.px-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 6px 4px 9px;   /* extra left room for the selection bar */
+  border-radius: 6px;
+  border: 1px solid transparent;
+  position: relative;
+}
+/* Mouse hover — a light wash so you can tell what you're pointing at (no border). */
+.px-row:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+
+/* SELECTED — filled tint + solid accent bar on the left + accent name. Unmistakable. */
+.px-row--sel {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: transparent;
+}
+.px-row--sel::before {
+  content: ''; position: absolute; left: 0; top: 3px; bottom: 3px; width: 3px;
+  border-radius: 2px; background: var(--accent);
+}
+.px-row--sel .px-name { color: var(--accent); font-weight: 700; }
+
+/* ACTIVE (last-clicked of a multi-select) — brighter fill + a full-height bar. */
+.px-row--active {
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border-color: transparent;
+}
+.px-row--active::before { top: 0; bottom: 0; width: 4px; box-shadow: 0 0 8px var(--accent); }
+
+/* 3D viewport hover sync — DASHED ring so it never gets confused with selection. */
+.px-row--hover {
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: -2px;
+}
+.px-row--drop { box-shadow: inset 0 2px 0 var(--accent); }
+.px-row[draggable="true"] { cursor: pointer; }
+
+/* Drag handle — only visible on hover, keeps rows tidy. */
+.px-grip {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: var(--text-dim);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s;
+  user-select: none;
+}
+.px-row:hover .px-grip { opacity: 0.6; }
+
+.lp-pivot-label {
+  margin: 8px 0 4px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+/* Body = blue dot, Joint = orange ring — different shape AND colour so they read at a
+   glance even for colour-blind users. */
+.px-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+.px-dot--body  { background: var(--accent); box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 60%, transparent); }
+.px-dot--joint { background: transparent; border: 2.5px solid var(--warn); box-shadow: 0 0 5px color-mix(in srgb, var(--warn) 55%, transparent); }
+
+.px-name {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  text-align: left;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.px-row--sel .px-name { color: var(--accent); }
+
+.px-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 5px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  outline: none;
+}
+
+.px-type {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+.px-row-actions { display: flex; gap: 2px; flex-shrink: 0; opacity: 0; transition: opacity 0.12s; }
+.px-row:hover .px-row-actions,
+.px-row--sel .px-row-actions { opacity: 1; }
+.px-mini {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.px-mini:hover:not(:disabled) { background: var(--bg-card-hover); border-color: var(--border); color: var(--accent); }
+.px-mini:disabled { opacity: 0.3; cursor: default; }
+
+/* Eye (visibility) button — always visible when body is hidden, otherwise show on hover */
+.px-eye { font-size: 11px; }
+.px-eye--hidden { opacity: 1 !important; color: var(--text-dim); }
+.px-row--hidden .px-name { opacity: 0.38; text-decoration: line-through; }
+
+/* ── Context menu (shared by LeftPanel + AnimLeftPanel) ── */
+.px-ctx-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9998;
+}
+.px-ctx-menu {
+  position: fixed;
+  z-index: 9999;
+  min-width: 160px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.px-ctx-menu button {
+  width: 100%;
+  text-align: left;
+  padding: 7px 11px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.px-ctx-menu button:hover { background: var(--bg-card); color: var(--accent); }
+.px-ctx-sep { height: 1px; background: var(--border); margin: 3px 4px; }
+.px-ctx-header {
+  padding: 6px 11px 4px;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.px-ctx-section {
+  padding: 3px 11px 1px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.px-ctx-con-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 11px;
+}
+.px-ctx-con-name {
+  flex: 1;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.px-ctx-con-row button {
+  width: auto !important;
+  padding: 3px 6px !important;
+  font-size: 11px !important;
+  flex-shrink: 0;
+}
+.px-ctx-con-row button.danger { color: var(--danger, #ef4444) !important; }
+.px-ctx-con-row button.danger:hover { background: color-mix(in srgb, var(--danger, #ef4444) 15%, transparent) !important; color: var(--danger, #ef4444) !important; }
+
+/* ── Project Explorer — Component tree ───────────────────────────────────────── */
+
+.px-explorer-hdr {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+}
+.px-comp-add-btn {
+  padding: 3px 9px;
+  background: var(--accent-glow);
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: var(--accent);
+  font-family: var(--font-ui);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.px-comp-add-btn:hover { background: var(--accent); color: #fff; }
+
+/* Search filter */
+.px-search-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.px-search {
+  flex: 1;
+  padding: 5px 28px 5px 9px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  outline: none;
+}
+.px-search:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-glow); }
+.px-search::placeholder { color: var(--text-dim); }
+.px-search-clear {
+  position: absolute;
+  right: 6px;
+  background: none; border: none; cursor: pointer;
+  color: var(--text-dim); font-size: 10px; padding: 2px 3px;
+  border-radius: 3px; line-height: 1;
+}
+.px-search-clear:hover { color: var(--text); background: var(--bg-card); }
+
+.px-target-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-bottom: 4px;
+  padding: 2px 4px;
+}
+.px-target-hint strong { color: var(--accent); }
+
+/* Component accordion */
+.px-comp {
+  border: 1px solid transparent;
+  border-radius: 7px;
+  margin-bottom: 2px;
+  transition: border-color 0.12s;
+}
+.px-comp--drop {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+}
+.px-comp--target > .px-comp-hdr {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+}
+.px-comp--target > .px-comp-hdr .px-comp-name { color: var(--accent); }
+
+/* Folder header reads as a distinct "container" bar (raised surface + border + bold), so
+   it's clearly different from the body/joint rows nested under it. */
+.px-comp-hdr {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 7px;
+  border-radius: 6px;
+  cursor: pointer;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border: 1px solid var(--border);
+  transition: background 0.12s, border-color 0.12s;
+  user-select: none;
+}
+.px-comp-hdr:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.px-comp-hdr--unassigned { cursor: default; }
+.px-comp-hdr--unassigned:hover { background: transparent; }
+
+.px-comp-chevron {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--accent);
+  transition: transform 0.18s;
+  display: inline-block;
+  width: 10px;
+}
+.px-comp-chevron--open { transform: rotate(90deg); }
+
+.px-comp-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.px-comp-count {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.3px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+}
+
+.px-comp-actions {
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.px-comp-hdr:hover .px-comp-actions { opacity: 1; }
+
+.px-mini--danger:hover { color: var(--danger) !important; border-color: var(--danger) !important; }
+
+.px-comp-children {
+  padding-left: 10px;
+  margin-left: 9px;
+  /* faint vertical guide so nested bodies/joints clearly belong to this folder */
+  border-left: 1px solid var(--border);
+}
+
+/* Indented rows (children of component) */
+.px-indent {
+  padding-left: 20px;
+}
+
+/* ── Mode toggle (Object / Edit) ──────────────────────────────────────────────── */
+.lp-mode-toggle { display: flex; gap: 6px; }
+.lp-mode-btn {
+  flex: 1;
+  padding: 8px 4px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.13s;
+}
+.lp-mode-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.lp-mode-btn--on { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
+.lp-mode-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.lp-mode-hint { font-size: 12px; color: var(--text-dim); line-height: 1.5; margin-top: 7px; }
+.lp-mode-hint strong { color: var(--text); }
+
+/* Rigid body mode button — green accent when active */
+.lp-mode-btn--rigid.lp-mode-btn--on {
+  background: rgba(0, 255, 136, 0.1);
+  border-color: #00ff88;
+  color: #00ff88;
+}
+.lp-mode-btn--rigid:hover:not(:disabled) { border-color: #00ff88; color: #00ff88; }
+
+/* Rigid mode hint bar */
+.lp-rigid-hint {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11.5px; color: var(--text-dim); margin-top: 5px;
+}
+.lp-rigid-hint strong { color: #00ff88; }
+.lp-rigid-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #00ff88; flex-shrink: 0;
+  box-shadow: 0 0 5px #00ff88;
+}
+.lp-rigid-dot--none { background: var(--text-dim); box-shadow: none; }
+
+/* Active/grounded body row in project explorer */
+.px-row--grounded .px-name { color: #00ff88 !important; }
+.px-row--grounded::before {
+  content: '⬛';
+  font-size: 9px; margin-right: 4px; color: #00ff88;
+  position: absolute; left: 4px;
+}
+.px-row--grounded { position: relative; }
+
+/* Context menu: active body item */
+.px-ctx-active-on { color: #00ff88 !important; }
+
+.lp-xform .lp-mode-btn { font-size: 12px; padding: 7px 3px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
+.lp-xform-key {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-app, rgba(127,127,127,0.15));
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+}
+.lp-mode-btn--on .lp-xform-key { color: var(--accent); border-color: var(--accent); }

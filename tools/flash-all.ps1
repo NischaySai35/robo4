@@ -17,7 +17,7 @@
 #>
 param(
   [string[]]$Hosts   = @('mod1','mod2','mod3','mod4'),
-  [string]  $Sketch  = "$PSScriptRoot\..\esp32_v2",
+  [string]  $Sketch  = "$PSScriptRoot\..\firmware\esp32_multi",
   [string]  $Fqbn    = 'esp32:esp32:esp32c3:PartitionScheme=default,CDCOnBoot=cdc',
   [string]  $Bin     = '',
   [switch]  $NoBuild,

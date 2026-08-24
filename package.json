@@ -1,17 +1,24 @@
 {
-  "name": "robo4",
-  "version": "1.0.0",
-  "description": "",
-  "main": "verify_app.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "name": "tetrobot",
+  "version": "1.0.3",
+  "private": true,
+  "description": "TETROBOT — modular robotics design, simulation and control platform. The desktop app lives in apps/studio; firmware in firmware/; docs in docs/.",
+  "author": "Nischay Sai D R",
+  "license": "SEE LICENSE IN LICENSE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NischaySai35/robo4.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "commonjs",
-  "dependencies": {
-    "electron-updater": "^6.8.9",
+  "scripts": {
+    "dev": "npm run dev --prefix apps/studio",
+    "build": "npm run build --prefix apps/studio",
+    "typecheck": "npm run typecheck --prefix apps/studio",
+    "electron:dev": "npm run electron:dev --prefix apps/studio",
+    "depcruise": "depcruise apps/studio/src --config .dependency-cruiser.cjs"
+  },
+  "devDependencies": {
+    "dependency-cruiser": "^16.10.4",
     "playwright": "^1.60.0"
   }
 }

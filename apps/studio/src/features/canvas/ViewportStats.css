@@ -1,0 +1,118 @@
+/* Bottom-left HUD column: VSEPR readout stacked above the stats box. Owning the position
+   here (rather than each HUD positioning itself at a hardcoded offset) is what stops them
+   overlapping when the stats box gains rows. */
+.vp-hud-stack {
+  position: absolute;
+  bottom: 12px;
+  left: 12px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.vp-stats {
+  background: rgba(30, 30, 30, 0.38);
+  backdrop-filter: blur(6px);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  border-radius: 8px;
+  padding: 7px 10px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* The HUD must not swallow orbit/drag input, so the box stays click-through and only the
+     one interactive row opts back in (see .vp-stats-row-click). Without that opt-in the
+     expandable Load row silently did nothing when clicked. */
+  pointer-events: none;
+  min-width: 110px;
+}
+
+.vp-stats-engine {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  margin-bottom: 3px;
+}
+
+.vp-stats-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.vp-stats-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.45);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.vp-stats-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.vp-stats-noisy {
+  font-size: 7px;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  color: #f87171;
+  margin-left: 5px;
+  vertical-align: middle;
+  animation: vp-blink 0.7s ease-in-out infinite alternate;
+}
+@keyframes vp-blink { from { opacity: 1 } to { opacity: 0.3 } }
+
+.vp-stats-bar-wrap {
+  height: 3px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 2px;
+  margin: 3px 0 1px;
+  overflow: hidden;
+}
+.vp-stats-bar {
+  height: 100%;
+  background: #e07b39;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.vp-stats-note {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  color: rgba(255, 255, 255, 0.25);
+  text-align: right;
+  margin-top: 2px;
+  letter-spacing: 0.08em;
+  transition: color 0.5s ease;
+}
+
+/* Clickable "Load" row that expands to the CPU/GPU split. */
+.vp-stats-row-click {
+  cursor: pointer;
+  user-select: none;
+  pointer-events: auto; /* opt back in — the container is click-through */
+}
+.vp-stats-row-click:hover .vp-stats-label {
+  opacity: 1;
+}
+/* Indented CPU/GPU detail rows under the combined figure. */
+.vp-stats-row-sub .vp-stats-label {
+  padding-left: 6px;
+  opacity: 0.55;
+}
+
+/* Footnote shown when metrics are machine-wide rather than app-scoped. */
+.vp-stats-scope {
+  font-size: 8.5px;
+  opacity: 0.5;
+  line-height: 1.25;
+  margin-top: 1px;
+}

@@ -1,6 +1,6 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # TETROBOT — git ignore
-# Covers the whole repo (root tooling, frontend/ web+Electron app, backend/, esp32/)
+# Covers the whole repo (root tooling, apps/ desktop app, firmware/, tools/)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Dependencies ─────────────────────────────────────────────────────────────
@@ -20,12 +20,12 @@ out/
 # ── Electron packaged installers / app bundles ───────────────────────────────
 release/
 release-builds/
-frontend/release/
+apps/studio/release/
 # Wildcard, not just "release/": an electron-builder run that output to release2/ slipped
 # past the exact-name rules and committed 72 build files including a 266MB app.asar, which
 # GitHub rejects (100MB/file limit). Any release* output directory is build product.
 release*/
-frontend/release*/
+apps/studio/release*/
 # app.asar is the packaged app bundle — always build output, always too big for git.
 *.asar
 *.exe
@@ -83,17 +83,31 @@ Desktop.ini
 $RECYCLE.BIN/
 
 # ── ESP32 / PlatformIO / Arduino build artifacts ─────────────────────────────
-esp32/.pio/
-esp32/build/
+# Wildcards, not exact names: the rules used to say only "esp32/", so esp32_v2/build/
+# was never ignored and was one accidental `git add -A` away from being committed —
+# the same exact-name gap that let a 266MB release2/ build into a commit.
+esp32*/.pio/
+esp32*/build/
+firmware/**/build/
+firmware/**/.pio/
 *.bin
 *.elf
 *.map
 
-# ── Local dev scratch (uncomment to ignore if these are throwaway) ────────────
+# ── Local dev scratch ────────────────────────────────────────────────────────
+# These were previously COMMITTED. A source repo should hold source; scratch files,
+# sample projects and captured output are local artefacts.
 /verify*.js
 /test_*.mjs
 /screenshot_*.png
 /home_*.png
+/playwright_*.js
+/*.nischay
+.scratch*/
+
+# ── Vendored build dependencies ──────────────────────────────────────────────
+# zenoh-c is fetched/built, not authored here, so it does not belong in git history.
+.build-deps/
 
 # Rust RT Core build artifacts
 rtcore/target/

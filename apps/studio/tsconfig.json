@@ -1,0 +1,27 @@
+{
+  // Full strict mode — all flags on and green. `useUnknownInCatchVariables` is the
+  // one deliberate exception (catch vars stay `any` so handlers read `e.message`
+  // without per-site narrowing — a common, pragmatic choice). `allowJs` is harmless
+  // (no .js left in src) and can be removed later.
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ESNext", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "useUnknownInCatchVariables": false,
+    "noEmit": true,
+    "allowJs": true,
+    "checkJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "allowImportingTsExtensions": true,
+    "paths": { "@/*": ["./src/*"] }
+  },
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "release"]
+}

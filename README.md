@@ -136,7 +136,7 @@ By **Nischay Sai D R** · Proprietary & confidential.
 ```
 
 For the code-level layout and design details, see
-[`frontend/ARCHITECTURE.md`](frontend/ARCHITECTURE.md); roadmaps live in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); roadmaps live in
 [`ROADMAP.md`](ROADMAP.md) / [`ROADMAP_ROBOTICS.md`](ROADMAP_ROBOTICS.md) /
 [`PLAN-INDUSTRIAL.md`](PLAN-INDUSTRIAL.md).
 
@@ -163,7 +163,7 @@ For the code-level layout and design details, see
 ### Web (dev)
 
 ```bash
-cd frontend
+cd apps/studio
 npm install
 npm run dev          # http://localhost:5173
 npm run typecheck    # tsc --noEmit
@@ -173,7 +173,7 @@ npm run build        # production build
 ### Desktop (Electron)
 
 ```bash
-cd frontend
+cd apps/studio
 npm run electron:dev   # Vite + Electron together
 npm run electron:build # packaged installer (Windows NSIS)
 ```

@@ -100,33 +100,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/robotics/rl/physicsWorld.ts",
-    "to": "src/viewport/joltJoints.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/robotics/rl/physicsWorld.ts",
-    "to": "src/viewport/joltLoader.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/robotics/rl/physicsWorld.ts",
-    "to": "src/viewport/joltShapes.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/features/animation/Timeline.tsx",
     "to": "✖",
     "rule": {

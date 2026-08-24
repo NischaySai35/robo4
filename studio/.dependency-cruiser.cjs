@@ -38,7 +38,7 @@ module.exports = {
         'what keeps the engine runnable and testable headlessly, and it is the single most ' +
         'load-bearing boundary in this codebase.',
       severity: 'error',
-      from: { path: '^src/(core|kinematics|robotics|runtime|control|hardware)/' },
+      from: { path: '^src/(core|physics|kinematics|robotics|runtime|control|hardware)/' },
       to: { path: '^src/(app|features|viewport)/' },
     },
     {
@@ -47,7 +47,7 @@ module.exports = {
         'Engine code taking values straight out of a zustand store is a hidden global. Pass ' +
         'what it needs as arguments so it stays callable from a test or a worker.',
       severity: 'error',
-      from: { path: '^src/(kinematics|robotics|runtime|control|hardware)/' },
+      from: { path: '^src/(physics|kinematics|robotics|runtime|control|hardware)/' },
       to: { path: '^src/state/' },
     },
     {

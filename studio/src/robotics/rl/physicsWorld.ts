@@ -13,9 +13,9 @@
  */
 import * as THREE from 'three';
 import type { Document } from '@/core/model/index';
-import { ensureJolt, createJoltWorldSync, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltModule, type JoltWorld } from '@/viewport/joltLoader';
-import { makeJoltShape } from '@/viewport/joltShapes';
-import { jointWorldGeom } from '@/viewport/joltJoints';
+import { ensureJolt, createJoltWorldSync, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltModule, type JoltWorld } from '@/physics/joltLoader';
+import { makeJoltShape } from '@/physics/joltShapes';
+import { jointWorldGeom } from '@/physics/joltJoints';
 
 // Callers (locomotionTask.ts, TrainingPanel.tsx, trainers that construct a fresh
 // RLPhysicsWorld per episode) rely on the ORIGINAL calling convention: await

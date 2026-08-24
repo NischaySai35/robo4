@@ -8,8 +8,8 @@
  * sagging) — there simply are no joints in this sim, by design.
  */
 import * as THREE from 'three';
-import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/viewport/joltLoader';
-import { makeJoltShapeSettings } from '@/viewport/joltShapes';
+import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
+import { makeJoltShapeSettings } from '@/physics/joltShapes';
 import type { Document } from '@/core/model/index';
 
 export type FK = Map<string, { position: number[]; quaternion: number[] }>;

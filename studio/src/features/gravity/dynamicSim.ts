@@ -49,12 +49,12 @@
  * flat ground plane.
  */
 import * as THREE from 'three';
-import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, JOLT_LAYER_MOVING_NO_GROUND, type JoltWorld } from '@/viewport/joltLoader';
-import { makeJoltShapeSettings } from '@/viewport/joltShapes';
-import { jointWorldGeom } from '@/viewport/joltJoints';
+import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, JOLT_LAYER_MOVING_NO_GROUND, type JoltWorld } from '@/physics/joltLoader';
+import { makeJoltShapeSettings } from '@/physics/joltShapes';
+import { jointWorldGeom } from '@/physics/joltJoints';
 import { jointMode, computeWheelGeometry, type WheelGeom } from './dynamicSimTopology';
 import { WheelContactSolver } from './wheelContact';
-import { convexRadiusFor } from '@/viewport/joltShapes';
+import { convexRadiusFor } from '@/physics/joltShapes';
 import type { Document } from '@/core/model/index';
 import type { FK, DriveOf } from './rigidDrop';
 

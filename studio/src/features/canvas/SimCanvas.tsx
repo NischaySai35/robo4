@@ -63,7 +63,7 @@ export default function SimCanvas() {
     // time gravity/physics actually runs. Never awaited here — errors are
     // swallowed because the real load attempt (with real error handling)
     // happens later when physics is actually used; this is purely a warm-up.
-    import('@/viewport/joltLoader').then((m) => m.ensureJolt()).catch(() => {});
+    import('@/physics/joltLoader').then((m) => m.ensureJolt()).catch(() => {});
 
     // Scene + theme.
     const sceneMgr = new SceneManager(canvas);

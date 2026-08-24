@@ -14,8 +14,8 @@
  * chart reads each sample to show impact spikes.
  */
 import * as THREE from 'three';
-import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from './joltLoader';
-import { makeJoltShape } from './joltShapes';
+import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
+import { makeJoltShape } from '@/physics/joltShapes';
 
 /** Impact torques written here; read by LiveTelemetryChart; decay each step. */
 export const extraContactTorques = new Map<string, number>(); // jointId -> N*m

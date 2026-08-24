@@ -20,9 +20,9 @@
  */
 import * as THREE from 'three';
 import type { Document } from '@/core/model/index';
-import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from './joltLoader';
-import { makeJoltShape } from './joltShapes';
-import { createJoint, setHingeTargetAngle, setHingeTargetVelocity, type CreatedJoint } from './joltJoints';
+import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
+import { makeJoltShape } from '@/physics/joltShapes';
+import { createJoint, setHingeTargetAngle, setHingeTargetVelocity, type CreatedJoint } from '@/physics/joltJoints';
 import { restPoseExcludePairs } from '@/features/gravity/rigidGeomXml';
 import { FIXED_DT } from './physicsConfig';
 

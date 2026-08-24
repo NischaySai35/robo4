@@ -39,7 +39,16 @@ export function ensureJolt(): Promise<JoltModule> {
 
 const LAYER_NON_MOVING = 0;
 const LAYER_MOVING = 1;
-const NUM_OBJECT_LAYERS = 2;
+/**
+ * Dynamic, but does NOT collide with the static ground. For a cluster whose ground contact is
+ * supplied by the slip-based tire model (wheelContact.ts) instead of the contact solver: the
+ * body still needs a real shape so Jolt derives the correct mass and inertia tensor from it,
+ * but that shape must not generate ground contacts, or the rigid cylinder would fight the tire
+ * model for the same contact. Colliding with LAYER_MOVING is kept so such a cluster can still
+ * be hit by other moving bodies.
+ */
+const LAYER_MOVING_NO_GROUND = 2;
+const NUM_OBJECT_LAYERS = 3;
 const NUM_BROAD_PHASE_LAYERS = 2;
 
 export interface JoltWorld {
@@ -72,10 +81,15 @@ export function createJoltWorldSync(Jolt: JoltModule, gravity: number): JoltWorl
   const objectFilter = new Jolt.ObjectLayerPairFilterTable(NUM_OBJECT_LAYERS);
   objectFilter.EnableCollision(LAYER_NON_MOVING, LAYER_MOVING);
   objectFilter.EnableCollision(LAYER_MOVING, LAYER_MOVING);
+  // Deliberately NOT enabled against LAYER_NON_MOVING — that omission is the whole point of
+  // this layer (see its declaration).
+  objectFilter.EnableCollision(LAYER_MOVING_NO_GROUND, LAYER_MOVING);
+  objectFilter.EnableCollision(LAYER_MOVING_NO_GROUND, LAYER_MOVING_NO_GROUND);
 
   const bpInterface = new Jolt.BroadPhaseLayerInterfaceTable(NUM_OBJECT_LAYERS, NUM_BROAD_PHASE_LAYERS);
   bpInterface.MapObjectToBroadPhaseLayer(LAYER_NON_MOVING, new Jolt.BroadPhaseLayer(0));
   bpInterface.MapObjectToBroadPhaseLayer(LAYER_MOVING, new Jolt.BroadPhaseLayer(1));
+  bpInterface.MapObjectToBroadPhaseLayer(LAYER_MOVING_NO_GROUND, new Jolt.BroadPhaseLayer(1));
 
   const settings = new Jolt.JoltSettings();
   // JoltSettings' defaults (mMaxBodies=10240, mMaxBodyPairs=65536,
@@ -113,6 +127,25 @@ export function createJoltWorldSync(Jolt: JoltModule, gravity: number): JoltWorl
   const physSettings = new Jolt.PhysicsSettings();
   physSettings.mNumVelocitySteps = 10;
   physSettings.mNumPositionSteps = 8;
+  // Both of these default to 0.02 (2cm) in Jolt — sized for metre-scale game objects, and far
+  // too coarse for this app's 5-15cm modules. Verified against the real WASM build, not assumed.
+  //
+  //  • mSpeculativeContactDistance: Jolt creates a contact when a body comes WITHIN this
+  //    distance of a surface, and the solver arrests the approach there. At 2cm that means
+  //    every body stops 2cm ABOVE the floor and never visually touches it — the whole model
+  //    hovering over the ground plane, uniformly, no matter how mass/friction/margins are
+  //    tuned. (This is a real reported symptom, not a hypothetical.) It must stay nonzero to
+  //    keep fast movers from tunnelling, so scale it to the parts rather than zeroing it.
+  //  • mPenetrationSlop: penetration shallower than this is never pushed back out, so bodies
+  //    rest up to 2cm INSIDE whatever they land on — half a wheel radius here.
+  //
+  // Same root cause as the flat 0.02 collision margin joltShapes.ts used to use: a Jolt
+  // default expressed in metres applied to centimetre-scale geometry.
+  // set_X(...) rather than `=`: these are the two settings the whole "nothing touches the
+  // floor" fix depends on, and this binding has a documented history of silently ignoring
+  // plain assignment. Not worth leaving to chance for the sake of matching the lines above.
+  physSettings.set_mSpeculativeContactDistance(0.002); // 2mm
+  physSettings.set_mPenetrationSlop(0.001); // 1mm
   physicsSystem.SetPhysicsSettings(physSettings);
   const bodyInterface = physicsSystem.GetBodyInterface();
 
@@ -127,3 +160,4 @@ export function createJoltWorldSync(Jolt: JoltModule, gravity: number): JoltWorl
 
 export const JOLT_LAYER_NON_MOVING = LAYER_NON_MOVING;
 export const JOLT_LAYER_MOVING = LAYER_MOVING;
+export const JOLT_LAYER_MOVING_NO_GROUND = LAYER_MOVING_NO_GROUND;

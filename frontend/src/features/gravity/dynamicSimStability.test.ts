@@ -88,3 +88,31 @@ test('once frozen, step() short-circuits to a stable no-op read instead of stepp
   assert.deepEqual([...before.values()], [...after.values()], 'frozen sim should return a stable, unchanging pose');
   sim!.dispose();
 });
+
+test('isSettled(): false while a dropped body is still falling, true once it comes to rest', async () => {
+  // This gates on-demand rendering (ModelEditor stops writing poses and stops redrawing once
+  // the sim settles), so a premature `true` would freeze the viewport mid-fall — visually
+  // identical to a hung app. Worth pinning both directions.
+  const box = makeGeometry(GeometryType.BOX, { size: [0.2, 0.2, 0.2] });
+  const GROUND_Y = -1;
+  const links = [
+    { name: 'A', geometry: box, transform: { position: [0, GROUND_Y + 1.5, 0], quaternion: [0, 0, 0, 1] } },
+  ];
+  const { doc } = buildSerialChain(makeDocument({ name: 'Drop' }), { name: 'Drop', links, joints: [] });
+
+  const sim = await DynamicSim.create(doc, fkOf(doc), GROUND_Y, () => null, null);
+  assert.ok(sim);
+
+  sim!.step(1 / 60);
+  assert.equal(sim!.isSettled(), false, 'a body still falling must not report settled');
+
+  // Long enough to land and for Jolt to put it to sleep (its default is ~0.5s at rest).
+  let settled = false;
+  for (let i = 0; i < 900 && !settled; i++) { sim!.step(1 / 60); settled = sim!.isSettled(); }
+  assert.ok(settled, 'a body resting on the ground must eventually report settled');
+
+  // And once settled it must STAY settled — a flapping value would redraw every other frame.
+  for (let i = 0; i < 60; i++) sim!.step(1 / 60);
+  assert.equal(sim!.isSettled(), true, 'settled state must be stable, not oscillating');
+  sim!.dispose();
+});

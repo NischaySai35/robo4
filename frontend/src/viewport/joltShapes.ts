@@ -31,6 +31,42 @@ export interface JoltShapeOpts {
   hullPoints?: Float32Array | null;
 }
 
+/**
+ * Largest convex radius (collision margin) we'll ever ask Jolt for. Jolt runs GJK on the
+ * shape SHRUNK by this radius and then re-inflates the result — a robustness trick that is
+ * only invisible while the margin is small relative to the shape.
+ */
+const MAX_CONVEX_RADIUS = 0.02;
+/** Margin as a fraction of the shape's SMALLEST half-extent. */
+const CONVEX_RADIUS_FRACTION = 0.1;
+
+/**
+ * Pick a collision margin that is small RELATIVE TO THE PART, instead of a flat 0.02.
+ *
+ * Two separate problems with the old hardcoded 0.02 (2cm), both caused by this app's real
+ * modules being 5-15cm — a scale at which 2cm is not a "margin" at all:
+ *
+ *  1. GEOMETRIC. Jolt shrinks the shape by the convex radius and rounds it back out, so a
+ *     4cm-radius wheel with a 2cm margin is HALF rounding — it is not meaningfully a
+ *     cylinder any more, and a 8cm box becomes a box with 2cm-radius corners, which rests
+ *     and tips quite differently than the box that's actually rendered. Physics resolving
+ *     against a shape this far from the visual mesh is exactly the "looks fine, behaves
+ *     wrong" class of bug.
+ *  2. HARD FAILURE. Jolt requires convexRadius <= every half-extent. computeWheelGeometry's
+ *     halfLen floors at 0.015, BELOW the old flat 0.02 — so a thin wheel produced an invalid
+ *     CylinderShapeSettings, whose Create() fails, which dynamicSim's build loop swallowed
+ *     silently (`if (!result.IsValid()) continue`), dropping an entire cluster with no error.
+ *
+ * Scaling to the smallest half-extent fixes both at once and is self-maintaining for any
+ * future part size. The cap keeps large parts from getting an absurdly thick margin.
+ */
+export function convexRadiusFor(...halfExtents: number[]): number {
+  let min = Infinity;
+  for (const h of halfExtents) if (Number.isFinite(h) && h > 0 && h < min) min = h;
+  if (!Number.isFinite(min)) return 0;
+  return Math.min(MAX_CONVEX_RADIUS, CONVEX_RADIUS_FRACTION * min);
+}
+
 /** Wrap `inner` (ShapeSettings) in a RotatedTranslatedShapeSettings if a local offset/rotation is needed. */
 function maybeOffset(Jolt: JoltModule, inner: any, pos: THREE.Vector3, quat: { x: number; y: number; z: number; w: number }): any {
   const isIdentity = pos.lengthSq() < 1e-12 && Math.abs(quat.x) < 1e-9 && Math.abs(quat.y) < 1e-9 && Math.abs(quat.z) < 1e-9 && Math.abs(quat.w - 1) < 1e-9;
@@ -59,10 +95,13 @@ export function makeJoltShapeSettings(Jolt: JoltModule, body: any, opts: JoltSha
       case GeometryType.CAPSULE:
       case GeometryType.CONE: {
         const r = g.radius ?? 0.5, l = g.length ?? 1;
-        return new Jolt.BoxShapeSettings(new Jolt.Vec3(r * sx, r * sy, (l * sz) / 2), 0.02);
+        const hx = r * sx, hy = r * sy, hz = (l * sz) / 2;
+        return new Jolt.BoxShapeSettings(new Jolt.Vec3(hx, hy, hz), convexRadiusFor(hx, hy, hz));
       }
-      default:
-        return new Jolt.BoxShapeSettings(new Jolt.Vec3(0.4 * sx, 0.4 * sy, 0.4 * sz), 0.02);
+      default: {
+        const hx = 0.4 * sx, hy = 0.4 * sy, hz = 0.4 * sz;
+        return new Jolt.BoxShapeSettings(new Jolt.Vec3(hx, hy, hz), convexRadiusFor(hx, hy, hz));
+      }
     }
   };
 
@@ -72,15 +111,14 @@ export function makeJoltShapeSettings(Jolt: JoltModule, body: any, opts: JoltSha
 
     case GeometryType.BOX: {
       const sz0 = g.size ?? [1, 1, 1];
-      return new Jolt.BoxShapeSettings(
-        new Jolt.Vec3(Math.abs(sz0[0] * s[0]) / 2, Math.abs(sz0[1] * s[1]) / 2, Math.abs(sz0[2] * s[2]) / 2), 0.02,
-      );
+      const hx = Math.abs(sz0[0] * s[0]) / 2, hy = Math.abs(sz0[1] * s[1]) / 2, hz = Math.abs(sz0[2] * s[2]) / 2;
+      return new Jolt.BoxShapeSettings(new Jolt.Vec3(hx, hy, hz), convexRadiusFor(hx, hy, hz));
     }
 
     case GeometryType.CYLINDER: {
       if (!radiallyUniform(sx, sy)) return cuboidFallback();
       const r = (g.radius ?? 0.5) * sx, halfH = ((g.length ?? 1) * sz) / 2;
-      return maybeOffset(Jolt, new Jolt.CylinderShapeSettings(halfH, r, 0.02), new THREE.Vector3(), ROT_Z_ALIGNED);
+      return maybeOffset(Jolt, new Jolt.CylinderShapeSettings(halfH, r, convexRadiusFor(halfH, r)), new THREE.Vector3(), ROT_Z_ALIGNED);
     }
 
     case GeometryType.CAPSULE: {
@@ -93,14 +131,26 @@ export function makeJoltShapeSettings(Jolt: JoltModule, body: any, opts: JoltSha
       if (!radiallyUniform(sx, sy)) return cuboidFallback();
       const r = (g.radius ?? 0.5) * sx, halfH = ((g.length ?? 1) * sz) / 2;
       // A true cone: top radius ~0 (Jolt needs a small nonzero radius), base = r.
-      return maybeOffset(Jolt, new Jolt.TaperedCylinderShapeSettings(halfH, 0.001, r, 0.02), new THREE.Vector3(), ROT_Z_ALIGNED);
+      // The near-zero TOP radius is itself a half-extent, so it caps the legal convex radius
+      // — feeding it through convexRadiusFor keeps the shape valid (a margin larger than the
+      // tip would make Create() fail) at the cost of a very small margin here. Cones are rare
+      // in this app's models, so validity is worth more than GJK margin robustness.
+      const topR = 0.001;
+      return maybeOffset(Jolt, new Jolt.TaperedCylinderShapeSettings(halfH, topR, r, convexRadiusFor(halfH, topR, r)), new THREE.Vector3(), ROT_Z_ALIGNED);
     }
 
     case GeometryType.MESH: {
       const hp = opts.hullPoints;
       if (hp && hp.length >= 12) {
         const chs = new Jolt.ConvexHullShapeSettings();
-        for (let i = 0; i < hp.length; i += 3) chs.mPoints.push_back(new Jolt.Vec3(hp[i] * sx, hp[i + 1] * sy, hp[i + 2] * sz));
+        let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+        for (let i = 0; i < hp.length; i += 3) {
+          const x = hp[i] * sx, y = hp[i + 1] * sy, z = hp[i + 2] * sz;
+          chs.mPoints.push_back(new Jolt.Vec3(x, y, z));
+          if (x < minX) minX = x; if (x > maxX) maxX = x;
+          if (y < minY) minY = y; if (y > maxY) maxY = y;
+          if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+        }
         // Every OTHER shape here passes an explicit 0.02 collision margin. This one didn't,
         // which meant it silently used Jolt's built-in default (0.05m / 5cm). This app's real
         // modules are typically 5-15cm — a 5cm margin puffs each mesh's collision boundary out
@@ -109,7 +159,12 @@ export function makeJoltShapeSettings(Jolt: JoltModule, body: any, opts: JoltSha
         // solver fights that phantom overlap every frame: exactly the violent shaking + parts
         // visually sinking through the floor (physics resolves against the inflated shape, the
         // render draws the true mesh, so they visibly diverge).
-        chs.mMaxConvexRadius = 0.02;
+        // Now scaled to THIS hull's own bounding box rather than a flat 0.02 — the 0.02 was
+        // itself still a large fraction of a 5cm module, so the same "puffed-out shape" effect
+        // it was written to fix was only partly fixed. (This one is a MAX — Jolt shrinks it
+        // further if the hull demands — but starting from a size-appropriate value keeps small
+        // parts honest instead of relying on that clamp.)
+        chs.mMaxConvexRadius = convexRadiusFor((maxX - minX) / 2, (maxY - minY) / 2, (maxZ - minZ) / 2);
         return chs;
       }
       return cuboidFallback();

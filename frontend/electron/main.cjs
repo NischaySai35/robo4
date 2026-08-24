@@ -10,7 +10,9 @@
  */
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const os = require('os');
 const fs = require('fs/promises');
+const { spawn } = require('child_process');
 const { autoUpdater } = require('electron-updater');
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL || 'http://127.0.0.1:5173';
@@ -47,6 +49,52 @@ ipcMain.handle('update:download', async () => {
 });
 ipcMain.handle('update:install', () => { autoUpdater.quitAndInstall(); });
 ipcMain.handle('app:version', () => app.getVersion());
+
+/* -- Real process metrics (RAM / CPU / GPU) ---------------------------------
+ *
+ * Replaces the renderer's old `performance.memory.usedJSHeapSize` readout, which
+ * measured only the V8 heap (missing GPU memory, the Jolt WASM heap and every other
+ * process) and, being a pre-GC sawtooth, mostly reported uncollected garbage rather
+ * than anything actionable.
+ *
+ * These are the same figures Task Manager shows for the app, scoped to THIS app only.
+ */
+
+/** Working set + CPU across every process this app owns (main, renderer, GPU, utility). */
+function appRamAndCpu() {
+  let ramBytes = 0;
+  let cpuRaw = 0;
+  const pids = [];
+  for (const m of app.getAppMetrics()) {
+    // workingSetSize is in KB and is the resident set -- what Task Manager calls Memory.
+    ramBytes += (m.memory?.workingSetSize ?? 0) * 1024;
+    cpuRaw += m.cpu?.percentCPUUsage ?? 0;
+    if (m.pid) pids.push(m.pid);
+  }
+  // Chromium reports percentCPUUsage relative to a SINGLE core, so a busy app on a
+  // 16-thread machine can report ~1600. Task Manager shows a share of the whole CPU,
+  // so divide by the logical core count to match what the user sees there.
+  const cores = Math.max(1, os.cpus().length);
+  return { ramBytes, cpuPercent: Math.max(0, Math.min(100, cpuRaw / cores)), pids };
+}
+
+/* GPU utilisation: shared with the Vite dev server so the desktop and browser readouts
+ * can never drift apart. See tools/gpuWatcher.cjs for why it is one long-lived
+ * streaming process rather than a poll-and-spawn. */
+const { ensureGpuWatcher, stopGpuWatcher, gpuPercentFor } = require('../tools/gpuWatcher.cjs');
+app.on('before-quit', stopGpuWatcher);
+
+ipcMain.handle('metrics:sample', () => {
+  const { ramBytes, cpuPercent, pids } = appRamAndCpu();
+  ensureGpuWatcher(); // lazy: costs nothing until something actually asks for metrics
+  // scope 'app': every figure here is THIS APPLICATION only, across all of its processes,
+  // matching Task Manager's row for it. No editor, no browser, no other app. This is the
+  // path a packaged/installed build always takes; the dev-server fallback (scope 'dev',
+  // which has to include the editor and browser hosting the page) never applies here, and
+  // the UI drops its asterisk and footnote accordingly.
+  return { ramBytes, cpuPercent, gpuPercent: gpuPercentFor(pids), scope: 'app', parts: [] };
+});
+
 
 function createWindow() {
   mainWindow = new BrowserWindow({

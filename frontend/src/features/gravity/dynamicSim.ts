@@ -30,8 +30,12 @@
  *    model's shape, so cluster-vs-cluster contact isn't load-bearing here.)
  *    Bodies WITHIN the same cluster never need exclusion either: they're one
  *    compound shape on one body, which can't self-collide.
- *  • Wheels (motor end-locks) get a true cylinder collider aligned to the
- *    axle (see dynamicSimTopology.ts's computeWheelGeometry) so they roll.
+ *  • Wheels (motor end-locks) are taken OUT of the contact solver entirely and
+ *    handled by a slip-based tire model (wheelContact.ts) — a cylinder-on-plane
+ *    rigid contact is a degenerate line manifold with no contact patch, which no
+ *    amount of friction/mass tuning fixes. Their cylinder shape is still built
+ *    (dynamicSimTopology.ts's computeWheelGeometry) because Jolt derives mass and
+ *    inertia from it, but on a layer that never touches the ground.
  *  • Mass: each body contributes its explicit inertial.mass, or a density
  *    fallback (400 kg/m^3 * estimated volume — NOT a flat placeholder mass,
  *    which was the other half of the sinking-through-the-ground bug: a
@@ -45,10 +49,12 @@
  * flat ground plane.
  */
 import * as THREE from 'three';
-import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/viewport/joltLoader';
+import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, JOLT_LAYER_MOVING_NO_GROUND, type JoltWorld } from '@/viewport/joltLoader';
 import { makeJoltShapeSettings } from '@/viewport/joltShapes';
 import { jointWorldGeom } from '@/viewport/joltJoints';
-import { jointMode, computeWheelGeometry } from './dynamicSimTopology';
+import { jointMode, computeWheelGeometry, type WheelGeom } from './dynamicSimTopology';
+import { WheelContactSolver } from './wheelContact';
+import { convexRadiusFor } from '@/viewport/joltShapes';
 import type { Document } from '@/core/model/index';
 import type { FK, DriveOf } from './rigidDrop';
 
@@ -67,6 +73,10 @@ const FIXED_DT_60 = 1 / 60;
 // time that caused the slowdown in the first place — worse fidelity, much better fps recovery.
 const MAX_SUBSTEPS = 3;
 const FALLBACK_DENSITY = 400; // kg/m^3, used only when a body has no explicit inertial.mass
+/** Motor torque/force ceiling (N·m / N). A real motor has finite torque, and an uncapped
+ *  velocity motor in this binding will apply UNLIMITED force to hit its target every substep.
+ *  See the hinge motor's note below for why this is no longer clamped down to 1. */
+const MOTOR_MAX_TORQUE = 5;
 
 const matOf = (t: any) => new THREE.Matrix4().compose(
   new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
@@ -117,6 +127,17 @@ function bodyMass(body: any, hullPoints?: Float32Array | null): number {
   return FALLBACK_DENSITY * volumeEstimate(body, hullPoints);
 }
 
+/** Cylinder shape for a wheel. Used for a wheels-only cluster, where it exists purely so Jolt
+ *  can derive a correct mass and inertia tensor — that cluster goes on JOLT_LAYER_MOVING_NO_GROUND
+ *  so the shape never generates ground contacts and the tire model owns the contact. */
+function wheelCylinderShape(Jolt: any, wc: WheelGeom): any | null {
+  const rotQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), wc.axisW);
+  const cyl = new Jolt.CylinderShapeSettings(wc.halfLen, wc.radius, convexRadiusFor(wc.halfLen, wc.radius));
+  return new Jolt.RotatedTranslatedShapeSettings(
+    new Jolt.Vec3(wc.offset.x, wc.offset.y, wc.offset.z), new Jolt.Quat(rotQ.x, rotQ.y, rotQ.z, rotQ.w), cyl,
+  );
+}
+
 interface MotorEntry { jointId: string; constraint: any; last: number }
 interface InitialPose { id: string; pos: THREE.Vector3; quat: THREE.Quaternion } // id = CLUSTER key (first body id)
 
@@ -139,6 +160,10 @@ export class DynamicSim {
   private _frozen = false;
   private _groundY = 0;
   private _wheelClusters = new Set<string>();
+  /** Slip-based tire model for driven wheels — see wheelContact.ts. */
+  private _wheelSolver = new WheelContactSolver();
+  /** Summed mass of every DYNAMIC cluster (static/superRigid ones hold themselves up). */
+  private _totalDynamicMass = 0;
   /** Peak speed seen per cluster SINCE the last once-a-second report (not just the
    *  instantaneous value at report time) — a 1Hz snapshot can completely miss a fast
    *  oscillation between reports and look deceptively calm while the render is visibly
@@ -242,6 +267,8 @@ export class DynamicSim {
       let totalMass = 0;
       let anyShape = false;
       let hasWheel = false;
+      /** Wheels held back from the compound, to be registered with the tire model below. */
+      const pendingWheels: { id: string; rel: THREE.Vector3; wc: WheelGeom }[] = [];
       for (const id of ids) {
         const body = doc.bodies[id];
         const M = worldMat(id);
@@ -251,37 +278,71 @@ export class DynamicSim {
 
         const wc = wheelCyl.get(id);
         const hp = meshVerts?.(id) ?? null;
-        let settings: any;
         if (wc) {
-          const rotQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), wc.axisW);
-          const cylSettings = new Jolt.CylinderShapeSettings(wc.halfLen, wc.radius, 0.02);
-          settings = new Jolt.RotatedTranslatedShapeSettings(
-            new Jolt.Vec3(wc.offset.x, wc.offset.y, wc.offset.z), new Jolt.Quat(rotQ.x, rotQ.y, rotQ.z, rotQ.w), cylSettings,
-          );
           hasWheel = true;
-          // Cross-check: the wheel shape's world position (rel + wc.offset, both relative to
-          // this cluster's origin) vs wherever the joint pivot for this same body ends up
-          // (see the BUILD joint log above) — if they're far apart, the wheel is spinning
-          // around a hinge that isn't where its own axle/shape actually is.
+          // NOT added to the compound. A driven wheel is deliberately taken OUT of the rigid
+          // contact solver and handed to the slip-based tire model in wheelContact.ts — see
+          // that file's header for why a cylinder-on-plane contact cannot be made to behave
+          // (degenerate line manifold, no contact patch, motor/friction stick-slip). Its mass
+          // and pose bookkeeping still happen here: it is still physically part of the
+          // cluster, it just doesn't generate contacts.
+          pendingWheels.push({ id, rel: rel.clone(), wc });
+          totalMass += bodyMass(body, hp);
+          sim._bodyInCluster.set(id, { clusterKey: root, localPos: rel, localQuat: bodyQuat });
+          // Cross-check: the wheel's position relative to this cluster vs wherever the joint
+          // pivot for this same body ends up (see the BUILD joint log above) — if they're far
+          // apart, the wheel spins around a hinge that isn't where its own axle actually is.
           const wheelWorld = rel.clone().add(wc.offset);
           // eslint-disable-next-line no-console
-          console.info(`[physics] BUILD wheel body=${id} cluster=${root} wheelShapeLocalToCluster=(${wheelWorld.x.toFixed(3)},${wheelWorld.y.toFixed(3)},${wheelWorld.z.toFixed(3)}) radius=${wc.radius.toFixed(3)}`);
-        } else {
-          settings = makeJoltShapeSettings(Jolt, body, { hullPoints: hp });
+          console.info(`[physics] BUILD wheel body=${id} cluster=${root} wheelLocalToCluster=(${wheelWorld.x.toFixed(3)},${wheelWorld.y.toFixed(3)},${wheelWorld.z.toFixed(3)}) radius=${wc.radius.toFixed(3)} -> tire model`);
+          continue;
         }
+        const settings = makeJoltShapeSettings(Jolt, body, { hullPoints: hp });
         if (!settings) continue;
         compound.AddShape(new Jolt.Vec3(rel.x, rel.y, rel.z), new Jolt.Quat(bodyQuat.x, bodyQuat.y, bodyQuat.z, bodyQuat.w), settings, 0);
         totalMass += bodyMass(body, hp);
         anyShape = true;
         sim._bodyInCluster.set(id, { clusterKey: root, localPos: rel, localQuat: bodyQuat });
       }
+      // A cluster made of NOTHING but wheels has no collider left after the exclusion above,
+      // and a body with no shape can't be created at all — Jolt derives mass and the inertia
+      // TENSOR from the shape, so an empty compound isn't merely untidy, it's unbuildable.
+      //
+      // This is the COMMON case, not an edge case: a motor joint never fuses, so an end-lock
+      // driven by one is always a single-body cluster. An earlier version fell back to rigid
+      // cylinder contact here and skipped the tire model, which meant the tire model never ran
+      // on a real model at all (measured: tireModelWheels=0 on a normal end_lock/middle/
+      // end_lock chain). Instead, keep the cylinder purely for its mass/inertia and put the
+      // body on the no-ground layer, so the tire model remains its only ground interaction.
+      const tireModelWheels = pendingWheels;
+      let inertiaOnlyWheels = false;
+      if (!anyShape && pendingWheels.length) {
+        for (const pw of pendingWheels) {
+          const s = wheelCylinderShape(Jolt, pw.wc);
+          if (!s) continue;
+          compound.AddShape(new Jolt.Vec3(pw.rel.x, pw.rel.y, pw.rel.z), Jolt.Quat.prototype.sIdentity(), s, 0);
+          anyShape = true;
+        }
+        inertiaOnlyWheels = anyShape;
+      }
       if (!anyShape) continue;
 
       const compoundResult = compound.Create();
-      if (!compoundResult.IsValid()) continue;
+      if (!compoundResult.IsValid()) {
+        // Was a silent `continue`, which dropped an entire cluster with no trace. The most
+        // likely cause is an invalid convex radius (Jolt requires it <= every half-extent),
+        // which is exactly what a flat 0.02 margin did to this app's centimetre-scale parts
+        // before convexRadiusFor started scaling it — see joltShapes.ts.
+        console.error(`[physics] cluster ${root} produced an INVALID compound shape (${ids.length} bodies) — cluster dropped, it will not simulate. Check collision margins vs part size.`);
+        continue;
+      }
 
       const motionType = superRigid ? Jolt.EMotionType_Static : Jolt.EMotionType_Dynamic;
-      const layer = superRigid ? JOLT_LAYER_NON_MOVING : JOLT_LAYER_MOVING;
+      // A wheels-only cluster keeps its cylinder for mass/inertia but must not contact the
+      // ground through the solver — the tire model owns that contact (see the exclusion above).
+      const layer = superRigid ? JOLT_LAYER_NON_MOVING
+        : inertiaOnlyWheels ? JOLT_LAYER_MOVING_NO_GROUND
+          : JOLT_LAYER_MOVING;
       const bs = new Jolt.BodyCreationSettings(compoundResult.Get(), new Jolt.RVec3(origin.x, origin.y, origin.z), Jolt.Quat.prototype.sIdentity(), motionType, layer);
       // Friction is a per-BODY scalar in this binding (no per-sub-shape
       // material support exposed) — Jolt's own default (~0.2 combined with
@@ -306,11 +367,19 @@ export class DynamicSim {
       // that kept climbing (0.1 -> 0.25 m/s) well past what pure rolling at this wheel's
       // radius/speed could produce. 1.0 (real rubber-on-concrete range) still grips more than
       // enough to drive a robot this light, without the runaway stick-slip.
-      bs.set_mFriction(hasWheel ? 1.0 : 0.3);
+      // Once a wheel is handled by the tire model it is no longer in the contact solver at
+      // all, so the old "wheel cluster grips at 1.0" no longer applies — that high friction
+      // existed purely to give the rigid cylinder traction, and combined with a stiff velocity
+      // motor it was itself the stick-slip source (hence the 1 N*m torque clamp below). Grip
+      // now comes from wheelContact.ts; whatever ELSE is in this cluster should just be a
+      // body resting on the floor. The 1.0 is kept only for the wheels-only fallback, which
+      // really is still relying on rigid cylinder contact.
+      bs.set_mFriction(tireModelWheels.length ? 0.3 : (hasWheel ? 1.0 : 0.3));
       if (hasWheel) sim._wheelClusters.add(root);
       if (!superRigid) {
         const mp = new Jolt.MassProperties();
         mp.set_mMass(Math.max(0.01, totalMass));
+        sim._totalDynamicMass += Math.max(0.01, totalMass);
         bs.set_mOverrideMassProperties(Jolt.EOverrideMassProperties_CalculateInertia);
         bs.set_mMassPropertiesOverride(mp);
         // Bumped well above Jolt's typical defaults: a multi-cluster chain linked
@@ -332,7 +401,27 @@ export class DynamicSim {
       bodyInterface.AddBody(rb.GetID(), superRigid ? Jolt.EActivation_DontActivate : Jolt.EActivation_Activate);
       sim._clusterBody.set(root, rb);
       sim._initial.push({ id: root, pos: origin.clone(), quat: new THREE.Quaternion() });
+
+      // Register the excluded wheels with the tire model. The cluster is created unrotated
+      // (Quat.sIdentity above), so the build-time WORLD axle direction is already this
+      // cluster's LOCAL axle direction — the same assumption the joint geometry below makes.
+      for (const pw of tireModelWheels) {
+        sim._wheelSolver.add({
+          bodyId: pw.id,
+          clusterKey: root,
+          localCentre: pw.rel.clone().add(pw.wc.offset),
+          localAxis: pw.wc.axisW.clone().normalize(),
+          radius: pw.wc.radius,
+          halfLen: pw.wc.halfLen,
+        });
+      }
     }
+
+    // Every wheel holds up an equal share of the WHOLE model, not just its own cluster: a
+    // driven end-lock is a single-body cluster but carries chassis load through its joints.
+    // Sized from cluster mass alone the spring was several times too soft and the wheel sank
+    // until the mesh clipped through the floor.
+    sim._wheelSolver.setSupportedMass(sim._totalDynamicMass);
 
     // ── 4. Cross-cluster joints (free / motor) ──────────────────────────
     const clusterOrigin = new Map<string, THREE.Vector3>(sim._initial.map((e) => [e.id, e.pos]));
@@ -384,8 +473,8 @@ export class DynamicSim {
         // "catch and kick" every substep instead of smoothly driving — see the hinge
         // motor's identical note below (confirmed live via a growing-peak-speed diagnostic).
         const slMotor = new Jolt.MotorSettings();
-        slMotor.set_mMaxForceLimit(2);
-        slMotor.set_mMinForceLimit(-2);
+        slMotor.set_mMaxForceLimit(MOTOR_MAX_TORQUE);
+        slMotor.set_mMinForceLimit(-MOTOR_MAX_TORQUE);
         ss.set_mMotorSettings(slMotor);
         const constraint = Jolt.castObject(ss.Create(bodyA, bodyB), Jolt.SliderConstraint);
         physicsSystem.AddConstraint(constraint);
@@ -405,17 +494,20 @@ export class DynamicSim {
       hs.set_mPoint2(new Jolt.RVec3(localB.x, localB.y, localB.z));
       hs.set_mHingeAxis1(new Jolt.Vec3(axis.x, axis.y, axis.z));
       hs.set_mHingeAxis2(new Jolt.Vec3(axis.x, axis.y, axis.z));
-      // Dropped from 5 N·m: verified live via a peak-speed diagnostic that a wheel's linear
-      // speed kept CLIMBING every report (0.1 -> 0.25 m/s) well past what pure rolling at
-      // this wheel's radius/commanded rad/s could produce — classic stick-slip, a stiff
-      // motor correcting hard each substep against high friction, injecting a little extra
-      // energy every cycle instead of settling. Still generous for a robot this light
-      // (Force = Torque/radius, e.g. 1 N·m / 0.03m radius = ~33N, far more than needed to
-      // overcome this model's own ~10N weight), just no longer strong enough to "fight" the
-      // ground into a growing oscillation.
+      // History: this was 5 N·m, then dropped to 1 N·m after a peak-speed diagnostic showed a
+      // wheel's linear speed CLIMBING every report (0.1 -> 0.25 m/s) — classic stick-slip, a
+      // stiff motor correcting hard each substep against the rigid contact's high friction and
+      // injecting energy every cycle. That clamp treated the symptom: the real cause was
+      // driving a wheel through an impulse friction solver at all.
+      //
+      // Now that a driven wheel is out of the contact solver entirely (wheelContact.ts), the
+      // energy-injecting loop the clamp was defending against no longer exists — grip comes
+      // from a continuous slip force that is clamped so it can never reverse the slip it
+      // opposes, so it cannot ring up. Restored to MOTOR_MAX_TORQUE so wheels are actually
+      // strong enough to drive rather than being kept artificially weak.
       const hMotor = new Jolt.MotorSettings();
-      hMotor.set_mMaxTorqueLimit(1);
-      hMotor.set_mMinTorqueLimit(-1);
+      hMotor.set_mMaxTorqueLimit(MOTOR_MAX_TORQUE);
+      hMotor.set_mMinTorqueLimit(-MOTOR_MAX_TORQUE);
       hs.set_mMotorSettings(hMotor);
       const constraint = Jolt.castObject(hs.Create(bodyA, bodyB), Jolt.HingeConstraint);
       physicsSystem.AddConstraint(constraint);
@@ -434,7 +526,8 @@ export class DynamicSim {
       // eslint-disable-next-line no-console
       console.info(
         `[physics] DynamicSim built: bodies=${bodies.length} clusters=${clusterBodies.size} ` +
-        `wheelClusters=${wheelClusters} motorJoints=${sim._motorJoints.length} groundY=${groundY}`,
+        `wheelClusters=${wheelClusters} tireModelWheels=${sim._wheelSolver.count} ` +
+        `motorJoints=${sim._motorJoints.length} groundY=${groundY}`,
       );
       if (sim._motorJoints.length === 0) {
         console.warn('[physics] no motor joints found — spinning a wheel will do nothing. Check that the joint mode resolves to "motor" (spinnable end-lock), not "free"/"rigid".');
@@ -480,7 +573,14 @@ export class DynamicSim {
 
     let steps = 0;
     this._acc += Math.min(dt, FIXED_DT_60 * MAX_SUBSTEPS);
-    while (this._acc >= FIXED_DT_60 && steps < MAX_SUBSTEPS) { this.world!.jolt.Step(FIXED_DT_60, 1); this._acc -= FIXED_DT_60; steps++; }
+    while (this._acc >= FIXED_DT_60 && steps < MAX_SUBSTEPS) {
+      // Wheel forces must be applied IMMEDIATELY before each Step, inside this loop — Jolt
+      // clears accumulated forces at the end of every step, so applying them once per frame
+      // outside the loop would drop them on every substep after the first.
+      this._wheelSolver.apply(this.world!.Jolt, this.world!.bodyInterface, this._clusterBody, this._groundY, FIXED_DT_60);
+      this.world!.jolt.Step(FIXED_DT_60, 1);
+      this._acc -= FIXED_DT_60; steps++;
+    }
 
     // Track PEAK speed every single frame (not just once a second) — see _peakSpeed's
     // comment for why: a 1Hz diagnostic snapshot can completely miss fast oscillation.
@@ -550,6 +650,16 @@ export class DynamicSim {
         // eslint-disable-next-line no-console
         console.info(`[physics] PEAK speed since last report: ${peaks.length ? peaks.join(', ') : '(all at rest)'}`);
         this._peakSpeed.clear();
+        // Tire model state — the direct answer to "is the wheel gripping, skidding, or in the
+        // air", which the rigid-contact version could never report because the contact lived
+        // inside the solver. penetration should sit near TARGET_PENETRATION (4mm) when
+        // resting; slipLong near 0 means rolling without slipping; SKID means the friction
+        // circle saturated (commanded faster than the ground can deliver).
+        if (this._wheelSolver.count) {
+          const wheelLines = this._wheelSolver.describe();
+          // eslint-disable-next-line no-console
+          console.info(`[physics] WHEELS: ${wheelLines.join(' | ')}`);
+        }
         // Joint-violation check: for each cross-cluster joint, how far apart are its
         // two connection points RIGHT NOW? A healthy hinge/slider holds this near 0.
         // A large or fast-growing number pinpoints exactly which joint's pivot/axis
@@ -583,6 +693,21 @@ export class DynamicSim {
     }
 
     return this._readPoses();
+  }
+
+  /**
+   * True when every cluster body is asleep, i.e. the model has fully come to rest.
+   *
+   * Jolt already stops integrating a sleeping body, but the caller still has to be told:
+   * without this, a settled robot kept writing identical poses into the doc every frame,
+   * which re-rendered React and redrew the scene at 60fps forever. Asking Jolt's own
+   * activation state is authoritative — far better than comparing poses with a threshold.
+   */
+  isSettled(): boolean {
+    for (const rb of this._clusterBody.values()) {
+      if (rb.IsActive?.()) return false;
+    }
+    return true;
   }
 
   private _resetToInitial() {

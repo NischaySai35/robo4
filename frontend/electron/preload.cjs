@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('tetrobot', {
   askOllama: (opts) => ipcRenderer.invoke('ai:ollama', opts),
   ollamaStatus: () => ipcRenderer.invoke('ai:ollama-status'),
 
+  // Real per-application RAM / CPU / GPU, the same figures Task Manager reports for
+  // this app. Resolves { ramBytes, cpuPercent, gpuPercent } — gpuPercent is null when
+  // unavailable (non-Windows, or the perf counters are localised/blocked), which the
+  // UI must render as "unknown" rather than as 0.
+  systemMetrics: () => ipcRenderer.invoke('metrics:sample'),
+
   // ── Auto-update ──────────────────────────────────────────────────────────
   appVersion: () => ipcRenderer.invoke('app:version'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),

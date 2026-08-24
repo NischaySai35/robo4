@@ -8,11 +8,11 @@
 import './ViewportStats.css';
 import { useEffect, useRef, useState } from 'react';
 import { bridge } from '@/viewport/cameraBridge';
+import { useSystemMetrics, formatRam } from '@/viewport/useSystemMetrics';
 
 type Stats = {
   fps: number;
   tris: number;
-  mem: number | null;
   engine: string;
   ptSamples: number;
   ptSamplesPerSec: number;
@@ -20,8 +20,12 @@ type Stats = {
 
 export default function ViewportStats() {
   const [stats, setStats] = useState<Stats>({
-    fps: 0, tris: 0, mem: null, engine: 'eevee', ptSamples: 0, ptSamplesPerSec: 0,
+    fps: 0, tris: 0, engine: 'eevee', ptSamples: 0, ptSamplesPerSec: 0,
   });
+  // Real RAM/CPU/GPU for this application (desktop shell only) — see useSystemMetrics
+  // for why the old JS-heap number was dropped rather than kept alongside these.
+  const sys = useSystemMetrics();
+  const [loadOpen, setLoadOpen] = useState(false);
   const lastTime    = useRef(performance.now());
   const lastSamples = useRef(0);
 
@@ -41,17 +45,13 @@ export default function ViewportStats() {
         fpsAcc = 0; fpsSamples = 0;
 
         const r    = bridge.getRendererStats?.() ?? { triangles: 0 };
-        const mem: number | null = (() => {
-          const p = (performance as any).memory;
-          return p ? Math.round(p.usedJSHeapSize / 1048576) : null;
-        })();
         const eng  = bridge.getRenderEngine?.() ?? 'eevee';
         const ptS  = bridge.getPathTracerSamples?.() ?? 0;
         // Samples accumulated since last UI update → samples/sec
         const ptSps = Math.round((ptS - lastSamples.current) * (1000 / 250));
         lastSamples.current = ptS;
 
-        setStats({ fps, tris: r.triangles, mem, engine: eng, ptSamples: ptS, ptSamplesPerSec: Math.max(0, ptSps) });
+        setStats({ fps, tris: r.triangles, engine: eng, ptSamples: ptS, ptSamplesPerSec: Math.max(0, ptSps) });
       }
     };
 
@@ -64,11 +64,23 @@ export default function ViewportStats() {
     : n >= 1_000   ? `${(n / 1_000).toFixed(0)}K`
     : `${n}`;
 
+  const loadColour = (pct: number) => (pct >= 85 ? '#f87171' : pct >= 60 ? '#fbbf24' : '#4ade80');
+
   const ENGINE_COLOUR: Record<string, string> = {
     eevee:   '#2f7dff',
     cycles:  '#e07b39',
     raycast: '#22c55e',
   };
+
+  // "Unknown GPU" must not read as "GPU idle", so an absent GPU figure falls back to
+  // CPU alone rather than being treated as a zero that could drag the number down.
+  const combinedLoad = Math.max(sys.cpuPercent, sys.gpuPercent ?? 0);
+  // A browser tab can't be attributed a slice of the shared browser process tree, so the
+  // dev-server source reports the whole machine. Mark it rather than let it read as app-only.
+  const sysWide = sys.scope === 'dev';
+  const scopeHint = sysWide
+    ? 'Dev server + the whole browser, so it includes your other tabs. The desktop app reports this application only.'
+    : 'This application only, across all its processes';
 
   const isCycles   = stats.engine === 'cycles';
   const maxSamples = bridge.getMaxSamples?.() ?? 32;
@@ -92,11 +104,52 @@ export default function ViewportStats() {
         <span className="vp-stats-val">{fmtTris(stats.tris)}</span>
       </div>
 
-      {stats.mem !== null && (
-        <div className="vp-stats-row">
-          <span className="vp-stats-label">JS mem</span>
-          <span className="vp-stats-val">{stats.mem} MB</span>
-        </div>
+      {sys.available && (
+        <>
+          <div className="vp-stats-row" title={scopeHint}>
+            <span className="vp-stats-label">RAM{sysWide ? '*' : ''}</span>
+            <span className="vp-stats-val">{formatRam(sys.ramBytes)}</span>
+          </div>
+
+          {/* Combined load, expandable to the CPU/GPU split. The combined figure is the
+              BUSIER of the two, not their sum: CPU and GPU run concurrently, so adding
+              them would report 90% for a machine that is comfortably half idle, and the
+              number you actually want at a glance is "how close to a limit am I". */}
+          <div
+            className="vp-stats-row vp-stats-row-click"
+            onClick={() => setLoadOpen((v) => !v)}
+            title={loadOpen ? 'Hide CPU/GPU split' : 'Show CPU/GPU split'}
+          >
+            <span className="vp-stats-label">Load{sysWide ? '*' : ''} {loadOpen ? '▾' : '▸'}</span>
+            <span className="vp-stats-val" style={{ color: loadColour(combinedLoad) }}>
+              {Math.round(combinedLoad)} %
+            </span>
+          </div>
+
+          {loadOpen && (
+            <>
+              <div className="vp-stats-row vp-stats-row-sub">
+                <span className="vp-stats-label">· CPU</span>
+                <span className="vp-stats-val" style={{ color: loadColour(sys.cpuPercent) }}>
+                  {Math.round(sys.cpuPercent)} %
+                </span>
+              </div>
+              {sys.parts.map((part) => (
+                <div className="vp-stats-row vp-stats-row-sub" key={part.label}>
+                  <span className="vp-stats-label">· {part.label}</span>
+                  <span className="vp-stats-val">{formatRam(part.ramBytes)}</span>
+                </div>
+              ))}
+              {sysWide && <div className="vp-stats-note vp-stats-scope">* dev mode: editor + whole browser. The packaged app reports itself only.</div>}
+              <div className="vp-stats-row vp-stats-row-sub">
+                <span className="vp-stats-label">· GPU</span>
+                <span className="vp-stats-val" style={{ color: sys.gpuPercent === null ? '#888' : loadColour(sys.gpuPercent) }}>
+                  {sys.gpuPercent === null ? '—' : `${Math.round(sys.gpuPercent)} %`}
+                </span>
+              </div>
+            </>
+          )}
+        </>
       )}
 
       {isCycles && (

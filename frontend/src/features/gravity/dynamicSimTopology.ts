@@ -78,20 +78,45 @@ export function computeWheelGeometry(doc: Document, worldMat: (id: string) => TH
       // cover the remaining few outliers, not the whole gap a raw max vs. typical-radius
       // mismatch would leave).
       radii.sort((a, b) => a - b);
-      radius = radii[Math.min(radii.length - 1, Math.floor(radii.length * 0.95))];
+      // 99th, not 95th. The percentile exists to reject a stray outlier vertex (a seam, a
+      // rounding artifact), but 95 throws away a real 5% of the rim on a part whose radii
+      // genuinely vary — an end-lock connector is not a round wheel — so it UNDERSIZED the
+      // collision cylinder, which is what the generous padding below was compensating for.
+      // 99 is still outlier-robust while landing much closer to the true extent, so the
+      // padding can shrink to something visually negligible.
+      radius = radii[Math.min(radii.length - 1, Math.floor(radii.length * 0.99))];
     }
-    if (!(radius > 0)) { const g: any = doc.bodies[bid]?.visual?.geometry ?? {}; const s = Math.max(...scale.map(Math.abs)) || 1; radius = (g.radius ?? 0.04) * s; aMin = -(g.length ?? 0.06) * s / 2; aMax = -aMin; centre.set(0, 0, 0); }
+    if (!(radius > 0)) {
+      const g: any = doc.bodies[bid]?.visual?.geometry ?? {};
+      // No mesh vertices to measure. Only a genuinely ROUND primitive can have its wheel
+      // geometry inferred from its declared geometry; anything else (a box, a torus, a body
+      // still awaiting its asset) has no radius to speak of, and the old `g.radius ?? 0.04`
+      // fabricated a flat 4cm one regardless of how big the body actually was — a 20cm box
+      // got a 4cm wheel cylinder bearing no relation to its own size. Skip those: they keep
+      // their real collision shape and ordinary ground contact, which is the honest answer
+      // for a body that isn't shaped like a wheel.
+      if (!(g.radius > 0)) continue;
+      const s = Math.max(...scale.map(Math.abs)) || 1;
+      radius = g.radius * s;
+      aMin = -(g.length ?? 0.06) * s / 2; aMax = -aMin;
+      centre.set(0, 0, 0);
+    }
     const axialMid = (aMin + aMax) / 2;
     const offset = centre.clone().add(axisW.clone().multiplyScalar(axialMid));
-    // Padding bumped from the original +0.003/+0.001 (barely a sliver): this radius is
-    // estimated from a possibly-simplified/stride-sampled hull of the wheel mesh's vertices
-    // (see convexHullPoints), which can undersize the true visual mesh — enough to let the
-    // rendered wheel visibly poke into the floor even while physics correctly rests the
-    // (slightly-too-small) collision cylinder on the ground with a valid positive height.
-    // A few mm of the collision shape being a bit larger than the true mesh (slight
-    // "floating") is far less visually jarring than the mesh visibly clipping through the
-    // floor, so pad generously rather than tightly.
-    wheelCyl.set(bid, { axisW, radius: Math.max(0.01, radius) + 0.01, halfLen: Math.max(0.01, (aMax - aMin) / 2) + 0.005, offset });
+    // Padding covers the remaining gap between this estimate and the true visual mesh (the
+    // hull is stride-sampled, so it can still undersize slightly), biased oversize because a
+    // wheel floating a hair reads better than one clipping through the floor.
+    //
+    // It was a FLAT +0.01/+0.005, which is 25% oversize on a 40mm wheel — the wheel's collision
+    // surface sat a full centimetre below its visual surface, so the model visibly hovered.
+    // That went unnoticed while Jolt's 2cm speculative-contact default (see joltLoader) was
+    // separately stopping bodies 2cm short of the floor: one error was hiding inside the other.
+    // With contact now correct to ~1mm, this has to be scaled to the part like every other
+    // length in this engine, not left as a flat metre-scale constant.
+    const r0 = Math.max(0.01, radius);
+    const h0 = Math.max(0.01, (aMax - aMin) / 2);
+    const pad = Math.min(0.003, Math.max(0.0005, r0 * 0.02)); // 2% of radius, 0.5-3mm
+    wheelCyl.set(bid, { axisW, radius: r0 + pad, halfLen: h0 + pad * 0.5, offset });
   }
   return wheelCyl;
 }

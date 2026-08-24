@@ -1,5 +1,6 @@
 /**
- * SpreadHud — single-line VSEPR spread readout, sits just above the EEVEE stats box.
+ * SpreadHud — single-line VSEPR spread readout, stacked above the EEVEE stats box by
+ * .vp-hud-stack (see SimCanvas). Deliberately NOT absolutely positioned.
  * Shows only the repulsion energy (Σ 1/dist between body centres): LOWER = more spread out.
  * Updates live as you drag; the number tints green while it's dropping, red while it climbs.
  */
@@ -19,8 +20,10 @@ export default function SpreadHud() {
   prev.current = s.energy;
   const color = better ? '#4ade80' : worse ? '#f87171' : 'rgba(255,255,255,0.85)';
 
+  // No absolute positioning / magic offset: this is a flow item inside .vp-hud-stack, so
+  // the stats box below can grow (RAM, Load, the CPU/GPU expansion) without colliding.
   const box: React.CSSProperties = {
-    position: 'absolute', bottom: 100, left: 12, zIndex: 10,
+    alignSelf: 'flex-start',
     background: 'rgba(30,30,30,0.38)', backdropFilter: 'blur(6px)',
     border: '1px solid rgba(255,255,255,0.10)', borderRadius: 8, padding: '5px 10px',
     font: '10px/1 var(--font-mono, ui-monospace, monospace)', letterSpacing: '0.05em',

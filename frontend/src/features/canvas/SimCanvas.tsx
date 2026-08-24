@@ -548,8 +548,13 @@ export default function SimCanvas() {
     <Fragment>
       <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
       <TransformHUD />
-      <ViewportStats />
-      <SpreadHud />
+      {/* Both HUDs live in ONE bottom-left column so they stack by flow. They used to be
+          independently absolutely-positioned with hardcoded offsets, so any row added to the
+          stats box (RAM/Load) silently overlapped the VSEPR readout above it. */}
+      <div className="vp-hud-stack">
+        <SpreadHud />
+        <ViewportStats />
+      </div>
       <DragWarningHud />
       <ViewportCtxMenu />
     </Fragment>

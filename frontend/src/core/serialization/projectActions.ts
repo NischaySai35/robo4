@@ -4,6 +4,7 @@
  */
 
 import { serializeProject } from './project';
+import { projectFingerprint } from './projectFingerprint';
 import { saveProjectToFile, openProjectFromFile, writeProjectToHandle } from './fileIO';
 import { putProject, getProjectData, listProjects, removeProject, saveHandle, getSavedHandle } from './projectLibrary';
 // Note: all projectLibrary functions are async (IndexedDB-backed).
@@ -30,6 +31,7 @@ export function newProject(opts: { empty?: boolean; confirm?: boolean } = {}) {
   const r = bridge.loadScene?.(project);
   if (r && !r.ok) { alert(r.error); return; }
   useDocStore.getState().setDoc(null, null); // also clears libraryId (see setDoc)
+  invalidateAutoSaveFingerprint(); // different document — never match the old one's fingerprint
 }
 
 /** A deep copy of the default module document with regenerated ids, so a new
@@ -129,21 +131,72 @@ export async function saveProject() {
   return saveProjectAs();
 }
 
-/** Auto-save on a timer — writes to disk (file handle) or IndexedDB (libraryId). */
+/* ── auto-save change detection ─────────────────────────────────────────────
+ *
+ * The auto-save timer fires every 30s forever, and it used to re-serialise, re-pack
+ * and re-write the ENTIRE project every single time — including every mesh asset —
+ * whether or not anything had changed.
+ *
+ * That is not merely wasted work, it is a large recurring allocation. packAssets()
+ * (projectLibrary.ts) runs atob() over each asset and copies it byte-by-byte into a
+ * fresh Uint8Array, then IndexedDB structured-clones the result again. On a project
+ * with a few hundred thousand triangles of mesh data that is tens of MB allocated
+ * per cycle, twice a minute, indefinitely. Left idle, the JS heap climbs steadily
+ * into the hundreds of MB purely as uncollected garbage from this one timer, which
+ * is exactly the reported symptom: heap growth that tracks TIME rather than use.
+ *
+ * So: fingerprint what would be written, and skip the whole save when it matches the
+ * last one. An idle app now allocates nothing at all on the auto-save path.
+ *
+ * Two things the fingerprint must handle carefully:
+ *  - `savedAt` is a fresh timestamp on every serializeProject() call, so it would
+ *    make every fingerprint differ. It is excluded.
+ *  - assets hold base64 mesh payloads; stringifying those would reintroduce the very
+ *    cost being avoided. They are compared by object IDENTITY instead (they are
+ *    replaced wholesale on import/edit-mesh), represented in the fingerprint by a
+ *    token that changes only when that reference changes.
+ */
+let _lastAssetsRef: unknown;
+let _assetsToken = 0;
+let _lastSavedFingerprint: string | null = null;
+
+function autoSaveFingerprint(project: unknown): string | null {
+  const model = (project as any)?.model ?? {};
+  if (model.assets !== _lastAssetsRef) { _lastAssetsRef = model.assets; _assetsToken++; }
+  return projectFingerprint(project, _assetsToken);
+}
+
+/** Forget the last fingerprint so the next auto-save definitely writes. Call after any
+ *  save path that changes WHERE we save to, so a new target always gets a full write. */
+function invalidateAutoSaveFingerprint() { _lastSavedFingerprint = null; }
+
+/** Auto-save on a timer — writes to disk (file handle) or IndexedDB (libraryId).
+ *  No-ops entirely when nothing has changed since the last successful save. */
 export async function autoSave() {
   const { handle, name, libraryId } = useDocStore.getState();
+  if (!handle && !libraryId) return; // untitled with no libraryId → nothing to save to
+
+  const project = serializeProject();
+  const fingerprint = autoSaveFingerprint(project);
+  // Unchanged since the last successful auto-save → skip the serialise/pack/write
+  // entirely. This is the whole fix: an idle app does no work and allocates nothing.
+  if (fingerprint !== null && fingerprint === _lastSavedFingerprint) return;
+
   if (handle) {
     try {
-      await writeProjectToHandle(handle, serializeProject());
+      await writeProjectToHandle(handle, project);
       useDocStore.getState().setStatus('saved');
+      _lastSavedFingerprint = fingerprint;
       saveCurrentToLibrary(name ?? undefined); // update thumbnail; best-effort
     } catch { /* will retry next interval */ }
-  } else if (libraryId) {
+  } else {
     // Library-only project: save to IndexedDB (no size limit, so safe to auto-save).
     const id = await saveCurrentToLibrary(name ?? undefined);
-    if (id) useDocStore.getState().setStatus('saved');
+    if (id) {
+      useDocStore.getState().setStatus('saved');
+      _lastSavedFingerprint = fingerprint;
+    }
   }
-  // untitled with no libraryId → skip (nothing to auto-save to)
 }
 
 /** Always prompt for a new file location. Save As creates a DISTINCT project, so
@@ -152,6 +205,7 @@ export async function autoSave() {
 export async function saveProjectAs() {
   const res = await saveProjectToFile(serializeProject(), 'tetrobot.nischay');
   if (res) {
+    invalidateAutoSaveFingerprint(); // new save target — force a full write next tick
     useDocStore.getState().setDoc(res.name, res.handle);
     useDocStore.getState().setLibraryId(null); // force a fresh library entry for the new file
     if (res.handle) await saveHandle(res.name, res.handle); // survive the next reload
@@ -264,6 +318,7 @@ export async function openFromLibrary(id: string, name: string): Promise<boolean
   if (r && !r.ok) { alert(`Could not open project: ${r.error}`); return false; }
   useDocStore.getState().setDoc(name, null);
   useDocStore.getState().setLibraryId(id);
+  invalidateAutoSaveFingerprint(); // different document loaded
   return true;
 }
 

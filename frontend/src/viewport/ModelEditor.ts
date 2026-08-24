@@ -900,6 +900,7 @@ export class ModelEditor {
     }
     this._gravScales = Object.fromEntries(Object.entries(doc.bodies).map(([id, b]: any) => [id, [...b.transform.scale]]));
     this._gravStarts = []; // marker that a sim is active (poses come per-body from the sim)
+    this._gravSettled = false; // a fresh sim always has at least one pose to apply
 
     // Physics runs on a FLAT ground plane (like a Gazebo world's ground_plane). A bumpy heightfield
     // makes rigid bodies rock on the bumps and never settle → the perpetual shaking. The rough road
@@ -962,6 +963,15 @@ export class ModelEditor {
       return dir * rpm * Math.PI / 30;
     };
     const poses = sim.step(dt, driveOf) as Map<string, { position: number[]; quaternion: number[] }>;
+
+    // Once every body is asleep the solved poses are identical frame after frame. Writing
+    // them into the doc anyway re-ran the model-store subscribers, re-synced the renderers
+    // and requested a redraw 60 times a second for a scene that had stopped moving — which
+    // is why an idle viewport still burned ~20% GPU. Apply the resting pose exactly once,
+    // then go quiet until something wakes the sim (a motor command re-activates the bodies).
+    const settled = sim.isSettled();
+    if (settled && this._gravSettled) return;
+    this._gravSettled = settled;
 
     const vals: Record<string, any> = {};
     for (const [id, pose] of poses) {
@@ -1039,6 +1049,7 @@ export class ModelEditor {
     this._gravLastVals = null;
     this._gravStarts = null;
     this._driveWheelIds = null;
+    this._gravSettled = false;
   }
 
   // ── Rough terrain floor — a PERSISTENT fixed rough road on the Animation page (gravity on OR
@@ -1306,7 +1317,17 @@ export class ModelEditor {
       return true; // one more draw to show the restored pose
     }
     // Live-animating (autonomous, not driven by a user event) → keep drawing.
-    return anim.preview || !!this._gravSim || !!this._fallingBoxes || !!this._gravFloatMoving;
+    //
+    // Both physics and animation are gated on actually MOVING, not merely being enabled:
+    //  • `anim.preview` alone was true for the whole time the Animation page was open, so
+    //    simply having it open redrew at 60fps even while paused on a frame with nothing
+    //    changing. Scrubbing still redraws — useAnimationStore is subscribed to
+    //    requestRender in SimCanvas — so gating on `playing` loses nothing.
+    //  • a gravity sim whose bodies have all gone to sleep is likewise not animating.
+    return (anim.preview && anim.playing)
+      || (!!this._gravSim && !this._gravSettled)
+      || !!this._fallingBoxes
+      || !!this._gravFloatMoving;
   }
 
   _fkWithOverrides(doc: Document, values: any) {

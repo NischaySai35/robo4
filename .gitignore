@@ -20,12 +20,12 @@ out/
 # ── Electron packaged installers / app bundles ───────────────────────────────
 release/
 release-builds/
-apps/studio/release/
+studio/release/
 # Wildcard, not just "release/": an electron-builder run that output to release2/ slipped
 # past the exact-name rules and committed 72 build files including a 266MB app.asar, which
 # GitHub rejects (100MB/file limit). Any release* output directory is build product.
 release*/
-apps/studio/release*/
+studio/release*/
 # app.asar is the packaged app bundle — always build output, always too big for git.
 *.asar
 *.exe

@@ -4,7 +4,7 @@ Layered, feature-based structure. Dependencies point **downward**: `features` (U
 → `viewport`/`kinematics`/`state` → `core`. The **core model** never imports React
 or Three.js — it's the backend-agnostic source of truth (see [ROADMAP](../ROADMAP.md)).
 
-Imports use the **`@/` alias** (= `apps/studio/src`). Example: `import { bridge } from
+Imports use the **`@/` alias** (= `studio/src`). Example: `import { bridge } from
 '@/viewport/cameraBridge.js'`. Only same-directory imports (`./Foo.css`) stay relative.
 
 ```

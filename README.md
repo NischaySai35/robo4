@@ -163,7 +163,7 @@ For the code-level layout and design details, see
 ### Web (dev)
 
 ```bash
-cd apps/studio
+cd studio
 npm install
 npm run dev          # http://localhost:5173
 npm run typecheck    # tsc --noEmit
@@ -173,7 +173,7 @@ npm run build        # production build
 ### Desktop (Electron)
 
 ```bash
-cd apps/studio
+cd studio
 npm run electron:dev   # Vite + Electron together
 npm run electron:build # packaged installer (Windows NSIS)
 ```

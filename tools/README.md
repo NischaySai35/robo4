@@ -8,7 +8,7 @@ angles, fixed root, world transform and mode, plus all welds (with their rigid
 structure — on disk the file is a `NSHCRY` binary blob (a SHA-256 keystream
 cipher keyed by an app secret + per-file salt), so a text editor shows only
 gibberish and only the TETROBOT app / this add-on can read it. See
-`apps/studio/src/persistence/codec.js` and `decode_nischay()` below for the scheme.
+`studio/src/persistence/codec.js` and `decode_nischay()` below for the scheme.
 
 > Honest note: the key ships inside client code, so this is strong app-locking /
 > obfuscation, not unbreakable DRM (impossible for any client-side format).
@@ -58,7 +58,7 @@ Blender → Edit → Preferences → Add-ons → Install… → pick
 (.nischay)"**. Then: **File → Import → TETROBOT Project (.nischay)**.
 
 > Keep the geometry constants at the top of the add-on in sync with
-> `apps/studio/src/store/armStore.js` if rod dimensions ever change.
+> `studio/src/store/armStore.js` if rod dimensions ever change.
 
 Fusion 360 has no `.nischay` reader; for CAD use a STEP export (not yet
 implemented) rather than GLB.

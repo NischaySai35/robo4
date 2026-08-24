@@ -19,7 +19,7 @@ If that's you, here's how to work in this repo cleanly.
 ## Setup
 
 ```bash
-cd apps/studio
+cd studio
 npm install
 npm run dev          # http://localhost:5173
 ```

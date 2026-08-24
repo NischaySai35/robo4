@@ -28,7 +28,7 @@ jobs:
 
       - name: Install (studio)
         run: npm install --legacy-peer-deps --no-audit --no-fund
-        working-directory: apps/studio
+        working-directory: studio
 
       - name: Typecheck
         run: npm run typecheck
@@ -37,8 +37,8 @@ jobs:
         run: npm test
 
       # Fails only on NEW boundary violations. The 16 pre-existing ones are recorded in
-      # apps/studio/.dependency-cruiser-known-violations.json and are Phase 3 work; see
-      # apps/studio/.dependency-cruiser.cjs for what the layers mean.
+      # studio/.dependency-cruiser-known-violations.json and are Phase 3 work; see
+      # studio/.dependency-cruiser.cjs for what the layers mean.
       - name: Layer boundaries
         run: npm run depcruise
 

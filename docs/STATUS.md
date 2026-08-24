@@ -32,17 +32,17 @@ both sides (TS `rtExport.ts`/`rtStatus.ts` ↔ Rust `traj-io`), so a schema chan
 
 | Capability | Where | Evidence |
 |---|---|---|
-| Deterministic, reproducible physics | `apps/studio` physicsConfig/PhysicsSim | determinism tests |
-| Real collision geometry (cyl/capsule/cone, mesh convex hull) | `apps/studio` colliderFactory | shape + hull tests |
-| 6-DOF IK (position + orientation) | `apps/studio` modelIK | 6-DOF convergence test |
-| Jerk-limited (S-curve) + corner-blended trajectories | `apps/studio` trajectory | cap/blend tests |
-| URDF round-trip fidelity | `apps/studio` exporters/importers | round-trip tests |
-| Reproducible RL training | `apps/studio` policy (seeded) | training test |
+| Deterministic, reproducible physics | `studio` physicsConfig/PhysicsSim | determinism tests |
+| Real collision geometry (cyl/capsule/cone, mesh convex hull) | `studio` colliderFactory | shape + hull tests |
+| 6-DOF IK (position + orientation) | `studio` modelIK | 6-DOF convergence test |
+| Jerk-limited (S-curve) + corner-blended trajectories | `studio` trajectory | cap/blend tests |
+| URDF round-trip fidelity | `studio` exporters/importers | round-trip tests |
+| Reproducible RL training | `studio` policy (seeded) | training test |
 | 1 kHz control loop + PID + controller manager | `native/include/rt_control.h` | PID/traj/hold tests |
 | Software safety: limits, soft end-stops, e-stop | `rt_control.h` SafetyMonitor | clamp/block/estop tests |
 | CiA 402 drive state machine + sim EtherCAT drives | `cia402.h`, `ethercat_hardware.h` | bring-up + drive tests |
 | Bidirectional live link (telemetry out, commands in) | `rt_telemetry.h` | native_core_tests |
-| Operator console (send move / e-stop, live readout) | `apps/studio` RtCoreReadout | same `ws://127.0.0.1:8088` contract, unchanged |
+| Operator console (send move / e-stop, live readout) | `studio` RtCoreReadout | same `ws://127.0.0.1:8088` contract, unchanged |
 
 **Quality:** Studio 75 tests (TypeScript strict, typecheck clean, production build OK);
 native core ported to C++ (see `native/MIGRATION.md`) with a parity test suite
@@ -63,7 +63,7 @@ not the loop. Sub-100 µs requires PREEMPT_RT (the architecture targets it).
 
 ## Demo (≈5 minutes)
 
-1. **Studio** — `cd apps/studio && npm run dev`. Build/load a robot; toggle **IK** and drag the
+1. **Studio** — `cd studio && npm run dev`. Build/load a robot; toggle **IK** and drag the
    tip; enable **Gravity**; open **Analysis** for the stress heatmap.
 2. **RT Core** — build `native/` (needs MuJoCo, Zenoh, nlohmann_json, IXWebSocket — see
    `native/MIGRATION.md`), then `./rtcored --ethercat`. Watch 3 CiA 402 axes brought up →
@@ -72,7 +72,7 @@ not the loop. Sub-100 µs requires PREEMPT_RT (the architecture targets it).
    **Runtime ▸ RT Core**, click **Connect**, and use **Send sample move** / **E-STOP** /
    **Reset**. The progress bar + per-joint tracking error update live (same
    `ws://127.0.0.1:8088` contract as before — app code is unchanged).
-4. **Tests** — `cd apps/studio && npm run typecheck && npx tsx --test "src/**/*.test.ts"` and
+4. **Tests** — `cd studio && npm run typecheck && npx tsx --test "src/**/*.test.ts"` and
    the `native/tests` parity suite (`native_core_tests`, once built via CMake).
 
 ## Talking points (honest)

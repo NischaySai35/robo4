@@ -16,7 +16,7 @@ Use:
 
 (Or run this file from Blender's Text Editor to register it for the session.)
 
-This mirrors apps/studio/src/three/RobotFK.js and store/armStore.js. Keep the
+This mirrors studio/src/three/RobotFK.js and store/armStore.js. Keep the
 constants below in sync if the rod dimensions ever change.
 """
 
@@ -65,7 +65,7 @@ def rod_len(rod_id):
     return ROD_LENGTHS.get(rod_id, 1.2)
 
 
-# ── .nischay decryption (mirror of apps/studio/src/persistence/codec.js) ───────────
+# ── .nischay decryption (mirror of studio/src/persistence/codec.js) ───────────
 _NSHCRY_PASS  = b"TETROBOT::nischay::v2::format-key::do-not-redistribute"
 _NSHCRY_MAGIC = b"NSHCRY"
 

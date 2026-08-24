@@ -32,7 +32,7 @@ You can expect:
 
 ## Scope
 
-In scope: the desktop app (`apps/studio/`) and
+In scope: the desktop app (`studio/`) and
 the ESP32 firmware (`esp32/`).
 
 Out of scope: third-party dependencies (report those upstream), issues requiring

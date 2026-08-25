@@ -5,7 +5,7 @@ import { useDockStore } from '@/state/dockStore';
 import { usePageStore } from '@/state/pageStore';
 import { useBusyStore } from '@/state/busyStore';
 import { useEditModeStore } from '@/state/editModeStore';
-import { hardwareBridge } from '@/hardware/HardwareBridge';
+import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { useHardwareStore } from '@/state/hardwareStore';
 
 export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: any) {

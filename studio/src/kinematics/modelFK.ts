@@ -11,7 +11,6 @@
  */
 import * as THREE from 'three';
 import type { Document, Origin } from '@/core/model/index';
-import { useWorkspaceStore } from '@/state/workspaceStore';
 
 const ONE = new THREE.Vector3(1, 1, 1);
 
@@ -215,10 +214,17 @@ function pickDefaultRoot(doc: any): string | null {
 let _animRootOverride: string | null = null;
 export function setAnimRootOverride(id: string | null) { _animRootOverride = id; }
 
+// The workspace's "grounded body" (rigid mode) is UI state, so it is PROVIDED to FK rather
+// than read from a store here — same inversion as _animRootOverride above, which this file
+// already used. Kinematics stays runnable with no React/state layer loaded (tests, workers);
+// unregistered simply means "no grounded body", which falls through to the natural base.
+let _groundedRoot: (() => string | null) | null = null;
+export function setGroundedRootProvider(fn: (() => string | null) | null) { _groundedRoot = fn; }
+
 export function resolveRoot(doc: any): string | null {
   if (_animRootOverride && doc.bodies?.[_animRootOverride]) return _animRootOverride;
-  const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
-  if (bodyMode === 'rigid' && activeBodyId && doc.bodies?.[activeBodyId]) return activeBodyId;
+  const grounded = _groundedRoot?.() ?? null;
+  if (grounded && doc.bodies?.[grounded]) return grounded;
   return pickDefaultRoot(doc);
 }
 

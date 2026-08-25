@@ -4,6 +4,7 @@
  * layout, page, and collapse states are restored when re-opening a project.
  */
 import { create } from 'zustand';
+import { setGroundedRootProvider } from '@/kinematics/modelFK';
 
 const LS = 'tetrobot:workspace:v2';
 const load = (): Partial<WorkspaceSnapshot> => {
@@ -119,3 +120,12 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     persist(get());
   },
 }));
+
+// Hand FK the workspace's grounded body. Wired HERE rather than read from inside
+// kinematics: this store is UI state and kinematics must stay loadable without it (tests,
+// workers). Registering at module scope means any code path that has the workspace loaded
+// gets the rigid-mode root, and one that doesn't falls back to FK's natural base.
+setGroundedRootProvider(() => {
+  const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
+  return bodyMode === 'rigid' ? activeBodyId : null;
+});

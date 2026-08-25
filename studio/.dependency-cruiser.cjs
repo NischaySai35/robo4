@@ -26,11 +26,10 @@
  *     kinematics robotics runtime control hardware   (engine/domain)
  *     shared workers
  *
- * Existing violations are captured in a BASELINE rather than fixed here: they are genuine
- * design issues (e.g. viewport/jolt* is physics code living in the render layer, and
- * serialization reaches into the camera bridge for its state) but untangling them is
- * Phase 3 work. The baseline means the rules fail on anything NEW while the known set stays
- * visible as a to-do list instead of being silently tolerated.
+ * The baseline (.dependency-cruiser-known-violations.json) now holds only TWO entries, and
+ * both are tool false positives (see not-to-unresolvable below). Every real architectural
+ * violation found when these rules were introduced — 16 of them — has been fixed, not
+ * tolerated. If that file starts growing again, something is being waved through.
  */
 module.exports = {
   forbidden: [
@@ -50,7 +49,13 @@ module.exports = {
         'Engine code taking values straight out of a zustand store is a hidden global. Pass ' +
         'what it needs as arguments so it stays callable from a test or a worker.',
       severity: 'error',
-      from: { path: '^src/(physics|assembly|kinematics|robotics|runtime|control|hardware)/' },
+      // Tests are exempt: verifying that two layers are correctly WIRED TOGETHER is a
+      // legitimate thing to test, and a rule forbidding a test from touching both sides of
+      // a seam forbids testing the seam. Production code has no such excuse.
+      from: {
+        path: '^src/(physics|assembly|kinematics|robotics|runtime|control|hardware)/',
+        pathNot: '\\.test\\.tsx?$',
+      },
       to: { path: '^src/state/' },
     },
     {
@@ -64,7 +69,15 @@ module.exports = {
     },
     {
       name: 'not-to-unresolvable',
-      comment: 'An import that cannot be resolved is a build waiting to break.',
+      comment:
+        'An import that cannot be resolved is a build waiting to break. This one has real ' +
+        'teeth: it is what caught BoxWorld/PhysicsSim after the jolt* move, when their ' +
+        'relative imports were left dangling and typecheck+build were both still green. ' +
+        'Two baselined entries are parser FALSE POSITIVES — dependency-cruiser matches the ' +
+        'word "import" inside JSX text ("multiple importance sampling", className="ol-import") ' +
+        'and reports it as an unnameable dependency. Do NOT try to filter those out with ' +
+        'dependencyTypesNot [unknown] — verified that a genuinely broken named import is ' +
+        'ALSO typed "unknown", so that filter silently disables the whole rule.',
       severity: 'error',
       from: {},
       to: { couldNotResolve: true },

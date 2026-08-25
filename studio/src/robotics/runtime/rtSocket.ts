@@ -7,15 +7,23 @@
  * restarts. The message-handling is split out (`handleRtMessage`) so it is unit-testable
  * without a real socket.
  */
-import { useRtStatusStore } from '@/state/rtStatusStore';
-
 export const DEFAULT_RTCORE_URL = 'ws://127.0.0.1:8088/';
 
-/** Feed one raw telemetry payload into the status store (ignores non-string/malformed). */
+/**
+ * Where parsed telemetry goes. Injected rather than imported: this is transport code, and
+ * reaching into a UI store from here made the daemon link untestable without the whole
+ * React state layer loaded, and put an engine module on the wrong side of the layer rules.
+ * The app wires the real store in at startup (see state/rtStatusStore).
+ */
+type RtSink = (msg: string) => void;
+let _sink: RtSink | null = null;
+
+/** Register the telemetry destination. Called once at startup by the state layer. */
+export function setRtTelemetrySink(sink: RtSink | null): void { _sink = sink; }
+
+/** Feed one raw telemetry payload to the sink (ignores non-string/malformed). */
 export function handleRtMessage(data: unknown): void {
-  if (typeof data === 'string') {
-    useRtStatusStore.getState().ingest(data);
-  }
+  if (typeof data === 'string') _sink?.(data);
 }
 
 export type RtConnState = 'connecting' | 'open' | 'closed';

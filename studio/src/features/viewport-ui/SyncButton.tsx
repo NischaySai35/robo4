@@ -7,7 +7,7 @@
  * uses — this is just a one-click toggle next to Home / Drag-tip.
  */
 import './HomeButton.css';
-import { hardwareBridge } from '@/hardware/HardwareBridge';
+import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { useHardwareStore } from '@/state/hardwareStore';
 
 export default function SyncButton() {

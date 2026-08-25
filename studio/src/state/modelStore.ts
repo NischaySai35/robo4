@@ -14,6 +14,7 @@ import { CommandBus } from '@/core/commands/index';
 import { makeDocument } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
 import { stabilizeLoops } from '@/assembly/connectorSnap';
+import { setModelPort } from '@/core/model/modelPort';
 
 const bus = new CommandBus(makeDocument({ name: 'Untitled' }));
 // Closed lock loops are a first-class invariant: after ANY mutation (drag, gizmo, sliders,
@@ -68,4 +69,13 @@ export const useModelStore = create<ModelState>((set) => {
     /** High-frequency update that bypasses undo history (action playback). */
     applyTransient: (fn) => { bus.applyTransient(fn); },
   };
+});
+
+// Hand engine-side services the live document. Registered HERE so modules like the motion
+// executor can ask for the current doc without importing this store — see core/model/modelPort
+// for why they need "current" rather than a per-call snapshot, and why that must not be a
+// store import.
+setModelPort({
+  getDoc: () => useModelStore.getState().doc,
+  applyTransient: (fn) => useModelStore.getState().applyTransient(fn),
 });

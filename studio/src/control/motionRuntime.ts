@@ -13,7 +13,7 @@
 import { actions } from '@/runtime/actions';
 import { services } from '@/runtime/services';
 import { params } from '@/runtime/params';
-import { useModelStore } from '@/state/modelStore';
+import { getDoc, applyTransient } from '@/core/model/modelPort';
 import { chainJoints } from '@/kinematics/modelIK';
 import { computeFK } from '@/kinematics/modelFK';
 import { CollisionModel } from '@/robotics/collision';
@@ -132,7 +132,8 @@ export function initMotionRuntime(): void {
   // Cartesian move service: tip follows a straight world-space line to targetPos.
   services.advertise<{ tipId: string; targetPos: [number, number, number]; steps?: number }, { fraction: number; states: number }>(
     '/motion/cartesian', (req) => {
-      const doc = useModelStore.getState().doc;
+      const doc = getDoc();
+      if (!doc) return { fraction: 0, states: 0 };
       const res = planCartesian(doc, req.tipId, req.targetPos, { steps: req.steps ?? 24 });
       if (!res) return { fraction: 0, states: 0 };
       return { fraction: res.fraction, states: res.path.length };
@@ -140,7 +141,8 @@ export function initMotionRuntime(): void {
 
   services.advertise<{ tipId: string; goalConfig?: number[]; planner?: Planner }, number[][] | null>(
     '/motion/plan', (req) => {
-      const doc = useModelStore.getState().doc;
+      const doc = getDoc();
+      if (!doc) return null;
       const ctx = chainContext(doc, req.tipId);
       if (!ctx) return null;
       const g = req.goalConfig ?? sampleGoal(ctx);
@@ -151,7 +153,8 @@ export function initMotionRuntime(): void {
   // action: plan + execute, streaming progress 0..1
   actions.advertise<{ tipId: string; goalConfig?: number[]; planner?: Planner }, { phase: string; progress: number }, { ok: boolean; states: number; cost: number }>(
     '/move_group', async (goal, ctx) => {
-      const doc = useModelStore.getState().doc;
+      const doc = getDoc();
+      if (!doc) throw new Error('no live document (model port not registered)');
       ctx.report({ phase: 'planning', progress: 0 });
       const planned = planTrajectory(doc, goal.tipId, goal.goalConfig ?? null, goal.planner ?? 'rrtstar');
       if (!planned) throw new Error('planning failed (no collision-free path)');
@@ -170,7 +173,7 @@ export function initMotionRuntime(): void {
           // Closed-loop when physics is live: command motor targets so the simulated
           // arm tracks the setpoint under gravity/contacts. Else teleport (kinematic).
           if (physicsBridge.active()) physicsBridge.setJointTargets(vals);
-          else useModelStore.getState().applyTransient((dd) => withJointValues(dd, vals));
+          else applyTransient((dd) => withJointValues(dd, vals));
           const p = traj.duration > 0 ? Math.min(1, t / traj.duration) : 1;
           ctx.report({ phase: 'executing', progress: p });
           if (t >= traj.duration) { resolve(); return; }

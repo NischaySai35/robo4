@@ -1,6 +1,12 @@
 /**
  * RT Core socket message handling (the part that's testable without a real WebSocket).
  *
+ * This is deliberately an INTEGRATION test across the transport/state seam: rtSocket no
+ * longer imports the store (it takes an injected sink), and importing the store here is
+ * what registers that sink. So these assertions also prove the wiring in rtStatusStore is
+ * live — if that registration were ever dropped, handleRtMessage would silently no-op and
+ * both tests below would fail.
+ *
  * Run: npx tsx --test src/robotics/runtime/rtSocket.test.ts
  */
 import test from 'node:test';

@@ -8,6 +8,7 @@
  */
 import { create } from 'zustand';
 import { parseRtControllerStatus, type RtControllerStatus } from '@/robotics/runtime/rtStatus';
+import { setRtTelemetrySink } from '@/robotics/runtime/rtSocket';
 
 interface RtStatusState {
   status: RtControllerStatus | null;
@@ -28,3 +29,7 @@ export const useRtStatusStore = create<RtStatusState>((set) => ({
   },
   clear: () => set({ status: null, lastUpdate: 0 }),
 }));
+
+// Point the RT Core transport at this store. Wired here so rtSocket stays pure transport,
+// unit-testable with a fake sink and with no dependency on the React state layer.
+setRtTelemetrySink((msg) => useRtStatusStore.getState().ingest(msg));

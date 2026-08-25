@@ -1,12 +1,20 @@
 /**
  * HardwareBridge — orchestrates a transport + the protocol + the model.
  *
+ * Lives in features/, not hardware/, deliberately. hardware/ is an engine layer (protocol.ts
+ * and transports.ts are pure and headlessly testable); this file is an application service
+ * that coordinates two live zustand stores, subscribes to model changes, and needs a real
+ * device on the other end. Inverting all ten of those store calls into a port would just
+ * re-declare the stores' API as an interface for something that will never run in a test or
+ * a worker — the very thing that rule exists to protect. So it sits above the line with the
+ * rest of the app wiring, and hardware/ stays genuinely pure.
+ *
  * Connect to any device, stream the model's joint values to it (live or one-shot),
  * and route incoming telemetry into the store. Backend reads the model and emits
  * commands — it never mutates the model (consistent with the platform rules).
  */
-import { TRANSPORTS } from './transports';
-import { formatJointCommand, parseTelemetry } from './protocol';
+import { TRANSPORTS } from '@/hardware/transports';
+import { formatJointCommand, parseTelemetry } from '@/hardware/protocol';
 import { useHardwareStore } from '@/state/hardwareStore';
 import { useModelStore } from '@/state/modelStore';
 

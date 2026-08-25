@@ -6,7 +6,7 @@
 import { useState } from 'react';
 import './HardwarePanel.css';
 import { useHardwareStore, BOARDS, type BoardKind } from '@/state/hardwareStore';
-import { hardwareBridge } from '@/hardware/HardwareBridge';
+import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { useModelStore } from '@/state/modelStore';
 import { commands } from '@/core/commands/index';
 import { jointServoDegrees } from '@/hardware/protocol';

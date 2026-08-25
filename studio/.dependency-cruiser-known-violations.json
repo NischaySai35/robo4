@@ -1,60 +1,6 @@
 [
   {
     "type": "dependency",
-    "from": "src/control/motionRuntime.ts",
-    "to": "src/state/modelStore.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-stores"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/hardware/HardwareBridge.ts",
-    "to": "src/state/hardwareStore.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-stores"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/hardware/HardwareBridge.ts",
-    "to": "src/state/modelStore.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-stores"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/kinematics/modelFK.ts",
-    "to": "src/state/workspaceStore.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-stores"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/robotics/runtime/rtSocket.test.ts",
-    "to": "src/state/rtStatusStore.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-stores"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/robotics/runtime/rtSocket.ts",
-    "to": "src/state/rtStatusStore.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-stores"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/features/animation/Timeline.tsx",
     "to": "✖",
     "rule": {

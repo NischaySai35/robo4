@@ -55,51 +55,6 @@
   },
   {
     "type": "dependency",
-    "from": "src/control/motionRuntime.ts",
-    "to": "src/viewport/physicsBridge.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/core/serialization/project.ts",
-    "to": "src/features/motor/spinEngine.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/core/serialization/project.ts",
-    "to": "src/viewport/cameraBridge.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/core/serialization/projectActions.ts",
-    "to": "src/viewport/cameraBridge.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
-    "from": "src/robotics/rl/assembleTask.ts",
-    "to": "src/features/assembly/connectorSnap.ts",
-    "rule": {
-      "severity": "error",
-      "name": "engine-must-not-import-ui"
-    }
-  },
-  {
-    "type": "dependency",
     "from": "src/features/animation/Timeline.tsx",
     "to": "✖",
     "rule": {

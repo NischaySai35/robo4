@@ -44,7 +44,7 @@ import { getSpin } from '@/features/motor/spinEngine';
 import { isMotorJoint } from '@/features/motor/endBody';
 import { useModelStore } from '@/state/modelStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
 
 // ── Clip Groups Panel ──────────────────────────────────────────────────────────

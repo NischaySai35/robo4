@@ -4,7 +4,7 @@ import { useThemeStore } from '@/state/themeStore';
 import { useHistoryStore } from '@/state/historyStore';
 import { useDocStore } from '@/state/docStore';
 import { useDockStore } from '@/state/dockStore';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { newProject, newRobotArm, newHumanoid, newModule, openProject, saveProject, saveProjectAs, exportModel, openFromLibrary } from '@/core/serialization/projectActions';
 import { listProjects } from '@/core/serialization/projectLibrary';
 import type { LibraryEntry } from '@/core/serialization/projectLibrary';

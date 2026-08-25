@@ -2,7 +2,7 @@
  * assembleTask — first slice of shape-changing multi-module training.
  *
  * Given up to 4 pre-built Components (each an already-assembled module with its
- * own connectors, per core/model/entities.ts Connector + features/assembly/
+ * own connectors, per core/model/entities.ts Connector + assembly/
  * connectorSnap.ts), train a policy that moves/rotates the WHOLE modules (not
  * their internal joints) so their connectors come together and "snap" into a
  * target graph topology — e.g. a 4-module CHAIN (0-1-2-3) vs a 4-module STAR
@@ -27,7 +27,7 @@
 import * as THREE from 'three';
 import { weightedReward, type Task, type RewardWeights } from './task';
 import type { Document, Connector } from '@/core/model/index';
-import { listConnectors } from '@/features/assembly/connectorSnap';
+import { listConnectors } from '@/assembly/connectorSnap';
 
 export const ASSEMBLE_DEFAULT_WEIGHTS: RewardWeights = {
   progress: 8, align: 0.3, connect: 6, success: 15, control: -0.01, alive: -0.01,

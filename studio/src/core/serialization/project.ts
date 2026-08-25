@@ -13,8 +13,8 @@ import { useAnimSceneStore } from '@/state/animSceneStore';
 import { usePageStore } from '@/state/pageStore';
 import { useDockStore } from '@/state/dockStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
-import { bridge } from '@/viewport/cameraBridge';
-import { getActiveSpins } from '@/features/motor/spinEngine';
+import { bridge } from '@/bridge/cameraBridge';
+import { getActiveSpins } from '@/core/motor/spinState';
 import { makeDocument } from '../model/index';
 
 export const PROJECT_FORMAT  = 'tetrobot-project';

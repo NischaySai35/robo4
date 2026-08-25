@@ -13,7 +13,7 @@
  */
 import './CameraPanel.css';
 import { useEffect, useState } from 'react';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
 import NumberField from '@/features/ui/NumberField';
 

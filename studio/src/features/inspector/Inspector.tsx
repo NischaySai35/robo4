@@ -20,7 +20,7 @@ import { computeFK, movePivotKeepingChild } from '@/kinematics/modelFK';
 import { solveModelIK, chainJoints } from '@/kinematics/modelIK';
 import { useState, useCallback } from 'react';
 import { getAllDrivers, saveCustomDriver, type DriverDef } from '@/features/driver/DriverRegistry';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import SpinControls from '@/features/motor/SpinControls';
 import { stopSpin } from '@/features/motor/spinEngine';
 import { isMotorJoint } from '@/features/motor/endBody';

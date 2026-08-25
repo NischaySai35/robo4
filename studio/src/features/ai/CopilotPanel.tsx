@@ -2,7 +2,7 @@ import './CopilotPanel.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { executeAiPlan } from './aiActions';
 import { requestCopilotPlan, localModelStatus, enableNeuralModel, neuralEnabled } from './aiClient';
 

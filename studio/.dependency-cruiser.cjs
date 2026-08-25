@@ -19,6 +19,9 @@
  *     viewport    (three.js rendering)
  *     state       (zustand stores)
  *     ─────────────────────────────────  <- nothing below here may import anything above
+ *     bridge      (cross-layer contracts: viewport POPULATES these singletons, engine and
+ *                  UI READ them — an inversion, so it must sit below the UI line)
+ *     assembly    (connector snap geometry — three.js as math only, no renderer)
  *     core        (document model, commands, serialization)
  *     kinematics robotics runtime control hardware   (engine/domain)
  *     shared workers
@@ -38,7 +41,7 @@ module.exports = {
         'what keeps the engine runnable and testable headlessly, and it is the single most ' +
         'load-bearing boundary in this codebase.',
       severity: 'error',
-      from: { path: '^src/(core|physics|kinematics|robotics|runtime|control|hardware)/' },
+      from: { path: '^src/(core|bridge|physics|assembly|kinematics|robotics|runtime|control|hardware)/' },
       to: { path: '^src/(app|features|viewport)/' },
     },
     {
@@ -47,7 +50,7 @@ module.exports = {
         'Engine code taking values straight out of a zustand store is a hidden global. Pass ' +
         'what it needs as arguments so it stays callable from a test or a worker.',
       severity: 'error',
-      from: { path: '^src/(physics|kinematics|robotics|runtime|control|hardware)/' },
+      from: { path: '^src/(physics|assembly|kinematics|robotics|runtime|control|hardware)/' },
       to: { path: '^src/state/' },
     },
     {

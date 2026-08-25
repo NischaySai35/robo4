@@ -15,7 +15,7 @@ import { getJointActuator } from '@/core/model/index';
 import { commands } from '@/core/commands/index';
 import { useEditorStore } from '@/state/editorStore';
 import { usePageStore } from '@/state/pageStore';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { computeFK } from '@/kinematics/modelFK';
 import { jointLoads, centerOfMass, bodyMechanics } from '@/kinematics/analysis';
 import { getMotorSpec } from '@/kinematics/motorDatabase';

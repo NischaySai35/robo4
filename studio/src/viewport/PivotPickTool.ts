@@ -14,11 +14,11 @@
 import * as THREE from 'three';
 import { computeGeoSnap, GeoSnap, SnapIndicator } from '@/viewport/Snapper';
 
-export interface PivotPickResult {
-  worldPosition: THREE.Vector3;
-  suggestedAxis?: THREE.Vector3; // from cylinder detection or face normal
-  snapType: string;
-}
+// Re-exported, not re-declared: the canonical definition lives with the bridge contract
+// in @/bridge/cameraBridge, because that file sits below the UI layer and engine code has
+// to be able to read it. Kept exported here so existing importers are unaffected.
+export type { PivotPickResult } from '@/bridge/cameraBridge';
+import type { PivotPickResult } from '@/bridge/cameraBridge';
 
 // ── Cylinder detection ────────────────────────────────────────────────────────
 

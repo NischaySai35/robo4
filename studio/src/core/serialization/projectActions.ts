@@ -9,7 +9,7 @@ import { saveProjectToFile, openProjectFromFile, writeProjectToHandle } from './
 import { putProject, getProjectData, listProjects, removeProject, saveHandle, getSavedHandle } from './projectLibrary';
 // Note: all projectLibrary functions are async (IndexedDB-backed).
 import { useDocStore } from '@/state/docStore';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { buildRobotArmProject } from '@/core/factory/robotArm';
 import { buildHumanoidProject } from '@/core/factory/humanoid';
 import { getDefaultModuleDoc, moduleDocToProject } from '@/core/factory/defaultModule';

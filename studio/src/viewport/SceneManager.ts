@@ -12,7 +12,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { WebGLPathTracer } from 'three-gpu-pathtracer';
-import { bridge } from './cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 
 export class SceneManager {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */

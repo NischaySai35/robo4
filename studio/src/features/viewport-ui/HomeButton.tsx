@@ -8,7 +8,7 @@ import { useModelStore } from '@/state/modelStore';
 import { commands } from '@/core/commands/index';
 import type { Document } from '@/core/model/index';
 import { stopAllSpins } from '@/features/motor/spinEngine';
-import { solveHome } from '@/features/assembly/connectorSnap';
+import { solveHome } from '@/assembly/connectorSnap';
 
 const DURATION = 500;
 

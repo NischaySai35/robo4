@@ -16,7 +16,7 @@ import {
 import type { Connector } from '@/core/model/index';
 import { jointFramesForBodies } from '@/kinematics/modelFK';
 import { buildDefaultModuleEntities, getDefaultModuleDoc, moduleDocToProject, saveDefaultModule } from '@/core/factory/defaultModule';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
 import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
 import GizmoModeButtons, { BODY_GIZMO_MODES, POINT_GIZMO_MODES, type GizmoModeId } from '@/features/common/GizmoModeButtons';

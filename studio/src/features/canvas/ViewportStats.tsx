@@ -7,7 +7,7 @@
  */
 import './ViewportStats.css';
 import { useEffect, useRef, useState } from 'react';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { useSystemMetrics, formatRam } from '@/viewport/useSystemMetrics';
 
 type Stats = {

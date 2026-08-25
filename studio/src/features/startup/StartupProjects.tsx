@@ -6,7 +6,7 @@
  */
 import { useEffect, useState } from 'react';
 import './StartupProjects.css';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { useDocStore } from '@/state/docStore';
 import { listProjects, removeProject, type LibraryEntry } from '@/core/serialization/projectLibrary';
 import { newProject, openFromLibrary, saveCurrentToLibrary, dedupeLibrary } from '@/core/serialization/projectActions';

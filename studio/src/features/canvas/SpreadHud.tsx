@@ -6,7 +6,7 @@
  */
 import { useRef } from 'react';
 import { useModelStore } from '@/state/modelStore';
-import { spreadScore } from '@/features/assembly/connectorSnap';
+import { spreadScore } from '@/assembly/connectorSnap';
 
 export default function SpreadHud() {
   const doc = useModelStore((s) => s.doc);

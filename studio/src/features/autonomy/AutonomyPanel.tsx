@@ -26,7 +26,7 @@ import { CollisionModel } from '@/robotics/collision';
 import { ReachEnv } from '@/robotics/rl/gymEnv';
 import { ESTrainer } from '@/robotics/rl/es';
 import { Sequence, Repeat, Action, runTree, type Blackboard } from '@/robotics/behavior/behaviorTree';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { actions } from '@/runtime/actions';
 import type { Planner } from '@/control/motionRuntime';
 

@@ -10,8 +10,8 @@
  */
 import * as THREE from 'three';
 import type { Document } from '@/core/model/index';
-import { listConnectors, getConnectorWorld } from '@/features/assembly/connectorSnap';
-import { connectorHighlight, type ConnPair } from '@/features/assembly/connectorHighlight';
+import { listConnectors, getConnectorWorld } from '@/assembly/connectorSnap';
+import { connectorHighlight, type ConnPair } from '@/bridge/connectorHighlight';
 import { constantScreenSize } from '@/viewport/gizmoUtil';
 
 // Size the marker as a fraction of the canvas height (not a fixed pixel count),

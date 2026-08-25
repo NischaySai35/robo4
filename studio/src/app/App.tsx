@@ -30,7 +30,7 @@ import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/fea
 import { bodiesOfComponent, jointsOfComponent, uid } from '@/core/model/index';
 import { useEditModeStore } from '@/state/editModeStore';
 import { editBridge } from '@/viewport/editBridge';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { useTransformHudStore } from '@/state/transformHudStore';
 import { usePageStore } from '@/state/pageStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';

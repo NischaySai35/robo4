@@ -13,7 +13,7 @@ import { create } from 'zustand';
 import { CommandBus } from '@/core/commands/index';
 import { makeDocument } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
-import { stabilizeLoops } from '@/features/assembly/connectorSnap';
+import { stabilizeLoops } from '@/assembly/connectorSnap';
 
 const bus = new CommandBus(makeDocument({ name: 'Untitled' }));
 // Closed lock loops are a first-class invariant: after ANY mutation (drag, gizmo, sliders,

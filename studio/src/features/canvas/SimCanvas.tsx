@@ -24,7 +24,7 @@ import { startMagnetEngine } from '@/features/magnets/magnetEngine';
 import { startEspPoll } from '@/features/servo/espPoll';
 import { useThemeStore } from '@/state/themeStore';
 import { useEditorStore } from '@/state/editorStore';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';

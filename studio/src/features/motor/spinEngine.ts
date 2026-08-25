@@ -18,20 +18,20 @@ import { useModelStore } from '@/state/modelStore';
 import { commands } from '@/core/commands/index';
 import type { Document } from '@/core/model/index';
 import { canJointSpin } from './spinFreedom';
+// The registry itself lives below the UI line so serialization and the physics sim can
+// read it without importing this React-driven module — see core/motor/spinState.
+import {
+  DEFAULT_SPIN_RPM, rpmToRadPerSec, getSpin, getActiveSpins, subscribeSpin,
+  emitSpinChange as emit, setSpin, deleteSpin, hasSpin, clearSpins, noSpins,
+  spinningIds, eachSpin, type Dir,
+} from '@/core/motor/spinState';
 
-export const DEFAULT_SPIN_RPM = 30;
-const rpmToRadPerSec = (rpm: number) => (rpm * Math.PI) / 30; // rev/min → rad/s
+// Re-exported so existing importers of spinEngine are unaffected by the split.
+export { DEFAULT_SPIN_RPM, getSpin, getActiveSpins };
+export type { Dir };
 
-type Dir = 1 | -1;
-
-// jointId → spin direction. A plain module-level store; components subscribe via the
-// useSpin hook below (useSyncExternalStore) so CW/CCW buttons light up reactively.
-const spins = new Map<string, Dir>();
-const listeners = new Set<() => void>();
 let rafId: number | null = null;
 let lastT = 0;
-
-const emit = () => { for (const fn of listeners) fn(); };
 
 function wrapPi(v: number) {
   const TWO_PI = Math.PI * 2;
@@ -43,25 +43,25 @@ function wrapPi(v: number) {
 function tick(now: number) {
   const dt = lastT ? Math.min((now - lastT) / 1000, 0.1) : 0; // clamp big gaps (tab away)
   lastT = now;
-  if (spins.size > 0 && dt > 0) {
+  if (!noSpins() && dt > 0) {
     const { applyTransient } = useModelStore.getState();
     applyTransient((d: Document) => {
       let next = d;
-      for (const [id, dir] of spins) {
+      eachSpin((id, dir) => {
         const j: any = (next.joints as any)[id];
-        if (!j) continue;
+        if (!j) return;
         const rpm = j.meta?.spinRpm ?? DEFAULT_SPIN_RPM;
         const v = wrapPi((j.state?.value ?? 0) + dir * rpmToRadPerSec(rpm) * dt);
         next = { ...next, joints: { ...next.joints, [id]: { ...j, state: { ...j.state, value: v } } } };
-      }
+      });
       return next;
     });
   }
-  rafId = spins.size > 0 ? requestAnimationFrame(tick) : null;
+  rafId = noSpins() ? null : requestAnimationFrame(tick);
 }
 
 function ensureLoop() {
-  if (rafId == null && spins.size > 0) { lastT = 0; rafId = requestAnimationFrame(tick); }
+  if (rafId == null && !noSpins()) { lastT = 0; rafId = requestAnimationFrame(tick); }
 }
 
 /** Commit the joint's current transient value as one undoable step so it persists. */
@@ -72,48 +72,35 @@ function commit(id: string) {
 
 /** Start/stop spinning a joint in `dir`. Clicking the active direction again stops it. */
 export function toggleSpin(jointId: string, dir: Dir) {
-  if (spins.get(jointId) === dir) { stopSpin(jointId); return; }
+  if (getSpin(jointId) === dir) { stopSpin(jointId); return; }
   // Backstop: refuse to spin a joint trapped in a rigid loop (UI also disables it).
   if (!canJointSpin(useModelStore.getState().doc, jointId)) return;
-  spins.set(jointId, dir);
+  setSpin(jointId, dir);
   emit();
   ensureLoop();
 }
 
 /** Stop one joint and commit where it landed. */
 export function stopSpin(jointId: string) {
-  if (!spins.has(jointId)) return;
-  spins.delete(jointId);
+  if (!hasSpin(jointId)) return;
+  deleteSpin(jointId);
   emit();
   commit(jointId);
 }
 
 /** Stop every spinning joint (used by Home). Does not reset values — the caller does. */
 export function stopAllSpins() {
-  if (spins.size === 0) return;
-  const ids = [...spins.keys()];
-  spins.clear();
+  if (noSpins()) return;
+  const ids = spinningIds();
+  clearSpins();
   emit();
   for (const id of ids) commit(id);
-}
-
-/** Current spin direction of a joint, or 0 if not spinning. */
-export function getSpin(jointId: string): Dir | 0 {
-  return spins.get(jointId) ?? 0;
-}
-
-/** Snapshot of all currently spinning joints → direction. Used to drive the physics
- *  sim's wheel velocity motors while gravity is on. */
-export function getActiveSpins(): Record<string, Dir> {
-  const out: Record<string, Dir> = {};
-  for (const [id, dir] of spins) out[id] = dir;
-  return out;
 }
 
 /** React hook: re-renders when the given joint's spin direction changes. */
 export function useSpin(jointId: string): Dir | 0 {
   return useSyncExternalStore(
-    (cb) => { listeners.add(cb); return () => listeners.delete(cb); },
-    () => spins.get(jointId) ?? 0,
+    subscribeSpin,
+    () => getSpin(jointId),
   );
 }

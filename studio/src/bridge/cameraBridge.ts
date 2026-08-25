@@ -7,6 +7,18 @@
  * ViewControls, the menus, and the panels read from them.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+/**
+ * Result of a viewport pivot pick. Declared HERE, with the contract, rather than in
+ * PivotPickTool: this file sits below the UI layer so that engine code may read the
+ * bridge, and importing a type out of viewport/ would have dragged the whole render
+ * layer back across that line for the sake of three plain fields.
+ */
+export interface PivotPickResult {
+  worldPosition: import('three').Vector3;
+  suggestedAxis?: import('three').Vector3; // from cylinder detection or face normal
+  snapType: string;
+}
 export interface CameraBridge {
   camera: any;
   scene?: any;
@@ -34,7 +46,7 @@ export interface CameraBridge {
   // On-demand rendering: request the viewport to draw the next few frames (idle scene rests).
   requestRender?: (n?: number) => void;
   // Joint pivot "click to place" — activates the PivotPickTool in the viewport.
-  startPivotPick?: (opts: { onPick: (result: import('@/viewport/PivotPickTool').PivotPickResult) => void; onCancel: () => void }) => void;
+  startPivotPick?: (opts: { onPick: (result: PivotPickResult) => void; onCancel: () => void }) => void;
   cancelPivotPick?: () => void;
   // Set later by SimCanvas; optional so reads are type-safe before assignment.
   getFitBox?: (...args: any[]) => any;

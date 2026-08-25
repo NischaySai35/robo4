@@ -21,7 +21,7 @@ import { planRRT } from '@/robotics/planning/rrt';
 import { planRRTStar, planPRM } from '@/robotics/planning/rrtstar';
 import { timeParameterize, blendCorners, type TimedTrajectory } from '@/robotics/planning/trajectory';
 import { planCartesian } from '@/robotics/planning/cartesian';
-import { physicsBridge } from '@/viewport/physicsBridge';
+import { physicsBridge } from '@/bridge/physicsBridge';
 import type { Document } from '@/core/model/index';
 
 export type Planner = 'rrt' | 'rrtstar' | 'prm' | 'cartesian';

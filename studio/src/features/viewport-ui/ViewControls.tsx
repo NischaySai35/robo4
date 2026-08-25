@@ -1,6 +1,6 @@
 import './ViewControls.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import { useDockStore } from '@/state/dockStore';
 import { usePageStore } from '@/state/pageStore';
 import { useBusyStore } from '@/state/busyStore';

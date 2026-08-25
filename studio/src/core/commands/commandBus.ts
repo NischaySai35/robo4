@@ -24,7 +24,7 @@ export class CommandBus {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _listeners: Set<any>;
   // Injected loop-closure stabilizer (doc→doc). Kept out of core so @/core stays framework- and
-  // feature-free; the app wires the real one (features/assembly) at startup. Applied after every
+  // feature-free; the app wires the real one (assembly/) at startup. Applied after every
   // FORWARD mutation so closed lock loops can never be left open by any edit path.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _stabilize: ((doc: any) => any) | null;
@@ -32,7 +32,7 @@ export class CommandBus {
   // animation) — falls back to _stabilize if not set. dispatch() always uses _stabilize: a
   // discrete, user-driven edit can afford a full, robust solve; a per-frame transient update
   // can't afford to re-run the same expensive solve every single frame. See stabilizeLoops's
-  // own doc comment (features/assembly/connectorSnap.ts) for why this split exists.
+  // own doc comment (assembly/connectorSnap.ts) for why this split exists.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _stabilizeTransient: ((doc: any) => any) | null;
 

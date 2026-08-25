@@ -9,7 +9,7 @@ import './NavigationGizmo.css';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import * as THREE from 'three';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 
 const SIZE   = 112;
 const CENTER = SIZE / 2;

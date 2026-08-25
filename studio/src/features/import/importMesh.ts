@@ -18,7 +18,7 @@ import { useSelectionStore } from '@/state/selectionStore';
 import { useBusyStore } from '@/state/busyStore';
 import { commands } from '@/core/commands/index';
 import { getAssetObject, preloadAsset } from '@/viewport/renderers/AssetCache';
-import { bridge } from '@/viewport/cameraBridge';
+import { bridge } from '@/bridge/cameraBridge';
 import {
   makeAsset, makeBody, makeGeometry, GeometryType, identityOrigin,
 } from '@/core/model/index';

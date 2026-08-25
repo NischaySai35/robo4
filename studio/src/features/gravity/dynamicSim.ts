@@ -30,12 +30,13 @@
  *    model's shape, so cluster-vs-cluster contact isn't load-bearing here.)
  *    Bodies WITHIN the same cluster never need exclusion either: they're one
  *    compound shape on one body, which can't self-collide.
- *  • Wheels (motor end-locks) are taken OUT of the contact solver entirely and
- *    handled by a slip-based tire model (wheelContact.ts) — a cylinder-on-plane
- *    rigid contact is a degenerate line manifold with no contact patch, which no
- *    amount of friction/mass tuning fixes. Their cylinder shape is still built
- *    (dynamicSimTopology.ts's computeWheelGeometry) because Jolt derives mass and
- *    inertia from it, but on a layer that never touches the ground.
+ *  • Wheels (motor end-locks) get a cylinder collider aligned to the axle
+ *    (dynamicSimTopology.ts's computeWheelGeometry). The rigid solver handles the
+ *    NORMAL direction; a slip-based tire model (wheelContact.ts) supplies the
+ *    TANGENTIAL force, because that is where the real problems were (stick-slip,
+ *    no lateral stiffness). Replacing the normal force too was tried and reverted:
+ *    a penalty spring stiff enough to hold the load, applied to a ~50g end-lock,
+ *    is past the explicit-integration stability limit and never settles.
  *  • Mass: each body contributes its explicit inertial.mass, or a density
  *    fallback (400 kg/m^3 * estimated volume — NOT a flat placeholder mass,
  *    which was the other half of the sinking-through-the-ground bug: a
@@ -49,7 +50,7 @@
  * flat ground plane.
  */
 import * as THREE from 'three';
-import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, JOLT_LAYER_MOVING_NO_GROUND, type JoltWorld } from '@/physics/joltLoader';
+import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
 import { makeJoltShapeSettings } from '@/physics/joltShapes';
 import { jointWorldGeom } from '@/physics/joltJoints';
 import { jointMode, computeWheelGeometry, type WheelGeom } from './dynamicSimTopology';
@@ -128,8 +129,8 @@ function bodyMass(body: any, hullPoints?: Float32Array | null): number {
 }
 
 /** Cylinder shape for a wheel. Used for a wheels-only cluster, where it exists purely so Jolt
- *  can derive a correct mass and inertia tensor — that cluster goes on JOLT_LAYER_MOVING_NO_GROUND
- *  so the shape never generates ground contacts and the tire model owns the contact. */
+ *  can derive a correct mass and inertia tensor, and so the rigid solver supports it in the
+ *  normal direction. The tire model supplies only the tangential force. */
 function wheelCylinderShape(Jolt: any, wc: WheelGeom): any | null {
   const rotQ = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), wc.axisW);
   const cyl = new Jolt.CylinderShapeSettings(wc.halfLen, wc.radius, convexRadiusFor(wc.halfLen, wc.radius));
@@ -280,21 +281,21 @@ export class DynamicSim {
         const hp = meshVerts?.(id) ?? null;
         if (wc) {
           hasWheel = true;
-          // NOT added to the compound. A driven wheel is deliberately taken OUT of the rigid
-          // contact solver and handed to the slip-based tire model in wheelContact.ts — see
-          // that file's header for why a cylinder-on-plane contact cannot be made to behave
-          // (degenerate line manifold, no contact patch, motor/friction stick-slip). Its mass
-          // and pose bookkeeping still happen here: it is still physically part of the
-          // cluster, it just doesn't generate contacts.
+          // The wheel DOES collide: the rigid solver owns the normal direction, because it is
+          // unconditionally stable at these mass ratios, distributes chassis load through the
+          // joints, and lets bodies sleep. A penalty spring here did none of those — see
+          // wheelContact.ts's header for the measurements. What the tire model still owns is
+          // the TANGENTIAL force, which is where stick-slip and the missing lateral stiffness
+          // actually were; the cluster's friction is dropped near zero below so the solver
+          // does not apply a competing tangential impulse for the same contact.
           pendingWheels.push({ id, rel: rel.clone(), wc });
+          const wheelShape = wheelCylinderShape(Jolt, wc);
+          if (wheelShape) {
+            compound.AddShape(new Jolt.Vec3(rel.x, rel.y, rel.z), Jolt.Quat.prototype.sIdentity(), wheelShape, 0);
+            anyShape = true;
+          }
           totalMass += bodyMass(body, hp);
           sim._bodyInCluster.set(id, { clusterKey: root, localPos: rel, localQuat: bodyQuat });
-          // Cross-check: the wheel's position relative to this cluster vs wherever the joint
-          // pivot for this same body ends up (see the BUILD joint log above) — if they're far
-          // apart, the wheel spins around a hinge that isn't where its own axle actually is.
-          const wheelWorld = rel.clone().add(wc.offset);
-          // eslint-disable-next-line no-console
-          console.info(`[physics] BUILD wheel body=${id} cluster=${root} wheelLocalToCluster=(${wheelWorld.x.toFixed(3)},${wheelWorld.y.toFixed(3)},${wheelWorld.z.toFixed(3)}) radius=${wc.radius.toFixed(3)} -> tire model`);
           continue;
         }
         const settings = makeJoltShapeSettings(Jolt, body, { hullPoints: hp });
@@ -304,27 +305,7 @@ export class DynamicSim {
         anyShape = true;
         sim._bodyInCluster.set(id, { clusterKey: root, localPos: rel, localQuat: bodyQuat });
       }
-      // A cluster made of NOTHING but wheels has no collider left after the exclusion above,
-      // and a body with no shape can't be created at all — Jolt derives mass and the inertia
-      // TENSOR from the shape, so an empty compound isn't merely untidy, it's unbuildable.
-      //
-      // This is the COMMON case, not an edge case: a motor joint never fuses, so an end-lock
-      // driven by one is always a single-body cluster. An earlier version fell back to rigid
-      // cylinder contact here and skipped the tire model, which meant the tire model never ran
-      // on a real model at all (measured: tireModelWheels=0 on a normal end_lock/middle/
-      // end_lock chain). Instead, keep the cylinder purely for its mass/inertia and put the
-      // body on the no-ground layer, so the tire model remains its only ground interaction.
       const tireModelWheels = pendingWheels;
-      let inertiaOnlyWheels = false;
-      if (!anyShape && pendingWheels.length) {
-        for (const pw of pendingWheels) {
-          const s = wheelCylinderShape(Jolt, pw.wc);
-          if (!s) continue;
-          compound.AddShape(new Jolt.Vec3(pw.rel.x, pw.rel.y, pw.rel.z), Jolt.Quat.prototype.sIdentity(), s, 0);
-          anyShape = true;
-        }
-        inertiaOnlyWheels = anyShape;
-      }
       if (!anyShape) continue;
 
       const compoundResult = compound.Create();
@@ -338,11 +319,7 @@ export class DynamicSim {
       }
 
       const motionType = superRigid ? Jolt.EMotionType_Static : Jolt.EMotionType_Dynamic;
-      // A wheels-only cluster keeps its cylinder for mass/inertia but must not contact the
-      // ground through the solver — the tire model owns that contact (see the exclusion above).
-      const layer = superRigid ? JOLT_LAYER_NON_MOVING
-        : inertiaOnlyWheels ? JOLT_LAYER_MOVING_NO_GROUND
-          : JOLT_LAYER_MOVING;
+      const layer = superRigid ? JOLT_LAYER_NON_MOVING : JOLT_LAYER_MOVING;
       const bs = new Jolt.BodyCreationSettings(compoundResult.Get(), new Jolt.RVec3(origin.x, origin.y, origin.z), Jolt.Quat.prototype.sIdentity(), motionType, layer);
       // Friction is a per-BODY scalar in this binding (no per-sub-shape
       // material support exposed) — Jolt's own default (~0.2 combined with
@@ -374,7 +351,10 @@ export class DynamicSim {
       // now comes from wheelContact.ts; whatever ELSE is in this cluster should just be a
       // body resting on the floor. The 1.0 is kept only for the wheels-only fallback, which
       // really is still relying on rigid cylinder contact.
-      bs.set_mFriction(tireModelWheels.length ? 0.3 : (hasWheel ? 1.0 : 0.3));
+      // Near-zero for a tire-modelled wheel: two independent sources of tangential force on
+      // the same contact fight each other, which is the stick-slip this model exists to remove.
+      // Not exactly zero, so a wheel with no tire model registered still behaves like a wheel.
+      bs.set_mFriction(tireModelWheels.length ? 0.05 : (hasWheel ? 1.0 : 0.3));
       if (hasWheel) sim._wheelClusters.add(root);
       if (!superRigid) {
         const mp = new Jolt.MassProperties();

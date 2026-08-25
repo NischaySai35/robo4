@@ -30,6 +30,24 @@
  * transmit full friction force. The problem is manifold stability and the missing patch
  * physics above, not the contact area itself.
  *
+ * NORMAL vs TANGENTIAL — the split this model now makes, and why.
+ *
+ * An earlier version of this file also replaced the NORMAL force with a penalty spring, and
+ * that was a mistake with a measurable failure mode. The spring has to be stiff enough to
+ * hold the robot's weight share (k ~= load/4mm ~= 1250 N/m), but it is applied to a single
+ * end-lock body of ~50g, giving omega*dt ~= 2.6 against an explicit-integration stability
+ * limit of 2. It oscillated by construction: a chain that settles in 0.73s with rigid
+ * contact never settled at all, with ~3mm of permanent residual wobble. It also pinned the
+ * bodies awake forever (a force applied every frame prevents sleep), which kept the whole
+ * viewport redrawing at 60fps and burned ~20% GPU on a stationary scene.
+ *
+ * So the normal direction goes back to the rigid solver, which is good at exactly this: it
+ * is unconditionally stable at these mass ratios, it distributes chassis load through the
+ * joints instead of dumping it on one small body, and it lets bodies sleep. What stays here
+ * is the TANGENTIAL force, which is where the actual problems were — stick-slip, no lateral
+ * stiffness, no rolling resistance. The wheel body's own friction is set near zero so the
+ * solver does not also apply a tangential impulse and fight this model for the same job.
+ *
  * THE FIX, which is what every other engine does one layer above its contact solver
  * (PhysX PxVehicle, Unity WheelCollider, Unreal Chaos, Bullet btRaycastVehicle, Gazebo
  * wheel_slip): take the wheel OUT of the contact solver entirely and replace it with a
@@ -49,13 +67,9 @@ import * as THREE from 'three';
 
 const GRAVITY = 9.81;
 
-/** Penetration depth the normal spring is sized to produce under the wheel's static load. */
-const TARGET_PENETRATION = 0.004; // 4mm
-/** Normal spring damping ratio. 1.0 = critically damped: settles without bouncing or ringing. */
-const NORMAL_DAMPING_RATIO = 1.0;
-/** Hard ceiling on normal force, as a multiple of static load — stops a deep penetration
- *  (a bad frame, a teleport, a spawn overlap) from launching the robot into orbit. */
-const MAX_NORMAL_LOAD_FACTOR = 8;
+/** How far above the ground the wheel still counts as touching it. Absorbs the small
+ *  penetration the rigid solver rests at, plus error in the estimated wheel radius. */
+const CONTACT_TOLERANCE = 0.004; // 4mm
 /** Coulomb limit for the tangential force. ~1.0 is rubber-on-concrete. */
 const FRICTION_COEFFICIENT = 1.0;
 /** Longitudinal slip stiffness, per unit of normal load (units: 1/(m/s)).
@@ -74,6 +88,9 @@ const ROLLING_RESISTANCE = 0.015;
 /** Below this slip speed, treat the contact as stuck and skip the tangential force entirely —
  *  avoids dividing by ~0 and avoids jittering a resting wheel with tiny alternating forces. */
 const SLIP_EPSILON = 1e-4;
+/** Below this magnitude (N) a tangential force is not worth applying — see the sleep note
+ *  in WheelContactSolver.apply for why calling AddForce with ~0 is actively harmful. */
+const FORCE_EPSILON = 1e-3;
 
 /** Ground height under a world XZ position. Flat plane today — the one hook to replace when
  *  real (heightfield/mesh) terrain collision lands in dynamicSim. */
@@ -106,16 +123,11 @@ export interface WheelContactInput {
    */
   supportedMass: number;
   /**
-   * The actual mass (kg) of the rigid body the force is applied to — usually FAR smaller than
-   * `supportedMass`, because a driven end-lock is a light single-body cluster holding up a
-   * heavy chassis through its joints.
-   *
-   * Both are needed and they are not interchangeable. Stiffness must come from `supportedMass`
-   * or the wheel sinks; the damping and force ceilings must come from THIS mass or the force
-   * — correct for the load, but applied to a body a fraction of that mass — accelerates it
-   * past equilibrium within a single step and the model shakes itself apart. (Measured: sizing
-   * both from supportedMass tilted the test model and left one wheel 26mm high, the other 9mm
-   * through the floor.)
+   * Mass (kg) of the rigid body the force is applied to. Used only by the stability clamp, so
+   * an impulse can never reverse the very slip it is opposing. It is FAR smaller than
+   * `supportedMass` — a driven end-lock is a light body carrying chassis load through its
+   * joints — which is exactly why sizing a normal spring from supportedMass and applying it
+   * to this body was unstable.
    */
   bodyMass: number;
   /** Substep length, used for the stability clamps. */
@@ -127,7 +139,7 @@ export interface WheelContactOutput {
   contactPoint: THREE.Vector3;
   /** Total force (normal + tangential) to apply at `contactPoint`. */
   force: THREE.Vector3;
-  /** Spring compression (m). Equals TARGET_PENETRATION when carrying exactly the design load. */
+  /** How far the wheel currently rests INTO the ground (m), as the rigid solver left it. */
   penetration: number;
   /** Gap from the RENDERED wheel surface to the ground (m). >0 floats, <0 clips through.
    *  This — not `penetration` — is what a visual "why isn't it touching" check should read. */
@@ -182,18 +194,12 @@ export function solveWheelContact(input: WheelContactInput): WheelContactOutput 
 
   const contactPoint = centre.clone().add(lowestPointOffset(axis, radius, halfLen));
   const ground = groundHeightAt(contactPoint.x, contactPoint.z, input.groundY);
-  /** Signed gap from the wheel's RENDERED surface to the ground. >0 floats, <0 clips through. */
+  /** Signed gap from the wheel surface to the ground. >0 clear of it, <0 resting into it. */
   const surfaceGap = contactPoint.y - ground;
-  // The spring compresses through a TARGET_PENETRATION-deep compliance shell that sits ABOVE
-  // the rendered surface, rather than below it. This is what makes the wheel look right: at
-  // rest under its design load the spring is compressed by exactly TARGET_PENETRATION, which
-  // now puts the rendered surface exactly ON the ground instead of TARGET_PENETRATION beneath
-  // it. Measuring compression from the bare geometry instead left the mesh visibly sunk by the
-  // full 4mm — physically "correct" for a rigid wheel, but this model's whole premise is that
-  // a wheel deforms (that is where the contact patch comes from), so the deformation belongs
-  // between the undeformed surface and the ground, exactly as it does on a real tire.
-  const penetration = TARGET_PENETRATION - surfaceGap;
-  if (penetration <= 0) return null; // airborne (more than one shell-depth clear of the ground)
+  // In contact if the wheel is at or slightly above the ground. The tolerance absorbs the
+  // small penetration the rigid solver settles at plus the wheel-radius estimate's own error;
+  // it is NOT a spring, nothing is proportional to it.
+  if (surfaceGap > CONTACT_TOLERANCE) return null; // airborne
 
   // Velocity of the material point of the body currently at the contact: v + omega x r.
   // This ALREADY includes the wheel's spin, because the wheel is rigidly part of its cluster
@@ -202,27 +208,16 @@ export function solveWheelContact(input: WheelContactInput): WheelContactOutput 
   const r = contactPoint.clone().sub(comPos);
   const pointVel = linVel.clone().add(new THREE.Vector3().crossVectors(angVel, r));
 
-  // ── Normal force: penalty spring-damper, sized so static load rests at TARGET_PENETRATION ──
-  const effMass = Math.max(1e-6, supportedMass);
+  // Normal load, used ONLY to scale the friction limit — no force is applied along it. The
+  // rigid solver owns the normal direction now. Reading the true contact impulse back would
+  // need a ContactListener; the static share is a good enough estimate for a friction cone,
+  // and unlike a spring it cannot go unstable.
+  const normalForce = Math.max(1e-6, supportedMass) * GRAVITY;
   const ownMass = Math.max(1e-6, bodyMass);
-  const staticLoad = effMass * GRAVITY;
-  // Stiffness from the SUPPORTED load, so the wheel settles at TARGET_PENETRATION under it.
-  const k = staticLoad / TARGET_PENETRATION;
-  // Damping from the body actually being pushed, so it can never over-correct that body.
-  const c = 2 * NORMAL_DAMPING_RATIO * Math.sqrt(k * ownMass);
-  const compressionRate = -pointVel.dot(up); // >0 while sinking further in
-  // Damping only resists compression. Letting it pull on rebound would suck the wheel back
-  // toward the ground (a spring-damper that can pull is a magnet, not a contact).
-  // Clamped so its impulse cannot reverse the compression it is damping: c*v*dt <= m*v.
-  const damping = Math.min(
-    c * Math.max(0, compressionRate),
-    (ownMass * Math.max(0, compressionRate)) / Math.max(dt, 1e-6),
-  );
-  let normalForce = k * penetration + damping;
-  normalForce = Math.min(normalForce, staticLoad * MAX_NORMAL_LOAD_FACTOR);
-  normalForce = Math.max(0, normalForce);
+  const penetration = Math.max(0, -surfaceGap);
 
-  const force = up.clone().multiplyScalar(normalForce);
+  // Tangential only: nothing is added along `up`.
+  const force = new THREE.Vector3();
 
   // ── Tangential: ground-plane basis (rolling direction, axle direction) ──
   // forward = perpendicular to both the axle and the ground normal.
@@ -283,7 +278,7 @@ export function solveWheelContact(input: WheelContactInput): WheelContactOutput 
     // the accumulated force opposes both (pure rolling has zero slip but nonzero travel, and
     // rolling resistance must still be allowed to act there).
     // Scaling down here can't violate the friction circle above, so applying it last is safe.
-    const maxStable = (effMass * Math.max(slipSpeed, travelSpeed)) / Math.max(dt, 1e-6);
+    const maxStable = (ownMass * Math.max(slipSpeed, travelSpeed)) / Math.max(dt, 1e-6);
     if (mag > maxStable && mag > 0) {
       const s = maxStable / mag;
       fx *= s; fy *= s;
@@ -375,14 +370,21 @@ export class WheelContactSolver {
       this._last.set(w.bodyId, out);
       if (!out) continue;
 
-      // EActivation_Activate: a wheel resting on the ground is allowed to sleep, but the
-      // moment it has a real force to apply it must be awake or the force silently does
-      // nothing (the same sleep trap dynamicSim.ts hit with motor targets).
+      // A resting wheel produces no tangential force (slip and travel are both ~0), and
+      // calling AddForce anyway — even with a zero vector — is not free: EActivation_Activate
+      // re-wakes the body EVERY frame, so nothing ever sleeps, the model never settles, and
+      // the viewport redraws at 60fps forever. Measured: this alone left ~1mm of permanent
+      // residual wobble on a chain that otherwise comes to rest in under a second.
+      //
+      // So: no force, no call. And when there IS force, DontActivate — a body that is asleep
+      // is by definition not slipping, so it needs no traction; whatever wakes it (a motor
+      // command, a collision, a joint) will bring the tire model back with it.
+      if (out.force.lengthSq() < FORCE_EPSILON * FORCE_EPSILON) continue;
       bodyInterface.AddForce(
         rb.GetID(),
         new Jolt.Vec3(out.force.x, out.force.y, out.force.z),
         new Jolt.RVec3(out.contactPoint.x, out.contactPoint.y, out.contactPoint.z),
-        Jolt.EActivation_Activate,
+        Jolt.EActivation_DontActivate,
       );
     }
   }

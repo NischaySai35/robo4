@@ -47,6 +47,12 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
 .bar i{display:block;height:100%;width:0;background:var(--acc);transition:width .2s}
 .hint{color:var(--dim);font-size:12px;margin:6px 0 0}
 .danger{color:var(--warn)}
+/* Post-mortem banner: what the board was doing when it last died. The only crash report
+   available on a unit with no USB access, so it is deliberately hard to miss. */
+.pm{border:1px solid var(--bad);background:#fff5f5;color:var(--fg);border-radius:8px;
+  padding:10px 12px;margin-bottom:14px;font-size:12px;line-height:1.5}
+.pm b{color:var(--bad)}
+.pm code{background:#ffe9e9;padding:1px 5px;border-radius:4px}
 </style></head><body>
 
 <header>
@@ -73,6 +79,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
 </nav>
 
 <main>
+<div id="pm" class="pm" style="display:none"></div>
 <section id="s-dash" class="sel">
   <div class="card"><h3>Servos</h3>
     <div class="wrap"><table><thead><tr>
@@ -225,6 +232,24 @@ function showTab(t){
 el('tabs').onclick=e=>{const t=e.target.dataset.t;if(!t)return;showTab(t);};
 
 /* ---------- dashboard ---------- */
+/* Show WHY the board last restarted and what it was mid-way through. A normal power-on or
+   a press of the reset button is not news; a panic, a watchdog or a brownout is. */
+let pmShown=0;
+function postMortem(d){
+  if(pmShown||!d.resetWhy)return;
+  pmShown=1;
+  const benign=(d.resetWhy==='power-on'||d.resetWhy==='external reset pin'||d.resetWhy==='software restart');
+  if(benign&&!d.lastCrumb)return;
+  const box=el('pm');
+  box.innerHTML='<b>Last restart: '+d.resetWhy+'</b>'+
+    (d.lastCrumb?('<br>It was in the middle of: <code>'+d.lastCrumb+'</code> at '+
+                  (d.lastCrumbMs/1000).toFixed(1)+'s uptime.'):'<br>No breadcrumb was recorded.')+
+    '<br><span style="color:var(--dim)">BROWNOUT means the power supply sagged (servos energising all at once). '+
+    'WATCHDOG means something blocked too long. PANIC means a crash. They need different fixes.</span>'+
+    ' <button onclick="pmHide()">dismiss</button>';
+  box.style.display='block';
+}
+function pmHide(){el('pm').style.display='none';}
 function rows(d){
   const tb=el('tb');
   const sig=d.servos.map(s=>s.id+s.label).join(',');
@@ -283,6 +308,7 @@ function mags(d){const box=el('mags');const sig='m'+d.magnets.length;
 async function poll(){
   if(!paused){try{
     const d=await(await fetch('/api/telemetry')).json();tel=d;
+    postMortem(d);
     el('p-host').textContent=d.wifi.hostname+'.local';
     el('p-ip').textContent=d.wifi.ip;
     el('p-wifi').textContent=d.wifi.mode+' '+(d.wifi.ssid||'-');

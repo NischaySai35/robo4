@@ -42,6 +42,7 @@
 #include <HTTPUpdate.h>
 #include <Preferences.h>
 #include <SCServo.h>
+#include <esp_system.h>
 #include <math.h>
 #include <stdarg.h>
 #include "types.h"
@@ -51,7 +52,7 @@
 #define UART_MODE_RS485_HALF_DUPLEX 4
 #endif
 
-#define FW_VERSION "0.0.5"
+#define FW_VERSION "0.0.6"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
 #define DEF_SSID  "GNXS-2.4G-6809B0"
@@ -116,6 +117,63 @@ void cfgLoad() {
 void cfgSave() {
   cfg.ver = CFG_VER;
   prefs.putBytes("cfg", &cfg, sizeof(Cfg));
+}
+
+// ── Crash breadcrumb (survives a reset; readable over Wi-Fi) ─────────────────
+//
+// This board can only be reached over the network — no USB — so a serial monitor is not an
+// option and the log ring is RAM that dies with the reset. RTC_NOINIT memory is neither
+// zeroed at boot nor cleared by a watchdog/panic reset, so the last thing the firmware was
+// doing survives into the next boot and can be read at /api/health and /api/log.
+//
+// Paired with esp_reset_reason(), that answers the question that actually matters: did it
+// PANIC (a crash), get killed by a WATCHDOG (something blocked too long), or BROWNOUT (the
+// supply sagged — six servos energising at once is exactly when that happens). Those three
+// have completely different fixes, and guessing between them from the browser side is how
+// the last two attempts went wrong.
+#define BC_MAGIC 0x0B00B1E5UL
+RTC_NOINIT_ATTR static uint32_t bcMagic;
+RTC_NOINIT_ATTR static char     bcText[72];
+RTC_NOINIT_ATTR static uint32_t bcAtMs;
+
+// What the PREVIOUS boot was doing when it died, captured before we overwrite it.
+String prevCrumb = "";
+String resetWhy  = "";
+uint32_t prevCrumbMs = 0;
+
+void bc(const char* fmt, ...) {
+  va_list ap; va_start(ap, fmt);
+  vsnprintf(bcText, sizeof(bcText), fmt, ap);
+  va_end(ap);
+  bcAtMs   = millis();
+  bcMagic  = BC_MAGIC;
+}
+
+const char* resetReasonName(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:  return "power-on";
+    case ESP_RST_EXT:      return "external reset pin";
+    case ESP_RST_SW:       return "software restart";
+    case ESP_RST_PANIC:    return "PANIC (crash)";
+    case ESP_RST_INT_WDT:  return "INTERRUPT WATCHDOG";
+    case ESP_RST_TASK_WDT: return "TASK WATCHDOG (something blocked)";
+    case ESP_RST_WDT:      return "other watchdog";
+    case ESP_RST_BROWNOUT: return "BROWNOUT (supply sagged)";
+    case ESP_RST_DEEPSLEEP:return "deep sleep wake";
+    default:               return "unknown";
+  }
+}
+
+// Call once, first thing in setup(), before anything can overwrite the breadcrumb.
+void captureLastBoot() {
+  resetWhy = resetReasonName(esp_reset_reason());
+  if (bcMagic == BC_MAGIC && bcText[0]) {
+    bcText[sizeof(bcText) - 1] = 0;
+    prevCrumb   = String(bcText);
+    prevCrumbMs = bcAtMs;
+  }
+  bcMagic = 0;
+  bcText[0] = 0;
 }
 
 // ── Log ring (readable over Wi-Fi at /api/log) ───────────────────────────────
@@ -325,7 +383,7 @@ void torqueOnHold(ServoState& sv) {
   sv.lastCommandMs = millis();
 }
 
-void torqueOnAll()  { for (uint8_t i = 0; i < nServos; i++) { torqueOnHold(servos[i]); yield(); } }
+void torqueOnAll()  { for (uint8_t i = 0; i < nServos; i++) { bc("torqueOn id=%u", servos[i].id); torqueOnHold(servos[i]); yield(); } }
 void torqueOffAll() {
   for (uint8_t i = 0; i < nServos; i++) {
     st.EnableTorque(servos[i].id, 0); delay(2);
@@ -380,6 +438,7 @@ void homeAll() {
 
 // ── Telemetry reads ──────────────────────────────────────────────────────────
 void refreshAllFastSync() {
+  bc("telemetry sync (%u servos)", nServos);
   if (nServos == 0) return;
   uint8_t ids[MAX_SERVOS];
   for (uint8_t i = 0; i < nServos; i++) ids[i] = servos[i].id;
@@ -693,6 +752,7 @@ void scanStep() {
   // is still ~20ms per id and keeps handleClient() responsive between every probe.
   for (uint8_t k = 0; k < 1 && sc.active; k++) {
     uint8_t id = sc.cur;
+    bc("scan ping id=%u @ %lu", id, (unsigned long)scanBaud());
     if (st.Ping(id) != -1 && sc.nHits < 24) {
       ScanHit& h = sc.hits[sc.nHits++];
       h.id   = id;
@@ -740,7 +800,10 @@ void route(const char* path, void (*fn)()) {
 
 String buildJSON() {
   String j; j.reserve(3200);
-  j += F("{\"ok\":true,\"fw\":\""); j += FW_VERSION;
+  j += F("{\"ok\":true,\"resetWhy\":\""); j += resetWhy;
+  j += F("\",\"lastCrumb\":\""); j += prevCrumb;
+  j += F("\",\"lastCrumbMs\":"); j += prevCrumbMs;
+  j += F(",\"fw\":\""); j += FW_VERSION;
   j += F("\",\"ms\":");    j += millis();
   j += F(",\"heap\":");    j += ESP.getFreeHeap();
   // 0 = this board has NO second OTA partition, so wireless upload cannot work
@@ -870,7 +933,7 @@ void handleCommand() {
   if (!sv) { errJson(404, "servo not found"); return; }
   // Mirrored to USB serial by lg(): if the board stops answering, the monitor's last line
   // names the exact request it was in, which beats guessing from the browser side.
-  lg("cmd id=%u %s", sv->id, cmd.c_str());
+  bc("cmd id=%u %s", sv->id, cmd.c_str());
 
   float   angle = server.hasArg("angle") ? server.arg("angle").toFloat() : sv->targetDeg;
   int     speed = server.hasArg("speed") ? server.arg("speed").toInt()   : 10;
@@ -885,6 +948,7 @@ void handleCommand() {
 }
 
 void handleBatch() {
+  bc("batch move");
   int     spd = server.hasArg("speed") ? constrain(server.arg("speed").toInt(), 1, 10) : 5;
   uint8_t acc = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100)
                                                : POS_ACC_DEFAULT);
@@ -916,9 +980,10 @@ void handleBatch() {
   okJson(b);
 }
 
-void handleHome() { homeAll(); okTrue(); }
+void handleHome() { bc("home all"); homeAll(); okTrue(); }
 void handleTorqueAll() {
   bool on = !server.hasArg("on") || server.arg("on") != "0";
+  bc("torque all %s (%u servos)", on ? "ON" : "OFF", nServos);
   if (on) torqueOnAll(); else torqueOffAll();
   okJson(on ? F("{\"ok\":true,\"torque\":\"on\"}") : F("{\"ok\":true,\"torque\":\"off\"}"));
 }
@@ -1332,6 +1397,7 @@ void otaConfig() {
 
 // ─────────────────────────────────────────────────────────────────────────────
 void setup() {
+  captureLastBoot();          // must be first: nothing may overwrite the breadcrumb
   Serial.begin(115200);
   delay(300);
   cfgLoad();
@@ -1386,6 +1452,14 @@ void setup() {
   });
   server.begin();
   lg("HTTP server up — http://%s.local/ (UI) and /api/*", cfg.host);
+  // Front and centre in the log, because this is the only post-mortem available on a board
+  // with no USB access.
+  lg("last reset: %s", resetWhy.c_str());
+  if (prevCrumb.length())
+    lg("BEFORE THAT RESET the firmware was in: \"%s\" (at %lu ms uptime)",
+       prevCrumb.c_str(), (unsigned long)prevCrumbMs);
+  else
+    lg("no breadcrumb from the previous boot (clean power-on, or it died before one was set)");
 
   delay(3000);                         // let the servo bus settle after power-up
   flushBus();

@@ -52,7 +52,7 @@
 #define UART_MODE_RS485_HALF_DUPLEX 4
 #endif
 
-#define FW_VERSION "0.0.6"
+#define FW_VERSION "0.0.0"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
 #define DEF_SSID  "GNXS-2.4G-6809B0"
@@ -216,13 +216,33 @@ uint8_t    nServos = 0;
 
 constexpr uint16_t FAST_MS         = 60;
 constexpr uint16_t SLOW_MS         = 250;
-constexpr uint16_t WAVE_MS         = 40;
 constexpr uint8_t  POS_MODE        = 0;
-constexpr uint8_t  MOTOR_MODE      = 1;
-constexpr uint8_t  POS_ACC_DEFAULT = 40;
-constexpr uint8_t  MOTOR_ACC       = 30;
+// ── Holding-stiffness tuning (ST3215 EPROM/SRAM registers) ───────────────────
+// Steady-state position error under load is set by the servo's own position loop, not by
+// anything this firmware sends. Three registers govern it:
+//   * DEAD BAND (26/27) - error inside this is simply ignored. 1 raw unit = 0.088 deg.
+//   * Kp (21) - proportional stiffness. Higher pushes harder for a given error, so the
+//     equilibrium the load settles at is a smaller error.
+//   * Ki (23) - integral. This is the one that actually drives a SUSTAINED error to zero;
+//     with Ki = 0 a constant load always leaves a constant offset, no matter how high Kp is.
+// Kd damps the extra Kp/Ki so the joint settles instead of hunting. TORQUE LIMIT (48) caps
+// how hard it may push at all - if that is low, nothing else matters.
+//
+// These are starting points, not measured optimums: the right gains depend on the arm's
+// inertia and gearing, which cannot be known from here. They are exposed at /api/servo/tune
+// so they can be adjusted against the real mechanism.
+constexpr uint8_t  TUNE_DEADBAND   = 1;      // raw units each side -> +/-0.088 deg ignored
+constexpr uint8_t  TUNE_KP         = 48;     // ST3215 default is 32
+constexpr uint8_t  TUNE_KD         = 24;     // damping for the raised Kp/Ki
+constexpr uint8_t  TUNE_KI         = 4;      // >0 is what removes steady-state droop
+constexpr uint16_t TUNE_TORQUE_MAX = 1000;   // full scale
+constexpr uint8_t  REG_KP = 21, REG_KD = 22, REG_KI = 23;
+constexpr uint8_t  REG_CW_DEAD = 26, REG_CCW_DEAD = 27;
+constexpr uint8_t  REG_TORQUE_LIMIT = 48;
 
-unsigned long lastFast = 0, lastSlow = 0, lastWave = 0;
+constexpr uint8_t  POS_ACC_DEFAULT = 40;
+
+unsigned long lastFast = 0, lastSlow = 0;
 uint8_t       slowIdx = 0;
 bool          otaBusy = false;      // pause the servo bus while flashing
 
@@ -329,20 +349,10 @@ void cmdPos(ServoState& sv, float deg, int speedScale, uint8_t acc) {
   st.WritePosEx(sv.id, sv.targetRaw, sv.speedRaw, sv.acc);
   delay(3);
 }
-void cmdCW(ServoState& sv) {
-  sv.mode = 1; setHwMode(sv, MOTOR_MODE); ensureTorque(sv);
-  sv.speedRaw = 3400; sv.lastCommandMs = millis();
-  st.WriteSpe(sv.id, 3400, MOTOR_ACC); delay(3);
-}
-void cmdCCW(ServoState& sv) {
-  sv.mode = 2; setHwMode(sv, MOTOR_MODE); ensureTorque(sv);
-  sv.speedRaw = 3400; sv.lastCommandMs = millis();
-  st.WriteSpe(sv.id, -3400, MOTOR_ACC); delay(3);
-}
-void cmdWave(ServoState& sv) {
-  sv.mode = 3; setHwMode(sv, MOTOR_MODE); ensureTorque(sv);
-  sv.lastCommandMs = millis();
-}
+/* Continuous-rotation (CW/CCW/wave) was removed: this module's joints are position-only, so
+   a mode that spins a joint past its limits has no meaning here and was one more way to
+   drive the hardware somewhere it should not go. The servos stay in POS_MODE for their
+   whole life, so the motor-mode constants went with it. */
 void cmdStop(ServoState& sv) {
   sv.mode = POS_MODE; sv.lastCommandMs = millis();
   st.EnableTorque(sv.id, 0); delay(2);
@@ -354,6 +364,42 @@ void cmdTorqueToggle(ServoState& sv) {
   else             { st.EnableTorque(sv.id, 1); delay(2); sv.torqueOn = true; }
 }
 void estopAll() { for (uint8_t i = 0; i < nServos; i++) cmdStop(servos[i]); }
+
+/* Write one EPROM byte only if it differs. EPROM has a finite write endurance and this runs
+   on every boot, so a blind write would burn the servo's flash for no reason. Returns true
+   if it actually changed something. */
+bool tuneByteIfDiff(uint8_t id, uint8_t addr, uint8_t want, const char* name) {
+  int have = st.readByte(id, addr);
+  if (have < 0) { lg("  id%u %s: read failed", id, name); return false; }
+  if ((uint8_t)have == want) return false;
+  st.writeByte(id, addr, want);
+  delay(12);
+  lg("  id%u %s: %d -> %u", id, name, have, want);
+  return true;
+}
+
+/* Make a servo hold its position stiffly. Deadband/gains live in EPROM (needs unlock);
+   the torque limit is a RAM register and is written every time, since it costs nothing. */
+void tuneServoHolding(ServoState& sv) {
+  st.unLockEprom(sv.id); delay(10);
+  bool changed = false;
+  changed |= tuneByteIfDiff(sv.id, REG_CW_DEAD,  TUNE_DEADBAND, "cw deadband");
+  changed |= tuneByteIfDiff(sv.id, REG_CCW_DEAD, TUNE_DEADBAND, "ccw deadband");
+  changed |= tuneByteIfDiff(sv.id, REG_KP, TUNE_KP, "Kp");
+  changed |= tuneByteIfDiff(sv.id, REG_KD, TUNE_KD, "Kd");
+  changed |= tuneByteIfDiff(sv.id, REG_KI, TUNE_KI, "Ki");
+  st.LockEprom(sv.id); delay(10);
+  st.writeWord(sv.id, REG_TORQUE_LIMIT, TUNE_TORQUE_MAX);
+  delay(6);
+  if (!changed) lg("  id%u already tuned", sv.id);
+}
+
+void tuneAllServos() {
+  lg("tuning hold stiffness (deadband %u, Kp %u, Kd %u, Ki %u, torque %u)",
+     TUNE_DEADBAND, TUNE_KP, TUNE_KD, TUNE_KI, TUNE_TORQUE_MAX);
+  for (uint8_t i = 0; i < nServos; i++) { bc("tune id=%u", servos[i].id); tuneServoHolding(servos[i]); yield(); }
+  lg("tuning done");
+}
 
 /* Enable torque WITHOUT moving. A servo holds whatever goal position is still in its own
    register, so switching torque on after the arm has been posed by hand can snap it back to
@@ -735,6 +781,7 @@ void scanFinish() {
   // deliberately NO bus reads here, because everything in this function runs inside loop()
   // and a slow one takes the watchdog with it.
   torqueOffAll();
+  tuneAllServos();          // the newly-adopted servos must hold as stiffly as the rest
   lg("scan done: %u servo(s) found, torque OFF", sc.nHits);
 }
 
@@ -905,10 +952,7 @@ void handleMagnet() {
 }
 
 void applyCmd(ServoState& sv, const String& cmd) {
-  if      (cmd == "cw")                     cmdCW(sv);
-  else if (cmd == "ccw")                    cmdCCW(sv);
-  else if (cmd == "wave")                   cmdWave(sv);
-  else if (cmd == "stop" || cmd == "estop")  cmdStop(sv);
+  if      (cmd == "stop" || cmd == "estop") cmdStop(sv);
   // Every torque-ON path goes through torqueOnHold so the joint holds exactly where it is
   // rather than snapping to whatever goal was left in the servo's register.
   else if (cmd == "torquetoggle")           { if (sv.torqueOn) cmdTorqueToggle(sv); else torqueOnHold(sv); }
@@ -940,7 +984,7 @@ void handleCommand() {
   uint8_t acc   = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100)
                                                  : POS_ACC_DEFAULT);
   if (cmd == "pos") { cmdPos(*sv, angle, speed, acc); okTrue(); return; }
-  if (cmd == "cw" || cmd == "ccw" || cmd == "wave" || cmd == "stop" || cmd == "estop" ||
+  if (cmd == "stop" || cmd == "estop" ||
       cmd == "torquetoggle" || cmd == "torqueon" || cmd == "torqueoff" || cmd == "home") {
     applyCmd(*sv, cmd); okTrue(); return;
   }
@@ -981,6 +1025,7 @@ void handleBatch() {
 }
 
 void handleHome() { bc("home all"); homeAll(); okTrue(); }
+void handleTune() { bc("tune all"); tuneAllServos(); okTrue(); }
 void handleTorqueAll() {
   bool on = !server.hasArg("on") || server.arg("on") != "0";
   bc("torque all %s (%u servos)", on ? "ON" : "OFF", nServos);
@@ -1425,6 +1470,7 @@ void setup() {
   route("/api/magnet",          handleMagnet);
   route("/api/home",            handleHome);
   route("/api/torque",          handleTorqueAll);
+  route("/api/servo/tune",      handleTune);
   route("/api/identify",        handleIdentify);
   route("/api/log",             handleLog);
   route("/api/scan",            handleScan);
@@ -1470,6 +1516,7 @@ void setup() {
   // explicit button press, and homing is a separate one.
   torqueOffAll();
   seedTargetsFromHardware();
+  tuneAllServos();          // writes only what differs, so this is a no-op after the first boot
   lg("boot complete — torque OFF, %u servo(s) configured", nServos);
 }
 
@@ -1504,19 +1551,4 @@ void loop() {
     }
   }
 
-  if (millis() - lastWave >= WAVE_MS) {
-    lastWave = millis();
-    for (uint8_t i = 0; i < nServos; i++) {
-      ServoState& sv = servos[i];
-      if (sv.mode == 3 && sv.torqueOn) {
-        float phase = (millis() / 500.0f) + (i * 0.65f);
-        int spd = constrain((int)(1700 + ((sinf(phase) + 1.0f) * 0.5f) * 1700.0f), 0, 3400);
-        setHwMode(sv, MOTOR_MODE);
-        ensureTorque(sv);
-        st.WriteSpe(sv.id, spd, MOTOR_ACC);
-        delay(2);
-        sv.lastCommandMs = millis();
-      }
-    }
-  }
 }

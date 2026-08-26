@@ -83,7 +83,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
 <section id="s-dash" class="sel">
   <div class="card"><h3>Servos</h3>
     <div class="wrap"><table><thead><tr>
-      <th class="l">#</th><th class="l">label</th><th>angle</th><th>target</th><th>set</th>
+      <th class="l">#</th><th class="l">label</th><th>angle</th><th>target</th><th>err&deg;</th><th>set</th>
       <th>spd</th><th>load</th><th>mA</th><th>V</th><th>degC</th><th>mode</th><th class="l">actions</th>
     </tr></thead><tbody id="tb"></tbody></table></div>
     <div class="row" style="margin-top:10px">
@@ -93,6 +93,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <button class="p" onclick="api('/api/torque?on=1')">Turn torque ON (hold, no move)</button>
       <button onclick="api('/api/torque?on=0')">Torque OFF (limp)</button>
       <button onclick="api('/api/home')">Home all &rarr; 180&deg;</button>
+      <button onclick="api('/api/servo/tune',1)" title="Re-write deadband / Kp / Kd / Ki / torque limit">Re-tune hold</button>
       <span class="hint" id="torqhint"></span>
     </div>
   </div>
@@ -255,14 +256,12 @@ function rows(d){
   const sig=d.servos.map(s=>s.id+s.label).join(',');
   if(tb.dataset.sig!==sig){tb.dataset.sig=sig;tb.innerHTML='';
     d.servos.forEach(s=>{const tr=document.createElement('tr');tr.id='r'+s.id;
-      tr.innerHTML='<td class="l">'+s.id+'</td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td>'+
+      tr.innerHTML='<td class="l">'+s.id+'</td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td><td class="er">-</td>'+
       '<td><input type="range" min="'+s.min+'" max="'+s.max+'" step="0.5" value="180" id="sl'+s.id+'" onchange="mv('+s.id+')">'+
       '<span id="lv'+s.id+'" style="color:var(--dim)"></span> '+
       '<button title="home this servo to 180" style="padding:2px 6px" onclick="homeOne('+s.id+')">&#8962;</button></td>'+
       '<td class="sp">-</td><td class="ld">-</td><td class="ma">-</td><td class="vv">-</td><td class="tp">-</td><td class="md">-</td>'+
-      '<td class="l"><button onclick="api(\'/api/command?servo='+s.id+'&cmd=cw\')">CW</button> '+
-      '<button onclick="api(\'/api/command?servo='+s.id+'&cmd=ccw\')">CCW</button> '+
-      '<button class="d" onclick="api(\'/api/command?servo='+s.id+'&cmd=stop\')">stop</button> '+
+      '<td class="l"><button class="d" onclick="api(\'/api/command?servo='+s.id+'&cmd=stop\')">stop</button> '+
       '<button onclick="api(\'/api/command?servo='+s.id+'&cmd=torquetoggle\')">torq</button> '+
       '<button onclick="api(\'/api/identify?id='+s.id+'\')">identify</button></td>';
       tb.appendChild(tr);});}
@@ -270,6 +269,12 @@ function rows(d){
     q('a').textContent=s.currentAngle==null?'--':s.currentAngle.toFixed(1);
     q('a').style.color=s.connected?(s.moving?'var(--acc)':'var(--fg)'):'var(--bad)';
     q('t').textContent=s.targetAngle==null?'--':s.targetAngle.toFixed(1);
+    // Holding error against the 0.3 deg goal. Grey while limp (a limp joint is not trying),
+    // green within spec, amber drooping, red being pushed off target and not winning.
+    if(s.currentAngle==null||s.targetAngle==null){q('er').textContent='--';}
+    else{const e=Math.abs(s.targetAngle-s.currentAngle);
+      q('er').textContent=e.toFixed(2);
+      q('er').style.color=!s.torque?'var(--dim)':e<=0.3?'var(--ok)':e<=1?'var(--warn)':'var(--bad)';}
     q('sp').textContent=s.speed;q('ld').textContent=s.loadAbs;
     q('ma').textContent=s.currentmA==null?'--':s.currentmA;
     q('vv').textContent=s.voltageV==null?'--':s.voltageV;

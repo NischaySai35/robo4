@@ -76,9 +76,10 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <label>speed 1-10</label><input type="number" id="g-spd" value="5" min="1" max="10">
       <label>acc 1-100</label><input type="number" id="g-acc" value="20" min="1" max="100">
       <button class="p" onclick="sendAll()">Send all sliders (sync)</button>
-      <button onclick="api('/api/command?servo=all&cmd=torqueon')">Torque on all</button>
-      <button onclick="api('/api/command?servo=all&cmd=torqueoff')">Torque off all</button>
-      <button onclick="api('/api/home')">Home 180</button>
+      <button class="p" onclick="api('/api/torque?on=1')">Turn torque ON (hold, no move)</button>
+      <button onclick="api('/api/torque?on=0')">Torque OFF (limp)</button>
+      <button onclick="api('/api/home')">Home all &rarr; 180&deg;</button>
+      <span class="hint" id="torqhint"></span>
     </div>
   </div>
 </section>
@@ -93,7 +94,10 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <span id="sstat" class="hint"></span>
     </div>
     <div class="wrap"><table><thead><tr><th class="l">ID</th><th>baud</th><th>raw pos</th><th>angle</th><th>volt</th><th>degC</th><th>mode</th><th class="l"></th></tr></thead><tbody id="sres"></tbody></table></div>
-    <p class="hint">Scanning pauses telemetry and restores the configured baud when it finishes.</p>
+    <p class="hint">The servos found here <b>become</b> the controlled set: sliders on the Dashboard are
+    rebuilt from them and the list is saved, so a reboot keeps it and only a rescan changes it.
+    Torque stays OFF afterwards &mdash; discovering a servo never energises it. Scanning pauses
+    telemetry and restores the working baud when it finishes.</p>
   </div>
   <div class="card"><h3>Change a servo ID</h3>
     <div class="row">
@@ -201,10 +205,14 @@ function api(u,show){return fetch(u).then(r=>r.json()).then(d=>{if(show)out(d);r
   .catch(e=>{out({ok:false,error:''+e})})}
 function out(d){const p=el('rout');if(p)p.textContent=JSON.stringify(d,null,1);}
 
-el('tabs').onclick=e=>{const t=e.target.dataset.t;if(!t)return;
+/* Named rather than inline so code can switch tabs too — the scan jumps back to the
+   Dashboard once it has adopted the servos it found. */
+function showTab(t){
   [...el('tabs').children].forEach(b=>b.classList.toggle('sel',b.dataset.t===t));
   document.querySelectorAll('main section').forEach(s=>s.classList.toggle('sel',s.id==='s-'+t));
-  if(t==='log')loadLog(); if(t==='cfg')fillCfg(); if(t==='wifi')fillWifi();};
+  if(t==='log')loadLog(); if(t==='cfg')fillCfg(); if(t==='wifi')fillWifi();
+}
+el('tabs').onclick=e=>{const t=e.target.dataset.t;if(!t)return;showTab(t);};
 
 /* ---------- dashboard ---------- */
 function rows(d){
@@ -214,7 +222,8 @@ function rows(d){
     d.servos.forEach(s=>{const tr=document.createElement('tr');tr.id='r'+s.id;
       tr.innerHTML='<td class="l">'+s.id+'</td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td>'+
       '<td><input type="range" min="'+s.min+'" max="'+s.max+'" step="0.5" value="180" id="sl'+s.id+'" onchange="mv('+s.id+')">'+
-      '<span id="lv'+s.id+'" style="color:var(--dim)"></span></td>'+
+      '<span id="lv'+s.id+'" style="color:var(--dim)"></span> '+
+      '<button title="home this servo to 180" style="padding:2px 6px" onclick="homeOne('+s.id+')">&#8962;</button></td>'+
       '<td class="sp">-</td><td class="ld">-</td><td class="ma">-</td><td class="vv">-</td><td class="tp">-</td><td class="md">-</td>'+
       '<td class="l"><button onclick="api(\'/api/command?servo='+s.id+'&cmd=cw\')">CW</button> '+
       '<button onclick="api(\'/api/command?servo='+s.id+'&cmd=ccw\')">CCW</button> '+
@@ -231,8 +240,19 @@ function rows(d){
     q('vv').textContent=s.voltageV==null?'--':s.voltageV;
     q('tp').textContent=s.tempC==null?'--':s.tempC;
     q('tp').style.color=s.tempC>55?'var(--bad)':s.tempC>45?'var(--warn)':'';
-    q('md').textContent=s.mode+(s.torque?'':' /off');});
+    q('md').textContent=s.mode+(s.torque?'':' /off');
+    // While torque is OFF the joint can be moved by hand, so the slider tracks the real
+    // angle. Once torque is on the slider is an INPUT and must not be yanked around under
+    // the operator's cursor, so it is left alone.
+    const sl=el('sl'+s.id);
+    if(sl&&!s.torque&&s.currentAngle!=null&&document.activeElement!==sl){
+      sl.value=s.currentAngle;el('lv'+s.id).textContent=s.currentAngle.toFixed(0);}});
+  const anyTorque=d.servos.some(s=>s.torque);
+  const th=el('torqhint');
+  if(th)th.textContent=d.servos.length===0?'no servos — run a scan in Tools'
+    :anyTorque?'':'all limp — sliders follow the arm; press Turn torque ON to hold';
 }
+function homeOne(id){api('/api/command?servo='+id+'&cmd=home');}
 function mv(id){el('lv'+id).textContent=(+v('sl'+id)).toFixed(0);
   api('/api/command?servo='+id+'&cmd=pos&angle='+v('sl'+id)+'&speed='+v('g-spd')+'&acc='+v('g-acc'));}
 function sendAll(){if(!tel)return;let q='/api/batch?speed='+v('g-spd')+'&acc='+v('g-acc');
@@ -283,7 +303,11 @@ function pollScan(){fetch('/api/scan/status').then(r=>r.json()).then(d=>{
   el('sres').innerHTML=d.found.map(f=>'<tr><td class="l">'+f.id+'</td><td>'+f.baud+'</td><td>'+f.pos+'</td><td>'+
     (f.pos*360/4095).toFixed(1)+'</td><td>'+(f.volt/10)+'</td><td>'+f.temp+'</td><td>'+f.mode+'</td>'+
     '<td class="l"><button onclick="api(\'/api/identify?id='+f.id+'\')">identify</button></td></tr>').join('');
-  if(d.active)setTimeout(pollScan,400);});}
+  if(d.active){setTimeout(pollScan,400);return;}
+  // The board adopts the scan results, so pull fresh config+telemetry and jump to the
+  // Dashboard: the whole point of scanning is to end up with sliders for what was found.
+  if(d.found.length){el('sstat').textContent='done - '+d.found.length+' adopted, torque OFF';
+    setTimeout(()=>{poll();showTab('dash');},400);}});}
 function setId(){if(!confirm('Only ONE servo may be connected. Write ID '+v('idf')+' -> '+v('idt')+'?'))return;
   api('/api/servo/setid?from='+v('idf')+'&to='+v('idt'),1).then(d=>alert(JSON.stringify(d)));}
 

@@ -51,7 +51,7 @@
 #define UART_MODE_RS485_HALF_DUPLEX 4
 #endif
 
-#define FW_VERSION "0.0.1"
+#define FW_VERSION "0.0.2"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
 #define DEF_SSID  "GNXS-2.4G-6809B0"
@@ -95,15 +95,11 @@ void cfgDefaults() {
   strlcpy(cfg.ssid[0], DEF_SSID, sizeof(cfg.ssid[0]));
   strlcpy(cfg.pass[0], DEF_PASS, sizeof(cfg.pass[0]));
   cfg.baud = 1000000;
-  cfg.servoCount = 7;
-  const char* L[7] = { "J1", "J2", "J3", "J4", "J5", "J6", "J7" };
-  for (uint8_t i = 0; i < 7; i++) {
-    cfg.ids[i] = i + 1;
-    strlcpy(cfg.labels[i], L[i], sizeof(cfg.labels[i]));
-    const bool bend = (i + 1 == 2 || i + 1 == 3 || i + 1 == 5 || i + 1 == 6);
-    cfg.minDeg[i] = bend ? 80  : 0;
-    cfg.maxDeg[i] = bend ? 280 : 360;
-  }
+  // No servos until a scan finds some. This used to assume seven, ids 1..7, so a board with
+  // (say) ids 1,5,6,12 came up showing seven sliders — four of them for servos that are not
+  // there and three real ones missing entirely. Discovery is the honest source of truth, and
+  // it is one button press. Only a FRESH board sees this; a configured one keeps its NVS.
+  cfg.servoCount = 0;
   cfg.magSafeHold = 40;
 }
 
@@ -285,6 +281,49 @@ void cmdTorqueToggle(ServoState& sv) {
   else             { st.EnableTorque(sv.id, 1); delay(2); sv.torqueOn = true; }
 }
 void estopAll() { for (uint8_t i = 0; i < nServos; i++) cmdStop(servos[i]); }
+
+/* Enable torque WITHOUT moving. A servo holds whatever goal position is still in its own
+   register, so switching torque on after the arm has been posed by hand can snap it back to
+   a stale goal. Reading the live position and writing it as the goal FIRST makes torque-on
+   a pure "hold exactly here" operation, which is what the button says it does. */
+void torqueOnHold(ServoState& sv) {
+  int pos = readRetry(sv.id, [](uint8_t i) { return st.ReadPos(i); }, [](int v) { return v >= 0; });
+  if (pos >= 0) {
+    sv.rawPos     = pos;
+    sv.targetRaw  = (uint16_t)pos;
+    sv.targetDeg  = rawToAngle((uint16_t)pos);
+    st.WritePosEx(sv.id, (int16_t)pos, speedScaleToRaw(10), POS_ACC_DEFAULT);
+    delay(3);
+  }
+  sv.mode = POS_MODE;
+  setHwMode(sv, POS_MODE);
+  st.EnableTorque(sv.id, 1); delay(2);
+  sv.torqueOn = true;
+  sv.lastCommandMs = millis();
+}
+
+void torqueOnAll()  { for (uint8_t i = 0; i < nServos; i++) torqueOnHold(servos[i]); }
+void torqueOffAll() {
+  for (uint8_t i = 0; i < nServos; i++) {
+    st.EnableTorque(servos[i].id, 0); delay(2);
+    servos[i].torqueOn = false;
+    servos[i].moving   = false;
+  }
+}
+
+/* Read each servo's real angle and adopt it as the target, so the UI sliders start where the
+   arm actually IS. Without this they sit at the 180 default while the servo is somewhere
+   else entirely, and the first slider nudge would fling the joint across its range. */
+void seedTargetsFromHardware() {
+  for (uint8_t i = 0; i < nServos; i++) {
+    ServoState& sv = servos[i];
+    int pos = readRetry(sv.id, [](uint8_t id) { return st.ReadPos(id); }, [](int v) { return v >= 0; });
+    if (pos < 0) continue;
+    sv.rawPos    = pos;
+    sv.targetRaw = (uint16_t)pos;
+    sv.targetDeg = rawToAngle((uint16_t)pos);
+  }
+}
 
 void homeAll() {
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
@@ -516,12 +555,76 @@ void scanStart(uint8_t from, uint8_t to, bool allBaud) {
 
 uint32_t scanBaud() { return sc.bCount == 1 ? cfg.baud : BAUD_TABLE[sc.bIdx]; }
 
+/* Take the servos the scan just found and make them THE servo list: sliders, telemetry and
+   batch moves all read from cfg.ids/servoCount, so without this step a scan was purely
+   informational — it printed "found id=5" and then the dashboard still showed whatever was
+   configured before. Persisted, so a reboot keeps them and only a rescan changes them. */
+void adoptScanResults() {
+  if (sc.nHits == 0) { lg("scan found nothing — keeping the existing servo list"); return; }
+
+  // A baud sweep can report the same physical servo at more than one rate, and can find
+  // servos the bus cannot actually talk to at cfg.baud. Adopt ONE baud: whichever the most
+  // hits agree on, switching cfg.baud to it if it differs, so the adopted list is always a
+  // set the bus can really reach.
+  uint32_t bestBaud = cfg.baud; uint8_t bestCount = 0;
+  for (uint8_t i = 0; i < sc.nHits; i++) {
+    uint8_t c = 0;
+    for (uint8_t k = 0; k < sc.nHits; k++) if (sc.hits[k].baud == sc.hits[i].baud) c++;
+    if (c > bestCount) { bestCount = c; bestBaud = sc.hits[i].baud; }
+  }
+  if (bestBaud != cfg.baud) { lg("adopting baud %lu (was %lu)", (unsigned long)bestBaud, (unsigned long)cfg.baud); cfg.baud = bestBaud; }
+
+  // Snapshot the OLD table before writing into it. Labels and limits are looked up by ID and
+  // the found IDs are rarely in their previous slots, so reading cfg.labels[] while rewriting
+  // cfg.labels[] would hand slot 2's label to slot 0 as soon as anything moved down.
+  uint8_t oldCount = min(cfg.servoCount, (uint8_t)MAX_SERVOS);
+  uint8_t oldIds[MAX_SERVOS];
+  char    oldLabels[MAX_SERVOS][14];
+  int16_t oldMin[MAX_SERVOS], oldMax[MAX_SERVOS];
+  for (uint8_t k = 0; k < oldCount; k++) {
+    oldIds[k] = cfg.ids[k];
+    memcpy(oldLabels[k], cfg.labels[k], sizeof(oldLabels[0]));
+    oldMin[k] = cfg.minDeg[k]; oldMax[k] = cfg.maxDeg[k];
+  }
+
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < sc.nHits && n < MAX_SERVOS; i++) {
+    if (sc.hits[i].baud != bestBaud) continue;
+    bool dup = false;
+    for (uint8_t k = 0; k < n; k++) if (cfg.ids[k] == sc.hits[i].id) dup = true;
+    if (dup) continue;                                    // a baud sweep can report an ID twice
+    // Keep any label/limits already configured for this ID; only unknown IDs get defaults.
+    int prev = -1;
+    for (uint8_t k = 0; k < oldCount; k++) if (oldIds[k] == sc.hits[i].id) prev = k;
+    cfg.ids[n] = sc.hits[i].id;
+    if (prev >= 0) {
+      memcpy(cfg.labels[n], oldLabels[prev], sizeof(cfg.labels[0]));
+      cfg.minDeg[n] = oldMin[prev]; cfg.maxDeg[n] = oldMax[prev];
+    } else {
+      snprintf(cfg.labels[n], sizeof(cfg.labels[0]), "id %u", sc.hits[i].id);
+      cfg.minDeg[n] = 0; cfg.maxDeg[n] = 360;             // unknown joint: no travel limits
+    }
+    n++;
+  }
+  for (uint8_t k = n; k < MAX_SERVOS; k++) { cfg.ids[k] = 0; cfg.labels[k][0] = 0; }
+  cfg.servoCount = n;
+  cfgSave();
+  applyServoConfig();
+  busBegin(cfg.baud);
+  lg("adopted %u servo(s) from scan", n);
+}
+
 void scanFinish() {
   sc.active = false; sc.done = true;
   st.IOTimeOut = sc.savedTimeout;
   busBegin(cfg.baud);
+  adoptScanResults();
   for (uint8_t i = 0; i < nServos; i++) servos[i].hwMode = 255;   // force mode re-write
-  lg("scan done: %u servo(s) found", sc.nHits);
+  // Torque stays OFF after a scan, exactly as after boot: discovering a servo must never
+  // energise it. Targets are seeded from the real angles so the sliders show the true pose.
+  torqueOffAll();
+  seedTargetsFromHardware();
+  lg("scan done: %u servo(s) found, torque OFF", sc.nHits);
 }
 
 void scanStep() {
@@ -681,9 +784,12 @@ void applyCmd(ServoState& sv, const String& cmd) {
   else if (cmd == "ccw")                    cmdCCW(sv);
   else if (cmd == "wave")                   cmdWave(sv);
   else if (cmd == "stop" || cmd == "estop")  cmdStop(sv);
-  else if (cmd == "torquetoggle")           cmdTorqueToggle(sv);
-  else if (cmd == "torqueon")  { if (!sv.torqueOn) cmdTorqueToggle(sv); }
+  // Every torque-ON path goes through torqueOnHold so the joint holds exactly where it is
+  // rather than snapping to whatever goal was left in the servo's register.
+  else if (cmd == "torquetoggle")           { if (sv.torqueOn) cmdTorqueToggle(sv); else torqueOnHold(sv); }
+  else if (cmd == "torqueon")  { if (!sv.torqueOn) torqueOnHold(sv); }
   else if (cmd == "torqueoff") { if (sv.torqueOn)  cmdTorqueToggle(sv); }
+  else if (cmd == "home")                   cmdPos(sv, 180.0f, 10, POS_ACC_DEFAULT);
 }
 
 void handleCommand() {
@@ -707,7 +813,7 @@ void handleCommand() {
                                                  : POS_ACC_DEFAULT);
   if (cmd == "pos") { cmdPos(*sv, angle, speed, acc); okTrue(); return; }
   if (cmd == "cw" || cmd == "ccw" || cmd == "wave" || cmd == "stop" || cmd == "estop" ||
-      cmd == "torquetoggle" || cmd == "torqueon" || cmd == "torqueoff") {
+      cmd == "torquetoggle" || cmd == "torqueon" || cmd == "torqueoff" || cmd == "home") {
     applyCmd(*sv, cmd); okTrue(); return;
   }
   errJson(400, "unknown cmd");
@@ -746,6 +852,11 @@ void handleBatch() {
 }
 
 void handleHome() { homeAll(); okTrue(); }
+void handleTorqueAll() {
+  bool on = !server.hasArg("on") || server.arg("on") != "0";
+  if (on) torqueOnAll(); else torqueOffAll();
+  okJson(on ? F("{\"ok\":true,\"torque\":\"on\"}") : F("{\"ok\":true,\"torque\":\"off\"}"));
+}
 
 // Wiggle one servo ±8° so you can SEE which physical joint an ID belongs to.
 void handleIdentify() {
@@ -1177,6 +1288,7 @@ void setup() {
   route("/api/batch",           handleBatch);
   route("/api/magnet",          handleMagnet);
   route("/api/home",            handleHome);
+  route("/api/torque",          handleTorqueAll);
   route("/api/identify",        handleIdentify);
   route("/api/log",             handleLog);
   route("/api/scan",            handleScan);
@@ -1207,7 +1319,14 @@ void setup() {
 
   delay(3000);                         // let the servo bus settle after power-up
   flushBus();
-  homeAll();
+  // Boot LIMP, deliberately. This used to call homeAll(), which energised every servo and
+  // drove it to 180 the instant the board powered up — a moving arm nobody asked for, before
+  // the operator had even opened the page. Now the board comes up torque-off and only READS,
+  // so the UI shows the true pose and the arm can be positioned by hand. Torque is an
+  // explicit button press, and homing is a separate one.
+  torqueOffAll();
+  seedTargetsFromHardware();
+  lg("boot complete — torque OFF, %u servo(s) configured", nServos);
 }
 
 void loop() {

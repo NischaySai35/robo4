@@ -71,9 +71,14 @@ struct ScanHit {
  * enough to need the physical reset button, because the loop never yields either, so the
  * Wi-Fi and TCP tasks are starved along with everything else.
  *
- * Two changes, both in the override below: an ABSOLUTE deadline that no amount of incoming
- * noise can push back, and a yield() per iteration so a legitimate wait cannot starve the
- * network stack on this single-core part. rFlushSCS is bounded for the same reason.
+ * What remains here is ONE thing: an absolute deadline alongside SCServo's inter-byte one.
+ * It costs two millis() comparisons and bounds any read no matter what the bus does.
+ *
+ * An earlier version also called yield() on every poll iteration. That was removed: this is a
+ * tight non-blocking poll, so yielding per iteration is a context-switch storm on a
+ * single-core part — tens of thousands of them during one 100ms wait — and it was added to
+ * support a diagnosis that turned out to be wrong. Slowing every servo read to defend against
+ * a hang that cannot happen is a bad trade.
  */
 class SafeSMS : public SMS_STS {
  public:
@@ -94,7 +99,6 @@ class SafeSMS : public SMS_STS {
       if (size >= nLen) break;
       if (millis() - tBegin > IOTimeOut) break;   // normal: gone quiet
       if (millis() - start > hardCap) break;      // pathological: never goes quiet
-      yield();                                    // never starve Wi-Fi/TCP on one core
     }
     return size;
   }
@@ -104,7 +108,6 @@ class SafeSMS : public SMS_STS {
     // Same hazard: "read until empty" never empties on a noisy floating line.
     while (pSerial->read() != -1) {
       if (millis() - start > 20) break;
-      yield();
     }
   }
 };

@@ -51,7 +51,7 @@
 #define UART_MODE_RS485_HALF_DUPLEX 4
 #endif
 
-#define FW_VERSION "0.0.4"
+#define FW_VERSION "0.0.5"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
 #define DEF_SSID  "GNXS-2.4G-6809B0"
@@ -302,7 +302,15 @@ void estopAll() { for (uint8_t i = 0; i < nServos; i++) cmdStop(servos[i]); }
    a stale goal. Reading the live position and writing it as the goal FIRST makes torque-on
    a pure "hold exactly here" operation, which is what the button says it does. */
 void torqueOnHold(ServoState& sv) {
-  int pos = readRetry(sv.id, [](uint8_t i) { return st.ReadPos(i); }, [](int v) { return v >= 0; });
+  // 2 attempts at 30ms, not 5 at the 100ms default: this runs once per servo inside an HTTP
+  // handler, so "torque on all" with six servos could block the web server for ~3 SECONDS if
+  // any of them were slow to answer — long enough for the browser to time out the request and
+  // for the board to look dead. A servo that will not report its position in 60ms simply does
+  // not get the hold-in-place write; torque still engages.
+  unsigned long saved = st.IOTimeOut;
+  st.IOTimeOut = 30;
+  int pos = readRetry(sv.id, [](uint8_t i) { return st.ReadPos(i); }, [](int v) { return v >= 0; }, 2);
+  st.IOTimeOut = saved;
   if (pos >= 0) {
     sv.rawPos     = pos;
     sv.targetRaw  = (uint16_t)pos;
@@ -317,7 +325,7 @@ void torqueOnHold(ServoState& sv) {
   sv.lastCommandMs = millis();
 }
 
-void torqueOnAll()  { for (uint8_t i = 0; i < nServos; i++) torqueOnHold(servos[i]); }
+void torqueOnAll()  { for (uint8_t i = 0; i < nServos; i++) { torqueOnHold(servos[i]); yield(); } }
 void torqueOffAll() {
   for (uint8_t i = 0; i < nServos; i++) {
     st.EnableTorque(servos[i].id, 0); delay(2);
@@ -860,6 +868,9 @@ void handleCommand() {
   }
   ServoState* sv = byId((uint8_t)sa.toInt());
   if (!sv) { errJson(404, "servo not found"); return; }
+  // Mirrored to USB serial by lg(): if the board stops answering, the monitor's last line
+  // names the exact request it was in, which beats guessing from the browser side.
+  lg("cmd id=%u %s", sv->id, cmd.c_str());
 
   float   angle = server.hasArg("angle") ? server.arg("angle").toFloat() : sv->targetDeg;
   int     speed = server.hasArg("speed") ? server.arg("speed").toInt()   : 10;

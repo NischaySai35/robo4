@@ -51,7 +51,7 @@
 #define UART_MODE_RS485_HALF_DUPLEX 4
 #endif
 
-#define FW_VERSION "0.0.3"
+#define FW_VERSION "0.0.4"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
 #define DEF_SSID  "GNXS-2.4G-6809B0"
@@ -150,7 +150,7 @@ void setMagnet(uint8_t ch, int pct) {
 }
 
 // ── Servos ───────────────────────────────────────────────────────────────────
-SMS_STS   st;
+SafeSMS   st;   // SMS_STS with bounded, yielding bus reads — see types.h
 WebServer server(80);
 
 ServoState servos[MAX_SERVOS];
@@ -168,7 +168,12 @@ unsigned long lastFast = 0, lastSlow = 0, lastWave = 0;
 uint8_t       slowIdx = 0;
 bool          otaBusy = false;      // pause the servo bus while flashing
 
-static inline void flushBus() { while (Serial1.available()) Serial1.read(); }
+// Bounded: "drain until empty" never empties on a floating half-duplex line, which is
+// the same trap that hung the board during a bus scan (see SafeSMS in types.h).
+static inline void flushBus() {
+  const unsigned long start = millis();
+  while (Serial1.available()) { Serial1.read(); if (millis() - start > 20) break; }
+}
 static inline float clampF(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 static inline uint16_t angleToRaw(float d) { d = clampF(d, 0, 360); return (uint16_t)lroundf((d / 360.0f) * 4095.0f); }
 static inline float rawToAngle(uint16_t r) { return (r / 4095.0f) * 360.0f; }
@@ -188,12 +193,22 @@ void limitsFor(uint8_t slot, float& lo, float& hi) {
 }
 
 void busBegin(uint32_t baud) {
+  // Only tear the UART down when the rate actually changes. In a normal session this runs
+  // ONCE, at boot; the bus scan was the first thing that ever re-entered it, and a scan at
+  // the already-configured baud (the default, box unticked) was doing a pointless
+  // end()/begin()/setMode() cycle on a live half-duplex RS485 port for no gain. Skipping the
+  // no-op removes that from the common path entirely — and re-init is now only reached by an
+  // explicit multi-baud sweep.
+  static uint32_t curBaud = 0;
+  if (baud == curBaud) { flushBus(); return; }
+  lg("bus re-init %lu -> %lu baud", (unsigned long)curBaud, (unsigned long)baud);
   Serial1.end();
   delay(5);
   Serial1.begin(baud, SERIAL_8N1, SERVO_PIN, SERVO_PIN);
   Serial1.setMode((SerialMode)UART_MODE_RS485_HALF_DUPLEX);
   Serial1.setRxBufferSize(512);
   st.pSerial = &Serial1;
+  curBaud = baud;
   flushBus();
 }
 
@@ -545,7 +560,8 @@ struct {
   uint8_t nHits;
   ScanHit hits[24];
   unsigned long savedTimeout;
-} sc = {false, false, 1, 20, 1, 0, 1, 0, {}, 100};
+  unsigned long startedMs;
+} sc = {false, false, 1, 20, 1, 0, 1, 0, {}, 100, 0};
 
 void scanStart(uint8_t from, uint8_t to, bool allBaud) {
   sc.from = max<uint8_t>(1, from);
@@ -558,8 +574,10 @@ void scanStart(uint8_t from, uint8_t to, bool allBaud) {
   sc.active = true; sc.done = false;
   sc.savedTimeout = st.IOTimeOut;
   st.IOTimeOut = 20;                          // a missing ID must fail fast
+  sc.startedMs = millis();
+  lg("scan %u..%u %s - preparing bus", sc.from, sc.to, allBaud ? "(all bauds)" : "");
   busBegin(allBaud ? BAUD_TABLE[0] : cfg.baud);
-  lg("scan %u..%u %s", sc.from, sc.to, allBaud ? "(all bauds)" : "");
+  lg("scan running");
 }
 
 uint32_t scanBaud() { return sc.bCount == 1 ? cfg.baud : BAUD_TABLE[sc.bIdx]; }
@@ -655,6 +673,13 @@ void scanFinish() {
 
 void scanStep() {
   if (!sc.active) return;
+  // Hard deadline. Even a sweep of every id at every baud is seconds, so anything past this
+  // is a stuck bus, and a scan that cannot end is a board that cannot be used.
+  if (millis() - sc.startedMs > 45000UL) {
+    lg("scan ABORTED - exceeded 45s (stuck bus?), stopping at id %u", sc.cur);
+    scanFinish();
+    return;
+  }
   // One id per loop() iteration, not three. A 20-id sweep took ~0.4s at three-per-pass, so
   // the UI's poll caught a single frame and the scan looked like it never ran. One at a time
   // is still ~20ms per id and keeps handleClient() responsive between every probe.

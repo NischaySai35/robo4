@@ -54,3 +54,57 @@ struct ScanHit {
   uint32_t baud;
   int      pos, volt, temp, mode;
 };
+
+#include <SCServo.h>
+
+/**
+ * SafeSMS — SMS_STS with the servo-bus reads made impossible to hang on.
+ *
+ * SCServo's readSCS() resets its timeout EVERY TIME A BYTE ARRIVES, so the loop only ends
+ * after IOTimeOut passes with complete silence. The servo bus here is RS485 half-duplex on a
+ * SINGLE pin, so the board hears its own transmissions and, when the line is left floating
+ * (nothing answering, no servo driving it), the UART produces a continuous stream of framing
+ * garbage. Every one of those bytes rearms the timeout, and the read never returns.
+ *
+ * That is exactly what a bus scan does: it deliberately addresses ids with nothing on them.
+ * Symptom was the whole board hanging a fraction of a second after pressing Scan — hard
+ * enough to need the physical reset button, because the loop never yields either, so the
+ * Wi-Fi and TCP tasks are starved along with everything else.
+ *
+ * Two changes, both in the override below: an ABSOLUTE deadline that no amount of incoming
+ * noise can push back, and a yield() per iteration so a legitimate wait cannot starve the
+ * network stack on this single-core part. rFlushSCS is bounded for the same reason.
+ */
+class SafeSMS : public SMS_STS {
+ public:
+  int readSCS(unsigned char* nDat, int nLen) override {
+    const unsigned long start = millis();
+    // Generous next to any real reply (10 bytes at 38400 baud is under 3ms) while still
+    // bounding the pathological case.
+    const unsigned long hardCap = IOTimeOut * 2 + 50;
+    unsigned long tBegin = start;
+    int size = 0;
+    while (true) {
+      const int c = pSerial->read();
+      if (c != -1) {
+        if (nDat) nDat[size] = (unsigned char)c;
+        size++;
+        tBegin = millis();
+      }
+      if (size >= nLen) break;
+      if (millis() - tBegin > IOTimeOut) break;   // normal: gone quiet
+      if (millis() - start > hardCap) break;      // pathological: never goes quiet
+      yield();                                    // never starve Wi-Fi/TCP on one core
+    }
+    return size;
+  }
+
+  void rFlushSCS() override {
+    const unsigned long start = millis();
+    // Same hazard: "read until empty" never empties on a noisy floating line.
+    while (pSerial->read() != -1) {
+      if (millis() - start > 20) break;
+      yield();
+    }
+  }
+};

@@ -393,12 +393,12 @@ function pullOta(){
   const u=v('ourl').trim();
   if(!u){alert('Enter the URL of the .bin, e.g. http://192.168.1.20:8000/esp32_multi-v0.0.3.ino.bin');return;}
   if(!confirm('Flash from\n'+u+'\n\nThe board reboots when it finishes. Continue?'))return;
-  el('ostat').textContent='asking the board to pull '+u+' ...';
+  el('pstat').textContent='asking the board to pull '+u+' ...';
   fetch('/api/ota/url?u='+encodeURIComponent(u))
     .then(r=>r.json())
-    .then(d=>{el('ostat').textContent=d.ok?'pulling - the board is offline while it writes, then reboots. Reload in ~30s.'
+    .then(d=>{el('pstat').textContent=d.ok?'pulling - the board is offline while it writes, then reboots. Reload in ~30s.'
                                           :('refused: '+(d.error||JSON.stringify(d)));})
-    .catch(()=>{el('ostat').textContent='pull started (board stopped responding, which is expected). Reload in ~30s.';});
+    .catch(()=>{el('pstat').textContent='pull started (board stopped responding, which is expected). Reload in ~30s.';});
 }
 function pick(s){if(el('ws0'))el('ws0').value=s;alert('put '+s+' in slot 0 - type the password and press Save');}
 

@@ -32,6 +32,13 @@ button.p{background:var(--acc);border-color:var(--acc);color:#ffffff;font-weight
 button.d{border-color:var(--bad);color:var(--bad)}
 input,select{background:var(--pan);border:1px solid var(--ln);color:var(--fg);padding:4px 6px;border-radius:6px;font:inherit}
 input[type=range]{padding:0;width:150px;vertical-align:middle}
+/* One chip per candidate id, so the sweep is watchable instead of a spinner. */
+.sgrid{display:flex;flex-wrap:wrap;gap:4px;margin:10px 0}
+.sgrid .c{min-width:30px;text-align:center;padding:3px 6px;border:1px solid var(--ln);border-radius:5px;
+  font-size:11px;color:var(--dim);background:var(--pan)}
+.sgrid .c.now{border-color:var(--acc);color:var(--acc);font-weight:700}
+.sgrid .c.chk{opacity:.45}
+.sgrid .c.hit{border-color:var(--ok);color:#fff;background:var(--ok);font-weight:700;opacity:1}
 input[type=number]{width:78px}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
 label{color:var(--dim)}
@@ -91,8 +98,11 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <label>to</label><input type="number" id="stt" value="20" min="1" max="253">
       <label><input type="checkbox" id="sb"> also sweep every baud rate</label>
       <button class="p" onclick="startScan()">Scan</button>
+      <button onclick="stopPoll=1">stop watching</button>
       <span id="sstat" class="hint"></span>
     </div>
+    <div id="sgrid" class="sgrid"></div>
+    <div id="sadopt" class="hint"></div>
     <div class="wrap"><table><thead><tr><th class="l">ID</th><th>baud</th><th>raw pos</th><th>angle</th><th>volt</th><th>degC</th><th>mode</th><th class="l"></th></tr></thead><tbody id="sres"></tbody></table></div>
     <p class="hint">The servos found here <b>become</b> the controlled set: sliders on the Dashboard are
     rebuilt from them and the list is saved, so a reboot keeps it and only a rescan changes it.
@@ -295,19 +305,46 @@ async function poll(){
 }
 
 /* ---------- scan ---------- */
-function startScan(){el('sres').innerHTML='';el('sstat').textContent='starting...';
-  api('/api/scan?from='+v('sf')+'&to='+v('stt')+'&allbaud='+(el('sb').checked?1:0)).then(()=>setTimeout(pollScan,300));}
-function pollScan(){fetch('/api/scan/status').then(r=>r.json()).then(d=>{
-  el('sstat').textContent=d.active?('scanning id '+d.at+' @ '+d.baud+' - found '+d.found.length)
-                                  :('done - '+d.found.length+' servo(s) found');
-  el('sres').innerHTML=d.found.map(f=>'<tr><td class="l">'+f.id+'</td><td>'+f.baud+'</td><td>'+f.pos+'</td><td>'+
-    (f.pos*360/4095).toFixed(1)+'</td><td>'+(f.volt/10)+'</td><td>'+f.temp+'</td><td>'+f.mode+'</td>'+
-    '<td class="l"><button onclick="api(\'/api/identify?id='+f.id+'\')">identify</button></td></tr>').join('');
-  if(d.active){setTimeout(pollScan,400);return;}
-  // The board adopts the scan results, so pull fresh config+telemetry and jump to the
-  // Dashboard: the whole point of scanning is to end up with sliders for what was found.
-  if(d.found.length){el('sstat').textContent='done - '+d.found.length+' adopted, torque OFF';
-    setTimeout(()=>{poll();showTab('dash');},400);}});}
+let stopPoll=0;
+function startScan(){
+  stopPoll=0;
+  el('sres').innerHTML='';el('sadopt').textContent='';
+  el('sstat').textContent='starting...';
+  // Draw the whole candidate range up front so there is something to watch from frame one.
+  const a=+v('sf'),b=+v('stt');let g='';
+  for(let i=a;i<=b;i++)g+='<span class="c" id="sc'+i+'">'+i+'</span>';
+  el('sgrid').innerHTML=g;
+  api('/api/scan?from='+a+'&to='+b+'&allbaud='+(el('sb').checked?1:0)).then(()=>setTimeout(pollScan,120));
+}
+function pollScan(){
+  if(stopPoll)return;
+  fetch('/api/scan/status').then(r=>r.json()).then(d=>{
+    // Everything below `at` in this pass has been probed; mark it so progress is visible even
+    // though the poll only ever samples the sweep, never sees every individual id.
+    for(let i=d.from;i<=d.to;i++){const c=el('sc'+i);if(!c)continue;
+      c.classList.toggle('now',d.active&&i===d.at);
+      if(i<d.at||!d.active)c.classList.add('chk');}
+    d.found.forEach(f=>{const c=el('sc'+f.id);if(c){c.className='c hit';c.title='found @ '+f.baud;}});
+
+    el('sstat').textContent=d.active
+      ? 'checking id '+d.at+' of '+d.from+'-'+d.to+(d.passes>1?(' · baud pass '+d.pass+'/'+d.passes+' ('+d.baud+')'):'')+' · found '+d.found.length
+      : 'done · '+d.found.length+' servo(s) found';
+
+    el('sres').innerHTML=d.found.map(f=>'<tr><td class="l">'+f.id+'</td><td>'+f.baud+'</td><td>'+f.pos+'</td><td>'+
+      (f.pos*360/4095).toFixed(1)+'</td><td>'+(f.volt/10)+'</td><td>'+f.temp+'</td><td>'+f.mode+'</td>'+
+      '<td class="l"><button onclick="api(\'/api/identify?id='+f.id+'\')">identify</button></td></tr>').join('');
+
+    if(d.active){setTimeout(pollScan,150);return;}
+    // Finished. The board has already adopted these and left torque OFF; say so and offer the
+    // jump rather than yanking the tab away while the result is still being read.
+    if(d.found.length){
+      el('sadopt').innerHTML='<b>'+d.found.length+' servo(s) adopted</b> — sliders rebuilt, torque left OFF. '+
+        '<button class="p" onclick="poll();showTab(\'dash\')">Open Dashboard</button>';
+      poll();
+    } else el('sadopt').textContent='nothing found - check power, wiring and the baud rate, then rescan.';
+  }).catch(e=>{el('sstat').textContent='lost contact with the board ('+e+') - retrying';
+    setTimeout(pollScan,700);});
+}
 function setId(){if(!confirm('Only ONE servo may be connected. Write ID '+v('idf')+' -> '+v('idt')+'?'))return;
   api('/api/servo/setid?from='+v('idf')+'&to='+v('idt'),1).then(d=>alert(JSON.stringify(d)));}
 
@@ -348,6 +385,21 @@ function wscan(){el('wstat').textContent='scanning...';
    el('wlist').innerHTML='<div class="wrap"><table><thead><tr><th class="l">ssid</th><th>rssi</th><th>ch</th><th>enc</th><th></th></tr></thead><tbody>'+
    d.nets.map(n=>'<tr><td class="l">'+n.ssid+'</td><td>'+n.rssi+'</td><td>'+n.ch+'</td><td>'+(n.open?'open':'wpa')+'</td>'+
    '<td><button onclick="pick(\''+n.ssid+'\')">use in slot 0</button></td></tr>').join('')+'</tbody></table></div>';});}
+/* The "Fetch and flash" button called this and it did not exist — the handler was never
+   written, so the OTA-from-URL path was dead in the UI even though /api/ota/url works.
+   The board stops serving HTTP the moment the pull starts (single core, blocking write),
+   so a failed fetch here is expected and is not an error worth alarming about. */
+function pullOta(){
+  const u=v('ourl').trim();
+  if(!u){alert('Enter the URL of the .bin, e.g. http://192.168.1.20:8000/esp32_multi-v0.0.3.ino.bin');return;}
+  if(!confirm('Flash from\n'+u+'\n\nThe board reboots when it finishes. Continue?'))return;
+  el('ostat').textContent='asking the board to pull '+u+' ...';
+  fetch('/api/ota/url?u='+encodeURIComponent(u))
+    .then(r=>r.json())
+    .then(d=>{el('ostat').textContent=d.ok?'pulling - the board is offline while it writes, then reboots. Reload in ~30s.'
+                                          :('refused: '+(d.error||JSON.stringify(d)));})
+    .catch(()=>{el('ostat').textContent='pull started (board stopped responding, which is expected). Reload in ~30s.';});
+}
 function pick(s){if(el('ws0'))el('ws0').value=s;alert('put '+s+' in slot 0 - type the password and press Save');}
 
 /* ---------- ota ---------- */

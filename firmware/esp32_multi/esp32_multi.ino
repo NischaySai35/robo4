@@ -51,7 +51,7 @@
 #define UART_MODE_RS485_HALF_DUPLEX 4
 #endif
 
-#define FW_VERSION "0.0.2"
+#define FW_VERSION "0.0.3"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
 #define DEF_SSID  "GNXS-2.4G-6809B0"
@@ -308,21 +308,30 @@ void torqueOffAll() {
     st.EnableTorque(servos[i].id, 0); delay(2);
     servos[i].torqueOn = false;
     servos[i].moving   = false;
+    yield();                       // bulk bus loops must not starve the idle task
   }
 }
 
 /* Read each servo's real angle and adopt it as the target, so the UI sliders start where the
    arm actually IS. Without this they sit at the 180 default while the servo is somewhere
    else entirely, and the first slider nudge would fling the joint across its range. */
+/* BOOT ONLY. Two attempts, not five, and a short timeout: at 100ms x 5 a dozen silent
+   servos would stall startup for ~6 seconds. Anything that does not answer twice is simply
+   left at its default until the first scan or telemetry pass fills it in. Never call this
+   from loop() — see the note in scanFinish. */
 void seedTargetsFromHardware() {
+  unsigned long saved = st.IOTimeOut;
+  st.IOTimeOut = 30;
   for (uint8_t i = 0; i < nServos; i++) {
     ServoState& sv = servos[i];
-    int pos = readRetry(sv.id, [](uint8_t id) { return st.ReadPos(id); }, [](int v) { return v >= 0; });
+    int pos = readRetry(sv.id, [](uint8_t id) { return st.ReadPos(id); }, [](int v) { return v >= 0; }, 2);
+    yield();
     if (pos < 0) continue;
     sv.rawPos    = pos;
     sv.targetRaw = (uint16_t)pos;
     sv.targetDeg = rawToAngle((uint16_t)pos);
   }
+  st.IOTimeOut = saved;
 }
 
 void homeAll() {
@@ -611,6 +620,22 @@ void adoptScanResults() {
   cfgSave();
   applyServoConfig();
   busBegin(cfg.baud);
+
+  // Seed each slider from the position the SCAN already read (ScanHit.pos). Re-reading the
+  // bus here is what froze the board: readRetry makes 5 attempts at SCServo's 100ms default
+  // timeout, so every servo that does not answer costs 500ms, and a dozen of them blocks a
+  // single loop() iteration for ~6s — long past the ESP32 task watchdog, which panics and
+  // resets. The scan already has the numbers; asking twice was pure cost.
+  for (uint8_t k = 0; k < n; k++) {
+    for (uint8_t i = 0; i < sc.nHits; i++) {
+      if (sc.hits[i].id != cfg.ids[k] || sc.hits[i].baud != bestBaud) continue;
+      if (sc.hits[i].pos < 0) break;
+      servos[k].rawPos    = sc.hits[i].pos;
+      servos[k].targetRaw = (uint16_t)sc.hits[i].pos;
+      servos[k].targetDeg = rawToAngle((uint16_t)sc.hits[i].pos);
+      break;
+    }
+  }
   lg("adopted %u servo(s) from scan", n);
 }
 
@@ -621,15 +646,19 @@ void scanFinish() {
   adoptScanResults();
   for (uint8_t i = 0; i < nServos; i++) servos[i].hwMode = 255;   // force mode re-write
   // Torque stays OFF after a scan, exactly as after boot: discovering a servo must never
-  // energise it. Targets are seeded from the real angles so the sliders show the true pose.
+  // energise it. Targets were seeded from the scan's own readings inside adoptScanResults —
+  // deliberately NO bus reads here, because everything in this function runs inside loop()
+  // and a slow one takes the watchdog with it.
   torqueOffAll();
-  seedTargetsFromHardware();
   lg("scan done: %u servo(s) found, torque OFF", sc.nHits);
 }
 
 void scanStep() {
   if (!sc.active) return;
-  for (uint8_t k = 0; k < 3 && sc.active; k++) {
+  // One id per loop() iteration, not three. A 20-id sweep took ~0.4s at three-per-pass, so
+  // the UI's poll caught a single frame and the scan looked like it never ran. One at a time
+  // is still ~20ms per id and keeps handleClient() responsive between every probe.
+  for (uint8_t k = 0; k < 1 && sc.active; k++) {
     uint8_t id = sc.cur;
     if (st.Ping(id) != -1 && sc.nHits < 24) {
       ScanHit& h = sc.hits[sc.nHits++];
@@ -890,8 +919,13 @@ void handleScan() {
 void handleScanStatus() {
   String j = F("{\"ok\":true,\"active\":");
   j += (sc.active ? F("true") : F("false"));
-  j += F(",\"at\":");   j += sc.cur;
-  j += F(",\"baud\":"); j += scanBaud();
+  j += F(",\"done\":");  j += (sc.done ? F("true") : F("false"));
+  j += F(",\"at\":");    j += sc.cur;
+  j += F(",\"from\":");  j += sc.from;      // the UI draws one cell per id in this range
+  j += F(",\"to\":");    j += sc.to;        // and marks them checked/found as the scan runs
+  j += F(",\"pass\":");  j += (sc.bIdx + 1);
+  j += F(",\"passes\":");j += sc.bCount;
+  j += F(",\"baud\":");  j += scanBaud();
   j += F(",\"found\":[");
   for (uint8_t i = 0; i < sc.nHits; i++) {
     const ScanHit& h = sc.hits[i];

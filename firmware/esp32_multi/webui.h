@@ -14,6 +14,16 @@ header b{font-size:15px;letter-spacing:.5px}
 .pill{padding:2px 8px;border:1px solid var(--ln);border-radius:99px;color:var(--dim)}
 .pill.on{color:var(--ok);border-color:var(--ok)}.pill.off{color:var(--bad);border-color:var(--bad)}
 .pill.ver{background:var(--acc);border-color:var(--acc);color:#fff;font-weight:700;font-size:14px;letter-spacing:.5px;padding:3px 12px}
+.led{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:99px;border:1px solid var(--ln);font-size:12px;color:var(--dim)}
+.led i{width:9px;height:9px;border-radius:50%;background:var(--ln);display:block;flex:none}
+.led.ok{color:var(--ok);border-color:var(--ok)}.led.ok i{background:var(--ok)}
+.led.warn{color:var(--warn);border-color:var(--warn)}.led.warn i{background:var(--warn)}
+.led.bad{color:var(--bad);border-color:var(--bad)}.led.bad i{background:var(--bad)}
+.led.busy{color:var(--acc);border-color:var(--acc)}.led.busy i{background:var(--acc);animation:bl .9s infinite}
+@keyframes bl{50%{opacity:.2}}
+.leds{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 10px}
+button:disabled{opacity:.4;cursor:not-allowed}
+button:disabled:hover{border-color:var(--ln)}
 nav{display:flex;gap:2px;flex-wrap:wrap;padding:8px 10px;background:var(--pan);border-bottom:1px solid var(--ln)}
 nav button{background:none;border:1px solid transparent;color:var(--dim);padding:6px 12px;border-radius:6px;cursor:pointer;font:inherit}
 nav button.sel{color:var(--fg);background:var(--pan);border-color:var(--ln);box-shadow:0 1px 0 var(--ln)}
@@ -93,6 +103,9 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <button class="p" onclick="api('/api/torque?on=1')">Turn torque ON (hold, no move)</button>
       <button onclick="api('/api/torque?on=0')">Torque OFF (limp)</button>
       <button onclick="api('/api/home')">Home all &rarr; 180&deg;</button>
+      <button class="p" onclick="api('/api/home/manual')">Go to manual home</button>
+      <button onclick="setHomeAll()" title="save every joint's current angle as its home">Set current angles as home</button>
+      <button onclick="clearHomeAll()" title="forget all saved homes - everything goes back to 180">Clear homes</button>
       <button onclick="api('/api/servo/tune',1)" title="Re-write deadband / Kp / Kd / Ki / torque limit">Re-tune hold</button>
       <span class="hint" id="torqhint"></span>
     </div>
@@ -118,12 +131,18 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
     telemetry and restores the working baud when it finishes.</p>
   </div>
   <div class="card"><h3>Change a servo ID</h3>
+    <div class="leds" id="dleds"><span class="led"><i></i>idle</span></div>
     <div class="row">
-      <label>current ID</label><input type="number" id="idf" value="1" min="1" max="253">
-      <label>new ID</label><input type="number" id="idt" value="2" min="1" max="253">
-      <button class="p" onclick="setId()">Write ID</button>
+      <button class="p" id="dbtn" onclick="detectId()">Detect</button>
+      <button id="cbtn" onclick="manualMode()" style="display:none">Continue anyway</button>
+      <span id="dstat" class="hint">click Detect to see which servo is on the bus</span>
     </div>
-    <p class="hint danger">Only ONE servo may be on the bus while writing an ID - every servo answering the old ID takes the new one. EPROM is unlocked, written, verified, re-locked.</p>
+    <div class="row">
+      <label>current ID</label><input type="number" id="idf" value="-" min="1" max="253" disabled>
+      <label>new ID</label><input type="number" id="idt" value="2" min="1" max="253" disabled>
+      <button class="p" id="sbtn" onclick="sendId()" disabled>Send</button>
+    </div>
+    <p class="hint danger">The write is addressed to one ID, so on a bus with unique IDs it only touches that servo. With several servos found, press Continue anyway and type the old and new IDs yourself. Two things are still refused: an old ID the detect never saw, and a new ID that is already taken (that would leave two servos sharing it, and no scan can tell them apart). Send re-locks after every write - detect again for the next one.</p>
   </div>
   <div class="card"><h3>Change a servo baud rate</h3>
     <div class="row">
@@ -259,7 +278,9 @@ function rows(d){
       tr.innerHTML='<td class="l">'+s.id+'</td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td><td class="er">-</td>'+
       '<td><input type="range" min="'+s.min+'" max="'+s.max+'" step="0.5" value="180" id="sl'+s.id+'" onchange="mv('+s.id+')">'+
       '<span id="lv'+s.id+'" style="color:var(--dim)"></span> '+
-      '<button title="home this servo to 180" style="padding:2px 6px" onclick="homeOne('+s.id+')">&#8962;</button></td>'+
+      '<button title="send this servo to 180" style="padding:2px 6px" onclick="api(\'/api/servo/home?id='+s.id+'&to180=1\')">180</button> '+
+      '<button class="hb" title="send this servo to its saved home" style="padding:2px 6px" onclick="api(\'/api/servo/home?id='+s.id+'\')">home</button> '+
+      '<button title="save this joint\'s CURRENT angle as its home" style="padding:2px 6px" onclick="setHomeOne('+s.id+')">set</button></td>'+
       '<td class="sp">-</td><td class="ld">-</td><td class="ma">-</td><td class="vv">-</td><td class="tp">-</td><td class="md">-</td>'+
       '<td class="l"><button class="d" onclick="api(\'/api/command?servo='+s.id+'&cmd=stop\')">stop</button> '+
       '<button onclick="api(\'/api/command?servo='+s.id+'&cmd=torquetoggle\')">torq</button> '+
@@ -281,6 +302,15 @@ function rows(d){
     q('tp').textContent=s.tempC==null?'--':s.tempC;
     q('tp').style.color=s.tempC>55?'var(--bad)':s.tempC>45?'var(--warn)':'';
     q('md').textContent=s.mode+(s.torque?'':' /off');
+    // The home button states its own destination: an explicit angle once one is saved,
+    // a greyed 180 while it is still the default.
+    const hb=r.querySelector('.hb');
+    if(hb&&s.home!=null){
+      hb.textContent='home '+(+s.home).toFixed(0)+'\u00b0';
+      hb.style.borderColor=s.homeSet?'var(--ok)':'';
+      hb.style.color=s.homeSet?'var(--ok)':'var(--dim)';
+      hb.title=s.homeSet?'saved home for this joint':'no home saved yet - defaults to 180';
+    }
     // While torque is OFF the joint can be moved by hand, so the slider tracks the real
     // angle. Once torque is on the slider is an INPUT and must not be yanked around under
     // the operator's cursor, so it is left alone.
@@ -376,8 +406,135 @@ function pollScan(){
   }).catch(e=>{el('sstat').textContent='lost contact with the board ('+e+') - retrying';
     setTimeout(pollScan,700);});
 }
-function setId(){if(!confirm('Only ONE servo may be connected. Write ID '+v('idf')+' -> '+v('idt')+'?'))return;
-  api('/api/servo/setid?from='+v('idf')+'&to='+v('idt'),1).then(d=>alert(JSON.stringify(d)));}
+/* ---------- home positions ---------- */
+function setHomeOne(id){
+  const r=el('r'+id), a=r?r.querySelector('.a').textContent:'?';
+  if(!confirm('Save '+a+'\u00b0 as the home position for servo '+id+'?'))return;
+  api('/api/home/set?id='+id).then(()=>poll());
+}
+function setHomeAll(){
+  if(!confirm('Save EVERY joint\'s current angle as its home position?\n\n'+
+              'Pose the arm how you want it first - this captures where it is right now.'))return;
+  api('/api/home/set').then(d=>{poll();
+    if(d&&d.count!=null)alert('saved home for '+d.count+' servo(s)');});
+}
+function clearHomeAll(){
+  if(!confirm('Forget all saved home positions? Every joint goes back to 180.'))return;
+  api('/api/home/set?id=all&clear=1').then(()=>poll());
+}
+
+/* ---------- guided ID change: detect -> send -> re-detect ---------- */
+let detId=null, detBusy=0, detFound=[], detManual=0;
+
+function leds(list){el('dleds').innerHTML=list.map(l=>
+  '<span class="led '+(l[1]||'')+'"><i></i>'+l[0]+'</span>').join('');}
+
+// mode 0 = locked, 1 = one servo found (old ID filled in and fixed),
+// 2 = manual (several servos found, you type the old ID yourself)
+function armSend(mode){
+  el('idt').disabled = !mode;
+  el('sbtn').disabled = !mode;
+  el('idf').disabled = (mode!==2);
+  if(mode===1) el('idf').value=detId;
+  else if(mode!==2) el('idf').value='-';
+}
+
+function manualMode(){
+  detManual=1;
+  el('cbtn').style.display='none';
+  el('idf').value = detFound.length ? detFound[0] : '';
+  armSend(2);
+  el('dstat').style.color='';
+  el('dstat').textContent='manual mode - IDs on the bus: '+detFound.join(', ')+
+    '. Type which one to change and its new number.';
+}
+
+function detectId(){
+  if(detBusy)return;
+  detBusy=1; detId=null; detFound=[]; detManual=0; armSend(0);
+  el('cbtn').style.display='none';
+  el('dbtn').disabled=true; el('dbtn').textContent='Detecting...';
+  el('dbtn').classList.remove('d');
+  el('dstat').style.color='';
+  leds([['scanning bus','busy']]);
+  // adopt=0: a read-only look at the bus - it must not rewrite the servo list or the baud.
+  fetch('/api/scan?from=1&to=253&adopt=0').then(r=>r.json()).then(d=>{
+    if(!d.ok) throw new Error(d.error||'board busy');
+    setTimeout(pollDetect,150);
+  }).catch(e=>{detBusy=0;el('dbtn').disabled=false;el('dbtn').textContent='Detect';
+    leds([['error','bad']]);el('dstat').style.color='var(--bad)';
+    el('dstat').textContent='could not start: '+e.message;});
+}
+
+function pollDetect(){
+  fetch('/api/scan/status').then(r=>r.json()).then(d=>{
+    if(d.active){
+      leds([['scanning id '+d.at+'/'+d.to,'busy'],
+            [d.found.length+' found', d.found.length?'ok':'']]);
+      el('dstat').textContent='probing every id 1-253, this takes a few seconds...';
+      setTimeout(pollDetect,150); return;
+    }
+    detBusy=0; el('dbtn').disabled=false; el('dbtn').textContent='Detect';
+    const f=d.found;
+    detFound=f.map(x=>x.id);
+    if(f.length===0){
+      leds([['no servo','bad']]);
+      el('dstat').style.color='var(--bad)';
+      el('dstat').textContent='nothing answered - check power, wiring, and the bus baud in Config';
+      armSend(0); return;
+    }
+    if(f.length>1){
+      // A warning, not a wall: with unique IDs the write is safe, so offer the way through.
+      leds([[f.length+' servos on bus','warn']].concat(f.map(x=>['id '+x.id,''])));
+      el('dstat').style.color='var(--warn)';
+      el('dstat').textContent='several servos found ('+detFound.join(', ')+'). Fine if their IDs '+
+        'are unique - press Continue anyway to type the old and new ID yourself.';
+      el('cbtn').style.display='';
+      armSend(0); return;
+    }
+    detId=f[0].id;
+    leds([['1 servo','ok'],['id '+detId,'ok'],['ready to send','ok']]);
+    el('dstat').style.color='var(--ok)';
+    el('dstat').textContent='servo '+detId+' found at '+f[0].baud+' baud - enter a new ID and press Send';
+    armSend(1);
+  }).catch(e=>{leds([['lost contact','bad']]);setTimeout(pollDetect,700);});
+}
+
+function sendId(){
+  const from = detManual ? +v('idf') : detId;
+  const to   = +v('idt');
+  if(!(from>=1&&from<=253))return alert('old ID must be 1..253');
+  if(!(to>=1&&to<=253))return alert('new ID must be 1..253');
+  if(to===from)return alert('that is already its ID');
+  let force=0;
+  if(detManual && detFound.length && detFound.indexOf(from)<0)
+    return alert('detect never saw ID '+from+' on this bus - re-detect');
+  if(detFound.indexOf(to)>=0){
+    if(!confirm('ID '+to+' is ALREADY used by a servo on this bus.\n\nGoing ahead leaves two '+
+                'servos sharing ID '+to+', and no scan can tell them apart afterwards.\n\nReally continue?'))
+      return;
+    force=1;
+  }
+  if(!confirm('Change servo '+from+' to ID '+to+'?'))return;
+  el('sbtn').disabled=true; el('idt').disabled=true; el('idf').disabled=true;
+  leds([['id '+from,'ok'],['writing -> '+to,'busy']]);
+  el('dstat').style.color='';
+  el('dstat').textContent='unlocking EPROM, writing, re-locking, verifying...';
+  fetch('/api/servo/setid?from='+from+'&to='+to+(force?'&force=1':'')).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      leds([['wrote '+from+' -> '+to,'ok'],['detect again for the next one','']]);
+      el('dstat').style.color='var(--ok)';
+      el('dstat').textContent='done - servo is now ID '+to+'. Detect is required before the next write.';
+    }else{
+      leds([['write failed','bad']]);
+      el('dstat').style.color='var(--bad)';
+      el('dstat').textContent='failed: '+(d.error||'unknown')+' - re-detect and try again';
+    }
+  }).catch(e=>{leds([['no reply','bad']]);el('dstat').style.color='var(--bad)';
+    el('dstat').textContent='no reply from the board: '+e;})
+  // The bus just changed, so every cached detect result is stale: force a fresh one.
+  .finally(()=>{ detId=null; detManual=0; detFound=[]; el('cbtn').style.display='none'; armSend(0); });
+}
 
 /* ---------- config ---------- */
 function fillCfg(){fetch('/api/config').then(r=>r.json()).then(d=>{

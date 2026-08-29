@@ -1,0 +1,197 @@
+/* ESP-TTL page — laptop-side console for a module's ESP32-C3.
+   Uses the app's own palette tokens so it follows the light/dark toggle. */
+
+.ettl {
+  display: flex; flex-direction: column;
+  height: 100%; min-height: 0;
+  background: var(--bg); color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+}
+
+/* ── header ─────────────────────────────────────────────────────────────── */
+.ettl-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 14px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.ettl-title { font-weight: 700; letter-spacing: .5px; font-size: 14px; }
+.ettl-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--text-dim); flex: none; }
+.ettl-dot.on  { background: var(--success, #3fb950); box-shadow: 0 0 6px var(--success, #3fb950); }
+.ettl-dot.off { background: var(--danger); }
+.ettl-url {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 3px 8px; font: inherit; width: 190px;
+}
+.ettl-chip {
+  padding: 2px 8px; border: 1px solid var(--border); border-radius: 99px;
+  color: var(--text-dim); white-space: nowrap;
+}
+
+/* ── tabs ───────────────────────────────────────────────────────────────── */
+.ettl-tabs {
+  display: flex; gap: 2px; flex-wrap: wrap;
+  padding: 6px 10px; background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.ettl-tabs button {
+  background: none; border: 1px solid transparent; color: var(--text-dim);
+  padding: 5px 13px; border-radius: 6px; cursor: pointer; font: inherit;
+}
+.ettl-tabs button:hover { color: var(--text); }
+.ettl-tabs button.sel {
+  color: var(--text); background: var(--bg); border-color: var(--border);
+}
+
+.ettl-body { flex: 1; min-height: 0; overflow: auto; padding: 14px; }
+
+/* ── cards ──────────────────────────────────────────────────────────────── */
+.ettl-card {
+  background: var(--bg-panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 12px; margin-bottom: 14px;
+}
+.ettl-card h4 {
+  margin: 0 0 10px; font-size: 11px; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--text-dim); font-weight: 600;
+}
+.ettl-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.ettl-row:last-child { margin-bottom: 0; }
+.ettl-sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+.ettl-lbl { display: inline-flex; align-items: center; gap: 6px; color: var(--text-dim); }
+.ettl-dim { color: var(--text-dim); }
+.ettl-hint { color: var(--text-dim); font-size: 11.5px; margin: 8px 0 0; line-height: 1.5; }
+
+.ettl-okline   { color: var(--success, #3fb950); margin-bottom: 8px; }
+.ettl-warnline { color: var(--danger); margin-bottom: 8px; }
+.ettl-warn {
+  border: 1px solid var(--danger); border-radius: 6px; padding: 8px 10px;
+  color: var(--danger); margin-top: 8px; line-height: 1.5;
+}
+
+/* ── controls ───────────────────────────────────────────────────────────── */
+.ettl-btn {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  padding: 4px 10px; border-radius: 6px; cursor: pointer; font: inherit;
+  white-space: nowrap;
+}
+.ettl-btn:hover:not(:disabled) { border-color: var(--accent); }
+.ettl-btn:disabled { opacity: .4; cursor: not-allowed; }
+.ettl-btn.accent { background: var(--accent); border-color: var(--accent); color: #04121f; font-weight: 600; }
+.ettl-btn.danger { border-color: var(--danger); color: var(--danger); }
+.ettl-btn.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+.ettl-btn.big { padding: 6px 14px; font-weight: 700; }
+.ettl-btn.tiny { padding: 2px 6px; font-size: 11px; }
+.ettl-btn.rec { border-color: #e5534b; color: #e5534b; font-weight: 600; }
+
+.ettl input, .ettl select {
+  background: var(--bg); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 3px 6px; font: inherit;
+}
+.ettl input[type=range] { padding: 0; width: 140px; vertical-align: middle; accent-color: var(--accent); }
+.ettl input:disabled { opacity: .45; }
+
+.ettl-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--text-dim); cursor: pointer; user-select: none;
+}
+.ettl-toggle input { display: none; }
+.ettl-toggle span {
+  width: 30px; height: 16px; border-radius: 99px;
+  border: 1px solid var(--border); background: var(--bg); position: relative; transition: .15s;
+}
+.ettl-toggle span::after {
+  content: ''; position: absolute; top: 2px; left: 2px;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--text-dim); transition: .15s;
+}
+.ettl-toggle.on { color: var(--accent); }
+.ettl-toggle.on span { border-color: var(--accent); }
+.ettl-toggle.on span::after { left: 16px; background: var(--accent); }
+
+/* ── LED strip ──────────────────────────────────────────────────────────── */
+.ettl-leds { display: flex; gap: 6px; flex-wrap: wrap; }
+.ettl-led {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 2px 9px; border: 1px solid var(--border); border-radius: 99px;
+  color: var(--text-dim); font-size: 11.5px;
+}
+.ettl-led i { width: 8px; height: 8px; border-radius: 50%; background: var(--border); flex: none; }
+.ettl-led.ok   { color: var(--success, #3fb950); border-color: var(--success, #3fb950); }
+.ettl-led.ok i { background: var(--success, #3fb950); }
+.ettl-led.warn   { color: #d29922; border-color: #d29922; }
+.ettl-led.warn i { background: #d29922; }
+.ettl-led.busy   { color: var(--accent); border-color: var(--accent); }
+.ettl-led.busy i { background: var(--accent); animation: ettl-blink .9s infinite; }
+@keyframes ettl-blink { 50% { opacity: .2; } }
+
+/* ── tables ─────────────────────────────────────────────────────────────── */
+.ettl-wrap { overflow-x: auto; }
+.ettl-table { border-collapse: collapse; width: 100%; }
+.ettl-table th, .ettl-table td {
+  padding: 4px 8px; border-bottom: 1px solid var(--border);
+  text-align: right; white-space: nowrap;
+}
+.ettl-table th { color: var(--text-dim); font-weight: 400; font-size: 11px; }
+.ettl-table th.l, .ettl-table td.l { text-align: left; }
+
+.ettl-pre {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+  padding: 9px; margin: 0; max-height: 220px; overflow: auto;
+  white-space: pre-wrap; font-size: 11.5px; color: var(--text-dim);
+}
+.ettl-pre.tall { max-height: 60vh; }
+
+.ettl-bar {
+  height: 8px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 99px; overflow: hidden; margin: 8px 0;
+}
+.ettl-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+
+/* ── timeline ───────────────────────────────────────────────────────────── */
+.ettl-empty {
+  border: 1px dashed var(--border); border-radius: 8px;
+  padding: 22px; text-align: center; color: var(--text-dim); line-height: 1.6;
+}
+.ettl-track {
+  display: flex; gap: 10px; overflow-x: auto; padding: 6px 2px 12px;
+  scrollbar-width: thin;
+}
+.ettl-frame {
+  flex: none; width: 168px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px; cursor: grab; transition: border-color .12s, transform .12s;
+}
+.ettl-frame:active { cursor: grabbing; }
+.ettl-frame:hover { border-color: var(--accent); }
+.ettl-frame.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.ettl-frame.playing {
+  border-color: var(--success, #3fb950);
+  box-shadow: 0 0 10px -2px var(--success, #3fb950);
+}
+.ettl-frame.over { transform: translateX(6px); border-color: var(--accent); border-style: dashed; }
+
+.ettl-frame-top { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+.ettl-frame-n {
+  background: var(--accent); color: #04121f; font-weight: 700;
+  border-radius: 4px; padding: 0 6px; font-size: 11px;
+}
+.ettl-frame-name {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px;
+}
+.ettl-frame-meta {
+  display: flex; gap: 8px; flex-wrap: wrap;
+  color: var(--text-dim); font-size: 10.5px; margin-bottom: 7px;
+}
+.ettl-frame-meta .ov { color: var(--accent); }
+.ettl-frame-btns { display: flex; gap: 4px; }
+
+/* ── toast ──────────────────────────────────────────────────────────────── */
+.ettl-toast {
+  position: fixed; right: 18px; bottom: 42px; z-index: 40;
+  background: var(--bg-panel); border: 1px solid var(--accent);
+  color: var(--text); padding: 8px 14px; border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .35);
+}
+
+.ettl-anim { display: block; }

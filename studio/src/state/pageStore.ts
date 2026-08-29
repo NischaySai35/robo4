@@ -1,12 +1,15 @@
 /**
  * pageStore — which top-level workspace page is active. The 3D scene is shared across
  * Editor / Analysis / Training / Animation (different side panels + layout per page);
- * Motor Control is a separate hardware page. Kept in a store (not local state) so the
- * viewport can switch pages too — e.g. double-clicking a part jumps to the Editor.
+ * MSRR Experiments runs its own lattice sandbox viewport instead (it can mirror into
+ * the shared scene on demand), Motor Control is a separate hardware page,
+ * and ESP-TTL is the laptop-side console for one module's ESP32 (its own full-width view). Kept in
+ * a store (not local state) so the viewport can switch pages too — e.g. double-clicking
+ * a part jumps to the Editor.
  */
 import { create } from 'zustand';
 
-export type Page = 'editor' | 'analysis' | 'training' | 'animation' | 'motor';
+export type Page = 'editor' | 'analysis' | 'training' | 'animation' | 'msrr' | 'motor' | 'esptt';
 
 interface PageState {
   page: Page;

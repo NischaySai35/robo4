@@ -461,7 +461,64 @@ void seedTargetsFromHardware() {
   st.IOTimeOut = saved;
 }
 
-void homeAll() {
+// ── Manual home positions ───────────────────────────────────────────────────
+// Stored under their own NVS key and keyed by servo id (not slot), so a re-scan that
+// reorders or renumbers the servo table cannot shuffle everyone's home onto the wrong
+// joint. Unset servos answer 180, which is what the old fixed behaviour did.
+struct HomeTable {
+  uint16_t ver;
+  uint8_t  n;
+  uint8_t  ids[MAX_SERVOS];
+  int16_t  deg10[MAX_SERVOS];   // tenths of a degree, so 142.5 survives a round trip
+};
+HomeTable homes = {1, 0, {}, {}};
+
+void homesLoad() {
+  if (prefs.getBytesLength("homes") == sizeof(HomeTable)) {
+    HomeTable t;
+    prefs.getBytes("homes", &t, sizeof(t));
+    if (t.ver == 1 && t.n <= MAX_SERVOS) { homes = t; lg("loaded %u home position(s)", t.n); return; }
+  }
+  homes.ver = 1; homes.n = 0;
+}
+
+void homesSave() { prefs.putBytes("homes", &homes, sizeof(homes)); }
+
+float homeFor(uint8_t id) {
+  for (uint8_t i = 0; i < homes.n; i++) if (homes.ids[i] == id) return homes.deg10[i] / 10.0f;
+  return 180.0f;
+}
+
+bool hasHome(uint8_t id) {
+  for (uint8_t i = 0; i < homes.n; i++) if (homes.ids[i] == id) return true;
+  return false;
+}
+
+void setHomeFor(uint8_t id, float deg) {
+  int16_t v = (int16_t)lroundf(clampF(deg, 0.0f, 360.0f) * 10.0f);
+  for (uint8_t i = 0; i < homes.n; i++) {
+    if (homes.ids[i] == id) { homes.deg10[i] = v; return; }
+  }
+  if (homes.n < MAX_SERVOS) { homes.ids[homes.n] = id; homes.deg10[homes.n] = v; homes.n++; }
+}
+
+void clearHomeFor(uint8_t id) {
+  for (uint8_t i = 0; i < homes.n; i++) {
+    if (homes.ids[i] == id) {
+      for (uint8_t k = i; k + 1 < homes.n; k++) { homes.ids[k] = homes.ids[k + 1]; homes.deg10[k] = homes.deg10[k + 1]; }
+      homes.n--;
+      return;
+    }
+  }
+}
+
+// Send one servo to a target, honouring its configured limits.
+void gotoDeg(uint8_t slot, float deg) {
+  if (slot >= nServos) return;
+  cmdPos(servos[slot], deg, 10, POS_ACC_DEFAULT);
+}
+
+void homeAll(bool homeManual = false) {
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
   uint16_t spd[MAX_SERVOS]; uint8_t  acc[MAX_SERVOS];
   for (uint8_t i = 0; i < nServos; i++) {
@@ -469,7 +526,7 @@ void homeAll() {
     ensureTorque(servos[i]);
     float lo, hi; limitsFor(i, lo, hi);
     servos[i].mode = POS_MODE;
-    servos[i].targetDeg = clampF(180.0f, lo, hi);
+    servos[i].targetDeg = clampF(homeManual ? homeFor(servos[i].id) : 180.0f, lo, hi);
     servos[i].targetRaw = angleToRaw(servos[i].targetDeg);
     servos[i].speedScale = 10;
     servos[i].speedRaw = speedScaleToRaw(10);
@@ -676,6 +733,9 @@ struct {
   unsigned long startedMs;
 } sc = {false, false, 1, 20, 1, 0, 1, 0, {}, 100, 0};
 
+// A detect pass (adopt=false) only reports what answered; it must not touch cfg.
+bool scAdopt = true;
+
 void scanStart(uint8_t from, uint8_t to, bool allBaud) {
   sc.from = max<uint8_t>(1, from);
   sc.to   = min<uint8_t>(253, to);
@@ -774,7 +834,7 @@ void scanFinish() {
   sc.active = false; sc.done = true;
   st.IOTimeOut = sc.savedTimeout;
   busBegin(cfg.baud);
-  adoptScanResults();
+  if (scAdopt) adoptScanResults();
   for (uint8_t i = 0; i < nServos; i++) servos[i].hwMode = 255;   // force mode re-write
   // Torque stays OFF after a scan, exactly as after boot: discovering a servo must never
   // energise it. Targets were seeded from the scan's own readings inside adoptScanResults —
@@ -782,7 +842,8 @@ void scanFinish() {
   // and a slow one takes the watchdog with it.
   torqueOffAll();
   tuneAllServos();          // the newly-adopted servos must hold as stiffly as the rest
-  lg("scan done: %u servo(s) found, torque OFF", sc.nHits);
+  lg(scAdopt ? "scan done: %u servo(s) found, torque OFF"
+             : "detect done: %u servo(s) answered (nothing adopted)", sc.nHits);
 }
 
 void scanStep() {
@@ -886,6 +947,8 @@ String buildJSON() {
     if (sv.rawVoltage > 0) j += String(sv.rawVoltage / 10.0f, 1); else j += F("null");
     j += F(",\"tempC\":");
     if (sv.rawTemp > 0) j += sv.rawTemp; else j += F("null");
+    j += F(",\"home\":");     j += String(homeFor(sv.id), 1);
+    j += F(",\"homeSet\":");  j += (hasHome(sv.id) ? F("true") : F("false"));
     j += F(",\"speedScale\":"); j += sv.speedScale;
     j += F(",\"acc\":");        j += sv.acc;
     j += F(",\"lastCommandAgeMs\":"); j += (millis() - sv.lastCommandMs);
@@ -1024,7 +1087,64 @@ void handleBatch() {
   okJson(b);
 }
 
-void handleHome() { bc("home all"); homeAll(); okTrue(); }
+// GET /api/home            all servos -> 180
+// GET /api/home?manual=1    all servos -> their stored home (180 where unset)
+void handleHome() {
+  bool manual = server.hasArg("manual") && server.arg("manual") != "0";
+  bc(manual ? "home all (manual)" : "home all -> 180");
+  homeAll(manual);
+  okTrue();
+}
+
+// GET /api/home/manual                 same as /api/home?manual=1
+void handleHomeManual() { bc("home all (manual)"); homeAll(true); okTrue(); }
+
+// GET /api/home/set                    capture EVERY servo's current angle as its home
+// GET /api/home/set?id=N               just this one
+// GET /api/home/set?id=N&deg=142.5     set it to an explicit angle instead
+// GET /api/home/set?id=N&clear=1       forget it (back to 180)
+void handleHomeSet() {
+  bool clear = server.hasArg("clear") && server.arg("clear") != "0";
+  String out = F("{\"ok\":true,\"homes\":[");
+  uint8_t n = 0;
+
+  for (uint8_t i = 0; i < nServos; i++) {
+    ServoState& sv = servos[i];
+    if (server.hasArg("id") && server.arg("id") != "all" &&
+        (uint8_t)server.arg("id").toInt() != sv.id) continue;
+
+    if (clear) { clearHomeFor(sv.id); }
+    else if (server.hasArg("deg")) { setHomeFor(sv.id, server.arg("deg").toFloat()); }
+    else {
+      // Capture what the joint is ACTUALLY at. A servo that never answered has no angle
+      // to capture, so it is skipped rather than silently homed to a stale reading.
+      if (sv.rawPos < 0) continue;
+      setHomeFor(sv.id, rawToAngle((uint16_t)sv.rawPos));
+    }
+    if (n++) out += ',';
+    out += F("{\"id\":");   out += sv.id;
+    out += F(",\"home\":"); out += String(homeFor(sv.id), 1);
+    out += '}';
+  }
+  homesSave();
+  bc(clear ? "home positions cleared" : "home positions saved");
+  out += F("],\"count\":"); out += n; out += '}';
+  okJson(out);
+}
+
+// GET /api/servo/home?id=N[&to180=1]   send one servo to its home
+void handleServoHome() {
+  if (!server.hasArg("id")) { errJson(400, "need id"); return; }
+  uint8_t id = (uint8_t)server.arg("id").toInt();
+  int slot = slotOf(id);
+  if (slot < 0) { errJson(404, "servo not in the current list"); return; }
+  bool to180 = server.hasArg("to180") && server.arg("to180") != "0";
+  float target = to180 ? 180.0f : homeFor(id);
+  gotoDeg((uint8_t)slot, target);
+  String r = F("{\"ok\":true,\"id\":"); r += id;
+  r += F(",\"target\":"); r += String(target, 1); r += '}';
+  okJson(r);
+}
 void handleTune() { bc("tune all"); tuneAllServos(); okTrue(); }
 void handleTorqueAll() {
   bool on = !server.hasArg("on") || server.arg("on") != "0";
@@ -1059,6 +1179,8 @@ void handleScan() {
   uint8_t from = server.hasArg("from") ? server.arg("from").toInt() : 1;
   uint8_t to   = server.hasArg("to")   ? server.arg("to").toInt()   : 20;
   bool allBaud = server.hasArg("allbaud") && server.arg("allbaud") != "0";
+  // adopt=0 → a read-only detect: report what answers, change nothing.
+  scAdopt = !(server.hasArg("adopt") && server.arg("adopt") == "0");
   scanStart(from, to, allBaud);
   okTrue();
 }
@@ -1072,6 +1194,9 @@ void handleScanStatus() {
   j += F(",\"pass\":");  j += (sc.bIdx + 1);
   j += F(",\"passes\":");j += sc.bCount;
   j += F(",\"baud\":");  j += scanBaud();
+  j += F(",\"adopt\":"); j += (scAdopt ? F("true") : F("false"));
+  j += F(",\"canWriteId\":");
+  j += ((sc.done && !sc.active && sc.nHits == 1) ? F("true") : F("false"));
   j += F(",\"found\":[");
   for (uint8_t i = 0; i < sc.nHits; i++) {
     const ScanHit& h = sc.hits[i];
@@ -1094,11 +1219,37 @@ void handleSetId() {
   uint8_t a = (uint8_t)server.arg("from").toInt();
   uint8_t b = (uint8_t)server.arg("to").toInt();
   if (a < 1 || a > 253 || b < 1 || b > 253) { errJson(400, "id out of range 1..253"); return; }
+
+  // The write is addressed to one id, so with unique ids it is safe even on a full bus.
+  // What the firmware still refuses, unless forced, is the genuinely dangerous pair:
+  // a source the last detect never saw, or a target that is already taken (which would
+  // leave two servos colliding on the same id, and scanning cannot tell them apart).
+  bool force = server.hasArg("force") && server.arg("force") != "0";
+  if (!sc.done || sc.active) { errJson(409, "run a detect first"); return; }
+  bool srcSeen = false, dstSeen = false;
+  for (uint8_t i = 0; i < sc.nHits; i++) {
+    if (sc.hits[i].id == a) srcSeen = true;
+    if (sc.hits[i].id == b) dstSeen = true;
+  }
+  if (!srcSeen && !force) {
+    String e = "detect never saw id " + String(a) + " - re-detect, or pass force=1";
+    errJson(409, e.c_str());
+    return;
+  }
+  if (dstSeen && !force) {
+    String e = "id " + String(b) + " is already on this bus - that would make two servos "
+               "share it. Pass force=1 only if you mean it.";
+    errJson(409, e.c_str());
+    return;
+  }
   if (st.Ping(a) == -1) { errJson(404, "no servo answering the current id"); return; }
   st.unLockEprom(a);           delay(10);
   st.writeByte(a, REG_ID, b);  delay(20);
   st.LockEprom(b);             delay(10);
   bool ok = st.Ping(b) != -1;
+  // The bus has changed under us: invalidate the detect so the next write needs a new one.
+  sc.done = false;
+  sc.nHits = 0;
   lg("setid %u -> %u : %s", a, b, ok ? "ok" : "FAILED");
   String r = F("{\"ok\":"); r += (ok ? F("true") : F("false"));
   r += F(",\"from\":"); r += a; r += F(",\"to\":"); r += b; r += '}';
@@ -1446,6 +1597,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   cfgLoad();
+  homesLoad();
   applyServoConfig();
   lg("ROBO4 fw %s booting as '%s' (%u servos, bus %lu baud)",
      FW_VERSION, cfg.host, nServos, (unsigned long)cfg.baud);
@@ -1469,6 +1621,9 @@ void setup() {
   route("/api/batch",           handleBatch);
   route("/api/magnet",          handleMagnet);
   route("/api/home",            handleHome);
+  route("/api/home/manual",     handleHomeManual);
+  route("/api/home/set",        handleHomeSet);
+  route("/api/servo/home",      handleServoHome);
   route("/api/torque",          handleTorqueAll);
   route("/api/servo/tune",      handleTune);
   route("/api/identify",        handleIdentify);

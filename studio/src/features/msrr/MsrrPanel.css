@@ -1,0 +1,359 @@
+/* MsrrPanel — MSRR Experiments page. Uses the app's existing CSS custom
+   properties so it follows the light/dark theme without its own toggle. */
+
+.msrr-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--panel-bg, #1b1d22);
+  color: var(--text, #e6e8ec);
+  font-size: 12px;
+}
+
+/* ── tabs ─────────────────────────────────────────────────────────────────── */
+
+.msrr-tabs {
+  display: flex;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border, #2c2f36);
+  overflow-x: auto;
+}
+.msrr-tab {
+  flex: 1 0 auto;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim, #9aa0ab);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.msrr-tab:hover { color: var(--text, #e6e8ec); }
+.msrr-tab.active {
+  color: var(--accent, #6ea8fe);
+  border-bottom-color: var(--accent, #6ea8fe);
+}
+
+/* ── structure readout ────────────────────────────────────────────────────── */
+
+.msrr-statbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border, #2c2f36);
+  flex: 0 0 auto;
+}
+.msrr-chip {
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: var(--chip-bg, #262a31);
+  border: 1px solid var(--border, #2c2f36);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.msrr-chip b { font-weight: 600; }
+.msrr-chip.ok   { border-color: #3f7d4c; color: #86d093; }
+.msrr-chip.warn { border-color: #8a6b2f; color: #e0b45f; }
+.msrr-chip.bad  { border-color: #8a3b3b; color: #e88b8b; }
+
+/* ── body / sections ──────────────────────────────────────────────────────── */
+
+.msrr-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 10px 10px;
+}
+
+.msrr-section { padding: 10px 0; border-bottom: 1px solid var(--border, #2c2f36); }
+.msrr-section:last-child { border-bottom: none; }
+
+/* ── workflow stepper ─────────────────────────────────────────────────────── */
+
+.msrr-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border, #2c2f36);
+}
+.msrr-stepper-stop {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-dim, #9aa0ab);
+}
+.msrr-stepper-stop:not(:last-child)::after {
+  content: '→';
+  margin-left: 6px;
+  color: var(--text-dim, #9aa0ab);
+  opacity: 0.5;
+}
+.msrr-stepper-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--border, #2c2f36);
+  font-size: 10px;
+  line-height: 1;
+}
+.msrr-stepper-stop.done { color: #86d093; }
+.msrr-stepper-stop.done .msrr-stepper-dot { border-color: #3f7d4c; color: #86d093; }
+
+/* ── numbered step sections ───────────────────────────────────────────────── */
+
+.msrr-step-index {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: var(--accent, #6ea8fe);
+  color: #0d1117;
+  font-size: 10px;
+  font-weight: 700;
+  margin-right: 3px;
+}
+.msrr-step.locked { opacity: 0.75; }
+.msrr-step.locked .msrr-step-index { background: var(--text-dim, #9aa0ab); }
+.msrr-section-title {
+  margin: 0 0 7px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim, #9aa0ab);
+}
+
+.msrr-note {
+  margin: 0 0 8px;
+  color: var(--text-dim, #9aa0ab);
+  line-height: 1.5;
+}
+.msrr-note.warn { color: #e0b45f; }
+.msrr-note.bad  { color: #e88b8b; }
+.msrr-note.dim  { opacity: 0.65; font-size: 11px; }
+
+/* ── search progress ──────────────────────────────────────────────────────── */
+
+.msrr-progress { margin: 6px 0 8px; }
+.msrr-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--btn-bg, #23262c);
+  border: 1px solid var(--border, #2c2f36);
+  overflow: hidden;
+  margin-bottom: 6px;
+}
+.msrr-progress-fill {
+  height: 100%;
+  background: var(--accent, #6ea8fe);
+  transition: width 120ms ease-out;
+}
+
+.msrr-pre {
+  max-height: 200px;
+  overflow: auto;
+  padding: 7px;
+  margin: 6px 0 0;
+  background: var(--input-bg, #14161a);
+  border: 1px solid var(--border, #2c2f36);
+  border-radius: 4px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── controls ─────────────────────────────────────────────────────────────── */
+
+.msrr-field { display: block; margin: 0 0 8px; }
+.msrr-field-label {
+  display: block;
+  margin-bottom: 3px;
+  color: var(--text-dim, #9aa0ab);
+  font-size: 11px;
+}
+.msrr-field input[type='range'] { width: 100%; }
+
+.msrr-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 7px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.msrr-toggle input { margin-top: 2px; }
+
+.msrr-select,
+.msrr-textarea {
+  width: 100%;
+  padding: 5px 6px;
+  background: var(--input-bg, #14161a);
+  color: var(--text, #e6e8ec);
+  border: 1px solid var(--border, #2c2f36);
+  border-radius: 4px;
+  font: inherit;
+}
+.msrr-textarea { resize: vertical; margin-bottom: 8px; }
+
+.msrr-row-btns { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+
+.msrr-btn {
+  padding: 5px 9px;
+  background: var(--btn-bg, #262a31);
+  color: var(--text, #e6e8ec);
+  border: 1px solid var(--border, #2c2f36);
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+.msrr-btn:hover:not(:disabled) { background: var(--btn-hover, #30353d); }
+.msrr-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.msrr-btn.primary { background: var(--accent, #6ea8fe); border-color: var(--accent, #6ea8fe); color: #0d1117; font-weight: 600; }
+.msrr-btn.ghost   { background: transparent; }
+.msrr-btn.danger  { border-color: #8a3b3b; color: #e88b8b; }
+.msrr-btn.small   { padding: 3px 6px; font-size: 11px; }
+
+/* ── shape library ────────────────────────────────────────────────────────── */
+
+.msrr-shape-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  gap: 5px;
+}
+.msrr-shape-cell { display: flex; flex-direction: column; gap: 2px; }
+.msrr-shape-cell .msrr-btn { width: 100%; }
+
+/* ── module theme / pose library ──────────────────────────────────────────── */
+
+.msrr-poses {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 6px 0;
+}
+.msrr-pose {
+  display: grid;
+  grid-template-columns: minmax(70px, auto) minmax(56px, auto) 1fr;
+  gap: 8px;
+  align-items: baseline;
+  padding: 4px 7px;
+  background: var(--input-bg, #14161a);
+  border: 1px solid var(--border, #2c2f36);
+  border-radius: 4px;
+}
+.msrr-pose-label { font-weight: 600; }
+.msrr-pose-cubes {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  color: var(--accent, #6ea8fe);
+}
+.msrr-pose-hint {
+  font-size: 11px;
+  color: var(--text-dim, #9aa0ab);
+  text-align: right;
+}
+
+.msrr-constraints {
+  margin: 6px 0 0;
+  padding-left: 16px;
+  color: var(--text-dim, #9aa0ab);
+  line-height: 1.5;
+}
+.msrr-constraints li { margin-bottom: 4px; }
+
+/* ── draw pad ─────────────────────────────────────────────────────────────── */
+
+.msrr-pad {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  margin: 8px 0;
+  background: var(--input-bg, #14161a);
+  border: 1px solid var(--border, #2c2f36);
+  border-radius: 4px;
+  cursor: crosshair;
+}
+.msrr-pad-grid { stroke: var(--border, #2c2f36); stroke-width: 0.15; }
+.msrr-pad-cell { fill: #6ea8fe; fill-opacity: 0.32; }
+.msrr-pad-line { fill: none; stroke: #9a7cff; stroke-width: 0.6; }
+.msrr-pad-dot  { fill: #9a7cff; }
+
+/* ── plan result / move list ──────────────────────────────────────────────── */
+
+.msrr-result { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+
+.msrr-moves {
+  max-height: 260px;
+  overflow-y: auto;
+  border: 1px solid var(--border, #2c2f36);
+  border-radius: 4px;
+  background: var(--input-bg, #14161a);
+}
+.msrr-move {
+  padding: 3px 7px;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border, #2c2f36);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.msrr-move:last-child { border-bottom: none; }
+.msrr-move:hover { background: var(--btn-hover, #30353d); }
+.msrr-move.done { color: var(--text-dim, #9aa0ab); }
+.msrr-move.active { background: rgba(110, 168, 254, 0.16); color: var(--accent, #6ea8fe); }
+
+/* ── log ──────────────────────────────────────────────────────────────────── */
+
+.msrr-log {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--border, #2c2f36);
+  background: var(--input-bg, #14161a);
+}
+.msrr-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-dim, #9aa0ab);
+}
+.msrr-log-body { max-height: 110px; overflow-y: auto; padding: 0 10px 7px; }
+.msrr-log-line {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-dim, #9aa0ab);
+  word-break: break-word;
+}
+.msrr-log-line.dim { opacity: 0.6; }
+
+/* ── viewport ─────────────────────────────────────────────────────────────── */
+
+.msrr-canvas-wrap { position: relative; width: 100%; height: 100%; min-height: 0; }
+.msrr-canvas { display: block; width: 100%; height: 100%; }
+.msrr-canvas-hint {
+  position: absolute;
+  left: 10px;
+  bottom: 10px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #d8dbe0;
+  font-size: 11px;
+  pointer-events: none;
+}

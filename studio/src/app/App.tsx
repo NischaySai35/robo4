@@ -40,6 +40,9 @@ import AnalysisModeButtons from '@/features/analysis/AnalysisModeButtons';
 import OverloadCards from '@/features/analysis/OverloadCards';
 import TrainingPanel from '@/features/training/TrainingPanel';
 import Timeline from '@/features/animation/Timeline';
+import EspTtlPage from '@/features/espttl/EspTtlPage';
+import MsrrPanel from '@/features/msrr/MsrrPanel';
+import MsrrCanvas from '@/features/msrr/MsrrCanvas';
 import HardwarePanel from '@/features/hardware/HardwarePanel';
 import ResizablePanel from '@/features/common/ResizablePanel';
 import { initRuntimeBridge } from '@/state/runtimeBridge';
@@ -146,7 +149,7 @@ function selectAllBodies() {
 if (typeof window !== 'undefined') window.tetrobotModel = useModelStore;
 
 // Top-level workspace pages. The 3D scene is shared across editor/analysis/training/
-// animation; motor is the hardware page.
+// animation; msrr runs its own lattice sandbox viewport and motor is the hardware page.
 const tabIcon = (d: string) => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
     {d.split('|').map((p, i) => <path key={i} d={p} />)}
@@ -157,6 +160,10 @@ const NAV_TABS: { id: import('@/state/pageStore').Page; label: string; icon: any
   { id: 'analysis',  label: 'Analysis',      icon: tabIcon('M2 12V2M2 12h10M5 9l2.5-3L9.5 8 12 4') },
   { id: 'training',  label: 'Training',      icon: tabIcon('M7 2v3M7 9v3M2 7h3M9 7h3|M5.2 5.2L4 4M8.8 5.2L10 4') },
   { id: 'animation', label: 'Animation',     icon: tabIcon('M2 4h10M2 10h10M5 4v6M9 4v6') },
+  // MSRR = Modular Self-Reconfigurable Robots. Icon: four cells mid-rearrangement.
+  { id: 'msrr',      label: 'MSRR Experiments', icon: tabIcon('M2 8h4v4H2zM8 8h4v4H8zM2 2h4v4H2z|M9 3.5l2 1.5-2 1.5z') },
+  // ESP-TTL = the laptop-side console for a module's ESP32 over the TTL servo bus.
+  { id: 'esptt',     label: 'ESP-TTL',       icon: tabIcon('M3 3h8v8H3zM5.5 1v2M8.5 1v2M5.5 11v2M8.5 11v2M1 5.5h2M1 8.5h2M11 5.5h2M11 8.5h2') },
   { id: 'motor',     label: 'Motor Control', icon: tabIcon('M7 4.5a2.5 2.5 0 100 5 2.5 2.5 0 000-5zM7 1v2M7 11v2M1 7h2M11 7h2') },
 ];
 
@@ -511,7 +518,7 @@ export default function App() {
         if (typing) return;
         // Ctrl/Cmd+A in the editor selects all bodies (not browser text). On the
         // other 3D pages it still just prevents the text-selection highlight.
-        if (k === 'a' && page !== 'motor' && !useEditModeStore.getState().active) {
+        if (k === 'a' && page !== 'motor' && page !== 'msrr' && page !== 'esptt' && !useEditModeStore.getState().active) {
           e.preventDefault();
           if (page === 'editor') selectAllBodies();
           return;
@@ -526,7 +533,7 @@ export default function App() {
       }
 
       if (!typing && (e.key === '?' || e.key === '/')) { e.preventDefault(); setHelpOpen(v => !v); return; }
-      if (typing || page === 'motor') return; // editing shortcuts work on all 3D pages
+      if (typing || page === 'motor' || page === 'msrr' || page === 'esptt') return; // editing shortcuts work on the shared 3D pages only
       const k = e.key.toLowerCase();
       const { selectedId, kind } = useSelectionStore.getState();
       const edit = useEditModeStore.getState();
@@ -633,10 +640,12 @@ export default function App() {
 
       <main className="app-main">
         {/* Shared 3D workspace — Editor / Analysis / Training / Animation. Always
-            mounted (keeps the Three scene alive); hidden only on the Motor page. */}
+            mounted (keeps the Three scene alive); hidden on the Motor and MSRR pages.
+            Kept mounted on MSRR specifically so the lattice mirror can keep driving
+            real modules in this scene while you watch the sandbox. */}
         <div
           className="app-root"
-          style={page === 'motor' ? {
+          style={page === 'motor' || page === 'msrr' || page === 'esptt' ? {
             visibility: 'hidden',
             pointerEvents: 'none',
             position: 'absolute',
@@ -681,6 +690,20 @@ export default function App() {
           {page === 'training'  && <ResizablePanel storageKey="tetrobot:panel:training" defaultW={400}><TrainingPanel /></ResizablePanel>}
           {page === 'animation' && <ResizablePanel storageKey="tetrobot:panel:animation" defaultW={480}><Timeline /></ResizablePanel>}
         </div>
+
+        {/* MSRR Experiments — its own lattice viewport + experiment panel. Mounted
+            only while active: the sandbox owns a second WebGL context, and there is
+            no reason to hold one open on every other page. */}
+        {page === 'msrr' && (
+          <div className="app-msrr-wrap">
+            <div className="msrr-main"><MsrrCanvas /></div>
+            <ResizablePanel storageKey="tetrobot:panel:msrr" defaultW={430}><MsrrPanel /></ResizablePanel>
+          </div>
+        )}
+
+        {/* ESP-TTL — full-width console for one board. Mounted only while active so its
+            telemetry poll stops the moment you leave: the ESP serves one client at a time. */}
+        {page === 'esptt' && <EspTtlPage />}
 
         {/* Motor Control — servo/motor view + hardware config panel on the right.
             Hidden with display:none (keeps polling alive) when not active. */}

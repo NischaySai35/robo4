@@ -21,6 +21,7 @@ import {
   type Cell, cellsOf, isConnected, occupiedNeighbors, groundCenter, fitToCount, key,
 } from '@/robotics/msrr/lattice';
 import { SHAPES, buildShape, type ShapeId } from '@/robotics/msrr/shapes';
+import { shapeQuality, type ShapeQuality } from '@/robotics/msrr/shapeQuality';
 import { describeMove, verifyPlan } from '@/robotics/msrr/moves';
 import { stabilitySummary } from '@/robotics/msrr/stability';
 import { requestShape, availableBackends, type AiBackend } from '@/robotics/msrr/aiShape';
@@ -190,10 +191,25 @@ function BuildTab() {
                  onChange={(e) => setScale(+e.target.value)} />
         </Row>
         <div className="msrr-shape-grid">
-          {SHAPES.map((s) => (
-            <button key={s.id} className="msrr-btn" onClick={() => apply(s.id)}>{s.label}</button>
-          ))}
+          {SHAPES.map((s) => {
+            const q = shapeQualityAt(s.id, budget, scale);
+            return (
+              <button key={s.id}
+                      className={`msrr-btn ${q.buildable ? '' : 'warn-outline'}`}
+                      title={q.buildable ? q.summary : `⚠ ${q.summary}`}
+                      onClick={() => apply(s.id)}>
+                {s.label}{q.buildable ? '' : ' ⚠'}
+              </button>
+            );
+          })}
         </div>
+        <p className="msrr-note dim">
+          ⚠ marks a shape whose cubes ask for more welds than a module physically
+          has (4+ arms at one cube, or cubes walled in on all six sides). Those
+          build as several disconnected pieces — see the warning below once one
+          is loaded.
+        </p>
+        <ShapeQualityNote />
         <div className="msrr-row-btns">
           <button className="msrr-btn" disabled={!canUndo} onClick={undo} title="Undo the last manual edit">
             ↶ Undo
@@ -256,6 +272,48 @@ function BuildTab() {
         </div>
       </Section>
     </>
+  );
+}
+
+/**
+ * Buildability of a library shape at the budget/scale currently selected —
+ * memoised because the shape grid asks for all eighteen on every render, and
+ * the answer only changes when those two sliders do. buildShape is cheap
+ * (no fitting), so this is a small cache rather than a real optimisation.
+ */
+const shapeQualityCache = new Map<string, ShapeQuality>();
+function shapeQualityAt(id: ShapeId, budget: number, scale: number): ShapeQuality {
+  const k = `${id}|${budget}|${scale}`;
+  const hit = shapeQualityCache.get(k);
+  if (hit) return hit;
+  const q = shapeQuality(buildShape(id, Math.max(1, budget), scale));
+  shapeQualityCache.set(k, q);
+  return q;
+}
+
+/**
+ * What is wrong with the shape currently on screen, in the terms that decide
+ * whether Build can make one connected robot out of it. Silent when the shape
+ * is fine, so it only ever appears when it has something to say.
+ */
+function ShapeQualityNote() {
+  const config = useMsrrStore((s) => s.config);
+  const q = useMemo(() => shapeQuality(cellsOf(config)), [config]);
+  if (!config.occ.size || (q.buildable && q.issues.length === 0)) return null;
+
+  return (
+    <div className={`msrr-note ${q.buildable ? 'warn' : 'bad'}`}>
+      <b>{q.buildable ? 'Shape warning.' : 'This shape cannot build as one robot.'}</b>{' '}
+      {q.summary}
+      <ul className="msrr-constraints">
+        {q.issues.map((i, n) => <li key={n}>{i.detail}</li>)}
+      </ul>
+      {!q.buildable && (
+        <>These are hardware limits, not planner limits: a module has two chain ends
+        plus four side faces, and only two OPPOSITE side faces can weld at once.
+        Build will still run and will report honestly what it could not attach.</>
+      )}
+    </div>
   );
 }
 
@@ -1143,6 +1201,16 @@ function BuildSection() {
               {built.uncovered.length ? `${built.uncovered.length} cubes uncovered` : 'shape fully covered'}
             </div>
             {built.runs > 1 && <div className="msrr-chip warn">{built.runs} separate chains</div>}
+            {built.touchingChains > 0 && (
+              <div className="msrr-chip warn"
+                   title="A wide shape needs more parallel attachment points than one module's 4 directions can weld together. These chains are placed flush against the rest, collision-checked, but not electrically joined there.">
+                {built.touchingChains} chain(s) touching, not locked
+              </div>
+            )}
+            <div className={`msrr-chip ${built.spatiallyOnePiece ? 'ok' : 'bad'}`}
+                 title="Every module's body is at least face-adjacent to another's — one physical object, whether or not every pair is formally welded.">
+              {built.spatiallyOnePiece ? 'one physical piece' : 'physically separate pieces'}
+            </div>
           </div>
 
           <Row label={`Assembled: ${reveal} of ${built.modules.length} modules`}>

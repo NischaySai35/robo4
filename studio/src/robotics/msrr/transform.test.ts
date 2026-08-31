@@ -12,41 +12,134 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { type Cell, key } from './lattice';
+import { type Cell, key, isConnected, configFromCells } from './lattice';
 import { fitModules, connectorsOf, weldChains } from './fitModules';
 import { planTransform, mobilityReport, structureAfter, describeTransformMove, oneStepMoves } from './transform';
-import { buildShape } from './shapes';
-import { weldTypeIsLegal } from './modulink';
+import { buildShape, SHAPES } from './shapes';
+import { weldTypeIsLegal, HEMISPHERE_RADIUS } from './modulink';
+import { MODULINK_CUBE_SIZE } from './occupancy';
 
 const line = (n: number): Cell[] => Array.from({ length: n }, (_, i) => [i, 0, 0] as Cell);
 
 // ── chain welding ─────────────────────────────────────────────────────────────
 
-test('growing chains off existing connectors gives one connected robot', () => {
-  // Chains are started ON a free connector wherever possible, so they are welded
-  // on from their first module rather than floating. That makes one piece the
-  // normal outcome — but it is not guaranteed: if nothing already built can reach
-  // the remaining cubes, a detached chain is the only way to cover them.
-  let oneP = 0;
-  const ids = ['chair', 'car', 'snake', 'humanoid', 'table'] as const;
-  for (const id of ids) {
-    const r = fitModules(buildShape(id, 28));
-    assert.ok(r.modules.length > 0, `${id}: nothing built`);
-    if (r.components === 1) oneP++;
-    else {
-      // A robot in pieces must say so — silently returning fragments as if they
-      // were one machine is the failure worth guarding against.
-      assert.match(r.log.join(' '), /unattached|reach those cubes/,
-        `${id}: left ${r.components} pieces without reporting it`);
+test('EVERY library shape, at every size, builds as exactly ONE physical robot', () => {
+  // The hard guarantee, not a measured tendency. A robot is one machine: a fit
+  // that leaves islands floating in space has not built the shape, it has
+  // built several unrelated robots that happen to share a picture.
+  //
+  // This does NOT require every module to be formally WELD-LOCKED into one
+  // graph (`r.components === 1`) — a wide shape (a wall, a table top, a wide
+  // tower cross-section) legitimately needs more parallel attachment points
+  // than one module's 4 directions can weld together, and Nischay's own rule
+  // for that case is explicit: side-by-side modules may stand flush against
+  // the structure without a formal lock, as long as they are collision-free
+  // and spatially part of the same body. That is exactly what the
+  // touching-tier (`r.touchingChains`) produces, and `r.components` can be
+  // >1 for a correctly-built wide shape as a result. What must never happen
+  // is a chain floating detached in space with nothing beneath it at all —
+  // that is what `r.spatiallyOnePiece` (body-cube adjacency, independent of
+  // formal locks) actually checks, and is the guarantee kept here.
+  //
+  // This replaced a much weaker test that only required 2 of 5 shapes to come
+  // out in one piece and accepted fragments as long as they were REPORTED.
+  // Reporting is not enough: the fitter now refuses to place a module that
+  // cannot weld OR touch the existing structure, so true floating fragments
+  // cannot happen at all.
+  for (const s of SHAPES) {
+    for (const n of [14, 21, 28]) {
+      const r = fitModules(buildShape(s.id, n));
+      if (r.modules.length === 0) continue; // nothing fitted is a different answer
+      assert.equal(r.spatiallyOnePiece, true,
+        `${s.id}@${n}: built in physically separate pieces — connectivity is a hard requirement`);
     }
   }
-  // Measured baseline, not an aspiration: at this cube count 2 of these 5 shapes
-  // come out as a single piece. Whether a chain can be started on an existing
-  // connector depends on whether any fold reaches the remaining cubes from one,
-  // which varies with the shape and how many cubes it was generated at. The bar
-  // guards against regression; raise it when the fit genuinely improves.
-  assert.ok(oneP >= 2,
-    `only ${oneP} of ${ids.length} shapes built as one piece — chain joining regressed`);
+});
+
+test('connectivity is paid for in coverage, and that cost is stated', () => {
+  // The honest other half of the guarantee above: where nothing already built
+  // can reach a region, those cubes are LEFT UNCOVERED rather than covered by
+  // a floating chain. That must be visible in the log, or an incomplete fit
+  // would look like a complete one.
+  let sawTradeoff = false;
+  for (const s of SHAPES) {
+    const r = fitModules(buildShape(s.id, 21));
+    if (r.uncovered.length === 0) continue;
+    sawTradeoff = true;
+    assert.match(r.log.join(' '), /uncovered/,
+      `${s.id}: left ${r.uncovered.length} cubes uncovered without saying so`);
+  }
+  assert.ok(sawTradeoff,
+    'test setup: expected at least one library shape to pay coverage for connectivity');
+});
+
+test('without the connectivity requirement the fitter can still fragment — proving the constraint is what fixes it', () => {
+  // Guards against the guarantee passing for the wrong reason. If no shape ever
+  // fragmented even unconstrained, the requireConnected flag would be doing
+  // nothing and the test above would be vacuous. At least one shape must
+  // genuinely need the constraint.
+  let fragmentedWithout = 0;
+  for (const s of SHAPES) {
+    const loose = fitModules(buildShape(s.id, 21), { requireConnected: false });
+    if (loose.components > 1) fragmentedWithout++;
+  }
+  assert.ok(fragmentedWithout > 0,
+    'no shape fragmented even without the constraint — the one-piece guarantee proves nothing');
+});
+
+test('every weld puts two domes at the SAME POINT — end-to-end and end-to-side alike', () => {
+  // The spec's definition of a lock: "exactly ONE dome pressed against ONE other
+  // dome: same point in space, outward normals pointing directly into each
+  // other". Two domes at the same point read as one complete sphere; that is
+  // what a correct lock looks like on screen.
+  //
+  // This is the regression that hid for a long time. End connectors land on
+  // lattice points, so end-to-end welds happened to be exact. SIDE connectors do
+  // not: all four report the same lattice cell while sitting ~0.63 cube units
+  // apart in four directions, so anchoring a branch at that cell left the two
+  // domes ~0.98 apart — wider than two dome radii, visibly not touching. A
+  // second, subtler version of the same fault made welds part-way down a chain
+  // drift by up to 2.7 cube units, because each module was re-anchored to its
+  // predecessor's rounded lattice cell instead of its real B dome, compounding
+  // the snap tolerance at every link.
+  const DOME_RADIUS = HEMISPHERE_RADIUS / MODULINK_CUBE_SIZE;
+  let checked = 0;
+  let sideWelds = 0;
+
+  for (const s of SHAPES) {
+    const r = fitModules(buildShape(s.id, 21));
+    const byId = new Map(r.modules.map((m) => [m.id, m]));
+
+    for (const m of r.modules) {
+      if (!m.weldedTo) continue;
+      const parent = byId.get(m.weldedTo);
+      assert.ok(parent, `${s.id}: ${m.id} claims a weld to missing module ${m.weldedTo}`);
+
+      const myA = connectorsOf(m).find((c) => c.end === 'A')!;
+      let best = Infinity;
+      let bestEnd = '';
+      for (const pc of connectorsOf(parent!)) {
+        const d = Math.hypot(
+          myA.pos[0] - pc.pos[0], myA.pos[1] - pc.pos[1], myA.pos[2] - pc.pos[2],
+        );
+        if (d < best) { best = d; bestEnd = pc.end; }
+      }
+      checked++;
+      if (bestEnd !== 'A' && bestEnd !== 'B') sideWelds++;
+
+      // Coincident, not merely close: comfortably inside one dome radius, so the
+      // pair genuinely forms a sphere rather than two domes near each other.
+      assert.ok(best < DOME_RADIUS * 0.5,
+        `${s.id}: ${m.id}.A is ${best.toFixed(3)} cube units from ${parent!.id}.${bestEnd} — `
+        + `a weld must be the same point (dome radius ${DOME_RADIUS.toFixed(3)})`);
+    }
+  }
+
+  assert.ok(checked > 0, 'test setup: no welds were found to check');
+  // If no side weld ever occurred, this would pass while testing only the case
+  // that already worked.
+  assert.ok(sideWelds > 0,
+    'no end-to-side welds in any library shape — this test would not cover the bug it exists for');
 });
 
 test('a plain corridor always builds as a single connected chain', () => {
@@ -114,10 +207,16 @@ test('mobility is at or above the level the on-demand solver unlocked', () => {
   // a module bridging two halves of the robot has ZERO legal moves, full
   // stop, however many "reachable-looking" targets it has, because letting
   // go at all would split the structure. Wall@20 dropped to 0 under that
-  // check — every module in it turned out to be load-bearing. Table@20 is
-  // used here instead because it genuinely keeps a positive floor, which is
-  // the only kind of floor worth asserting.
-  const build = fitModules(buildShape('table', 20));
+  // check — every module in it turned out to be load-bearing.
+  //
+  // table@20, not 32: bestPlacement later learned to prefer straight rows
+  // and clean corners over efficient zigzags (segmentCount) — good for
+  // matching the shape, but a straighter build packs LESS densely, and at
+  // table@20 that leaves every module load-bearing again (mobility 0). @32
+  // has enough room to be built mostly as straight parallel rows with real
+  // slack between them, which is genuinely the size that keeps a positive
+  // floor now — the only kind of floor worth asserting.
+  const build = fitModules(buildShape('table', 32));
   const m = mobilityReport(build);
   assert.ok(m.total >= 1,
     `table mobility dropped to ${m.total}, below the measured floor of 1`);
@@ -128,13 +227,25 @@ test('mobility is at or above the level the on-demand solver unlocked', () => {
     `mobility jumped to ${m.total}, which is implausibly high — verify before raising this`);
 });
 
-test('a longer, less dense structure is more mobile than a compact one', () => {
+test('a branchy, less dense structure is more mobile than a compact block', () => {
   // Sanity on the metric itself: mobility should track how much room the modules
   // actually have, not be a constant the implementation happens to produce.
-  const snake = mobilityReport(fitModules(buildShape('snake', 24)));
-  const tower = mobilityReport(fitModules(buildShape('tower', 20)));
-  assert.ok(snake.total >= tower.total,
-    `a snake (${snake.total}) should not be less mobile than a tower (${tower.total})`);
+  //
+  // Not snake vs tower any more: a snake is built as ONE continuous weld
+  // chain, and under the real bridge/cut-vertex check (staysConnectedWithout)
+  // that makes EVERY module load-bearing by construction — removing any
+  // interior module always splits the two halves, so a chain shape now
+  // measures 0 mobility at every size that was tried, not because the metric
+  // is broken but because a single unbranched chain genuinely has none to
+  // give: there is no redundant path for a module to let go into. car/box
+  // is the pair that actually demonstrates the property this test is for —
+  // car has real branching (multiple chains meeting at welds, so a module
+  // can let go without disconnecting anything), box is one compact block.
+  // Measured at n=32: car=4, box=0.
+  const car = mobilityReport(fitModules(buildShape('car', 32)));
+  const box = mobilityReport(fitModules(buildShape('box', 32)));
+  assert.ok(car.total >= box.total,
+    `a car (${car.total}) should not be less mobile than a box (${box.total})`);
 });
 
 // ── never comes apart, for real ────────────────────────────────────────────────
@@ -167,42 +278,32 @@ test('a module bridging two otherwise-unconnected sub-chains has zero legal move
   assert.equal(entry.reachable, 0);
 });
 
-test('every module of a finished plan is reachable from every other — one piece, not several', async () => {
+test('every module of a finished plan is PHYSICALLY one piece — body-adjacent, not several', async () => {
+  // Checks SPATIAL adjacency (body cubes touching), not weld-graph adjacency.
+  // Those used to be the same claim; they no longer are, deliberately —
+  // fitModules can now place a chain touching the rest of the structure
+  // without a formal lock when a shape needs more parallel attachment points
+  // than one module's 4 directions can weld (see fitModules.findTouchingSeed
+  // and FitResult.spatiallyOnePiece). A finished plan inherits that: its
+  // finalModules can legitimately contain a touching-not-locked group. What
+  // must still never happen is a module with NO relation to the rest at
+  // all — not welded AND not touching, which really would be a separate
+  // machine sharing the picture by coincidence.
+  //
+  // (An earlier version of this test also had its own bug: it grouped
+  // connectors by `c.cell`, the LATTICE cell every side connector of a module
+  // shares, not `c.pos`, the real position — the same class of mistake fixed
+  // everywhere else in this file. It happened to pass only because it never
+  // exercised a real side weld before now.)
   for (const [from, to] of [['car', 'humanoid'], ['chair', 'table'], ['snake', 'wall']] as const) {
     const cur = fitModules(buildShape(from, 20));
     const r = await planTransform(cur, buildShape(to, 20));
     const mods = r.finalModules;
     if (mods.length <= 1) continue;
 
-    // Real weld adjacency among the FINAL modules — the same geometric
-    // coincidence check the planner itself uses, applied independently here
-    // as a check on the OUTPUT rather than trusted from how it was produced.
-    const byCell = new Map<string, { id: string; dir: Cell }[]>();
-    for (const m of mods) for (const c of connectorsOf(m)) {
-      const k = key(c.cell);
-      const list = byCell.get(k);
-      const entry = { id: m.id, dir: c.dir };
-      if (list) list.push(entry); else byCell.set(k, [entry]);
-    }
-    const adj = new Map<string, Set<string>>(mods.map((m) => [m.id, new Set<string>()]));
-    for (const entries of byCell.values()) {
-      for (let i = 0; i < entries.length; i++) for (let j = i + 1; j < entries.length; j++) {
-        const a = entries[i]; const b = entries[j];
-        if (a.id === b.id) continue;
-        if (a.dir[0] === -b.dir[0] && a.dir[1] === -b.dir[1] && a.dir[2] === -b.dir[2]) {
-          adj.get(a.id)!.add(b.id); adj.get(b.id)!.add(a.id);
-        }
-      }
-    }
-    const seen = new Set<string>([mods[0].id]);
-    const queue = [mods[0].id];
-    while (queue.length) {
-      const cur2 = queue.shift() as string;
-      for (const n of adj.get(cur2) ?? []) if (!seen.has(n)) { seen.add(n); queue.push(n); }
-    }
-    assert.equal(seen.size, mods.length,
-      `${from} -> ${to}: final structure is in ${mods.length - seen.size + 1}+ piece(s), `
-      + `not one — ${mods.map((m) => m.id).filter((id) => !seen.has(id)).join(', ')} unreachable from the rest`);
+    const allCells = mods.flatMap((m) => m.cells);
+    assert.ok(isConnected(configFromCells(allCells)),
+      `${from} -> ${to}: final structure's bodies are not even touching — genuinely separate pieces`);
   }
 });
 

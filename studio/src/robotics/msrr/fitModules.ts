@@ -30,9 +30,15 @@
  *                 module's connector, so the output is one robot rather than
  *                 several. Whatever cannot be joined is reported, not hidden.
  */
-import { type Cell, key, unkey, DIRS_6, add, eq } from './lattice';
-import { type LatticePose, reachTable } from './chainMoves';
-import { type ConnectorEnd, SIDE_ENDS, weldTypeIsLegal, oppositeSideEnd } from './modulink';
+import {
+  type Cell, key, unkey, DIRS_6, add, eq,
+} from './lattice';
+import { type LatticePose, reachTable, MIN_AXIS_ALIGNMENT } from './chainMoves';
+import {
+  type ConnectorEnd, type Vec3, SIDE_ENDS, weldTypeIsLegal, oppositeSideEnd,
+  baseQuatFor, connectorPoses, REQUIRED_DOME_CLEARANCE,
+} from './modulink';
+import { MODULINK_CUBE_SIZE } from './occupancy';
 
 // ── lattice rotations ─────────────────────────────────────────────────────────
 
@@ -214,6 +220,23 @@ export interface FittedModule {
   id: string;
   /** cube connector A sits in */
   anchorCell: Cell;
+  /**
+   * Connector A's REAL position in cube units, which is not always the centre
+   * of `anchorCell`.
+   *
+   * A module welded end-to-end starts exactly on a lattice point, so for those
+   * this equals anchorCell. A module welded onto a SIDE connector does not: a
+   * side connector rides SIDE_CONNECTOR_RADIAL_OFFSET (0.6 physical, ~0.633
+   * cube units) off the spine axis, which is nowhere near a cube centre. The
+   * lattice cannot represent that, and pretending it can is what made
+   * end-to-side welds render as two domes ~0.98 cube units apart instead of
+   * one sphere — a gap wider than two dome radii.
+   *
+   * So the lattice keeps doing lattice work (which cubes a body occupies,
+   * coverage, collision) on `anchorCell`, and anything GEOMETRIC — where the
+   * domes actually are, whether a weld is real, what gets drawn — uses this.
+   */
+  anchorPos: Vec3;
   /** outward normal of connector A */
   anchorDir: Cell;
   /** cube connector B lands in */
@@ -237,10 +260,22 @@ export interface FittedModule {
 export interface PlacedConnector {
   moduleId: string;
   end: ConnectorEnd;
-  /** cube it sits in */
+  /**
+   * Cube it sits in. LATTICE bookkeeping only — all four side connectors of a
+   * module report the SAME cell (the spine's midpoint cube) even though they
+   * are physically ~0.63 cube units apart in four different directions. Never
+   * use this to decide whether two connectors touch; use `pos`.
+   */
   cell: Cell;
   /** outward normal */
   dir: Cell;
+  /**
+   * Where the dome actually is, in cube units — the truth a weld is defined
+   * against ("same point in space, outward normals opposed"). For A and B this
+   * coincides with the centre of `cell`; for the four side connectors it does
+   * not, and that difference is exactly the bug this field exists to fix.
+   */
+  pos: Vec3;
 }
 
 /** A weld joining two chains that the end-to-end fit left separate. */
@@ -262,15 +297,72 @@ export interface ChainWeldLink {
  * is why a side weld found here should be verified in continuous space before it
  * is trusted in metal.
  */
+/** Physical module units -> cube units. */
+const CUBES_PER_UNIT = 1 / MODULINK_CUBE_SIZE;
+
+/**
+ * Where a placed module's connector B REALLY is, in cube units.
+ *
+ * The next module in a chain welds its A onto exactly this point, so the chain
+ * must be built from it rather than from B's lattice cell. A solved pose lands
+ * within MAX_SNAP_ERROR (0.3 cube units) of its lattice target, which is fine
+ * once and ruinous compounded: anchoring each module at the rounded cell threw
+ * that error away and then re-introduced it at every link, so welds part-way
+ * down a chain ended up nearly a whole cube open. Threading the real position
+ * through keeps every weld exact no matter how long the chain.
+ */
+function realEndPos(m: FittedModule): Vec3 {
+  const poses = connectorPoses(m.pose.angles, {
+    position: [0, 0, 0],
+    quaternion: baseQuatFor(m.anchorDir),
+  });
+  const b = poses.find((c) => c.end === 'B');
+  if (!b) return [m.endCell[0], m.endCell[1], m.endCell[2]];
+  return [
+    m.anchorPos[0] + b.position[0] * CUBES_PER_UNIT,
+    m.anchorPos[1] + b.position[1] * CUBES_PER_UNIT,
+    m.anchorPos[2] + b.position[2] * CUBES_PER_UNIT,
+  ];
+}
+
+/**
+ * Real positions of all six connectors, in cube units, by running the module's
+ * own forward kinematics from where it is actually anchored.
+ *
+ * This is the same computation the renderer does, which is the point: what the
+ * planner welds and what you see on screen must be the same geometry. Keyed by
+ * connector end so callers cannot mispair them by index.
+ */
+function realConnectorPositions(m: FittedModule): Map<ConnectorEnd, Vec3> {
+  const poses = connectorPoses(m.pose.angles, {
+    position: [0, 0, 0],
+    quaternion: baseQuatFor(m.anchorDir),
+  });
+  const out = new Map<ConnectorEnd, Vec3>();
+  for (const c of poses) {
+    out.set(c.end, [
+      m.anchorPos[0] + c.position[0] * CUBES_PER_UNIT,
+      m.anchorPos[1] + c.position[1] * CUBES_PER_UNIT,
+      m.anchorPos[2] + c.position[2] * CUBES_PER_UNIT,
+    ]);
+  }
+  return out;
+}
+
 export function connectorsOf(m: FittedModule): PlacedConnector[] {
+  const real = realConnectorPositions(m);
+  const at = (end: ConnectorEnd, fallback: Cell): Vec3 =>
+    real.get(end) ?? [fallback[0], fallback[1], fallback[2]];
+
   const out: PlacedConnector[] = [
-    { moduleId: m.id, end: 'A', cell: m.anchorCell, dir: m.anchorDir },
-    { moduleId: m.id, end: 'B', cell: m.endCell, dir: m.endDir },
+    { moduleId: m.id, end: 'A', cell: m.anchorCell, dir: m.anchorDir, pos: at('A', m.anchorCell) },
+    { moduleId: m.id, end: 'B', cell: m.endCell, dir: m.endDir, pos: at('B', m.endCell) },
   ];
   const rot = rotationTo(m.anchorDir);
   const midCell = add(m.anchorCell, rot(m.pose.midOffset));
   m.pose.sideDirs.forEach((d, i) => {
-    out.push({ moduleId: m.id, end: SIDE_ENDS[i] ?? 'UP', cell: midCell, dir: rot(d) });
+    const end = SIDE_ENDS[i] ?? 'UP';
+    out.push({ moduleId: m.id, end, cell: midCell, dir: rot(d), pos: at(end, midCell) });
   });
   return out;
 }
@@ -285,8 +377,21 @@ export interface FitResult {
   runs: number;
   /** welds joining those chains to each other */
   chainWelds: ChainWeldLink[];
-  /** separate pieces AFTER chain welding — 1 means one connected robot */
+  /**
+   * Separate pieces after chain welding, by REAL LOCKS ONLY — 1 means every
+   * module is electrically/mechanically joined to every other. Can be more
+   * than 1 even in a normal, successful build: a wide shape (a wall, a table
+   * top) legitimately needs more parallel chains than the 4 attachment
+   * directions one module offers can weld together, and those extra chains
+   * are placed touching (see `touchingChains`), not locked. Use `spatiallyOnePiece`
+   * for "is this actually one physical object", not this.
+   */
   components: number;
+  /** true when every module's body is at least face-adjacent to another's —
+   *  the honest "is this one physical object" check, independent of locks */
+  spatiallyOnePiece: boolean;
+  /** how many chains were placed touching the structure without a formal weld */
+  touchingChains: number;
   log: string[];
 }
 
@@ -304,6 +409,38 @@ interface FitState {
   chain: number;
   /** every connector of every placed module, indexed by the cube it sits in */
   conn: Map<string, PlacedConnector[]>;
+  /**
+   * Every placed dome's real centre, bucketed by rounded cube, so a candidate
+   * placement can be checked for dome-on-dome interpenetration without
+   * scanning the whole robot. Body-cube occupancy does NOT cover this: two
+   * modules can occupy entirely different cubes and still drive their
+   * connector domes through each other, which is what produced spheres with
+   * chunks chewed out of them.
+   */
+  domes: Map<string, { pos: Vec3; normal: Vec3; moduleId: string }[]>;
+  /**
+   * Cubes of the shape with 3+ occupied neighbours — the branch points.
+   *
+   * A module's four side connectors all ride the midpoint of its big spine
+   * rod. So if a module is placed with that midpoint ON a junction, the
+   * junction's extra arms have real connectors to weld onto; if the module
+   * merely passes its END through the junction, they have nothing and get
+   * left uncovered. Knowing where the junctions are is what lets the fit
+   * prefer the first arrangement.
+   */
+  junctions: Set<string>;
+  /**
+   * Which of EACH module's own side connectors are already claimed by
+   * something welded onto it. A module supports at most two, and they must be
+   * opposite — enforced here, at the moment a NEW module's A end welds onto an
+   * existing connector, because nothing previously did: `weldChains` (the
+   * post-hoc pass joining otherwise-separate chains) already had this rule,
+   * but the LIVE build path (growFromConnector / the junction pre-pass) did
+   * not, and could weld three or more branches onto one module's midpoint —
+   * exactly the "3/4 sphere with a bite out of it" kind of impossibility, just
+   * for weld COUNT rather than weld GEOMETRY.
+   */
+  usedSides: Map<string, ConnectorEnd[]>;
 }
 
 interface Placement {
@@ -323,14 +460,356 @@ interface Placement {
  * same amount are equally good structurally and the longer one uses no extra
  * parts. Returns null when nothing covers anything new, which is what ends a chain.
  */
+/**
+ * Dome centres a candidate pose would put in the world, in cube units.
+ *
+ * Runs the same forward kinematics the fitter and the renderer use, so a
+ * clearance decision is made against the geometry that will actually be drawn
+ * and built rather than a lattice approximation of it.
+ */
+interface DomeAt { pos: Vec3; normal: Vec3 }
+
+function candidateDomes(pose: LatticePose, anchorDir: Cell, anchorPos: Vec3): DomeAt[] {
+  const poses = connectorPoses(pose.angles, {
+    position: [0, 0, 0],
+    quaternion: baseQuatFor(anchorDir),
+  });
+  return poses.map((c) => ({
+    pos: [
+      anchorPos[0] + c.position[0] * CUBES_PER_UNIT,
+      anchorPos[1] + c.position[1] * CUBES_PER_UNIT,
+      anchorPos[2] + c.position[2] * CUBES_PER_UNIT,
+    ] as Vec3,
+    normal: [c.normal[0], c.normal[1], c.normal[2]] as Vec3,
+  }));
+}
+
+/**
+ * Where a given connector of a hypothetical pose would really sit, in cube
+ * units, if a module were anchored at `anchorPos` facing `anchorDir`.
+ *
+ * Exported because the walk planner needs exactly this: it must know whether a
+ * candidate move's travelling dome ACTUALLY lands on the dome it is trying to
+ * grab, which is a question about real geometry, not about lattice offsets.
+ */
+export function realConnectorPosOf(
+  pose: LatticePose, anchorDir: Cell, anchorPos: Vec3, end: ConnectorEnd,
+): Vec3 | null {
+  const poses = connectorPoses(pose.angles, {
+    position: [0, 0, 0],
+    quaternion: baseQuatFor(anchorDir),
+  });
+  const c = poses.find((x) => x.end === end);
+  if (!c) return null;
+  return [
+    anchorPos[0] + c.position[0] * CUBES_PER_UNIT,
+    anchorPos[1] + c.position[1] * CUBES_PER_UNIT,
+    anchorPos[2] + c.position[2] * CUBES_PER_UNIT,
+  ];
+}
+
+const domeBucket = (v: Vec3) =>
+  key([Math.round(v[0]), Math.round(v[1]), Math.round(v[2])] as Cell);
+
+/** Record a placed module's domes so later placements can avoid them. */
+function registerDomes(m: FittedModule, st: FitState): void {
+  const real = candidateDomes(m.pose, m.anchorDir, m.anchorPos);
+  for (const d of real) {
+    const k = domeBucket(d.pos);
+    const list = st.domes.get(k);
+    const entry = { pos: d.pos, normal: d.normal, moduleId: m.id };
+    if (list) list.push(entry); else st.domes.set(k, [entry]);
+  }
+}
+
+/**
+ * Two domes must be either the SAME point (a weld) or at least a dome-diameter
+ * apart. Anything between is interpenetration: the parts pass through each
+ * other, which on screen is a sphere with a bite taken out of it and in metal
+ * is a part that does not fit.
+ *
+ * Legality of a coincident pair is PURE GEOMETRY — opposed normals, whoever put
+ * them there — not "did the caller declare this specific pairing on purpose".
+ * An earlier version required the coincident partner to match a `weldingTo` id
+ * the caller passed in, which was over-specified: it made an INCIDENTAL,
+ * perfectly valid lock (two independently-placed modules whose domes happen to
+ * land on each other, facing correctly) indistinguishable from a genuine
+ * collision, purely because nobody had asked for that specific pairing. Side-
+ * by-side placement (Nischay's own rule: touching is fine, colliding is not,
+ * and a coincidence that lines up should read as one sphere whether or not it
+ * was the intended target) needs exactly that case to be legal.
+ */
+const DOME_DIAMETER_CUBES = REQUIRED_DOME_CLEARANCE * CUBES_PER_UNIT;
+/** Coincident-enough to be the intended weld rather than a clash. */
+const WELD_SAME_POINT = 0.35;
+
+/**
+ * How closely two coincident domes must oppose each other to be a real lock.
+ * Two hemispheres only close into ONE sphere when their flat faces meet, which
+ * needs their outward normals antiparallel. Coincident domes pointing any other
+ * way are not a weld at all — they are two solid parts occupying the same
+ * space, which is what left spheres looking like a bite had been taken out.
+ *
+ * REUSES the table's own established axis-alignment tolerance
+ * (chainMoves.MIN_AXIS_ALIGNMENT, ~26°) rather than a stricter invented value.
+ * An earlier version used -0.999 (~2.6°) and broke ROUTINE chain continuation
+ * through any bend: the reach table's own bent poses are only sampled to within
+ * MIN_AXIS_ALIGNMENT of their recorded (rounded) endDir, so a module continuing
+ * straight out of a "gentle" corner measured ~20° of real facing error against
+ * its predecessor's TRUE end normal — correct behaviour, since growChain always
+ * anchors the next segment off the SNAPPED direction, not the continuous one.
+ * -0.999 rejected that as a bad weld and stalled an otherwise ordinary L-shaped
+ * corridor at 3 modules, 13 of 41 cubes covered. This tolerance still rejects
+ * anything grossly misaligned (the original "3/4 sphere" bug had domes 90-180°
+ * off, nowhere near this threshold) while accepting the table's own known slop.
+ */
+const WELD_NORMAL_DOT = -MIN_AXIS_ALIGNMENT;
+
+function domesClear(cand: DomeAt[], st: FitState): boolean {
+  for (const v of cand) {
+    const b: Cell = [Math.round(v.pos[0]), Math.round(v.pos[1]), Math.round(v.pos[2])];
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const list = st.domes.get(key([b[0] + dx, b[1] + dy, b[2] + dz] as Cell));
+      if (!list) continue;
+      for (const other of list) {
+        const d = Math.hypot(
+          v.pos[0] - other.pos[0], v.pos[1] - other.pos[1], v.pos[2] - other.pos[2],
+        );
+        if (d < WELD_SAME_POINT) {
+          // Coincident: legal exactly when the two domes genuinely face into
+          // each other, regardless of which modules they belong to.
+          const dot = v.normal[0] * other.normal[0]
+            + v.normal[1] * other.normal[1]
+            + v.normal[2] * other.normal[2];
+          if (dot > WELD_NORMAL_DOT) return false;
+          continue;
+        }
+        if (d < DOME_DIAMETER_CUBES) return false; // overlapping, not welded
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * Try to place ONE STRAIGHT module whose own MIDPOINT — where its two side
+ * connectors physically are — lands exactly on `junction`, spanning symmetric-
+ * ally across it along some axis.
+ *
+ * WHY THIS EXISTS (Nischay's own design instinct, made explicit): a module
+ * offers up to FOUR directions from one place — its own two chain ends, plus
+ * two OPPOSITE side connectors — but only if that place is the MIDPOINT of a
+ * straight run through it. The general path-cover walk cannot discover this on
+ * its own: it grows greedily from a tip, and by the time a branch arm is
+ * considered the junction cube has usually already been consumed as an
+ * ordinary body cube of whichever run reached it first, with no guarantee that
+ * run's own pose happened to centre there. The result was a junction covered,
+ * but by accident, with nothing useful for the other arms to weld onto —
+ * arms left stranded and the whole area coming out as a tangled knot rather
+ * than a recognisable shape (measured on "cross": a clean 7-cube spine plus
+ * four arms fit as ONE cube of the junction covered and the rest scattered
+ * into disconnected pieces).
+ *
+ * So this runs FIRST, before the general walk, for every real junction (3+
+ * neighbours), trying every axis in both directions and every fully symmetric
+ * straight pose (endOffset exactly 2x midOffset) until one fits entirely
+ * inside the shape without colliding. Committing it up front reserves the
+ * junction's side connectors for the branches that actually need them —
+ * the general walk then discovers those connectors the normal way, through
+ * `st.conn`, exactly as it would for any other pre-existing weld.
+ */
+function tryCenterOnJunction(junction: Cell, st: FitState, table: LatticePose[]): boolean {
+  for (const travel of DIRS_6) {
+    const rot = rotationTo(negCell(travel));
+    for (const pose of table) {
+      if (pose.bendPoseId !== 'straight') continue;
+      // Only a fully symmetric straight pose can centre on a single cube —
+      // asymmetric ones (short reach with an off-centre mid) would not
+      // actually straddle the junction evenly.
+      const sym = pose.endOffset.every((v, i) => v === 2 * pose.midOffset[i]);
+      if (!sym) continue;
+
+      const mid = rot(pose.midOffset);
+      const anchorCell: Cell = [junction[0] - mid[0], junction[1] - mid[1], junction[2] - mid[2]];
+      const endCell: Cell = add(anchorCell, rot(pose.endOffset));
+      const cells = pose.cells.map((c) => add(anchorCell, rot(c)));
+
+      if (!cells.every((c) => st.shape.has(key(c)))) continue; // must stay on the diagram
+      if (cells.some((c) => st.bodyOcc.has(key(c)))) continue; // must not collide
+
+      const anchorPos: Vec3 = [anchorCell[0], anchorCell[1], anchorCell[2]];
+      if (!domesClear(candidateDomes(pose, negCell(travel), anchorPos), st)) continue;
+
+      place({ pose, cells, endCell, endDir: rot(pose.endDir), gain: cells.length }, anchorCell, travel, null, st);
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * An uncovered cube that already touches the built structure (shares a face
+ * with a cube some module's body occupies) — the best available starting
+ * point for a chain that CANNOT weld onto anything, when the shape genuinely
+ * has no connector within reach for it.
+ *
+ * WHY THIS EXISTS. A module offers only 4 real attachment directions (2 chain
+ * ends + 2 opposite side connectors) — nowhere near enough to weld a fully
+ * interlocked tree across a WIDE shape (a wall, a table top, a tower's cross-
+ * section), which needs many chains standing in parallel. Requiring every
+ * module to weld onto something left most of a wide shape uncovered — not
+ * because it cannot physically be built, but because "weld" is a stricter
+ * requirement than the shape actually needs there. Nischay's own rule: side-
+ * by-side modules may touch, must not collide, and lock incidentally if a
+ * connector happens to line up (domesClear already allows that, unconditionally
+ * on geometry) — a formal weld is not required just to stand next to the rest.
+ *
+ * Preferring the MOST-touching cube (most occupied face-neighbours) packs new
+ * chains flush against the existing structure rather than merely adjacent at
+ * a single corner, which is what actually reads as "one wall", not a scatter.
+ */
+/**
+ * Neighbor offsets used to decide whether an uncovered cube is close enough
+ * to the already-built structure to grow a new chain from it. This is NOT
+ * the 6 face directions used for shape connectivity (DIRS_6) — a module's
+ * real body is a swept collision footprint from continuous FK, and a bent
+ * ("gentle") pose regularly threads a run diagonally across a flat cube
+ * grid (e.g. a wide wall) without ever touching a neighbor face-on. Using
+ * face-only adjacency here made whole rows of a wall/tower invisible to
+ * the touching-tier even though they sit right next to built cubes on a
+ * diagonal, which silently gave up on them instead of growing into them.
+ * Full 26-neighbor adjacency matches how "near" is already judged
+ * elsewhere for module bodies in this file (domesClear's bucket search).
+ */
+const NEIGHBORS_26: Vec3[] = (() => {
+  const out: Vec3[] = [];
+  for (let dx = -1; dx <= 1; dx++)
+    for (let dy = -1; dy <= 1; dy++)
+      for (let dz = -1; dz <= 1; dz++)
+        if (dx !== 0 || dy !== 0 || dz !== 0) out.push([dx, dy, dz]);
+  return out;
+})();
+
+/**
+ * Flood-fill `cells` under 26-neighbor adjacency and report whether they all
+ * land in one component. Used for the "is this actually one physical
+ * object" check — see the comment at its call site for why this uses 26-way
+ * adjacency instead of the lattice's face-only `isConnected`.
+ */
+function cellsAreOnePiece(cells: Cell[]): boolean {
+  if (cells.length === 0) return true;
+  const set = new Set(cells.map((c) => key(c)));
+  const seen = new Set<string>();
+  const stack = [cells[0]];
+  seen.add(key(cells[0]));
+  while (stack.length) {
+    const c = stack.pop()!;
+    for (const d of NEIGHBORS_26) {
+      const nk = key(add(c, d as Cell));
+      if (set.has(nk) && !seen.has(nk)) { seen.add(nk); stack.push(unkey(nk)); }
+    }
+  }
+  return seen.size === set.size;
+}
+
+function findTouchingSeed(st: FitState, skip: Set<string>): Cell | null {
+  let best: Cell | null = null;
+  let bestTouch = 0;
+  for (const k of st.uncovered) {
+    if (skip.has(k)) continue;
+    const c = unkey(k);
+    let touch = 0;
+    for (const d of NEIGHBORS_26) if (st.bodyOcc.has(key(add(c, d as Cell)))) touch++;
+    if (touch > bestTouch) { bestTouch = touch; best = c; }
+  }
+  return best;
+}
+
+/**
+ * Would welding a new module onto `conn` still leave its host within the
+ * two-opposite-sides budget? A/B ends have no budget — the chain's own two
+ * ends are unlimited by this rule, only the four SIDE faces are.
+ */
+function sideAvailable(conn: PlacedConnector, st: FitState): boolean {
+  if (conn.end === 'A' || conn.end === 'B') return true;
+  const used = st.usedSides.get(conn.moduleId) ?? [];
+  if (used.length >= 2) return false;
+  return used.every((u) => u === conn.end || oppositeSideEnd(u) === conn.end);
+}
+
+/** Record that `conn` is now claimed by a real weld, for sideAvailable's count. */
+function claimSide(conn: PlacedConnector, st: FitState): void {
+  if (conn.end === 'A' || conn.end === 'B') return;
+  const used = st.usedSides.get(conn.moduleId) ?? [];
+  st.usedSides.set(conn.moduleId, [...used, conn.end]);
+}
+
+/**
+ * How many straight-line RUNS does this pose's body take through
+ * cube-space? 1 means a literal straight line; 2 means one clean corner
+ * (an L); higher means a real staircase — direction changing almost every
+ * step, which is what "elbow" and "gentle" poses turned out to be just as
+ * often as "straight" ones.
+ *
+ * `bendPoseId` is only the nearest NAMED angle bucket (see
+ * `nearestNamedPose` in chainMoves.ts) — it is a label for how the pose was
+ * classified when sampled, not a promise about the shape its cells actually
+ * trace out. A pose called "straight" routinely zigzags, and a pose called
+ * "elbow" routinely turns out to be a 4-direction staircase, not the clean
+ * two-segment corner the name suggests. Counting direction changes directly
+ * on the cube-space geometry sidesteps the label entirely, so it needs no
+ * shape-specific case — a wall gets straight rows, a corner gets one clean
+ * turn, and a shape that genuinely has nowhere to go straight still gets
+ * whatever the least-zigzag option available is.
+ */
+function segmentCount(cells: readonly Cell[]): number {
+  if (cells.length < 2) return 1;
+  let segments = 1;
+  let dir = [cells[1][0] - cells[0][0], cells[1][1] - cells[0][1], cells[1][2] - cells[0][2]];
+  for (let i = 2; i < cells.length; i++) {
+    const d = [cells[i][0] - cells[i - 1][0], cells[i][1] - cells[i - 1][1], cells[i][2] - cells[i - 1][2]];
+    if (d[0] !== dir[0] || d[1] !== dir[1] || d[2] !== dir[2]) { segments++; dir = d; }
+  }
+  return segments;
+}
+
+interface Candidate {
+  pose: LatticePose;
+  cells: Cell[];
+  endCell: Cell;
+  endDir: Cell;
+  gain: number;
+  segments: number;
+  spineOnJunction: boolean;
+}
+
+/**
+ * A zigzag pose routinely covers MORE distinct cubes per module than a
+ * straighter one does, in a wide flat area — it advances along two axes of
+ * the grid at once instead of one, so raw coverage alone will pick it almost
+ * every time a wall or a tower's cross-section is being filled. That is
+ * coverage-efficient and also exactly what produced the tangled,
+ * unrecognizable builds Nischay rejected: nothing in a pure "maximize cubes
+ * this module covers" score can ever prefer clean rows and corners over
+ * efficient diagonals, because the diagonal genuinely does more per module.
+ *
+ * So this is not a score weight (a small bonus is provably too small to
+ * ever move a ~2-cube gain gap, and a large one would override real coverage
+ * differences everywhere, wrecking shapes that legitimately need a fold).
+ * It is a deliberate trade accepted up front: give up a SMALL amount of
+ * coverage per module, if it buys fewer direction changes.
+ */
+const STRAIGHT_GAIN_SLACK = 2;
+
 function bestPlacement(
   anchorCell: Cell,
   travel: Cell,
   st: FitState,
   table: LatticePose[],
+  anchorPos?: Vec3,
 ): Placement | null {
   const rot = rotationTo(negCell(travel)); // A faces back down the way we came
-  let best: Placement | null = null;
+  const candidates: Candidate[] = [];
 
   for (const pose of table) {
     const endCell = add(anchorCell, rot(pose.endOffset));
@@ -350,18 +829,85 @@ function bestPlacement(
     }
     if (collides || gain === 0) continue;
 
-    if (!best || gain > best.gain || (gain === best.gain && pose.reach > best.pose.reach)) {
-      best = { pose, cells, endCell, endDir: rot(pose.endDir), gain };
+    // HARD: connector domes may not interpenetrate. Checked only after the
+    // cheap cube tests above, because it costs a forward-kinematics run.
+    const anchorAt: Vec3 = anchorPos ?? [anchorCell[0], anchorCell[1], anchorCell[2]];
+    if (!domesClear(candidateDomes(pose, negCell(travel), anchorAt), st)) continue;
+
+    const midCell = add(anchorCell, rot(pose.midOffset));
+    candidates.push({
+      pose, cells, endCell, endDir: rot(pose.endDir), gain,
+      segments: segmentCount(pose.cells),
+      spineOnJunction: st.junctions.has(key(midCell)),
+    });
+  }
+  if (!candidates.length) return null;
+
+  // Among candidates within STRAIGHT_GAIN_SLACK of the best coverage on
+  // offer, keep only the ones with the FEWEST direction changes — see
+  // STRAIGHT_GAIN_SLACK and segmentCount. This is the general form: it picks
+  // a literal straight line when one is available, a single clean corner
+  // when only a turn is available, and only falls through to a genuine
+  // staircase when nothing straighter reaches anywhere near the same
+  // coverage — which is exactly the trade Nischay described (clean rows,
+  // clean turns, side-by-side rather than diagonal knots), decided from the
+  // shape's own geometry rather than a rule written for any one shape.
+  const maxGain = Math.max(...candidates.map((c) => c.gain));
+  const nearBest = candidates.filter((c) => c.gain >= maxGain - STRAIGHT_GAIN_SLACK);
+  const minSegments = Math.min(...nearBest.map((c) => c.segments));
+  const pool = nearBest.filter((c) => c.segments === minSegments);
+
+  // SCORING within the pool: coverage first, but a placement that lands the
+  // module's SPINE on a junction is worth a lot more than one that merely
+  // crosses it.
+  //
+  // The four side connectors all sit at the big rod's midpoint. Put that
+  // midpoint on a branch point and the junction's other arms have somewhere
+  // to weld — two opposite sides plus the chain's own two ends is four
+  // directions from one module, which is exactly what a 4-way crossing
+  // needs. Run the module's END through the junction instead and those arms
+  // have no connector within reach, so they are dropped and the middle of a
+  // cross comes out as a knot of stubs. Greedy coverage alone cannot see
+  // that, because both placements cover the same cubes THIS step; the
+  // difference only shows up in what can attach NEXT.
+  //
+  // MEASURED HONESTLY: at 90 this is a pure TIE-BREAK — it never outvotes a
+  // cube of coverage (100). It is kept because it is the right preference
+  // for the hardware and costs nothing, NOT because it has been shown to
+  // help yet. The reason it cannot help much here is structural: this is a
+  // greedy walk, so by the time a branch is considered the junction cube has
+  // usually already been consumed by whichever run reached it first. Making
+  // junction placement actually pay off needs the fit to choose junction
+  // poses BEFORE walking the runs — a non-greedy fitter, which this is not.
+  let best: Placement | null = null;
+  let bestScore = -Infinity;
+  for (const c of pool) {
+    const score = c.gain * 100 + (c.spineOnJunction ? 90 : 0) + c.pose.reach;
+    if (!best || score > bestScore) {
+      bestScore = score;
+      best = { pose: c.pose, cells: c.cells, endCell: c.endCell, endDir: c.endDir, gain: c.gain };
     }
   }
   return best;
 }
 
-/** Commit a placement and return the module. */
-function place(p: Placement, anchorCell: Cell, travel: Cell, prev: string | null, st: FitState): FittedModule {
+/**
+ * Commit a placement and return the module.
+ *
+ * `anchorPos` defaults to the centre of `anchorCell` — correct for every
+ * end-to-end weld, where connector A really does land on a lattice point. A
+ * caller welding onto a SIDE connector must pass the connector's real
+ * off-lattice position instead, or the new module is drawn (and reasoned
+ * about) up to ~0.98 cube units away from the dome it is supposedly locked to.
+ */
+function place(
+  p: Placement, anchorCell: Cell, travel: Cell, prev: string | null, st: FitState,
+  anchorPos?: Vec3,
+): FittedModule {
   const m: FittedModule = {
     id: `M${st.nextId++}`,
     anchorCell,
+    anchorPos: anchorPos ?? [anchorCell[0], anchorCell[1], anchorCell[2]],
     anchorDir: negCell(travel),
     endCell: p.endCell,
     endDir: p.endDir,
@@ -373,6 +919,7 @@ function place(p: Placement, anchorCell: Cell, travel: Cell, prev: string | null
     chain: st.chain,
   };
   st.modules.push(m);
+  registerDomes(m, st);
   for (const c of p.cells) {
     st.bodyOcc.add(key(c));
     st.uncovered.delete(key(c));
@@ -411,24 +958,35 @@ function growFromConnector(
   st: FitState,
   table: LatticePose[],
 ): { count: number; weldedTo: string } | null {
-  // The new module's A sits in the same cube facing back — that is what a weld is.
+  // The new module's A goes exactly where the connector it is welding to IS —
+  // same point in space, normals opposed. `conn.cell` is only the lattice cube
+  // that connector is filed under, which for a side connector is up to ~0.98
+  // cube units from the dome itself; anchoring there put the two domes nowhere
+  // near each other and no sphere formed. The lattice cell still drives body
+  // occupancy and coverage, but the module is POSED at conn.pos.
   const anchorCell = conn.cell;
   const travel = conn.dir;
   if (!weldTypeIsLegal('A', conn.end)) return null;
+  if (!sideAvailable(conn, st)) return null; // host's 2-opposite-sides budget is spent
 
-  const p = bestPlacement(anchorCell, travel, st, table);
+  const p = bestPlacement(anchorCell, travel, st, table, conn.pos);
   if (!p) return null;
 
-  let prev = place(p, anchorCell, travel, conn.moduleId, st).id;
+  claimSide(conn, st);
+  let prevMod = place(p, anchorCell, travel, conn.moduleId, st, conn.pos);
+  let prev = prevMod.id;
   let anchor = p.endCell;
+  let anchorPos = realEndPos(prevMod);
   let dir = p.endDir;
   let count = 1;
   let guard = 0;
   while (guard++ < 500) {
-    const next = bestPlacement(anchor, dir, st, table);
+    const next = bestPlacement(anchor, dir, st, table, anchorPos);
     if (!next) break;
-    prev = place(next, anchor, dir, prev, st).id;
+    prevMod = place(next, anchor, dir, prev, st, anchorPos);
+    prev = prevMod.id;
     anchor = next.endCell;
+    anchorPos = realEndPos(prevMod);
     dir = next.endDir;
     count++;
   }
@@ -450,7 +1008,7 @@ function growChain(seed: Cell, st: FitState, table: LatticePose[]): number {
   // a separate robot, and the whole point of the build is one connected thing.
   let opening: { p: Placement; travel: Cell; score: number } | null = null;
   for (const d of DIRS_6) {
-    const p = bestPlacement(seed, d, st, table);
+    const p = bestPlacement(seed, d, st, table, [seed[0], seed[1], seed[2]]);
     if (!p) continue;
     const anchorDir = negCell(d);
     const joins = canWeldInto(seed, anchorDir, 'A', st)
@@ -460,17 +1018,21 @@ function growChain(seed: Cell, st: FitState, table: LatticePose[]): number {
   }
   if (!opening) return 0;
 
-  let prev = place(opening.p, seed, opening.travel, null, st).id;
+  let prevMod = place(opening.p, seed, opening.travel, null, st);
+  let prev = prevMod.id;
   let anchor = opening.p.endCell;
+  let anchorPos = realEndPos(prevMod);
   let travel = opening.p.endDir;
   let count = 1;
 
   let guard = 0;
   while (guard++ < 500) {
-    const p = bestPlacement(anchor, travel, st, table);
+    const p = bestPlacement(anchor, travel, st, table, anchorPos);
     if (!p) break;
-    prev = place(p, anchor, travel, prev, st).id;
+    prevMod = place(p, anchor, travel, prev, st, anchorPos);
+    prev = prevMod.id;
     anchor = p.endCell;
+    anchorPos = realEndPos(prevMod);
     travel = p.endDir;
     count++;
   }
@@ -513,12 +1075,31 @@ export function weldChains(modules: FittedModule[]): {
   const all: PlacedConnector[] = [];
   for (const m of modules) all.push(...connectorsOf(m));
 
+  // Indexed by ROUNDED REAL POSITION, not by lattice cell. A module's four side
+  // connectors all report the same cell but sit ~0.63 cube units apart in four
+  // directions, so a cell index both invented welds between domes that are
+  // nowhere near each other and missed real ones.
   const atCell = new Map<string, PlacedConnector[]>();
+  const posKey = (v: Vec3) =>
+    key([Math.round(v[0]), Math.round(v[1]), Math.round(v[2])] as Cell);
   for (const c of all) {
-    const k = key(c.cell);
+    const k = posKey(c.pos);
     const list = atCell.get(k);
     if (list) list.push(c); else atCell.set(k, [c]);
   }
+  /** Candidates near a point, including buckets a rounding boundary split. */
+  const candidatesNear = (v: Vec3): PlacedConnector[] => {
+    const out: PlacedConnector[] = [];
+    const b: Cell = [Math.round(v[0]), Math.round(v[1]), Math.round(v[2])];
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const g = atCell.get(key([b[0] + dx, b[1] + dy, b[2] + dz] as Cell));
+      if (g) out.push(...g);
+    }
+    return out;
+  };
+  /** Two domes are welded when they are at the same point, within tolerance. */
+  const coincident = (a: Vec3, b: Vec3) =>
+    Math.abs(a[0] - b[0]) < 0.35 && Math.abs(a[1] - b[1]) < 0.35 && Math.abs(a[2] - b[2]) < 0.35;
 
   // Sides already carrying a weld, for the two-opposite-faces rule.
   const usedSides = new Map<string, ConnectorEnd[]>();
@@ -543,10 +1124,11 @@ export function weldChains(modules: FittedModule[]): {
   for (const from of all) {
     if (from.end !== 'A' && from.end !== 'B') continue; // only a free END travels
     const meetCell = from.cell;
-    for (const to of atCell.get(key(meetCell)) ?? []) {
+    for (const to of candidatesNear(from.pos)) {
       if (to.moduleId === from.moduleId) continue;
       if (find(from.moduleId) === find(to.moduleId)) continue; // already one piece
       if (!weldTypeIsLegal(from.end, to.end)) continue;
+      if (!coincident(from.pos, to.pos)) continue; // same point in space, or no weld
       if (!eq(to.dir, negCell(from.dir))) continue; // must face back at us
       if (sideBlocked(to.moduleId, to.end) || sideBlocked(from.moduleId, from.end)) continue;
 
@@ -582,7 +1164,31 @@ export function weldChains(modules: FittedModule[]): {
  * tight or too short for any fold is a real answer about that shape, and
  * quietly dropping the leftovers would hide it.
  */
-export function fitModules(cells: Cell[]): FitResult {
+export interface FitOptions {
+  /**
+   * Refuse to place any module that would not be welded to the rest of the
+   * robot. ON by default, and it is a HARD constraint, not a preference.
+   *
+   * A robot is one machine. A "fit" that covers more cubes by leaving islands
+   * floating in mid-air has not built the shape — it has built several
+   * unrelated robots that happen to sit near each other, which is not a thing
+   * the hardware can be, and every downstream stage (mobility, the walk
+   * planner, the weld graph) is meaningless across a gap no connector spans.
+   *
+   * The cost is real and is paid in COVERAGE: where nothing already built can
+   * reach a region, those cubes are simply left uncovered and reported, rather
+   * than covered by a detached chain. That trade is the right way round —
+   * uncovered cubes are visibly, honestly incomplete, whereas floating chains
+   * look like a finished robot and are not.
+   *
+   * Set false only to study what the greedy fit COULD cover if connectivity
+   * were ignored; nothing in the app ships that way.
+   */
+  requireConnected?: boolean;
+}
+
+export function fitModules(cells: Cell[], options: FitOptions = {}): FitResult {
+  const requireConnected = options.requireConnected ?? true;
   const table = reachTable();
   const st: FitState = {
     shape: new Set(cells.map(key)),
@@ -593,6 +1199,18 @@ export function fitModules(cells: Cell[]): FitResult {
     nextId: 0,
     chain: 0,
     conn: new Map<string, PlacedConnector[]>(),
+    domes: new Map<string, { pos: Vec3; normal: Vec3; moduleId: string }[]>(),
+    usedSides: new Map<string, ConnectorEnd[]>(),
+    junctions: (() => {
+      const occ = new Set(cells.map(key));
+      const out = new Set<string>();
+      for (const c of cells) {
+        let n = 0;
+        for (const d of DIRS_6) if (occ.has(key(add(c, d)))) n++;
+        if (n >= 3) out.add(key(c));
+      }
+      return out;
+    })(),
   };
 
   // Seeds come from the run decomposition: its endpoints are the tips of the
@@ -606,20 +1224,54 @@ export function fitModules(cells: Cell[]): FitResult {
 
   let chains = 0;
 
-  // The first chain has nothing to attach to, so it starts at a tip of the shape.
-  for (const seed of seeds) {
-    if (!st.uncovered.has(key(seed))) continue;
+  // PRE-PASS: centre a straight spine on the WORST (highest-degree) real
+  // junction, as the very first thing placed — see tryCenterOnJunction for why
+  // this has to happen up front, not as a scoring tie-break inside the walk
+  // (that was tried and measured not to help: see the spineOnJunction comment
+  // in bestPlacement).
+  //
+  // ONLY THE FIRST ONE. An earlier version centred a spine on EVERY junction
+  // independently, which is where the shape actually resembling itself came
+  // from — but each centred spine is its own unattached ROOT (weldedTo: null)
+  // with no guarantee any two of them ever come within weld range of each
+  // other. On "chair"@21, two junctions each got their own island, and
+  // nothing downstream can weld two pre-existing roots together (the
+  // connector-anchored loop below only EXTENDS an existing structure; the
+  // post-hoc weldChains pass tries, but is not guaranteed to find a match).
+  // One pre-placed root avoids the problem structurally: every OTHER junction
+  // is then reached by the normal walk growing off THIS root's own free
+  // connectors, which is what stays connected by construction.
+  const junctionsByDegree = [...st.junctions]
+    .map((k) => unkey(k))
+    .sort((a, b) => neighboursOf(b, st.shape).length - neighboursOf(a, st.shape).length);
+  if (junctionsByDegree.length) {
     st.chain = chains;
-    if (growChain(seed, st, table) > 0) { chains++; break; }
+    if (tryCenterOnJunction(junctionsByDegree[0], st, table)) chains++;
+  }
+
+  // The first chain has nothing to attach to, so it starts at a tip of the
+  // shape — UNLESS the junction pre-pass above already placed one. Skipping
+  // this when it did is what makes the pre-pass actually connected: without
+  // this guard, this loop plants a second, unrelated root chain regardless
+  // (weldedTo: null) instead of asking the connector-anchored loop below to
+  // extend the spine that already exists.
+  if (st.modules.length === 0) {
+    for (const seed of seeds) {
+      if (!st.uncovered.has(key(seed))) continue;
+      st.chain = chains;
+      if (growChain(seed, st, table) > 0) { chains++; break; }
+    }
   }
 
   // Everything after that grows OFF an existing free connector wherever it can,
   // so each new chain is welded on from its first module instead of floating
-  // free. Only when no connector can reach the remaining cubes does a detached
-  // chain get started, and that is reported.
+  // free. When nothing can weld, try starting flush against the structure
+  // instead (touching, not locked) before finally giving up on those cubes.
   let detached = 0;
+  const touchingChains: number[] = [];
   let guard = 0;
   const stuck = new Set<string>();
+  const touchStuck = new Set<string>();
 
   while (st.uncovered.size && guard++ < 500) {
     // Best connector-anchored start: the one that covers the most.
@@ -627,7 +1279,8 @@ export function fitModules(cells: Cell[]): FitResult {
     for (const list of st.conn.values()) {
       for (const c of list) {
         if (!weldTypeIsLegal('A', c.end)) continue;
-        const p = bestPlacement(c.cell, c.dir, st, table);
+        if (!sideAvailable(c, st)) continue;
+        const p = bestPlacement(c.cell, c.dir, st, table, c.pos);
         if (p && (!best || p.gain > best.gain)) best = { conn: c, gain: p.gain };
       }
     }
@@ -636,7 +1289,38 @@ export function fitModules(cells: Cell[]): FitResult {
       if (growFromConnector(best.conn, st, table)) { chains++; continue; }
     }
 
-    // Nothing reachable from the built structure — fall back to a fresh tip.
+    // Nothing can WELD onto the remaining cubes — but a shape wide enough to
+    // need more than one chain (a wall, a table, a wide tower cross-section)
+    // routinely runs out of the 4 attachment directions one module offers
+    // long before it runs out of cubes. Rather than call the shape unbuildable
+    // there, start a new chain flush against whatever is already built —
+    // touching, not welded, and still checked for real collision by the same
+    // bodyOcc/domesClear rules as everything else. This is the middle ground
+    // between "must be locked" and "may float anywhere": Nischay's own rule
+    // for side-by-side placement.
+    // A single "best" touching cube can still fail to grow a chain — its only
+    // legal poses might collide with the structure it is flush against, or
+    // fail domesClear, or simply not be reachable by any pose in the table.
+    // Give up on THAT cube and keep trying the next-best touching cube rather
+    // than abandoning the whole region: a wide shape can have many candidate
+    // start points along the same edge of the already-built structure.
+    const touchSeed = requireConnected ? findTouchingSeed(st, touchStuck) : null;
+    if (touchSeed) {
+      st.chain = chains;
+      if (growChain(touchSeed, st, table) > 0) { touchingChains.push(chains); chains++; continue; }
+      touchStuck.add(key(touchSeed));
+      continue;
+    }
+
+    // Nothing already built can be reached AT ALL — not welded, not even
+    // touching. With connectivity required, this is where the fit STOPS: the
+    // only way to cover those cubes would be a chain standing off on its own,
+    // unrelated in space to the rest, and that is not part of this robot.
+    // Leaving the cubes uncovered says that plainly.
+    if (requireConnected) break;
+
+    // Unconstrained mode only (see FitOptions.requireConnected): start a fresh
+    // detached chain and report it.
     let seed: Cell | null = null;
     for (const k of st.uncovered) {
       if (!stuck.has(k)) { seed = unkey(k); break; }
@@ -659,7 +1343,11 @@ export function fitModules(cells: Cell[]): FitResult {
   if (uncovered.length) {
     st.log.push(
       `${uncovered.length} cube(s) uncovered — a module bridges 4 cubes straight and `
-      + 'fewer when folded, so very short stubs have nothing that fits them',
+      + 'fewer when folded, so very short stubs have nothing that fits them'
+      + (requireConnected
+        ? ', and anything a free connector could not reach was left out rather than '
+          + 'covered by a chain floating unattached'
+        : ''),
     );
   }
   // Catch any remaining pair whose connectors happen to meet.
@@ -674,6 +1362,48 @@ export function fitModules(cells: Cell[]): FitResult {
       + 'built could reach those cubes',
     );
   }
+  if (touchingChains.length) {
+    st.log.push(
+      `${touchingChains.length} chain(s) placed touching the structure without a formal `
+      + 'lock — the shape needs more parallel attachment points than one module\'s 4 '
+      + 'directions (2 chain ends + 2 opposite sides) can weld together. Packed flush and '
+      + 'collision-checked, not electrically joined there; any connectors that happened to '
+      + 'line up locked anyway.',
+    );
+  }
+
+  // The honest "is this actually one physical object" check — body-cube
+  // adjacency across ALL modules, independent of which pairs are formally
+  // welded. A wide shape legitimately has weld-components > 1 (see
+  // `touchingChains`) while still being one physically contiguous mass; a
+  // GENUINE bug produces pieces that are not even touching, which this catches.
+  //
+  // This is deliberately NOT `isConnected(configFromCells(...))` — that
+  // lattice-level helper is face-only (DIRS_6) by design, because it also
+  // backs the WALK planner's bridge/cut-vertex safety check, which must stay
+  // strict about what counts as one structural path. A module's real body is
+  // a continuous swept shape from FK, not a cube: two modules can be flush
+  // against each other (Nischay's side-by-side rule) while their nearest body
+  // cells are only diagonal neighbors, not face neighbors — the same 26-way
+  // adjacency findTouchingSeed already uses to decide "close enough to grow
+  // into". Checking spatial one-piece-ness with the stricter face-only rule
+  // instead flagged those legitimate diagonal touches as a fabricated "BUG".
+  const allCells = st.modules.flatMap((m) => m.cells);
+  const spatiallyOnePiece = allCells.length > 0 && cellsAreOnePiece(allCells);
+
+  if (requireConnected && !spatiallyOnePiece) {
+    st.log.push(
+      `BUG: connectivity was required but the fit still produced physically separate `
+      + 'pieces — please report this shape.',
+    );
+  } else if (requireConnected && st.modules.length > 0) {
+    st.log.push(
+      joined.components === 1
+        ? `all ${st.modules.length} module(s) are welded into one connected robot`
+        : `all ${st.modules.length} module(s) form one physically contiguous robot `
+          + `(${joined.components} separately-locked group(s) within it — see above)`,
+    );
+  }
 
   return {
     modules: st.modules,
@@ -682,6 +1412,8 @@ export function fitModules(cells: Cell[]): FitResult {
     runs: chains,
     chainWelds: joined.welds,
     components: joined.components,
+    spatiallyOnePiece,
+    touchingChains: touchingChains.length,
     log: st.log,
   };
 }

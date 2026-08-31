@@ -9,12 +9,14 @@ import React, { useRef, useState } from 'react';
 import { useEspTtlStore, currentPose, ttlTry } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
 import { playTimeline, stopPlayback, gotoFrame } from './player';
+import { sendToBoard, startOnBoard, stopOnBoard } from './sender';
 
 export default function AnimationTab() {
   const tel      = useEspTtlStore(s => s.tel);
   const online   = useEspTtlStore(s => s.online);
   const t        = useTimelineStore();
   const [msg, setMsg]   = useState<string>('');
+  const [sending, setSending] = useState(false);
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -34,6 +36,21 @@ export default function AnimationTab() {
     if (!Object.keys(pose).length) { say('nothing to record — no servo is reporting an angle'); return; }
     t.addFrame(pose);
     say(`recorded ${Object.keys(pose).length} joint(s)`);
+  };
+
+  // ── send the whole sequence to the board ────────────────────────────────────
+  // Upload first, and only start it if the board confirms it received every frame. The
+  // board checks a declared count and checksum, so a truncated upload is refused rather
+  // than played as a half sequence.
+  const send = async () => {
+    setSending(true);
+    const up = await sendToBoard();
+    if (!up.ok) { setSending(false); say(`send failed: ${up.error}`); return; }
+    const go = await startOnBoard(0);
+    setSending(false);
+    say(go.ok
+      ? `sent ${up.frames} frames — the board is running it on its own now`
+      : `uploaded ${up.frames} frames but could not start: ${go.error}`);
   };
 
   // ── import / export ─────────────────────────────────────────────────────────
@@ -98,6 +115,13 @@ export default function AnimationTab() {
           </label>
         </div>
         <p className="ettl-hint">
+          <b>Send to board</b> uploads the whole sequence and hands over timing — once the
+          board has it, a poor Wi-Fi link cannot stutter the motion, because nothing is being
+          streamed. It only runs if every frame arrived intact (checked by count and checksum).
+          <b> Stream from laptop</b> is the old behaviour, useful when you are still tweaking
+          frames and want each edit to take effect immediately.
+        </p>
+        <p className="ettl-hint">
           Sine mode streams eased setpoints from the laptop, so each move starts slow, peaks
           mid-path and settles instead of lurching. It never exceeds the speed cap — a short
           hop simply never gets near it.
@@ -109,10 +133,18 @@ export default function AnimationTab() {
         <h4>Timeline · {t.frames.length} frame{t.frames.length === 1 ? '' : 's'}</h4>
         <div className="ettl-row">
           <button className="ettl-btn rec" onClick={record} disabled={!online}>● Record pose</button>
+          <button className="ettl-btn accent" onClick={send}
+                  disabled={!t.frames.length || !online || sending}>
+            {sending ? 'Sending…' : `⇪ Send to board (${t.frames.length})`}
+          </button>
+          <button className="ettl-btn danger" onClick={() => { void stopOnBoard(); stopPlayback(); }}>■ Stop</button>
           {t.playing
-            ? <button className="ettl-btn danger" onClick={stopPlayback}>■ Stop</button>
-            : <button className="ettl-btn accent" onClick={() => playTimeline(0, say)}
-                      disabled={!t.frames.length || !online}>▶ Play</button>}
+            ? <button className="ettl-btn" onClick={stopPlayback}>stop streaming</button>
+            : <button className="ettl-btn" onClick={() => playTimeline(0, say)}
+                      disabled={!t.frames.length || !online}
+                      title="Play from the laptop instead — every frame boundary goes over Wi-Fi">
+                ▶ Stream from laptop
+              </button>}
           <span className="ettl-sep" />
           <button className="ettl-btn" onClick={t.undo} disabled={!t.canUndo()} title="Undo">↶ Undo</button>
           <button className="ettl-btn" onClick={t.redo} disabled={!t.canRedo()} title="Redo">↷ Redo</button>
@@ -193,12 +225,12 @@ export default function AnimationTab() {
                 return (
                   <tr key={id}>
                     <td className="l">{live?.label || `id ${id}`}</td>
-                    <td>
-                      <input type="range" min={live?.min ?? 0} max={live?.max ?? 360} step={0.5}
-                             value={sel.pose[id]}
-                             onChange={e => t.setJoint(sel.id, id, +e.target.value)} />
-                      <input type="number" step={0.5} value={sel.pose[id]} style={{ width: 78 }}
-                             onChange={e => t.setJoint(sel.id, id, +e.target.value)} />°
+                    <td className="grow">
+                      <JointRow
+                        min={live?.min ?? 0} max={live?.max ?? 360}
+                        value={sel.pose[id]}
+                        onChange={v => t.setJoint(sel.id, id, v)}
+                      />
                     </td>
                     <td className="ettl-dim">{live?.currentAngle?.toFixed(1) ?? '—'}°</td>
                     <td><button className="ettl-btn tiny danger"
@@ -223,6 +255,38 @@ export default function AnimationTab() {
       )}
 
       {msg && <div className="ettl-toast">{msg}</div>}
+    </div>
+  );
+}
+
+/**
+ * A joint row in the frame editor: slider, whole-degree steppers, typed box.
+ * The typed box commits on Enter or blur — never per keystroke, so a half-typed number
+ * cannot land in the frame.
+ */
+function JointRow(props: { min: number; max: number; value: number; onChange: (v: number) => void }) {
+  const [typed, setTyped] = useState<string | null>(null);
+  const clamp = (v: number) => Math.min(props.max, Math.max(props.min, v));
+  const step = (dir: 1 | -1) =>
+    props.onChange(clamp(dir > 0 ? Math.floor(props.value) + 1 : Math.ceil(props.value) - 1));
+  const commit = () => {
+    if (typed === null) return;
+    const v = parseFloat(typed);
+    setTyped(null);
+    if (Number.isFinite(v)) props.onChange(clamp(v));
+  };
+  return (
+    <div className="ettl-angle">
+      <button className="ettl-btn step" onClick={() => step(-1)}>−</button>
+      <input className="ettl-slider" type="range" min={props.min} max={props.max} step={0.5}
+             value={props.value} onChange={e => props.onChange(+e.target.value)} />
+      <button className="ettl-btn step" onClick={() => step(1)}>+</button>
+      <input className="ettl-num" type="number" step={0.5}
+             value={typed ?? props.value.toFixed(1)}
+             onChange={e => setTyped(e.target.value)}
+             onKeyDown={e => { if (e.key === 'Enter') { commit(); (e.target as HTMLInputElement).blur(); } }}
+             onBlur={commit} />
+      <span className="ettl-dim">°</span>
     </div>
   );
 }

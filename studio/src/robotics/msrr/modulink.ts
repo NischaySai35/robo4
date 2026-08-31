@@ -51,6 +51,20 @@ export const BIG_ROD_LENGTH_SCALE = 2;
 export const SEGMENT_GAP = 0.02;
 export const HEMISPHERE_RADIUS = 0.42;
 export const SIDE_CONNECTOR_RADIAL_OFFSET = 0.6;
+/**
+ * Rod cylinder radius, from the hardware spec. Every rod is this thick, the
+ * big spine rod included — the spine is LONGER (BIG_ROD_LENGTH_SCALE), not
+ * fatter.
+ *
+ * This matters geometrically, not just cosmetically: a side connector rides
+ * at SIDE_CONNECTOR_RADIAL_OFFSET (0.6) from the rod axis with a dome of
+ * HEMISPHERE_RADIUS (0.42), so the dome's inner edge lands at 0.6 - 0.42 =
+ * 0.18, just INSIDE this 0.2 rod surface. That overlap is what makes a side
+ * dome read as mounted flush on the spine. Drawing either radius smaller
+ * than spec opens a visible gap and the dome appears to float in mid-air
+ * beside the rod, attached to nothing.
+ */
+export const ROD_RADIUS = 0.2;
 
 export const RODS_PER_MODULE = 6;
 export const BIG_ROD_INDEX = 3;
@@ -257,6 +271,34 @@ export function canReleaseEnd(welds: ChainWeld[], end: ConnectorEnd): { ok: bool
 // ── pose maths (compact, dependency-free) ─────────────────────────────────────
 
 export const IDENTITY: Pose = { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
+
+/**
+ * Quaternion carrying a module's local +Z (connector A's outward normal) onto a
+ * lattice direction — the orientation half of "this module is anchored here,
+ * pointing that way".
+ *
+ * Lives here rather than in the renderer because the FITTER needs it too: real
+ * connector positions come from running forward kinematics from this base, and
+ * a weld is defined in real space ("same point, opposed normals"), not by cube
+ * membership. Two copies of this table would be two chances to disagree about
+ * where a connector physically is.
+ *
+ * These are the quaternion counterparts of fitModules.ROTATIONS, which does the
+ * same job for integer cells; the two are cross-checked against each other in
+ * moduleGeometry.test.ts rather than trusted by inspection.
+ */
+const BASE_Q = Math.SQRT1_2;
+const BASE_QUAT: Record<string, Quat> = {
+  '0,0,1': [0, 0, 0, 1],      // identity
+  '0,0,-1': [1, 0, 0, 0],     // 180 degrees about X
+  '1,0,0': [0, BASE_Q, 0, BASE_Q],
+  '-1,0,0': [0, -BASE_Q, 0, BASE_Q],
+  '0,1,0': [-BASE_Q, 0, 0, BASE_Q],
+  '0,-1,0': [BASE_Q, 0, 0, BASE_Q],
+};
+
+export const baseQuatFor = (dir: readonly number[]): Quat =>
+  BASE_QUAT[`${dir[0]},${dir[1]},${dir[2]}`] ?? [0, 0, 0, 1];
 
 function quatMul(a: Quat, b: Quat): Quat {
   const [ax, ay, az, aw] = a;

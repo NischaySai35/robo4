@@ -52,6 +52,9 @@
 #define UART_MODE_RS485_HALF_DUPLEX 4
 #endif
 
+// Defined further down with the sequence player; estopAll() needs it before then.
+void animStop();
+
 #define FW_VERSION "0.0.0"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
@@ -231,7 +234,14 @@ constexpr uint8_t  POS_MODE        = 0;
 // These are starting points, not measured optimums: the right gains depend on the arm's
 // inertia and gearing, which cannot be known from here. They are exposed at /api/servo/tune
 // so they can be adjusted against the real mechanism.
-constexpr uint8_t  TUNE_DEADBAND   = 1;      // raw units each side -> +/-0.088 deg ignored
+// Hold freedom. 1 raw unit = 360/4096 = 0.088 deg, so the default is +/-0.09 deg — as tight
+// as the encoder allows. Measured on this arm it holds without hunting, so tight is the right
+// default here; widen it per-joint if one starts buzzing. Runtime-adjustable via
+// /api/servo/deadband, stored under its own NVS key so changing it cannot disturb the
+// saved servo list the way growing Cfg would.
+constexpr uint8_t  TUNE_DEADBAND_DEFAULT = 1;
+uint8_t            deadbandUnits         = TUNE_DEADBAND_DEFAULT;
+constexpr float    DEG_PER_UNIT          = 360.0f / 4096.0f;
 constexpr uint8_t  TUNE_KP         = 48;     // ST3215 default is 32
 constexpr uint8_t  TUNE_KD         = 24;     // damping for the raised Kp/Ki
 constexpr uint8_t  TUNE_KI         = 4;      // >0 is what removes steady-state droop
@@ -363,7 +373,10 @@ void cmdTorqueToggle(ServoState& sv) {
   if (sv.torqueOn) { st.EnableTorque(sv.id, 0); delay(2); sv.torqueOn = false; sv.moving = false; }
   else             { st.EnableTorque(sv.id, 1); delay(2); sv.torqueOn = true; }
 }
-void estopAll() { for (uint8_t i = 0; i < nServos; i++) cmdStop(servos[i]); }
+void estopAll() {
+  animStop();                          // an E-STOP that leaves a sequence running is not a stop
+  for (uint8_t i = 0; i < nServos; i++) cmdStop(servos[i]);
+}
 
 /* Write one EPROM byte only if it differs. EPROM has a finite write endurance and this runs
    on every boot, so a blind write would burn the servo's flash for no reason. Returns true
@@ -383,8 +396,8 @@ bool tuneByteIfDiff(uint8_t id, uint8_t addr, uint8_t want, const char* name) {
 void tuneServoHolding(ServoState& sv) {
   st.unLockEprom(sv.id); delay(10);
   bool changed = false;
-  changed |= tuneByteIfDiff(sv.id, REG_CW_DEAD,  TUNE_DEADBAND, "cw deadband");
-  changed |= tuneByteIfDiff(sv.id, REG_CCW_DEAD, TUNE_DEADBAND, "ccw deadband");
+  changed |= tuneByteIfDiff(sv.id, REG_CW_DEAD,  deadbandUnits, "cw deadband");
+  changed |= tuneByteIfDiff(sv.id, REG_CCW_DEAD, deadbandUnits, "ccw deadband");
   changed |= tuneByteIfDiff(sv.id, REG_KP, TUNE_KP, "Kp");
   changed |= tuneByteIfDiff(sv.id, REG_KD, TUNE_KD, "Kd");
   changed |= tuneByteIfDiff(sv.id, REG_KI, TUNE_KI, "Ki");
@@ -395,8 +408,9 @@ void tuneServoHolding(ServoState& sv) {
 }
 
 void tuneAllServos() {
-  lg("tuning hold stiffness (deadband %u, Kp %u, Kd %u, Ki %u, torque %u)",
-     TUNE_DEADBAND, TUNE_KP, TUNE_KD, TUNE_KI, TUNE_TORQUE_MAX);
+  lg("tuning hold stiffness (deadband %u units = +/-%s deg, Kp %u, Kd %u, Ki %u, torque %u)",
+     deadbandUnits, String(deadbandUnits * DEG_PER_UNIT, 2).c_str(),
+     TUNE_KP, TUNE_KD, TUNE_KI, TUNE_TORQUE_MAX);
   for (uint8_t i = 0; i < nServos; i++) { bc("tune id=%u", servos[i].id); tuneServoHolding(servos[i]); yield(); }
   lg("tuning done");
 }
@@ -459,6 +473,121 @@ void seedTargetsFromHardware() {
     sv.targetDeg = rawToAngle((uint16_t)pos);
   }
   st.IOTimeOut = saved;
+}
+
+// ── Animation sequence ──────────────────────────────────────────────────────
+// Uploaded whole, validated whole, then played from RAM by animTick(). A frame is a pose
+// plus the time budget to reach it; "sine" spends that budget easing along a raised
+// cosine instead of leaving the servo's own profile to do it.
+AnimFrame anim[MAX_FRAMES];
+uint8_t   animCount   = 0;
+bool      animSine    = true;
+bool      animLoop    = false;
+bool      animPlaying = false;
+uint8_t   animIdx     = 0;
+uint32_t  animT0      = 0;         // when the current frame started
+
+void animStop() {
+  if (animPlaying) lg("anim stopped at frame %u", animIdx + 1);
+  animPlaying = false;
+}
+
+/*
+  Motion profile, one command per frame.
+
+  The obvious implementation — stream interpolated setpoints every 40 ms — is what makes a
+  servo judder: each setpoint is a fresh target for the servo's OWN trapezoidal generator,
+  so it accelerates hard, arrives early, stops, and waits for the next one. Twenty-five
+  start-stops a second, which is what "sine mode" felt like.
+
+  So instead we let the servo do what it is good at, and only choose its parameters. For a
+  move of D steps that must take T seconds:
+
+      cruise speed v  =  k * D / T          (steps/s)
+      acceleration a  =  k * v / T          (steps/s^2, sent in units of 100)
+
+  with k = 1 for a flat run, and k = 1.5 for the eased one — that spends the first and last
+  third of T accelerating and decelerating, which IS the ease-in/ease-out shape, generated
+  in the servo's own control loop at its full update rate instead of over Wi-Fi at 25 Hz.
+
+  Each joint gets its own v and a from its own distance, so a joint moving 5 degrees and one
+  moving 90 both finish at T — they move together instead of the short one snapping and then
+  waiting. Speed is capped by the frame's speed setting; a move that cannot fit in T at that
+  cap simply takes longer, which is the honest outcome.
+*/
+void animSendFrame(uint8_t idx) {
+  const AnimFrame& f = anim[idx];
+  uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
+  uint16_t spd[MAX_SERVOS]; uint8_t  acc[MAX_SERVOS];
+  uint8_t  n = 0;
+
+  const float T   = max(0.05f, f.timeMs / 1000.0f);
+  const float k   = animSine ? 1.5f : 1.0f;
+  const uint16_t vCap = speedScaleToRaw(f.speed);
+
+  for (uint8_t i = 0; i < f.n; i++) {
+    int slot = slotOf(f.ids[i]);
+    if (slot < 0) continue;                       // not a servo on this board
+    ServoState& sv = servos[slot];
+
+    float lo, hi; limitsFor((uint8_t)slot, lo, hi);
+    float wantDeg = clampF(f.deg10[i] / 10.0f, lo, hi);
+    uint16_t wantRaw = angleToRaw(wantDeg);
+
+    // Distance from where the joint actually is, not from where we last told it to be.
+    int32_t cur = sv.rawPos >= 0 ? sv.rawPos : (int32_t)sv.targetRaw;
+    int32_t D   = labs((int32_t)wantRaw - cur);
+
+    uint16_t v;
+    uint8_t  a;
+    if (D < 4) {
+      // Already there. Give it a gentle speed rather than 0, which some firmware reads
+      // as "maximum".
+      v = (uint16_t)max<uint16_t>(40, vCap / 8);
+      a = 20;
+    } else {
+      float vf = k * (float)D / T;
+      float af = k * vf / T;
+      v = (uint16_t)constrain((int)lroundf(vf), 30, (int)vCap);
+      // ACC is in units of 100 steps/s^2. Round UP: too little acceleration is what makes
+      // a move overrun its time budget.
+      a = (uint8_t)constrain((int)ceilf(af / 100.0f), 1, 150);
+    }
+
+    setHwMode(sv, POS_MODE);
+    ensureTorque(sv);
+    sv.mode          = POS_MODE;
+    sv.targetDeg     = wantDeg;
+    sv.targetRaw     = wantRaw;
+    sv.speedScale    = f.speed;
+    sv.speedRaw      = v;
+    sv.acc           = a;
+    sv.lastCommandMs = millis();
+
+    ids[n] = sv.id; pos[n] = (int16_t)wantRaw; spd[n] = v; acc[n] = a;
+    n++;
+  }
+
+  if (n == 1)     { st.WritePosEx(ids[0], pos[0], spd[0], acc[0]); delay(2); }
+  else if (n > 1) { st.SyncWritePosEx(ids, n, pos, spd, acc);      delay(2); }
+}
+
+void animBeginFrame(uint8_t i) {
+  animIdx = i;
+  animT0  = millis();
+  animSendFrame(i);
+}
+
+void animTick() {
+  if (!animPlaying || animCount == 0) return;
+  // One command per frame, so there is nothing to do mid-frame but wait for its time to
+  // elapse. The servo is running the profile itself at its own update rate.
+  if (millis() - animT0 < anim[animIdx].timeMs) return;
+
+  if (animIdx + 1 < animCount) { animBeginFrame(animIdx + 1); return; }
+  if (animLoop)                { animBeginFrame(0); return; }
+  animPlaying = false;
+  lg("anim finished (%u frames)", animCount);
 }
 
 // ── Manual home positions ───────────────────────────────────────────────────
@@ -593,11 +722,25 @@ uint32_t wDrops       = 0;
 uint32_t wConnectedAt = 0;
 char     apName[24];
 
-bool slotUsable(uint8_t i) { return i < 3 && cfg.ssid[i][0] != 0; }
+// Slot 3 is virtual: the SSID compiled into this firmware. Saved slots are tried first.
+#define WSLOT_DEFAULT 3
+
+const char* ssidFor(uint8_t i) { return i < 3 ? cfg.ssid[i] : DEF_SSID; }
+const char* passFor(uint8_t i) { return i < 3 ? cfg.pass[i] : DEF_PASS; }
+
+bool slotUsable(uint8_t i) {
+  if (i < 3) return cfg.ssid[i][0] != 0;
+  if (i != WSLOT_DEFAULT || DEF_SSID[0] == 0) return false;
+  // Pointless to try it twice if a saved slot already holds the same network.
+  for (uint8_t k = 0; k < 3; k++) if (strcmp(cfg.ssid[k], DEF_SSID) == 0) return false;
+  return true;
+}
 
 uint8_t nextSlot() {
-  for (uint8_t k = 1; k <= 3; k++) {
-    uint8_t i = (uint8_t)((wSlot == 255 ? 0 : wSlot + k) % 3);
+  for (uint8_t k = 1; k <= 4; k++) {
+    // +k must be OUTSIDE the ternary: with it inside, a fresh boot (wSlot 255) evaluated
+    // to slot 3 on every iteration and never looked at the saved slots at all.
+    uint8_t i = (uint8_t)(((wSlot == 255 ? 3 : wSlot) + k) % 4);
     if (slotUsable(i)) return i;
   }
   return 255;
@@ -662,9 +805,10 @@ void onWiFiEvent(WiFiEvent_t ev, WiFiEventInfo_t info) {
 
 void wifiConnectSlot(uint8_t i) {
   wSlot = i;
-  lg("WiFi try slot %u '%s' (attempt %u, backoff %lums)", i, cfg.ssid[i], wFails, wBackoff);
+  lg("WiFi try %s '%s' (attempt %u, backoff %lums)",
+     i == WSLOT_DEFAULT ? "compiled default" : "saved slot", ssidFor(i), wFails, wBackoff);
   WiFi.disconnect(false, false);
-  WiFi.begin(cfg.ssid[i], cfg.pass[i]);
+  WiFi.begin(ssidFor(i), passFor(i));
 }
 
 void wifiInit() {
@@ -913,10 +1057,15 @@ String buildJSON() {
   j += F("\",\"lastCrumbMs\":"); j += prevCrumbMs;
   j += F(",\"fw\":\""); j += FW_VERSION;
   j += F("\",\"ms\":");    j += millis();
+  j += F(",\"deadbandDeg\":");   j += String(deadbandUnits * DEG_PER_UNIT, 2);
+  j += F(",\"deadbandUnits\":"); j += deadbandUnits;
   j += F(",\"heap\":");    j += ESP.getFreeHeap();
   // 0 = this board has NO second OTA partition, so wireless upload cannot work
   j += F(",\"otaSpace\":");   j += ESP.getFreeSketchSpace();
   j += F(",\"sketchSize\":"); j += ESP.getSketchSize();
+  j += F(",\"animFrames\":");  j += animCount;
+  j += F(",\"animPlaying\":"); j += (animPlaying ? F("true") : F("false"));
+  j += F(",\"animIdx\":");     j += animIdx;
   j += F(",\"scanning\":"); j += (sc.active ? F("true") : F("false"));
   j += F(",\"servos\":[");
 
@@ -1130,6 +1279,143 @@ void handleHomeSet() {
   bc(clear ? "home positions cleared" : "home positions saved");
   out += F("],\"count\":"); out += n; out += '}';
   okJson(out);
+}
+
+// POST /api/anim/load   body:
+//   V1 <frameCount> <checksum>
+//   <timeMs> <speed> <id>:<deg> <id>:<deg> ...
+//   ...
+// The header states how many frames to expect and a checksum over the body; a partial or
+// mangled upload therefore fails validation instead of being played. Nothing replaces the
+// stored sequence until the whole thing parses — a half-received upload leaves the
+// previous one intact rather than half-wrecking it.
+void handleAnimLoad() {
+  if (!server.hasArg("plain")) { errJson(400, "empty body"); return; }
+  String body = server.arg("plain");
+
+  int nl = body.indexOf('\n');
+  if (nl < 0) { errJson(400, "no header line"); return; }
+  String head = body.substring(0, nl);
+  head.trim();
+  if (!head.startsWith("V1 ")) { errJson(400, "bad header (expected V1)"); return; }
+
+  int sp1 = head.indexOf(' ', 3);
+  if (sp1 < 0) { errJson(400, "bad header fields"); return; }
+  uint16_t wantCount = (uint16_t)head.substring(3, sp1).toInt();
+  uint32_t wantSum   = (uint32_t)strtoul(head.substring(sp1 + 1).c_str(), nullptr, 10);
+
+  String payload = body.substring(nl + 1);
+  uint32_t sum = 0;
+  for (size_t i = 0; i < payload.length(); i++) sum = (sum * 31u + (uint8_t)payload[i]) & 0xFFFFFFFFu;
+  if (sum != wantSum) {
+    lg("anim upload rejected: checksum %lu, expected %lu", (unsigned long)sum, (unsigned long)wantSum);
+    errJson(400, "checksum mismatch - upload was incomplete or corrupted");
+    return;
+  }
+  if (wantCount == 0 || wantCount > MAX_FRAMES) { errJson(400, "frame count out of range"); return; }
+
+  // Parse into a scratch buffer first; the live sequence is only replaced on full success.
+  static AnimFrame tmp[MAX_FRAMES];
+  uint8_t got = 0;
+  int pos = 0;
+  while (pos < (int)payload.length() && got < MAX_FRAMES) {
+    int e = payload.indexOf('\n', pos);
+    String line = (e < 0) ? payload.substring(pos) : payload.substring(pos, e);
+    pos = (e < 0) ? payload.length() : e + 1;
+    line.trim();
+    if (!line.length()) continue;
+
+    AnimFrame f; f.n = 0;
+    int sp = line.indexOf(' ');
+    if (sp < 0) { errJson(400, "bad frame line"); return; }
+    f.timeMs = (uint16_t)constrain(line.substring(0, sp).toInt(), 0, 60000);
+    int sp2 = line.indexOf(' ', sp + 1);
+    if (sp2 < 0) { errJson(400, "bad frame line"); return; }
+    f.speed = (uint8_t)constrain(line.substring(sp + 1, sp2).toInt(), 1, 10);
+
+    int q = sp2 + 1;
+    while (q < (int)line.length() && f.n < MAX_SERVOS) {
+      int spc = line.indexOf(' ', q);
+      String tok = (spc < 0) ? line.substring(q) : line.substring(q, spc);
+      q = (spc < 0) ? line.length() : spc + 1;
+      int c = tok.indexOf(':');
+      if (c < 0) continue;
+      int id = tok.substring(0, c).toInt();
+      float dg = tok.substring(c + 1).toFloat();
+      if (id < 1 || id > 253) continue;
+      f.ids[f.n] = (uint8_t)id;
+      f.deg10[f.n] = (int16_t)lroundf(clampF(dg, 0.0f, 360.0f) * 10.0f);
+      f.n++;
+    }
+    tmp[got++] = f;
+  }
+
+  if (got != wantCount) {
+    String e = "got " + String(got) + " frames, header promised " + String(wantCount);
+    lg("anim upload rejected: %s", e.c_str());
+    errJson(400, e.c_str());
+    return;
+  }
+
+  animStop();
+  memcpy(anim, tmp, sizeof(AnimFrame) * got);
+  animCount = got;
+  animSine = !(server.hasArg("sine") && server.arg("sine") == "0");
+  animLoop = server.hasArg("loop") && server.arg("loop") != "0";
+  lg("anim loaded: %u frames, sine %s, loop %s", animCount,
+     animSine ? "on" : "off", animLoop ? "on" : "off");
+
+  String r = F("{\"ok\":true,\"frames\":"); r += animCount;
+  r += F(",\"sine\":"); r += (animSine ? F("true") : F("false"));
+  r += F(",\"loop\":"); r += (animLoop ? F("true") : F("false"));
+  r += '}';
+  okJson(r);
+}
+
+void handleAnimPlay() {
+  if (animCount == 0) { errJson(409, "no sequence loaded"); return; }
+  if (server.hasArg("loop")) animLoop = server.arg("loop") != "0";
+  uint8_t from = server.hasArg("from") ? (uint8_t)server.arg("from").toInt() : 0;
+  if (from >= animCount) from = 0;
+  bc("anim play (%u frames)", animCount);
+  animPlaying = true;
+  animBeginFrame(from);
+  okTrue();
+}
+
+void handleAnimStop() { animStop(); okTrue(); }
+
+void handleAnimStatus() {
+  String r = F("{\"ok\":true,\"frames\":"); r += animCount;
+  r += F(",\"playing\":"); r += (animPlaying ? F("true") : F("false"));
+  r += F(",\"idx\":");     r += (animPlaying ? animIdx : 0);
+  r += F(",\"sine\":");    r += (animSine ? F("true") : F("false"));
+  r += F(",\"loop\":");    r += (animLoop ? F("true") : F("false"));
+  r += '}';
+  okJson(r);
+}
+
+// GET /api/servo/deadband                 report the current hold freedom
+// GET /api/servo/deadband?deg=1.0         set it (rounded to the nearest 0.088 deg unit)
+// Applied to every servo immediately and remembered across reboots. tuneByteIfDiff only
+// writes when the value actually changes, so repeated calls do not wear the servo EPROM.
+void handleDeadband() {
+  if (server.hasArg("deg") || server.hasArg("units")) {
+    int units = server.hasArg("units")
+              ? server.arg("units").toInt()
+              : (int)lroundf(server.arg("deg").toFloat() / DEG_PER_UNIT);
+    units = constrain(units, 0, 200);
+    deadbandUnits = (uint8_t)units;
+    prefs.putUChar("deadband", deadbandUnits);
+    lg("hold freedom set to %u units (+/-%s deg)", deadbandUnits,
+       String(deadbandUnits * DEG_PER_UNIT, 2).c_str());
+    tuneAllServos();
+  }
+  String r = F("{\"ok\":true,\"units\":"); r += deadbandUnits;
+  r += F(",\"deg\":");        r += String(deadbandUnits * DEG_PER_UNIT, 2);
+  r += F(",\"degPerUnit\":"); r += String(DEG_PER_UNIT, 4);
+  r += '}';
+  okJson(r);
 }
 
 // GET /api/servo/home?id=N[&to180=1]   send one servo to its home
@@ -1598,6 +1884,7 @@ void setup() {
   delay(300);
   cfgLoad();
   homesLoad();
+  deadbandUnits = prefs.getUChar("deadband", TUNE_DEADBAND_DEFAULT);
   applyServoConfig();
   lg("ROBO4 fw %s booting as '%s' (%u servos, bus %lu baud)",
      FW_VERSION, cfg.host, nServos, (unsigned long)cfg.baud);
@@ -1622,8 +1909,13 @@ void setup() {
   route("/api/magnet",          handleMagnet);
   route("/api/home",            handleHome);
   route("/api/home/manual",     handleHomeManual);
+  route("/api/anim/load",       handleAnimLoad);
+  route("/api/anim/play",       handleAnimPlay);
+  route("/api/anim/stop",       handleAnimStop);
+  route("/api/anim/status",     handleAnimStatus);
   route("/api/home/set",        handleHomeSet);
   route("/api/servo/home",      handleServoHome);
+  route("/api/servo/deadband",  handleDeadband);
   route("/api/torque",          handleTorqueAll);
   route("/api/servo/tune",      handleTune);
   route("/api/identify",        handleIdentify);
@@ -1672,7 +1964,19 @@ void setup() {
   torqueOffAll();
   seedTargetsFromHardware();
   tuneAllServos();          // writes only what differs, so this is a no-op after the first boot
-  lg("boot complete — torque OFF, %u servo(s) configured", nServos);
+
+  // If manual homes have been saved, the operator has already said where this arm should
+  // rest, so go there on power-up. With none saved we stay limp rather than inventing a
+  // destination — driving to a hardcoded 180 that nobody chose is the behaviour that used
+  // to make the arm lunge at boot.
+  if (homes.n > 0) {
+    lg("boot: moving to saved manual home (%u joint(s) have one)", homes.n);
+    homeAll(true);
+  } else {
+    lg("boot: no manual home saved — staying limp. Pose the arm and press 'Set current as home'.");
+  }
+  lg("boot complete — %s, %u servo(s) configured",
+     homes.n > 0 ? "moved to manual home" : "torque OFF", nServos);
 }
 
 void loop() {
@@ -1683,6 +1987,8 @@ void loop() {
   delay(1);
 
   if (otaBusy) return;                 // never touch the servo bus mid-flash
+
+  animTick();                          // the board owns sequence timing, not the browser
 
   if (sc.active) { scanStep(); return; }   // scan owns the bus until it finishes
 

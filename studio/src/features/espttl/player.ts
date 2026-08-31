@@ -140,12 +140,22 @@ export async function playTimeline(startIdx = 0, onError?: (msg: string) => void
   }
 }
 
+/**
+ * "go" previews a frame, so it deliberately moves at a fraction of the sequence speed.
+ * A preview jumps from wherever the arm happens to be — often a long, unplanned move — and
+ * at playback speed that arrives as a lurch. Slow is the right default for a jog you are
+ * watching; playback itself is unaffected.
+ */
+const GOTO_SPEED_FRACTION = 0.4;
+
 /** Jump straight to one frame's pose (used by the "go" button on a frame card). */
 export async function gotoFrame(f: Frame, onError?: (msg: string) => void) {
   const st = useTimelineStore.getState();
+  const base = f.speed ?? st.globalSpeed;
+  const speed = Math.max(1, Math.round(base * GOTO_SPEED_FRACTION));
   const ctl = new AbortController();
   try {
-    await sendPose(f.pose, f.speed ?? st.globalSpeed, 30, ctl.signal);
+    await sendPose(f.pose, speed, 20, ctl.signal);   // lower acc too: ease in, do not snap
   } catch (e: any) {
     onError?.(e?.message || String(e));
   }

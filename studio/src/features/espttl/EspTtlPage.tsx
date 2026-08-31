@@ -54,6 +54,9 @@ export default function EspTtlPage() {
           <span className="ettl-chip">{Math.round(tel.heap / 1024)}k heap</span>
           <span className="ettl-chip">{latencyMs} ms</span>
           <span className="ettl-chip">{tel.servos.length} servos</span>
+          {(tel as any).deadbandDeg != null &&
+            <span className="ettl-chip" title="servo deadband — error smaller than this is ignored by the servo">
+              ±{(tel as any).deadbandDeg}° band</span>}
         </>}
         <span style={{ flex: 1 }} />
         <button className="ettl-btn danger big"
@@ -98,11 +101,11 @@ function ControlTab() {
   const { msg, call } = useSay();
   const [speed, setSpeed] = useState(5);
   const [acc, setAcc]     = useState(20);
-  const [drafts, setDrafts] = useState<Record<number, number>>({});
+  const [band, setBand] = useState('0.1');
 
   const servos = tel?.servos ?? [];
+  const deadband = (tel as any)?.deadbandDeg ?? 2.46;
   const move = (s: TtlServo, deg: number) => {
-    setDrafts(d => ({ ...d, [s.id]: deg }));
     void ttlTry(`/api/command?servo=${s.id}&cmd=pos&angle=${deg}&speed=${speed}&acc=${acc}`);
   };
 
@@ -123,6 +126,20 @@ function ControlTab() {
           <button className="ettl-btn" onClick={() => call('/api/home/set', 'set home')}>Set current as home</button>
           <button className="ettl-btn" onClick={() => call('/api/servo/tune', 're-tune')}>Re-tune hold</button>
         </div>
+        <div className="ettl-row">
+          <label className="ettl-lbl" title="Error smaller than this is ignored by the servo — it stops correcting inside the band">
+            hold freedom ±
+            <input type="number" min={0} max={17} step={0.1} value={band}
+                   onChange={e => setBand(e.target.value)} style={{ width: 70 }} />°
+          </label>
+          <button className="ettl-btn accent" onClick={async () => {
+            const r = await call(`/api/servo/deadband?deg=${band}`, 'hold freedom');
+            if (r.ok && r.data?.deg) setBand(String(r.data.deg));
+          }}>Apply to all servos</button>
+          <span className="ettl-dim">
+            now ±{deadband}° · tighter holds more precisely but can hunt and heat; wider lets the joint sag
+          </span>
+        </div>
       </div>
 
       <div className="ettl-card">
@@ -130,8 +147,9 @@ function ControlTab() {
         <div className="ettl-wrap">
           <table className="ettl-table">
             <thead><tr>
-              <th className="l">id</th><th className="l">label</th><th>angle</th><th>target</th>
-              <th>set</th><th>load</th><th>mA</th><th>V</th><th>°C</th><th>mode</th><th className="l">actions</th>
+              <th className="l">id</th><th className="l">label</th><th>angle</th><th>target</th><th title="actual − target · positive = pushed past it, negative = sagging below it">err°</th>
+              <th className="grow">set</th>
+              <th>load</th><th>mA</th><th>V</th><th>°C</th><th>mode</th><th className="l">actions</th>
             </tr></thead>
             <tbody>
               {servos.map(s => (
@@ -142,13 +160,9 @@ function ControlTab() {
                     {s.currentAngle?.toFixed(1) ?? '—'}
                   </td>
                   <td>{s.targetAngle?.toFixed(1) ?? '—'}</td>
-                  <td>
-                    <input type="range" min={s.min} max={s.max} step={0.5}
-                           value={drafts[s.id] ?? s.currentAngle ?? 180}
-                           onChange={e => setDrafts(d => ({ ...d, [s.id]: +e.target.value }))}
-                           onMouseUp={e => move(s, +(e.target as HTMLInputElement).value)}
-                           onTouchEnd={e => move(s, +(e.target as HTMLInputElement).value)} />
-                    <span className="ettl-dim"> {(drafts[s.id] ?? s.currentAngle ?? 180).toFixed(0)}°</span>
+                  <td style={{ color: errColor(s, deadband) }}>{errOf(s)}</td>
+                  <td className="grow">
+                    <AngleCell s={s} onCommit={v => move(s, v)} />
                   </td>
                   <td>{s.loadAbs}</td>
                   <td>{s.currentmA ?? '—'}</td>
@@ -172,6 +186,90 @@ function ControlTab() {
         </div>
       </div>
       {msg && <div className="ettl-toast">{msg}</div>}
+    </div>
+  );
+}
+
+/**
+ * Holding error, signed as (actual - target): negative means the joint is sitting BELOW
+ * where it was told, which is what gravity droop looks like; positive means it has been
+ * pushed past. The sign is the useful part — magnitude alone cannot tell you which way a
+ * joint is losing.
+ */
+function errOf(s: TtlServo) {
+  if (s.currentAngle == null || s.targetAngle == null) return '—';
+  const e = s.currentAngle - s.targetAngle;
+  return (e > 0 ? '+' : e < 0 ? '−' : '') + Math.abs(e).toFixed(2);
+}
+/* Coloured against the servos' ACTUAL deadband, reported by the board — inside the band the
+   servo is not even trying, so that is "fine", not "close". A hardcoded threshold here would
+   go wrong the moment the deadband is retuned. */
+function errColor(s: TtlServo, deadband: number) {
+  if (s.currentAngle == null || s.targetAngle == null) return 'var(--text-dim)';
+  if (!s.torque) return 'var(--text-dim)';          // a limp joint is not trying to hold
+  const e = Math.abs(s.targetAngle - s.currentAngle);
+  if (e <= deadband) return 'var(--success, #3fb950)';
+  return e <= deadband * 2 ? '#d29922' : 'var(--danger)';
+}
+
+/**
+ * One joint's control: slider, whole-degree steppers, and a typed box.
+ *
+ * The displayed value follows the BOARD, not a local copy. An earlier version kept a
+ * "draft" per servo that was written on every interaction and never cleared, so once you
+ * touched a joint its slider froze at whatever you last set — even after the firmware
+ * clamped the command to the joint's limits, or the servo failed to get there. The control
+ * then disagreed with the angle column right next to it.
+ *
+ * So a local value exists only while you are actually holding the slider or typing in the
+ * box. The moment you let go, it goes back to mirroring the board: the commanded target
+ * while the joint is holding, or the live angle while it is limp and being posed by hand.
+ */
+function AngleCell(props: { s: TtlServo; onCommit: (v: number) => void }) {
+  const { s } = props;
+  const [dragging, setDragging] = useState(false);
+  const [draft, setDraft] = useState(0);
+  const [typed, setTyped] = useState<string | null>(null);
+
+  // While limp the joint is being moved by hand, so the live angle is the truth. While
+  // holding, what it was TOLD is the truth — that is what the slider represents.
+  const live = (s.torque ? (s.targetAngle ?? s.currentAngle) : s.currentAngle) ?? 180;
+  const shown = dragging ? draft : live;
+
+  const clamp = (v: number) => Math.min(s.max, Math.max(s.min, v));
+
+  const step = (dir: 1 | -1) => {
+    // Snap to the next whole degree rather than adding 1.0 to a fractional angle.
+    props.onCommit(clamp(dir > 0 ? Math.floor(live) + 1 : Math.ceil(live) - 1));
+  };
+
+  const commitTyped = () => {
+    if (typed === null) return;
+    const v = parseFloat(typed);
+    setTyped(null);
+    if (Number.isFinite(v)) props.onCommit(clamp(v));
+  };
+
+  const release = (v: number) => { setDragging(false); props.onCommit(clamp(v)); };
+
+  return (
+    <div className="ettl-angle">
+      <button className="ettl-btn step" onClick={() => step(-1)} title="one degree down">−</button>
+      <input className="ettl-slider" type="range" min={s.min} max={s.max} step={0.5}
+             value={shown}
+             onPointerDown={() => { setDraft(live); setDragging(true); }}
+             onChange={e => { setDraft(+e.target.value); setDragging(true); }}
+             onMouseUp={e => release(+(e.target as HTMLInputElement).value)}
+             onTouchEnd={e => release(+(e.target as HTMLInputElement).value)}
+             onBlur={() => setDragging(false)} />
+      <button className="ettl-btn step" onClick={() => step(1)} title="one degree up">+</button>
+      <input className="ettl-num" type="number" step={0.5} min={s.min} max={s.max}
+             value={typed ?? shown.toFixed(1)}
+             onChange={e => setTyped(e.target.value)}
+             onKeyDown={e => { if (e.key === 'Enter') { commitTyped(); (e.target as HTMLInputElement).blur(); } }}
+             onBlur={commitTyped}
+             title="type an angle and press Enter" />
+      <span className="ettl-dim">°</span>
     </div>
   );
 }

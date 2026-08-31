@@ -63,10 +63,11 @@
  */
 import { type Cell, key, manhattan, bestAlignment, translateCells } from './lattice';
 import { type LatticePose } from './chainMoves';
+import { type Vec3 } from './modulink';
 import { findLandingPoses } from './chainSolve';
 import {
   type FittedModule, type FitResult, type PlacedConnector,
-  fitModules, connectorsOf, rotationTo, inverseRotationTo,
+  fitModules, connectorsOf, rotationTo, inverseRotationTo, realConnectorPosOf,
 } from './fitModules';
 import { type ConnectorEnd, weldTypeIsLegal, oppositeSideEnd } from './modulink';
 
@@ -88,6 +89,18 @@ export interface TransformMove {
   /** where it is anchored after */
   toCell: Cell;
   toDir: Cell;
+  /**
+   * The real (possibly off-lattice) counterparts of fromCell/toCell.
+   *
+   * A module welded onto a side connector is anchored ~0.63 cube units off any
+   * lattice point, so carrying only cells through a move silently snapped it
+   * back onto the grid and pulled its domes apart from whatever it was locked
+   * to. Both are needed because they answer different questions: fromPos is
+   * where the body hangs from (and so what it is DRAWN from, since the pose was
+   * solved relative to it), toPos is the connector it now grips.
+   */
+  fromPos: Vec3;
+  toPos: Vec3;
   /** module and connector it grabbed */
   ontoModule: string;
   ontoEnd: ConnectorEnd;
@@ -138,16 +151,49 @@ interface WeldState {
   occupied: Map<string, string>;
 }
 
+/**
+ * How close two dome centres must be to count as welded, in cube units. A weld
+ * forces them to the same point, so this is a floating-point tolerance rather
+ * than a physical allowance — solved poses land within MAX_SNAP_ERROR of their
+ * lattice target, and this sits well inside a dome radius (~0.44) so two
+ * merely-adjacent domes can never be mistaken for a locked pair.
+ */
+const WELD_COINCIDENCE = 0.35;
+
+const near = (a: Vec3, b: Vec3) =>
+  Math.abs(a[0] - b[0]) < WELD_COINCIDENCE
+  && Math.abs(a[1] - b[1]) < WELD_COINCIDENCE
+  && Math.abs(a[2] - b[2]) < WELD_COINCIDENCE;
+
 function weldState(modules: FittedModule[]): WeldState {
-  const byCell = new Map<string, { moduleId: string; end: ConnectorEnd; dir: Cell }[]>();
+  // Bucketed by rounded REAL position, not by lattice cell. All four side
+  // connectors of a module share one cell but sit ~0.63 apart in space, so
+  // cell-keying declared welds between domes that are nowhere near each other
+  // — and missed real ones. Neighbouring buckets are checked too, since two
+  // coincident points can round to different cells.
+  const byCell = new Map<string, { moduleId: string; end: ConnectorEnd; dir: Cell; pos: Vec3 }[]>();
   for (const m of modules) {
     for (const c of connectorsOf(m)) {
-      const k = key(c.cell);
+      const k = key([Math.round(c.pos[0]), Math.round(c.pos[1]), Math.round(c.pos[2])] as Cell);
       const list = byCell.get(k);
-      const entry = { moduleId: m.id, end: c.end, dir: c.dir };
+      const entry = { moduleId: m.id, end: c.end, dir: c.dir, pos: c.pos };
       if (list) list.push(entry); else byCell.set(k, [entry]);
     }
   }
+  // Merge each bucket with its 26 neighbours so a pair straddling a rounding
+  // boundary is still compared.
+  const merged = new Map<string, typeof byCell extends Map<string, infer V> ? V : never>();
+  for (const [k] of byCell) {
+    const c = k.split(',').map(Number) as Cell;
+    const group: { moduleId: string; end: ConnectorEnd; dir: Cell; pos: Vec3 }[] = [];
+    for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
+      const g = byCell.get(key([c[0] + dx, c[1] + dy, c[2] + dz] as Cell));
+      if (g) group.push(...g);
+    }
+    merged.set(k, group);
+  }
+  byCell.clear();
+  for (const [k, v] of merged) byCell.set(k, v);
   const neighbors = new Map<string, Set<string>>(modules.map((m) => [m.id, new Set<string>()]));
   const occupied = new Map<string, string>();
   for (const entries of byCell.values()) {
@@ -155,10 +201,11 @@ function weldState(modules: FittedModule[]): WeldState {
       for (let j = i + 1; j < entries.length; j++) {
         const a = entries[i]; const b = entries[j];
         if (a.moduleId === b.moduleId) continue;
-        // Mated: opposite-facing normals at the same cell. Same-facing would
-        // mean two connectors merely occupying the same cell, not locked
-        // together — geometrically shouldn't happen for legal poses, but
-        // checked rather than assumed.
+        // Mated: the spec's own definition of a lock — the SAME POINT IN SPACE
+        // with outward normals pointing into each other. Both halves are
+        // required; coincident-but-same-facing is not a weld, and opposed
+        // normals far apart are two unrelated connectors.
+        if (!near(a.pos, b.pos)) continue;
         if (a.dir[0] !== -b.dir[0] || a.dir[1] !== -b.dir[1] || a.dir[2] !== -b.dir[2]) continue;
         neighbors.get(a.moduleId)!.add(b.moduleId);
         neighbors.get(b.moduleId)!.add(a.moduleId);
@@ -267,6 +314,8 @@ export function oneStepMoves(m: FittedModule, others: FittedModule[]): Transform
     const wantedOffset = invRot(subCell(t.cell, m.anchorCell));
     const wantedDir = invRot(negCell(t.dir));
 
+
+
     // Requesting fewer alternates than the default (4) here: this loop only
     // ever uses the FIRST collision-free one (the `break` below) — it is not
     // the caller that benefits from a deep alternates list, mobilityReport is
@@ -290,6 +339,21 @@ export function oneStepMoves(m: FittedModule, others: FittedModule[]): Transform
       });
       if (hits) continue; // this route is blocked; try the next one
 
+      // GEOMETRIC TRUTH CHECK. The solver reasons in INTEGER cube offsets, but
+      // a module can be anchored off-lattice (a side weld sits ~0.63 cube units
+      // off the grid, and threading real positions along a chain leaves each
+      // link off by up to the snap tolerance). A pose that reaches the right
+      // RELATIVE offset from the wrong absolute point misses the dome it is
+      // supposed to grab. So rather than trust the lattice arithmetic, ask
+      // where the travelling dome REALLY ends up and require it to coincide
+      // with the target dome — the same "same point in space" rule a weld is
+      // defined by everywhere else.
+      const realGrab = realConnectorPosOf(pose, m.anchorDir, m.anchorPos, 'B');
+      if (!realGrab) continue;
+      if (Math.abs(realGrab[0] - t.pos[0]) > WELD_COINCIDENCE
+        || Math.abs(realGrab[1] - t.pos[1]) > WELD_COINCIDENCE
+        || Math.abs(realGrab[2] - t.pos[2]) > WELD_COINCIDENCE) continue;
+
       out.push({
         index: 0,
         moduleId: m.id,
@@ -297,8 +361,10 @@ export function oneStepMoves(m: FittedModule, others: FittedModule[]): Transform
         grabEnd: 'B',
         fromCell: m.anchorCell,
         fromDir: m.anchorDir,
+        fromPos: m.anchorPos,
         toCell: endCell,
         toDir: endDir,
+        toPos: t.pos,
         ontoModule: t.moduleId,
         ontoEnd: t.end,
         pose,
@@ -501,7 +567,11 @@ async function beamSearchTransform(
 
         for (const mv of moves) {
           const nextModules = node.modules.slice();
-          nextModules[i] = { ...m, anchorCell: mv.toCell, anchorDir: mv.toDir, cells: mv.cells, pose: mv.pose };
+          nextModules[i] = {
+            ...m,
+            anchorCell: mv.toCell, anchorPos: mv.toPos,
+            anchorDir: mv.toDir, cells: mv.cells, pose: mv.pose,
+          };
           const sig = stateSignature(nextModules);
           if (visited.has(sig)) continue;
           visited.add(sig);
@@ -568,7 +638,7 @@ function connectsToAny(candidate: FittedModule, existing: FittedModule[]): boole
   for (const m of existing) {
     for (const c of connectorsOf(m)) {
       for (const cc of connectorsOf(candidate)) {
-        if (key(cc.cell) === key(c.cell)
+        if (near(cc.pos, c.pos)
           && cc.dir[0] === -c.dir[0] && cc.dir[1] === -c.dir[1] && cc.dir[2] === -c.dir[2]) {
           return true;
         }
@@ -940,6 +1010,7 @@ export function structureAfter(current: FitResult, moves: TransformMove[], count
     // entirely. The two coordinates are both correct and mean different things:
     // fromCell is where the body hangs from, toCell is what it is now gripping.
     m.anchorCell = mv.fromCell;
+    m.anchorPos = mv.fromPos;
     m.anchorDir = mv.fromDir;
     m.cells = mv.cells;
     m.pose = mv.pose;

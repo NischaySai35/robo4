@@ -357,3 +357,11 @@
   font-size: 11px;
   pointer-events: none;
 }
+
+/* A library shape whose cubes ask for more welds than a module physically has.
+   Outlined rather than disabled: the shape is still worth loading and looking
+   at, it just will not fit as one connected robot. */
+.msrr-btn.warn-outline {
+  border-color: #8a6b2f;
+  color: #e0b45f;
+}

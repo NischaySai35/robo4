@@ -172,23 +172,29 @@ test('continuous twists reach targets that quantized twists could not', () => {
   // three position plus one facing constraint, so most real connector targets
   // came back unreachable — measured at 3 of 14 on a real structure, including
   // targets a single cube away.
+  // Scans EVERY module of the structure, not modules[0]. This is a claim about
+  // the SOLVER's reach, not about whichever module the fitter happens to place
+  // first — and that placement moves whenever the fitter's constraints change
+  // (it has, twice: connectivity and dome clearance), which made a
+  // modules[0]-only version fail for reasons unrelated to twists.
   const build = fitModules(buildShape('snake', 20));
-  const m = build.modules[0];
-  const others = build.modules.filter((x) => x.id !== m.id);
-  const invRot = inverseRotationTo(m.anchorDir);
 
   let inEnvelope = 0;
   let reachable = 0;
-  for (const t of others.flatMap(connectorsOf)) {
-    if (!weldTypeIsLegal('B', t.end)) continue;
-    const offset: Cell = [
-      t.cell[0] - m.anchorCell[0], t.cell[1] - m.anchorCell[1], t.cell[2] - m.anchorCell[2],
-    ];
-    const wantedOffset = invRot(offset);
-    // Only count targets the module could physically reach at all.
-    if (Math.hypot(...wantedOffset) > 4.2) continue;
-    inEnvelope++;
-    if (solveLandingPoses(wantedOffset, invRot([-t.dir[0], -t.dir[1], -t.dir[2]])).length) reachable++;
+  for (const m of build.modules) {
+    const others = build.modules.filter((x) => x.id !== m.id);
+    const invRot = inverseRotationTo(m.anchorDir);
+    for (const t of others.flatMap(connectorsOf)) {
+      if (!weldTypeIsLegal('B', t.end)) continue;
+      const offset: Cell = [
+        t.cell[0] - m.anchorCell[0], t.cell[1] - m.anchorCell[1], t.cell[2] - m.anchorCell[2],
+      ];
+      const wantedOffset = invRot(offset);
+      // Only count targets the module could physically reach at all.
+      if (Math.hypot(...wantedOffset) > 4.2) continue;
+      inEnvelope++;
+      if (solveLandingPoses(wantedOffset, invRot([-t.dir[0], -t.dir[1], -t.dir[2]])).length) reachable++;
+    }
   }
 
   assert.ok(inEnvelope > 0, 'test setup: no targets were within reach to check');

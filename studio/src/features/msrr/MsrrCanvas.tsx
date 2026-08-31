@@ -24,6 +24,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { useThemeStore } from '@/state/themeStore';
 import { useMsrrStore, configAtStep } from '@/state/msrrStore';
 import { type Cell, key, cellsOf, add } from '@/robotics/msrr/lattice';
@@ -126,6 +127,26 @@ export default function MsrrCanvas() {
     // cylinder stretched between two points, a joint or dome a unit sphere.
     const rodGeo = new THREE.CylinderGeometry(1, 1, 1, 12);
     const ballGeo = new THREE.SphereGeometry(1, 14, 10);
+    // A lock connector is a DOME, not a floating ball: "same point in space,
+    // outward normal pointing directly out" (the spec's own definition of a
+    // lock). Sphere geometry's default pole sits on +Y, so a hemisphere cut
+    // at the equator (thetaLength = PI/2) bulges toward +Y with its flat face
+    // in the XZ plane — oriented per-instance by rotating +Y onto the
+    // connector's own outward normal, and positioned flush against the rod
+    // rather than centred on it, so it reads as a cap on the chain, not a
+    // sphere hovering nearby.
+    // Capped: a bare SphereGeometry hemisphere is an open shell, so the flat
+    // side — which is the side that faces OUT at a lock, and therefore the
+    // side most often pointed at the camera — would be a see-through hole
+    // into a hollow interior. The disc closes it into a solid-looking dome.
+    // Merged as one geometry so a dome stays a single pooled mesh.
+    const domeShell = new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2);
+    const domeCap = new THREE.CircleGeometry(1, 14);
+    // CircleGeometry lies in XY facing +Z; rotate it into the XZ plane facing
+    // -Y so it seals the hemisphere's rim at the local origin.
+    domeCap.rotateX(Math.PI / 2);
+    const domeGeo = mergeGeometries([domeShell, domeCap], false) ?? domeShell;
+    const DOME_UP = new THREE.Vector3(0, 1, 0);
     const partMats = {
       rod: new THREE.MeshStandardMaterial({ color: 0x9aa3b2, roughness: 0.5, metalness: 0.35 }),
       bigRod: new THREE.MeshStandardMaterial({ color: 0x7f8899, roughness: 0.45, metalness: 0.4 }),
@@ -141,7 +162,7 @@ export default function MsrrCanvas() {
     const st = {
       renderer, scene, camera, controls, groups, mats, makeCube, ghostBox, grid,
       raycaster, pointer, builtMats,
-      rodGeo, ballGeo, partMats,
+      rodGeo, ballGeo, domeGeo, DOME_UP, partMats,
       /** pooled meshes for real module geometry */
       partPool: [] as THREE.Mesh[],
       /** signature of what partPool currently shows, so FK is not re-run per frame */
@@ -163,6 +184,7 @@ export default function MsrrCanvas() {
       dispose: () => {
         boxGeo.dispose(); edgeGeo.dispose(); nubGeo.dispose();
         rodGeo.dispose(); ballGeo.dispose();
+        domeGeo.dispose(); domeShell.dispose(); domeCap.dispose();
         for (const m of builtMats) m.dispose();
         for (const m of Object.values(partMats)) m.dispose();
         for (const m of Object.values(mats)) (m as any).dispose?.();
@@ -561,10 +583,27 @@ function syncScene(st: any) {
         mesh.quaternion.identity();
       }
       for (const c of g.connectors) {
-        const mesh = nextMesh(st.ballGeo, c.isEnd ? st.partMats.dome : st.partMats.sideDome);
+        const mesh = nextMesh(st.domeGeo, c.isEnd ? st.partMats.dome : st.partMats.sideDome);
+        // THE BULGE POINTS INWARD, THE FLAT FACE OUTWARD — this is what makes
+        // a lock look like a lock. Two locked connectors are coincident with
+        // antiparallel normals, so their two flat faces meet and the pair
+        // reads as ONE COMPLETE SPHERE straddling the joint. Orienting the
+        // bulge outward instead (the obvious-looking reading of "outward
+        // normal") makes two mating domes meet curve-to-curve, which is both
+        // wrong and unmistakable on screen.
+        //
+        // The hemisphere's pole is local +Y and its flat rim sits at the
+        // local origin, so the pole is rotated onto MINUS the connector
+        // normal and the origin left exactly at c.at — the same reference
+        // point the clearance math uses (REQUIRED_DOME_CLEARANCE = 2*radius
+        // between two of these, in modulink.ts), which is precisely the
+        // separation at which two of these domes form one sphere.
+        const n = new THREE.Vector3(c.normal[0], c.normal[1], c.normal[2]);
+        if (n.lengthSq() > 1e-8) {
+          mesh.quaternion.setFromUnitVectors(st.DOME_UP, n.normalize().multiplyScalar(-1));
+        } else mesh.quaternion.identity();
         mesh.position.set(c.at[0], c.at[1], c.at[2]);
         mesh.scale.setScalar(c.radius);
-        mesh.quaternion.identity();
       }
     });
 

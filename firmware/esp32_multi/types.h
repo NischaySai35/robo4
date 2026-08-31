@@ -111,3 +111,14 @@ class SafeSMS : public SMS_STS {
     }
   }
 };
+
+#define MAX_FRAMES 60
+
+/** One pose in an uploaded animation: where to go, and the time budget to get there. */
+struct AnimFrame {
+  uint16_t timeMs;
+  uint8_t  speed;                  // 1..10 cap for this frame
+  uint8_t  n;                      // joints in this frame
+  uint8_t  ids[MAX_SERVOS];
+  int16_t  deg10[MAX_SERVOS];      // tenths of a degree
+};

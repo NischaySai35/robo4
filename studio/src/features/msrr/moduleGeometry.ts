@@ -23,6 +23,7 @@ import {
   type ModuleAngles, type Pose, type Vec3, type Quat,
   moduleFrames, connectorPoses, ROD_ORDER, BIG_ROD_INDEX,
   HEMISPHERE_RADIUS, SIDE_CONNECTOR_RADIAL_OFFSET,
+  ROD_RADIUS as SPEC_ROD_RADIUS,
 } from '@/robotics/msrr/modulink';
 import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
 import type { Cell } from '@/robotics/msrr/lattice';
@@ -97,15 +98,26 @@ export interface ModuleGeometry {
 /** Physical units -> cube units, so a straight module spans exactly four cubes. */
 const S = 1 / MODULINK_CUBE_SIZE;
 
-// Drawn thicknesses, directly in cube units. Chosen so the chain reads clearly
-// at the scale a whole structure is viewed at; only the dome radii are derived
-// from real geometry, because their size is what makes adjacent side connectors
-// visibly clash.
-const ROD_RADIUS = 0.17;
-const BIG_ROD_RADIUS = 0.21;
-const JOINT_RADIUS = 0.23;
-const END_DOME_RADIUS = HEMISPHERE_RADIUS * S * 0.62;
-const SIDE_DOME_RADIUS = HEMISPHERE_RADIUS * S * 0.40;
+// Drawn thicknesses, ALL derived from the hardware spec and converted to cube
+// units — no cosmetic fudge factors.
+//
+// An earlier version shrank the domes (END * 0.62, SIDE * 0.40) purely to make
+// the chain "read" better, and that quietly broke the geometry it was meant to
+// illustrate: a side dome belongs at radial offset 0.6 with radius 0.42, so its
+// inner edge sits at 0.18 — just inside the 0.2 rod surface, i.e. flush-mounted.
+// Shrunk to 0.40 of that, its inner edge moved out to ~0.45 while the rod
+// surface stayed at ~0.18, leaving a quarter-cube of empty space between rod and
+// dome. That is exactly the reported "side hemispheres floating in air": not a
+// placement bug at all, a size one. Spec sizes touch; invented sizes float.
+const ROD_RADIUS_CUBES = SPEC_ROD_RADIUS * S;
+// The spine is longer, not thicker — same radius as every other rod.
+const BIG_ROD_RADIUS = ROD_RADIUS_CUBES;
+const ROD_RADIUS = ROD_RADIUS_CUBES;
+// Joints are the knuckles between rods; drawn just proud of the rod so the
+// articulation is visible without inventing a diameter the spec does not give.
+const JOINT_RADIUS = ROD_RADIUS_CUBES * 1.15;
+const END_DOME_RADIUS = HEMISPHERE_RADIUS * S;
+const SIDE_DOME_RADIUS = HEMISPHERE_RADIUS * S;
 
 /**
  * Full drawable geometry for one placed module.
@@ -120,10 +132,17 @@ export function moduleGeometry(m: FittedModule): ModuleGeometry {
 
   // Kinematics run at the module's own scale about the origin, then everything
   // is scaled into cube units and shifted onto the module's anchor cube.
+  // Anchored at the module's REAL position, which is the centre of anchorCell
+  // for an end-to-end weld but deliberately is not for a side weld — a side
+  // connector rides ~0.63 cube units off the spine axis. Drawing from the cell
+  // instead put a side-welded module ~0.98 cube units from the dome it is
+  // locked to, so the pair rendered as two separated domes rather than one
+  // sphere. (?? keeps older callers that build a FittedModule by hand working.)
+  const anchor = m.anchorPos ?? m.anchorCell;
   const toCube = (p: Vec3): Vec3 => [
-    m.anchorCell[0] + p[0] * S,
-    m.anchorCell[1] + p[1] * S,
-    m.anchorCell[2] + p[2] * S,
+    anchor[0] + p[0] * S,
+    anchor[1] + p[1] * S,
+    anchor[2] + p[2] * S,
   ];
 
   const frames = moduleFrames(angles, base);

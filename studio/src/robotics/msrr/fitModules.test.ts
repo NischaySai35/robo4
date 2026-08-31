@@ -121,7 +121,16 @@ test('the fit covers nearly all of a shape, and admits whatever it misses', () =
 
     assert.equal(r.covered.length + r.uncovered.length, cells.length,
       `${id}: covered + uncovered must account for every cube`);
-    assert.ok(r.covered.length / cells.length >= 0.85,
+    // The floor has come DOWN, deliberately, twice. Connectivity became a hard
+    // requirement (a module that cannot weld on is not placed at all), and then
+    // dome-on-dome clearance became one too (a placement whose connector domes
+    // would interpenetrate another module's is rejected). Both removed
+    // placements the old fit was making and should not have been: they covered
+    // cubes with chains floating unattached, or with parts driven through each
+    // other. Lower coverage that is physically real beats higher coverage that
+    // is not — measured at ~0.66-0.71 across the library where it used to read
+    // ~0.86. What must never regress is the ACCOUNTING below.
+    assert.ok(r.covered.length / cells.length >= 0.6,
       `${id}: only ${r.covered.length}/${cells.length} cubes covered`);
     if (r.uncovered.length) {
       assert.match(r.log.join(' '), /uncovered/,
@@ -166,11 +175,27 @@ test('modules come out in build order, so they can be shown appearing one by one
   r.modules.forEach((m, i) => assert.equal(m.order, i, 'build order must be dense and ascending'));
 });
 
-test('a module body is a connected run of cubes', () => {
+test('a module body is a dense run of cubes that includes its own anchor', () => {
+  // NOT face-connectivity. These cells are a COLLISION FOOTPRINT — the cubes
+  // the centreline passes through — not a structure. A chain crossing near a
+  // cube corner legitimately registers two cells that touch only diagonally,
+  // which face-adjacency calls "disconnected" even though the module is one
+  // solid object. (Measured: chair@28 M3, a STRAIGHT pose spanning 5 cells,
+  // is diagonally connected and face-disconnected.) The same correction was
+  // already made for solved poses in chainSolve.test.ts.
+  //
+  // What must hold is that the sampling is dense — every cube within one
+  // diagonal step of another, so none was skipped — and that the body covers
+  // the cube it is anchored in.
   const r = fitModules(buildShape('snake', 20));
   for (const m of r.modules) {
     assert.ok(m.cells.length >= 1);
-    assert.equal(isConnected(configFromCells(m.cells)), true, `${m.id} body is disconnected`);
+    for (const c of m.cells) {
+      const near = m.cells.some((o) => o !== c
+        && Math.abs(o[0] - c[0]) <= 1 && Math.abs(o[1] - c[1]) <= 1 && Math.abs(o[2] - c[2]) <= 1);
+      assert.ok(m.cells.length === 1 || near,
+        `${m.id}: cube ${key(c)} is isolated — the body sampling skipped cubes`);
+    }
     assert.ok(m.cells.some((c) => key(c) === key(m.anchorCell)), `${m.id} body misses its anchor`);
   }
 });

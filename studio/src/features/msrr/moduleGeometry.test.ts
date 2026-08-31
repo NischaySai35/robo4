@@ -12,6 +12,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { type Cell, key } from './../../robotics/msrr/lattice';
+import type { Vec3 } from './../../robotics/msrr/modulink';
 import { rotationTo, fitModules } from './../../robotics/msrr/fitModules';
 import { MODULE_CHAIN_LENGTH } from './../../robotics/msrr/modulink';
 import { MODULINK_CUBE_SIZE } from './../../robotics/msrr/occupancy';
@@ -75,15 +76,22 @@ test('a straight module is drawn exactly four cubes long', () => {
     `drawn rod run spans ${span} cubes, expected about ${expected}`);
 });
 
-test('every module is drawn anchored where Build placed it', () => {
+test('every module is drawn anchored where Build placed it — at its REAL position, not its cube', () => {
   const build = fitModules(buildShape('snake', 20));
   for (const m of build.modules) {
     const g = moduleGeometry(m);
-    // Connector A is the anchor: it must sit on the module's own anchor cube.
     const a = g.connectors.find((c) => c.isEnd);
     assert.ok(a, `${m.id} has no end connector`);
+
+    // Compared against anchorPos, NOT anchorCell. Those are the same thing for
+    // an end-to-end weld, and deliberately are not for a side weld: a side
+    // connector rides ~0.63 cube units off the spine axis, so a module welded
+    // to one is genuinely anchored between lattice points. This test used to
+    // assert the cube and so quietly demanded the wrong thing — it would have
+    // passed only while side welds were being drawn detached from the dome
+    // they are locked to.
     const d = Math.hypot(
-      a.at[0] - m.anchorCell[0], a.at[1] - m.anchorCell[1], a.at[2] - m.anchorCell[2],
+      a.at[0] - m.anchorPos[0], a.at[1] - m.anchorPos[1], a.at[2] - m.anchorPos[2],
     );
     assert.ok(d < 0.01, `${m.id} draws its anchor ${d} cubes from where Build put it`);
   }
@@ -114,13 +122,22 @@ test('a module is drawn as a real six-rod chain, not a box', () => {
   }
 });
 
-test('exactly one rod is the big rod, and it is the thickest', () => {
+test('exactly one rod is the big rod: LONGER than the others, and no thicker', () => {
   const g = moduleGeometry(fitModules(buildShape('snake', 20)).modules[0]);
   const big = g.rods.filter((r) => r.isBigRod);
   assert.equal(big.length, 1, 'the spine is a single rod');
+
+  // Every rod is the same thickness. The spec gives ONE rod radius (0.2) and
+  // distinguishes the spine by BIG_ROD_LENGTH_SCALE alone. An earlier revision
+  // drew the spine fatter as a readability tweak and this test enshrined it;
+  // that invented dimension is also what let the dome radii drift off-spec and
+  // start floating beside the rod, so the drawn sizes now come from the spec
+  // and nothing else.
   for (const r of g.rods) {
-    if (!r.isBigRod) assert.ok(big[0].radius > r.radius, 'the big rod should read as the spine');
+    assert.ok(Math.abs(big[0].radius - r.radius) < 1e-9,
+      'all rods share one spec radius — the spine is longer, not thicker');
   }
+
   // And it is genuinely longer, which is what makes it the spine.
   const bigLen = Math.hypot(...([0, 1, 2].map((i) => big[0].to[i] - big[0].from[i]) as [number, number, number]));
   for (const r of g.rods) {
@@ -230,88 +247,76 @@ test('the anchor is the fixed point of a move — it holds on the whole way', ()
   }
 });
 
-test('a module that moves twice in one plan tweens pinned to the connector it just grabbed, not floating between two unrelated anchors', () => {
-  // The bug this guards: a's chain (the module's state after its FIRST move)
-  // is anchored at that move's own anchor cell. b's chain (its state after a
-  // SECOND move) is anchored where it just grabbed — a's FAR end, not a's
-  // anchor. If tweenGeometry blindly pairs a.points[0] with b.points[0], it
-  // interpolates between two physically different points and the "anchor"
-  // visibly drifts through empty space — reported as the module "reversing in
-  // thin air, not locked to anything".
+test('tweening a module onto its own far end keeps the shared connector pinned', () => {
+  // The bug this guards: when a module moves a SECOND time, the configuration
+  // it is moving into is anchored at the connector it grabbed last time —
+  // which is the FAR end of where it is now, not the same anchor. If
+  // tweenGeometry blindly pairs a.points[0] with b.points[0] it interpolates
+  // between two physically different points and the "anchor" drifts through
+  // empty space — reported as the module reversing in thin air, locked to
+  // nothing.
   //
-  // Built directly with oneStepMoves rather than fished out of a real search:
-  // whether a real plan happens to reuse a module twice is a property of the
-  // search's heuristics and budget, not of this bug, and hunting for one made
-  // this test slow and occasionally unable to find a repeat at all. Chaining
-  // two real legal moves for the same module reproduces the exact state
-  // MsrrCanvas feeds tweenGeometry, deterministically.
-  // "car" @ 20 cubes, module 0: a real build where module 0 happens to be a
-  // genuine chain-end (a leaf in the weld graph, so free to detach) that also
-  // has a real two-hop opportunity. Picked by scanning real shapes rather
-  // than assumed — a plain straight line's end module, and several library
-  // shapes' module 0 including "snake", either have no room for a second hop
-  // or turn out to be a branch point bridging two otherwise-unconnected
-  // sub-chains (correctly immovable — see staysConnectedWithout), which would
-  // make an assumed setup invalid rather than testing the thing this test is
-  // actually about.
-  const cur = fitModules(buildShape('car', 20));
-  const m0 = cur.modules[0];
-  const others = cur.modules.filter((x) => x.id !== m0.id);
+  // Constructed directly rather than mined out of a real plan. This is a
+  // RENDERING unit test, and sourcing its inputs from the planner made it
+  // hostage to planner constraints that have since tightened to the point
+  // where no library shape offers two consecutive moves at all — the test
+  // would then fail for a reason that has nothing to do with what it checks.
+  // Anchoring b at a's real B position reproduces exactly the geometry the
+  // canvas feeds tweenGeometry, deterministically and forever.
+  const build = fitModules(buildShape('snake', 20));
+  const m = build.modules[0];
+  const a = moduleGeometry(m);
 
-  const move1 = oneStepMoves(m0, others)[0];
-  assert.ok(move1, 'test setup: car@20 module 0 should have at least one legal move');
-  const m1 = { ...m0, anchorCell: move1.toCell, anchorDir: move1.toDir, cells: move1.cells, pose: move1.pose };
+  // b: the same module, positioned so its chain STARTS exactly where a's ends.
+  // points[0] is the first rod's start, which sits a SEGMENT_GAP along from the
+  // anchor rather than on it, so the anchor is offset by that same amount
+  // rather than placed on the far end directly.
+  const farEnd = a.points[a.points.length - 1];
+  const leadIn: Vec3 = [
+    a.points[0][0] - m.anchorPos[0],
+    a.points[0][1] - m.anchorPos[1],
+    a.points[0][2] - m.anchorPos[2],
+  ];
+  const bAnchor: Vec3 = [
+    farEnd[0] - leadIn[0], farEnd[1] - leadIn[1], farEnd[2] - leadIn[2],
+  ];
+  const b = moduleGeometry({
+    ...m,
+    anchorPos: bAnchor,
+    anchorCell: [Math.round(bAnchor[0]), Math.round(bAnchor[1]), Math.round(bAnchor[2])] as Cell,
+  });
 
-  const move2 = oneStepMoves(m1, others)[0];
-  assert.ok(move2, 'test setup: after one move, the module should have a second legal move available');
-
-  // Drawing convention (structureAfter): a module at rest after a move is
-  // drawn from that move's OWN fromCell/pose, not its toCell — the pose was
-  // solved relative to fromCell, and FK from there naturally reaches toCell.
-  const a = moduleGeometry({ ...m0, anchorCell: move1.fromCell, anchorDir: move1.fromDir, cells: move1.cells, pose: move1.pose });
-  const b = moduleGeometry({ ...m0, anchorCell: move2.fromCell, anchorDir: move2.fromDir, cells: move2.cells, pose: move2.pose });
-
-  // The physically shared point: move1's far end (where it just grabbed) is
-  // move2's anchor (where it holds while its OTHER end swings this time). Not
-  // bit-exact — a.points[last] is a continuous FK result, b.points[0] is the
-  // integer lattice cell it was solved to land on, and MAX_SNAP_ERROR is the
-  // model's own tolerance between those two — but they must be that close.
+  const shared = b.points[0];
   const sharedDist = Math.hypot(
-    a.points[a.points.length - 1][0] - b.points[0][0],
-    a.points[a.points.length - 1][1] - b.points[0][1],
-    a.points[a.points.length - 1][2] - b.points[0][2],
+    a.points[a.points.length - 1][0] - shared[0],
+    a.points[a.points.length - 1][1] - shared[1],
+    a.points[a.points.length - 1][2] - shared[2],
   );
-  assert.ok(sharedDist < MAX_SNAP_ERROR,
-    `test setup: consecutive moves of one module should share a connector (off by ${sharedDist})`);
+  assert.ok(sharedDist < 1e-9, "test setup: b must be anchored exactly at a's far end");
 
   for (const t of [0, 0.25, 0.5, 0.75, 1]) {
     const mid = tweenGeometry(a, b, t, { sharedIsFarEndOfA: true });
-    // Whichever of mid's two chain tips corresponds to the shared, just-grabbed
-    // connector must stay WITHIN THE SAME NEIGHBOURHOOD it started in (bounded
-    // by the setup's own solve tolerance, sharedDist) for the whole tween, and
-    // land there EXACTLY at t=1 — that connector is welded and does not swing
-    // away mid-step. What must never happen is that tip ending up somewhere
-    // else entirely, cube-units away, which is what the unflagged bug does.
+    // Whichever tip is the shared, welded connector must stay put for the
+    // whole tween — a weld does not travel mid-step.
     const tip0 = mid.points[0];
     const tipN = mid.points[mid.points.length - 1];
-    const d0 = Math.hypot(tip0[0] - b.points[0][0], tip0[1] - b.points[0][1], tip0[2] - b.points[0][2]);
-    const dN = Math.hypot(tipN[0] - b.points[0][0], tipN[1] - b.points[0][1], tipN[2] - b.points[0][2]);
-    const tol = t === 1 ? 1e-6 : sharedDist + 1e-6;
-    assert.ok(Math.min(d0, dN) < tol,
-      `t=${t}: neither tip of the tweened chain sits near the shared connector — it drifted`);
+    const d0 = Math.hypot(tip0[0] - shared[0], tip0[1] - shared[1], tip0[2] - shared[2]);
+    const dN = Math.hypot(tipN[0] - shared[0], tipN[1] - shared[1], tipN[2] - shared[2]);
+    assert.ok(Math.min(d0, dN) < 1e-6,
+      `t=${t}: neither tip sits on the shared connector — it drifted`);
   }
 
-  // Sanity on the bug itself: WITHOUT the flag, the same tween must fail this
-  // check somewhere in the sweep — otherwise this test is not exercising the
-  // regression it claims to.
-  let anyDrifted = false;
+  // And the flag genuinely matters: without it the same tween must misbehave,
+  // or this test is passing for a reason unrelated to the bug.
+  let drifted = false;
   for (const t of [0.25, 0.5, 0.75]) {
     const mid = tweenGeometry(a, b, t);
-    const tip0 = mid.points[0];
-    const d0 = Math.hypot(tip0[0] - b.points[0][0], tip0[1] - b.points[0][1], tip0[2] - b.points[0][2]);
-    if (d0 > 1e-6) anyDrifted = true;
+    const d0 = Math.hypot(
+      mid.points[0][0] - shared[0], mid.points[0][1] - shared[1], mid.points[0][2] - shared[2],
+    );
+    if (d0 > 1e-6) drifted = true;
   }
-  assert.ok(anyDrifted, 'test setup: the default (unflagged) tween should exhibit the drift this test guards against');
+  assert.ok(drifted, 'test setup: the unflagged tween should exhibit the drift this guards against');
 });
 
 test('buildGeometry keeps assembly order so modules can appear one at a time', () => {

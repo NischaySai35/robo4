@@ -12,18 +12,18 @@
  *   target  — the shape we are trying to become
  *   plan    — the ordered moves from one to the other, plus playback position
  *
- * ONE CELL IS ONE CUBE OF THE LATTICE
- * `config`/`target` hold cube-cell coordinates. Under the mod1 module theme one
- * cube is exactly one module. Under mod2 (MODULINK) a module is a bendable
- * 6-rod chain that spans SEVERAL cubes depending on its pose — see
- * robotics/msrr/moduleThemes.ts and modulink.ts. The lattice itself stays
- * uniformly cubic either way; what changes is how many cubes one module claims.
+ * ONE CELL IS ONE CUBE OF THE LATTICE, AND A MODULE IS NOT A CUBE
+ * `config`/`target` hold cube-cell coordinates — a shape DIAGRAM, not modules.
+ * A module is a MODULINK: a bendable 6-rod chain spanning up to four cubes
+ * depending on its pose (robotics/msrr/modulink.ts, moduleThemes.ts). Turning
+ * the diagram into real modules is what `build` does, and how many it takes is
+ * an output of that fit, never an input.
  */
 import { create } from 'zustand';
 import {
   type Cell, type Config,
   emptyConfig, configFromCells, cellsOf, key, cloneConfig,
-  isConnected, isConnectedWithout, articulationCells,
+  isConnected, wouldSplitOwnPiece, articulationCells,
 } from '@/robotics/msrr/lattice';
 import { type Move, type MoveModel, applyMove, movesForModule } from '@/robotics/msrr/moves';
 import {
@@ -32,11 +32,11 @@ import {
 } from '@/robotics/msrr/planner';
 import { type StabilityReport, checkStability } from '@/robotics/msrr/stability';
 import { type PlaybackState, type PlaybackOptions, DEFAULT_PLAYBACK, advance } from '@/robotics/msrr/executor';
-import { type ModuleThemeId, DEFAULT_MODULE_THEME, getModuleTheme } from '@/robotics/msrr/moduleThemes';
 import { type FitResult, fitModules } from '@/robotics/msrr/fitModules';
+import { type ManualBuild, emptyManual } from '@/robotics/msrr/manualBuild';
 import { type TransformResult, type SearchProgress, planTransform, mobilityReport } from '@/robotics/msrr/transform';
 
-export type MsrrTab = 'build' | 'text' | 'draw' | 'plan' | 'run' | 'bridge';
+export type MsrrTab = 'build' | 'text' | 'draw' | 'compose' | 'transform' | 'bridge';
 
 /** World size of one lattice cube, in metres. */
 export const DEFAULT_CELL_SIZE = 0.25;
@@ -47,6 +47,16 @@ const MAX_HISTORY = 40;
 interface MsrrState {
   tab: MsrrTab;
   setTab: (t: MsrrTab) => void;
+  /**
+   * A structure placed BY HAND, module by module (manualBuild.ts) — the
+   * Compose tab's document. Kept beside the fitted build rather than replacing
+   * it: the point is to be able to compare what a person builds against what
+   * the fitter proposes for the same shape.
+   */
+  manual: ManualBuild;
+  manualSelected: string | null;
+  setManual: (b: ManualBuild) => void;
+  selectManual: (id: string | null) => void;
 
   // ── structure ──────────────────────────────────────────────────────────────
   config: Config;
@@ -90,10 +100,7 @@ interface MsrrState {
   rewindTransform: () => void;
   setTransformSpeed: (n: number) => void;
 
-  /** which module theme the sandbox is modelling (mod1 cube / mod2 MODULINK) */
-  moduleTheme: ModuleThemeId;
-  setModuleTheme: (id: ModuleThemeId) => void;
-  /** pose id per module, only meaningful for multi-cube themes like mod2 */
+  /** pose id per module — which fold each MODULINK is holding */
   modulePoses: Map<string, string>;
   setModulePose: (moduleId: string, poseId: string) => void;
 
@@ -224,6 +231,10 @@ export const useMsrrStore = create<MsrrState>((set, get) => {
   return {
     tab: 'build',
     setTab: (tab) => set({ tab }),
+    manual: emptyManual(),
+    manualSelected: null,
+    setManual: (manual) => set({ manual }),
+    selectManual: (manualSelected) => set({ manualSelected }),
 
     config: seed,
     target: [],
@@ -310,15 +321,6 @@ export const useMsrrStore = create<MsrrState>((set, get) => {
       set({ buildReveal: Math.max(0, Math.min(max, Math.round(n))) });
     },
 
-    moduleTheme: DEFAULT_MODULE_THEME,
-    setModuleTheme: (moduleTheme) => {
-      // Switching theme reinterprets what an occupied cube MEANS, so any plan
-      // built under the old reading is stale. The structure itself is untouched.
-      set({ moduleTheme, plan: null, playing: false });
-      const t = getModuleTheme(moduleTheme);
-      get().pushLog(`module theme → ${t.label}: ${t.cellsPerModuleSummary}`);
-    },
-
     modulePoses: new Map<string, string>(),
     setModulePose: (moduleId, poseId) => {
       const next = new Map(get().modulePoses);
@@ -365,11 +367,18 @@ export const useMsrrStore = create<MsrrState>((set, get) => {
       const { config } = get();
       const k = key(cell);
       if (!config.occ.has(k)) return { ok: false, reason: 'nothing there to delete' };
-      if (config.occ.size > 1 && !isConnectedWithout(config, cell)) {
+      // wouldSplitOwnPiece, not isConnectedWithout: this only asks whether
+      // removing `cell` splits the ISLAND IT IS PART OF, not whether the whole
+      // shape is one piece afterward. That distinction matters the moment the
+      // shape is already in more than one piece for any reason — a stray
+      // island elsewhere is not this cell's business, and asking the wrong
+      // question there refuses every deletion, permanently, everywhere,
+      // including the deletion that would actually clean the stray island up.
+      if (wouldSplitOwnPiece(config, cell)) {
         return {
           ok: false,
-          reason: `cannot delete (${cell.join(',')}) — it is holding the structure together, `
-            + 'removing it would split the robot into two pieces',
+          reason: `cannot delete (${cell.join(',')}) — it is holding its piece together, `
+            + 'removing it would split that piece into two',
         };
       }
       const next = cloneConfig(config);

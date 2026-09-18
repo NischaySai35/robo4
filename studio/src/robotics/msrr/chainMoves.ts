@@ -36,7 +36,7 @@
  */
 import { type Cell, key, manhattan } from './lattice';
 import {
-  type ModuleAngles, type ConnectorEnd, type Vec3, type Pose, type Quat,
+  type ModuleAngles, type ConnectorEnd, type ConnectorPose, type Vec3, type Pose, type Quat,
   IDENTITY, sampleCenterline, rodLength, SEGMENT_GAP,
   isSideEnd, weldTypeIsLegal,
   moduleFrames, composePoses, translateZ, rotateVec, BIG_ROD_INDEX, SIDE_ENDS,
@@ -162,6 +162,85 @@ export interface LatticePose {
    * cross-check test can re-derive a mirrored entry correctly.
    */
   anchorEnd: 'A' | 'B';
+}
+
+/**
+ * The correct BASE POSE for recomputing a placed module's real, continuous
+ * geometry — rod segments, connector positions, drawn shape — from `pose.angles`,
+ * given which physical connector is actually anchored.
+ *
+ * A quarter of the reach table's poses are NOT held from connector A: they are
+ * the mirror pass below, built by reusing an A-anchored pose's `angles` but held
+ * from the OTHER physical end (`anchorEnd: 'B'`, id suffix "#B<n>") — the module
+ * doesn't care which physical connector is which, see the mirror's own comment.
+ * `moduleFrames` itself always assumes A is what sits at `base`, so recomputing
+ * geometry for one of these with a bare `{position:[0,0,0], quaternion:
+ * baseQuatFor(anchorDir)}` places the chain as if A were held when B is —
+ * wrongly, by the pose's own reach.
+ *
+ * `invB`, the pose's own A->B transform inverted, composed as the innermost
+ * transform, re-bases the chain so physical B — not A — sits at the local
+ * origin facing local +Z, matching the convention `outer` already expects to
+ * rotate into world space. This is exactly what table-build time already did
+ * for these poses' `cells`/`midOffset`/`sideDirs` (`invB` below), which is why
+ * the LATTICE bookkeeping for one was always fine while re-deriving continuous
+ * geometry from scratch, ignoring this, was not.
+ *
+ * Exported for moduleGeometry.ts's renderer, which needs the rod/joint frames
+ * this base produces directly (rods have no 'A'/'B' label to get backwards).
+ * fitModules.ts should reach for `bookkeepingConnectors` below instead, unless
+ * it specifically wants raw physical-end labels.
+ */
+export function anchoredBase(pose: LatticePose, outerQuat: Quat): Pose {
+  const outer: Pose = { position: [0, 0, 0], quaternion: outerQuat };
+  if (pose.anchorEnd === 'A') return outer;
+  const invB = invertPose(endPose(pose.angles, IDENTITY));
+  return composePoses(outer, invB);
+}
+
+/**
+ * All six lock faces of a placed module, in WORLD space, labelled by which one
+ * is bookkeeping-anchored and which is bookkeeping-free — the sense fitModules.ts
+ * and moduleGeometry.ts actually need, as opposed to which is physically rod-end
+ * "A" or "B".
+ *
+ * THE BUG THIS FIXES, found from a real build a user reported as visibly wrong:
+ * one module's rendered bend was in the wrong place, and the module after it
+ * read as physically disconnected, though every LATTICE-level number (which
+ * cubes, which cell) was entirely correct — the coverage report said "fully
+ * covered" while the build was visibly two robots wearing one description.
+ *
+ * `anchoredBase` alone is not enough to fix this. `connectorPoses` always
+ * labels the chain's very first connector "A" and its very last "B", REGARDLESS
+ * of which one a pose is anchored by — because that labelling is intrinsic to
+ * the rod chain itself, not to how the pose is being used. For an A-anchored
+ * pose those two senses happen to coincide (physical A IS the anchor), which is
+ * exactly why the bug hid in ordinary testing: three quarters of all placements
+ * never exercise the mismatch. For a MIRRORED pose (`anchorEnd: 'B'`) they do
+ * not coincide — physical B is the anchor, physical A is the free end — so a
+ * caller asking `.find(c => c.end === 'A')` meaning "the connector we're
+ * anchored by" silently got the FAR end's position instead: a weld computed at
+ * (5.0, 5.0, 1.0) came out at (1.8, 1.9, 0.0), four cubes from anything else in
+ * the structure — while `cells`/`endCell`/coverage, which never go through
+ * `connectorPoses`, stayed correct throughout, hiding the defect from every
+ * lattice-level check.
+ *
+ * So the two physical end labels are swapped back for a mirrored pose, once,
+ * here — after that every caller can keep asking for 'A' meaning "anchored" and
+ * 'B' meaning "free", which is the bookkeeping fitModules.ts's own header
+ * comment documents and has always assumed. Side connectors need no such
+ * swap: they are not "A" or "B", and their positions come out correctly placed
+ * from `anchoredBase` alone (a rigid re-basing moves every point consistently,
+ * connector labels aside).
+ */
+export function bookkeepingConnectors(pose: LatticePose, outerQuat: Quat): ConnectorPose[] {
+  const cp = connectorPoses(pose.angles, anchoredBase(pose, outerQuat));
+  if (pose.anchorEnd === 'A') return cp;
+  return cp.map((c) => (
+    c.end === 'A' ? { ...c, end: 'B' as ConnectorEnd }
+      : c.end === 'B' ? { ...c, end: 'A' as ConnectorEnd }
+        : c
+  ));
 }
 
 let tableCache: { cubeSize: number; poses: LatticePose[] } | null = null;

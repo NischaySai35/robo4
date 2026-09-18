@@ -29,7 +29,7 @@
 import {
   MODULE_CHAIN_LENGTH, RODS_PER_MODULE, ROD_ORDER, BIG_ROD_INDEX,
   HEMISPHERE_RADIUS, SIDE_CONNECTOR_RADIAL_OFFSET,
-  ADJACENT_SIDE_FACES_CLASH, ADJACENT_SIDE_SEPARATION, REQUIRED_DOME_CLEARANCE,
+  ADJACENT_SIDE_SEPARATION, ADJACENT_SIDE_CLEARANCE, REQUIRED_DOME_CLEARANCE,
 } from './modulink';
 import {
   type PoseSummary, poseLibrary, cubeRange, MODULINK_CUBE_SIZE, DEFAULT_POSE_ID,
@@ -112,11 +112,9 @@ function buildMod2(): ModuleTheme {
     plannerIsExact: false,
     dof: RODS_PER_MODULE,
     constraints: [
-      ADJACENT_SIDE_FACES_CLASH
-        ? `Adjacent side connectors clash: two side faces 90° apart sit ${ADJACENT_SIDE_SEPARATION.toFixed(3)} apart `
-          + `but two domes need ${REQUIRED_DOME_CLEARANCE.toFixed(3)} to clear. A module can carry at most TWO side `
-          + 'welds and they must be opposite (UP/DOWN or LEFT/RIGHT).'
-        : 'Adjacent side connectors clear each other at the current geometry.',
+      `All four side connectors may carry a weld at once. Two 90° apart sit `
+        + `${ADJACENT_SIDE_SEPARATION.toFixed(3)} apart against a ${REQUIRED_DOME_CLEARANCE.toFixed(3)} `
+        + `requirement — real clearance (${ADJACENT_SIDE_CLEARANCE.toFixed(4)}), just a thin one.`,
       `Hemisphere radius ${HEMISPHERE_RADIUS}, side connector radial offset ${SIDE_CONNECTOR_RADIAL_OFFSET}.`,
       'TWIST joints roll 0–360° about the chain axis; BEND joints pitch ±90°.',
       `Straight A→B length is ${MODULE_CHAIN_LENGTH.toFixed(3)}, so one cube is ${MODULINK_CUBE_SIZE.toFixed(3)}.`,

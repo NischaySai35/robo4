@@ -108,20 +108,22 @@ export const REQUIRED_DOME_CLEARANCE = 2 * HEMISPHERE_RADIUS;
 export const DOME_CLEARANCE_MARGIN = 0.05;
 
 /**
- * Adjacent side connectors clash, so a module supports at most TWO side welds and
- * they must be opposite each other (UP/DOWN or LEFT/RIGHT). This shapes every
- * branching decision downstream.
+ * Whether two side connectors 90° apart clear a manufacturing-tolerance MARGIN
+ * on top of their bare geometric minimum — NOT whether they physically overlap.
+ * They do not: `ADJACENT_SIDE_CLEARANCE` below is positive. This is kept as
+ * information only; nothing in this file enforces it any more (Nischay's own
+ * call, 2026-09-05, after building and inspecting adjacent-side welds directly
+ * — see fitModules.ts's changelog). A module may use any and all four of its
+ * side connectors at once now, not just one opposite pair.
  *
- * A NOTE ON THE SOURCE SPEC, because the numbers do not agree with its prose.
- * The MODULINK write-up says adjacent side connectors "sit 0.6*sqrt(2) ~= 0.707
- * apart". That arithmetic is stale: 0.6*sqrt(2) = 0.8485. The 0.707 figure is
- * 0.5*sqrt(2), left over from when the radial offset was 0.5. At the current
- * offset of 0.6 the true separation is 0.8485 against a 0.84 requirement — the
- * domes clear by 0.0085, about 1%, which is nothing. The source project also
- * MEASURED real interpenetration at junctions (10 overlapping pairs, 0.642 deep),
- * so they clash in practice regardless of which side of the line the bare
- * inequality falls on. Hence the margin: computed, not asserted, and it reports
- * true at the documented geometry for the documented reason.
+ * A NOTE ON A STALE CITATION THIS COMMENT USED TO CARRY. An earlier version of
+ * this file cited an external write-up claiming "10 overlapping pairs, 0.642
+ * units deep" measured at real junctions, and treated that as the reason to
+ * enforce a margin regardless of the bare arithmetic. That figure is not
+ * computed anywhere in this codebase, is roughly 1.5x a full dome radius (far
+ * larger than anything the geometry here produces), and — per the same
+ * project's own notes elsewhere — was written against a DIFFERENT codebase
+ * entirely. It should not be trusted as a live fact about this module.
  */
 export const ADJACENT_SIDE_FACES_CLASH =
   ADJACENT_SIDE_SEPARATION < REQUIRED_DOME_CLEARANCE * (1 + DOME_CLEARANCE_MARGIN);
@@ -149,7 +151,13 @@ const SIDE_DIRECTION: Record<string, Vec3> = {
   LEFT: [-1, 0, 0],
 };
 
-/** The two side faces 90° away from `end` — the ones that cannot also carry a weld. */
+/**
+ * The two side faces 90° away from `end`.
+ *
+ * Kept for callers that want to reason about adjacency itself (it is still a
+ * true geometric relationship); it is no longer used to forbid a weld. See
+ * `sideWeldsAreLegal`.
+ */
 export function adjacentSideEnds(end: ConnectorEnd): ConnectorEnd[] {
   switch (end) {
     case 'UP':
@@ -160,7 +168,7 @@ export function adjacentSideEnds(end: ConnectorEnd): ConnectorEnd[] {
   }
 }
 
-/** The face directly opposite `end` — the only side face that may share a module. */
+/** The face directly opposite `end`. */
 export function oppositeSideEnd(end: ConnectorEnd): ConnectorEnd | null {
   switch (end) {
     case 'UP': return 'DOWN';
@@ -172,14 +180,19 @@ export function oppositeSideEnd(end: ConnectorEnd): ConnectorEnd | null {
 }
 
 /**
- * Are these side welds simultaneously buildable on one module? Enforces the
- * two-welds-and-they-must-be-opposite rule that ADJACENT_SIDE_FACES_CLASH implies.
+ * Are these side welds simultaneously buildable on one module?
+ *
+ * All four side connectors may be used at once now — 2026-09-05, Nischay's own
+ * call, made after building an adjacent-pair weld and inspecting it directly
+ * (fitModules' `allowAdjacentSideWelds` toggle, since folded into the default).
+ * Two side domes 90° apart clear each other by 0.0085 cube units
+ * (`ADJACENT_SIDE_CLEARANCE`) — real, if thin, clearance, not an
+ * interpenetration. The only thing this still refuses is a physical
+ * impossibility: more than four sides on a module that only has four.
  */
 export function sideWeldsAreLegal(ends: ConnectorEnd[]): boolean {
   const sides = ends.filter(isSideEnd);
-  if (sides.length <= 1) return true;
-  if (sides.length > 2) return false;
-  return oppositeSideEnd(sides[0]) === sides[1];
+  return sides.length <= SIDE_ENDS.length;
 }
 
 /**
@@ -242,8 +255,7 @@ export function weldSetIsLegal(welds: ChainWeld[]): { ok: boolean; reason: strin
   if (!sideWeldsAreLegal(welds.map((w) => w.own))) {
     return {
       ok: false,
-      reason: 'a module can carry at most two side welds and they must be on opposite faces '
-        + '(UP/DOWN or LEFT/RIGHT) — adjacent side domes interpenetrate',
+      reason: 'a module has only four side connectors and cannot carry more than four side welds',
     };
   }
   return { ok: true, reason: '' };

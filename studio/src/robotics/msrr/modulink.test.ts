@@ -142,14 +142,21 @@ test('adjacent side faces clash at this geometry, so only opposite pairs may wel
   assert.equal(oppositeSideEnd('A'), null);
 });
 
-test('side weld legality: at most two, and they must be opposite', () => {
+test('side weld legality: up to all four, adjacent or opposite', () => {
+  // 2026-09-05: two side connectors 90° apart clear each other by a real (if
+  // thin) 0.0085 cube units, not an overlap — see ADJACENT_SIDE_CLEARANCE.
+  // Nischay built and inspected an adjacent-pair weld directly and made the
+  // call: all four side connectors may carry a weld at once. The only thing
+  // still refused is a fifth — a module physically has four.
   assert.equal(sideWeldsAreLegal(['UP']), true);
-  assert.equal(sideWeldsAreLegal(['UP', 'DOWN']), true);
-  assert.equal(sideWeldsAreLegal(['LEFT', 'RIGHT']), true);
-  assert.equal(sideWeldsAreLegal(['UP', 'RIGHT']), false, 'adjacent side welds must be rejected');
-  assert.equal(sideWeldsAreLegal(['UP', 'DOWN', 'LEFT']), false, 'three side welds must be rejected');
+  assert.equal(sideWeldsAreLegal(['UP', 'DOWN']), true, 'opposite pair');
+  assert.equal(sideWeldsAreLegal(['LEFT', 'RIGHT']), true, 'opposite pair');
+  assert.equal(sideWeldsAreLegal(['UP', 'RIGHT']), true, 'adjacent pair, now legal');
+  assert.equal(sideWeldsAreLegal(['UP', 'DOWN', 'LEFT']), true, 'three of four');
+  assert.equal(sideWeldsAreLegal(['UP', 'DOWN', 'LEFT', 'RIGHT']), true, 'all four');
   // A and B are on the chain axis and never count against the side budget.
   assert.equal(sideWeldsAreLegal(['A', 'B', 'UP', 'DOWN']), true);
+  assert.equal(sideWeldsAreLegal(['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT']), true);
 });
 
 // ── the locomotion gait's weld rules ─────────────────────────────────────────
@@ -170,7 +177,7 @@ test('side-to-side welds are impossible; end-to-end and end-to-side are fine', (
   }
 });
 
-test('a weld set is rejected for side-to-side or for adjacent side faces', () => {
+test('a weld set is rejected for side-to-side, or for a fifth side; adjacent sides are fine', () => {
   assert.equal(weldSetIsLegal([{ own: 'A', toModuleId: 'm1', toEnd: 'UP' }]).ok, true);
   assert.equal(weldSetIsLegal([
     { own: 'A', toModuleId: 'm1', toEnd: 'B' },
@@ -181,12 +188,23 @@ test('a weld set is rejected for side-to-side or for adjacent side faces', () =>
   assert.equal(sideToSide.ok, false);
   assert.match(sideToSide.reason, /side-to-side/);
 
+  // 2026-09-05: adjacent side faces both carrying a weld is now legal — a
+  // module only refuses more sides than it physically has (four).
   const adjacent = weldSetIsLegal([
     { own: 'UP', toModuleId: 'm1', toEnd: 'A' },
     { own: 'RIGHT', toModuleId: 'm2', toEnd: 'B' },
   ]);
-  assert.equal(adjacent.ok, false, 'adjacent side faces cannot both carry a weld');
-  assert.match(adjacent.reason, /opposite/);
+  assert.equal(adjacent.ok, true, 'adjacent side faces may both carry a weld');
+
+  const allFourSides = weldSetIsLegal([
+    { own: 'UP', toModuleId: 'm1', toEnd: 'A' },
+    { own: 'RIGHT', toModuleId: 'm2', toEnd: 'A' },
+    { own: 'DOWN', toModuleId: 'm3', toEnd: 'A' },
+    { own: 'LEFT', toModuleId: 'm4', toEnd: 'A' },
+    { own: 'A', toModuleId: 'm5', toEnd: 'UP' },
+    { own: 'B', toModuleId: 'm6', toEnd: 'UP' },
+  ]);
+  assert.equal(allFourSides.ok, true, 'all four sides plus both ends is exactly six, the physical maximum');
 
   // Opposite side faces are fine, and so is adding both ends on top.
   assert.equal(weldSetIsLegal([
@@ -295,10 +313,10 @@ test('both themes exist and disagree about cubes per module', () => {
   assert.equal(mod2.plannerIsExact, false, 'mod2 must declare the planner is only approximate for it');
 });
 
-test('mod2 surfaces the adjacent-side-connector clash as a constraint', () => {
+test('mod2 surfaces the real side-connector clearance as a constraint', () => {
   const mod2 = getModuleTheme('mod2');
-  assert.ok(mod2.constraints.some((c) => /opposite/i.test(c) && /side/i.test(c)),
-    'the two-opposite-side-welds rule must be surfaced');
+  assert.ok(mod2.constraints.some((c) => /side/i.test(c) && /clearance|clear/i.test(c)),
+    'the side-connector clearance figure must be surfaced');
 });
 
 test('module count from cube count is exact for mod1 and a range for mod2', () => {

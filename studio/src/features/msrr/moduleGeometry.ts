@@ -25,6 +25,7 @@ import {
   HEMISPHERE_RADIUS, SIDE_CONNECTOR_RADIAL_OFFSET,
   ROD_RADIUS as SPEC_ROD_RADIUS,
 } from '@/robotics/msrr/modulink';
+import { anchoredBase } from '@/robotics/msrr/chainMoves';
 import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
 import type { Cell } from '@/robotics/msrr/lattice';
 import type { FittedModule } from '@/robotics/msrr/fitModules';
@@ -128,7 +129,21 @@ const SIDE_DOME_RADIUS = HEMISPHERE_RADIUS * S;
  */
 export function moduleGeometry(m: FittedModule): ModuleGeometry {
   const angles: ModuleAngles = m.pose.angles;
-  const base: Pose = { position: [0, 0, 0], quaternion: baseQuatFor(m.anchorDir) };
+  // anchoredBase, not a bare {position:[0,0,0], quaternion: baseQuatFor(...)}:
+  // roughly a quarter of the reach table's poses are held from connector B, not
+  // A (anchorEnd: 'B' — the mirror pass in chainMoves.ts), and moduleFrames'
+  // own convention assumes A is what sits at the origin. Using the plain base
+  // for one of those drew the module bent in the wrong place and its real weld
+  // position elsewhere in space than its neighbour — see anchoredBase's own
+  // comment for the exact bug this was.
+  // A hand-placed module (manualBuild.ts) carries its own orientation, because
+  // bending a joint by anything other than a quarter turn leaves everything
+  // downstream of it off-axis and `anchorDir` — one of six lattice
+  // directions — cannot say where it points. Everything the FITTER builds is
+  // lattice-aligned and takes the branch below.
+  const base: Pose = m.baseQuat
+    ? { position: [0, 0, 0], quaternion: m.baseQuat }
+    : anchoredBase(m.pose, baseQuatFor(m.anchorDir));
 
   // Kinematics run at the module's own scale about the origin, then everything
   // is scaled into cube units and shifted onto the module's anchor cube.
@@ -296,9 +311,59 @@ export function tweenGeometry(
   };
 }
 
+/**
+ * Force every weld's two domes to EXACTLY antiparallel normals — the sphere
+ * rule — regardless of any residual tilt the kinematics leave on a bent pose.
+ *
+ * The reach table is a discrete search (BEND_STEP_DEG=10 degree steps over a
+ * continuous joint) that snaps a pose's free end onto a lattice CELL and
+ * AXIS within a tolerance loose enough to serve every shape (MIN_AXIS_ALIGNMENT
+ * in chainMoves.ts is a ~26 degree cone) — loose by design, because the module
+ * is re-anchored on its neighbour's REAL welded position at every step (see
+ * `anchorPos` on FittedModule), not the idealised cell centre, so a few
+ * degrees of residual tilt in the rod's OWN bend never opens a position gap.
+ * But it does leave that same tilt sitting on the rendered connector normal,
+ * and a weld needs its normals EXACTLY opposed, not merely close — the two
+ * hemisphere domes are only a complete sphere at zero tilt; a few degrees off
+ * opens a visible wedge-shaped crack on one side. This is a purely cosmetic
+ * fix over the already-computed geometry: it never touches a position, a
+ * cell, or which pose was chosen, only the normal used to orient the dome
+ * mesh, so it cannot change coverage, connectivity or collision behaviour.
+ */
+function alignWeldedDomes(modules: FittedModule[], geoms: ModuleGeometry[]): void {
+  const byId = new Map(geoms.map((g) => [g.moduleId, g]));
+  for (const m of modules) {
+    if (!m.weldedTo) continue;
+    const host = byId.get(m.weldedTo);
+    const mine = byId.get(m.id);
+    // A module always welds its OWN connector A onto its host — A is always
+    // the reach table's first connector (see connectorPoses in modulink.ts).
+    const myA = mine?.connectors[0];
+    if (!host || !myA) continue;
+
+    // Which of the host's (up to six) connectors this actually welded onto —
+    // found by proximity, not by end label, since a side weld can land on
+    // any of the host's four side connectors, not just its A or B.
+    let hostConn: ConnectorMarker | undefined;
+    let bestD = Infinity;
+    for (const c of host.connectors) {
+      const d = Math.hypot(c.at[0] - myA.at[0], c.at[1] - myA.at[1], c.at[2] - myA.at[2]);
+      if (d < bestD) { bestD = d; hostConn = c; }
+    }
+    // Well under a dome radius — anything this far off is not the weld
+    // partner, just some other connector that happens to be nearby.
+    if (!hostConn || bestD > 0.15) continue;
+
+    myA.normal = [-hostConn.normal[0], -hostConn.normal[1], -hostConn.normal[2]];
+  }
+}
+
 /** Geometry for a whole build, in assembly order. */
-export const buildGeometry = (modules: FittedModule[]): ModuleGeometry[] =>
-  modules.map(moduleGeometry);
+export const buildGeometry = (modules: FittedModule[]): ModuleGeometry[] => {
+  const geoms = modules.map(moduleGeometry);
+  alignWeldedDomes(modules, geoms);
+  return geoms;
+};
 
 /** Exposed for the test that pins the drawn side-connector offset to the model. */
 export const SIDE_OFFSET_IN_CUBES = SIDE_CONNECTOR_RADIAL_OFFSET * S;

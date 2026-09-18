@@ -10,61 +10,61 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { type Cell, key, configFromCells, isConnected } from './lattice';
-import { cubePaths, orderPaths, fitModules, rotationTo } from './fitModules';
+import { fitModules, rotationTo } from './fitModules';
+import { analyseShape } from './skeleton';
 import { buildShape } from './shapes';
 import { MODULINK_CUBE_SIZE } from './occupancy';
 
 const line = (n: number): Cell[] => Array.from({ length: n }, (_, i) => [i, 0, 0] as Cell);
 
-// ── decomposition ─────────────────────────────────────────────────────────────
+// ── the skeleton the fit reads ──────────────────────────────────────
 
-test('a straight corridor is one run, not a pile of edges', () => {
-  const runs = cubePaths(line(13));
-  assert.equal(runs.length, 1, `expected one run, got ${runs.length}`);
-  assert.equal(runs[0].length, 13);
+test('a straight corridor has no junctions and no corners — only two tips', () => {
+  const s = analyseShape(line(13));
+  assert.equal(s.junctions.size, 0);
+  assert.equal(s.corners.size, 0);
+  assert.equal(s.features.filter((f) => f.kind === 'tip').length, 2);
+  assert.equal(s.runs.length, 1, 'one straight run');
+  assert.equal(s.runs[0].cells.length, 13);
 });
 
-test('the run cover is a partition — every cube once, none invented', () => {
-  for (const cells of [line(13), buildShape('chair', 24), buildShape('car', 32)]) {
-    const runs = cubePaths(cells);
-    const seen = new Set<string>();
-    for (const r of runs) {
-      for (const c of r) {
-        assert.ok(!seen.has(key(c)), `cube ${key(c)} appears in two runs`);
-        seen.add(key(c));
-      }
-    }
-    assert.equal(seen.size, cells.length, 'every shape cube must belong to exactly one run');
-    for (const c of cells) assert.ok(seen.has(key(c)), `cube ${key(c)} was dropped`);
+test('an L is one corner, and the corner knows which way it turns', () => {
+  const cells: Cell[] = [
+    [0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0],
+    [3, 0, 1], [3, 0, 2], [3, 0, 3],
+  ];
+  const s = analyseShape(cells);
+  assert.equal(s.corners.size, 1);
+  assert.ok(s.corners.has(key([3, 0, 0])), 'the corner is the cube where the shape turns');
+  const corner = s.features.find((f) => f.kind === 'corner')!;
+  const arms = corner.arms.map(key).sort();
+  assert.deepEqual(arms, ['-1,0,0', '0,0,1'], 'arms point back down each leg');
+});
+
+test('a plus outranks a tee, which outranks a corner, which outranks a tip', () => {
+  // rule 6: the busiest feature must sort first, whatever else is in the shape.
+  const plus: Cell[] = [
+    [0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1], [0, 0, -1],
+  ];
+  const s = analyseShape(plus);
+  assert.equal(s.features[0].kind, 'junction');
+  assert.equal(s.features[0].degree, 4);
+  const kinds = s.features.map((f) => f.kind);
+  assert.equal(kinds.indexOf('junction'), 0, 'the junction is served first');
+
+  const tee: Cell[] = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 0, 1]];
+  assert.ok(
+    analyseShape(plus).features[0].priority > analyseShape(tee).features[0].priority,
+    'a 4-way crossing must outrank a 3-way tee',
+  );
+});
+
+test('a straight-through cube is not a feature — nothing is asked of a module there', () => {
+  const s = analyseShape(line(5));
+  for (const f of s.features) {
+    assert.ok(f.kind !== 'corner' && f.kind !== 'junction',
+      'a corridor has no bends and no branches to align to');
   }
-});
-
-test('runs are contiguous — consecutive cubes are face neighbours', () => {
-  for (const r of cubePaths(buildShape('car', 32))) {
-    for (let i = 1; i < r.length; i++) {
-      const d = Math.abs(r[i][0] - r[i - 1][0])
-        + Math.abs(r[i][1] - r[i - 1][1])
-        + Math.abs(r[i][2] - r[i - 1][2]);
-      assert.equal(d, 1, `run jumps ${d} cubes between steps — not a walk`);
-    }
-  }
-});
-
-test('a solid shape does not shatter into two-cube fragments', () => {
-  // The regression this replaced: cutting at junctions gave 25 runs for 24 cubes
-  // and zero fittable modules.
-  const cells = buildShape('chair', 24);
-  const runs = cubePaths(cells);
-  assert.ok(runs.length < cells.length / 3,
-    `${runs.length} runs for ${cells.length} cubes — the cover shattered`);
-});
-
-test('orderPaths keeps every run and orients it to hang off what is built', () => {
-  const runs = cubePaths(buildShape('chair', 24));
-  const ordered = orderPaths(runs);
-  assert.equal(ordered.length, runs.length);
-  const total = ordered.reduce((n, o) => n + o.path.length, 0);
-  assert.equal(total, runs.reduce((n, r) => n + r.length, 0));
 });
 
 // ── rotations ─────────────────────────────────────────────────────────────────
@@ -139,18 +139,28 @@ test('the fit covers nearly all of a shape, and admits whatever it misses', () =
   }
 });
 
-test('no two modules occupy the same cube', () => {
-  const r = fitModules(buildShape('car', 32));
-  const owner = new Map<string, string>();
-  for (const m of r.modules) {
-    for (const c of m.cells) {
-      const k = key(c);
-      const prev = owner.get(k);
-      // Sharing is legal only at the weld: the cube the module anchors in.
-      if (prev && prev !== m.weldedTo) {
-        assert.equal(k, key(m.anchorCell), `${m.id} overlaps ${prev} at ${k}, away from its weld`);
+test('no two modules occupy the same cube, except at the weld itself', () => {
+  // Modules come back in REVEAL order, which is a walk of the connection graph
+  // and not the order they were placed in, so this cannot be checked as "the
+  // later one anchors here". The invariant the fit actually enforces is
+  // symmetric: any cube two bodies share must be the cube one of them ANCHORS
+  // in — that cube is the weld, two connectors meeting at one point.
+  for (const id of ['car', 'chair', 'snake'] as const) {
+    const r = fitModules(buildShape(id, 32));
+    const byId = new Map(r.modules.map((m) => [m.id, m]));
+    const at = new Map<string, string[]>();
+    for (const m of r.modules) {
+      for (const c of m.cells) {
+        const k = key(c);
+        const list = at.get(k);
+        if (list) list.push(m.id); else at.set(k, [m.id]);
       }
-      owner.set(k, m.id);
+    }
+    for (const [k, ids] of at) {
+      if (ids.length < 2) continue;
+      const anchored = ids.filter((i) => key(byId.get(i)!.anchorCell) === k);
+      assert.ok(anchored.length > 0,
+        `${id}: ${ids.join(' and ')} share cube ${k} and none of them anchors there`);
     }
   }
 });
@@ -200,11 +210,17 @@ test('a module body is a dense run of cubes that includes its own anchor', () =>
   }
 });
 
-test('an empty or single-cube shape builds nothing rather than throwing', () => {
-  assert.equal(fitModules([]).modules.length, 0);
+test('rule 1: one cube gets one module, straight, overhang and all', () => {
+  assert.equal(fitModules([]).modules.length, 0, 'no diagram, no robot');
+
   const one = fitModules([[0, 0, 0]]);
-  assert.equal(one.modules.length, 0, 'one cube is too short for any module');
-  assert.equal(one.uncovered.length, 1);
+  assert.equal(one.modules.length, 1, 'a single cube still says SOMETHING is here');
+  assert.equal(one.uncovered.length, 0);
+  assert.equal(one.modules[0].reach, 4, 'straight — it must not fold itself to fit the cube');
+
+  const two = fitModules([[0, 0, 0], [1, 0, 0]]);
+  assert.equal(two.modules.length, 1, 'two cubes is still one module');
+  assert.equal(two.modules[0].reach, 4);
 });
 
 test('the fit reports what it could not do', () => {

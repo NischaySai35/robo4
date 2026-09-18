@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
-  type Cell, configFromCells, cellsOf, isConnected, isConnectedWithout,
+  type Cell, configFromCells, cellsOf, isConnected, isConnectedWithout, wouldSplitOwnPiece,
   articulationCells, key, fitToCount, bestAlignment, diff, shapeKey, groundCenter,
 } from './lattice';
 import { legalMoves, movesForModule, applyMove, verifyPlan, type MoveModel } from './moves';
@@ -55,6 +55,49 @@ test('articulation cells are exactly the ones whose removal splits the robot', (
       `articulation disagreement at ${key(c)}`,
     );
   }
+});
+
+test('wouldSplitOwnPiece judges a cell against ITS OWN island, not the whole structure', () => {
+  // A real trap found live: a straight run plus an unrelated disconnected
+  // island sitting off to the side. `isConnectedWithout` asks "is the WHOLE
+  // structure one piece after this?" — which is false here no matter what is
+  // removed, since the island was never joined to the run at all. That refuses
+  // every deletion forever, including the one deletion that would actually
+  // start cleaning the stray island up. `wouldSplitOwnPiece` asks the question
+  // a hand-edit actually needs: would removing this cell split the piece IT
+  // belongs to, ignoring whatever else is going on elsewhere.
+  const run: Cell[] = [[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]];
+  const island: Cell[] = [[10, 0, 0], [10, 1, 0], [10, 2, 0], [10, 3, 0], [10, 4, 0]];
+  const cfg = configFromCells([...run, ...island]);
+  assert.equal(isConnected(cfg), false, 'test setup: the island must be genuinely separate');
+
+  // isConnectedWithout would refuse ALL of these — that is the bug.
+  for (const c of [...run, ...island]) {
+    assert.equal(isConnectedWithout(cfg, c), false,
+      `isConnectedWithout should refuse every cell while a stray island exists — ${key(c)} did not`);
+  }
+
+  // wouldSplitOwnPiece judges each cell against its own component only.
+  assert.equal(wouldSplitOwnPiece(cfg, [0, 0, 0]), false, 'an end of the run is always safe');
+  assert.equal(wouldSplitOwnPiece(cfg, [3, 0, 0]), false, 'the other end too');
+  assert.equal(wouldSplitOwnPiece(cfg, [1, 0, 0]), true, 'the run\'s own middle would split IT');
+  assert.equal(wouldSplitOwnPiece(cfg, [2, 0, 0]), true);
+
+  assert.equal(wouldSplitOwnPiece(cfg, [10, 0, 0]), false, 'an end of the island is always safe');
+  assert.equal(wouldSplitOwnPiece(cfg, [10, 4, 0]), false, 'the other end too');
+  assert.equal(wouldSplitOwnPiece(cfg, [10, 2, 0]), true, 'the island\'s own middle would split IT');
+
+  // Whittling the whole island away, one legal end-deletion at a time, must
+  // stay legal all the way down — this is the actual recovery path a stuck
+  // sandbox needs.
+  let cells = [...run, ...island];
+  for (const c of [[10, 0, 0], [10, 1, 0], [10, 2, 0], [10, 3, 0], [10, 4, 0]] as Cell[]) {
+    const cfgNow = configFromCells(cells);
+    assert.equal(wouldSplitOwnPiece(cfgNow, c), false,
+      `${key(c)} should stay deletable while the island shrinks from one end`);
+    cells = cells.filter((x) => key(x) !== key(c));
+  }
+  assert.equal(isConnected(configFromCells(cells)), true, 'only the run is left, and it is whole');
 });
 
 test('fitToCount hits the exact count and keeps one connected piece', () => {

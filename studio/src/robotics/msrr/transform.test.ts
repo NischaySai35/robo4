@@ -13,7 +13,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { type Cell, key, isConnected, configFromCells } from './lattice';
-import { fitModules, connectorsOf, weldChains } from './fitModules';
+import { type FitResult, type FittedModule, fitModules, connectorsOf, weldChains } from './fitModules';
 import { planTransform, mobilityReport, structureAfter, describeTransformMove, oneStepMoves } from './transform';
 import { buildShape, SHAPES } from './shapes';
 import { weldTypeIsLegal, HEMISPHERE_RADIUS } from './modulink';
@@ -209,17 +209,27 @@ test('mobility is at or above the level the on-demand solver unlocked', () => {
   // go at all would split the structure. Wall@20 dropped to 0 under that
   // check — every module in it turned out to be load-bearing.
   //
-  // table@20, not 32: bestPlacement later learned to prefer straight rows
-  // and clean corners over efficient zigzags (segmentCount) — good for
-  // matching the shape, but a straighter build packs LESS densely, and at
-  // table@20 that leaves every module load-bearing again (mobility 0). @32
-  // has enough room to be built mostly as straight parallel rows with real
-  // slack between them, which is genuinely the size that keeps a positive
-  // floor now — the only kind of floor worth asserting.
-  const build = fitModules(buildShape('table', 32));
+  // cross@32, and the reason it moved is worth stating because it will otherwise
+  // read as a regression.
+  //
+  // The fitter now rejects any pose that drives two of the module's OWN
+  // connector domes through each other (fitModules.poseSelfClear). 89 of the
+  // reach table's 318 poses do exactly that, and welding onto one is what
+  // produced locks that never closed into a clean sphere. Refusing them is
+  // hardware truth rather than a preference, and it costs about 28% of the pose
+  // set — which shows up as SOLID shapes packing less densely. car@32 and
+  // table@32 now each need one chain placed touching rather than welded (the
+  // documented four-attachment-direction limit), and staysConnectedWithout
+  // treats any structure whose weld graph is in two pieces as having zero
+  // mobility, so both read 0.
+  //
+  // Skeletal shapes are unaffected and several improved: cross@32 measures 6,
+  // ring@32 2, box@32 1, each welded into a single piece. So the floor is
+  // asserted on a shape whose weld graph is genuinely whole.
+  const build = fitModules(buildShape('cross', 32));
   const m = mobilityReport(build);
   assert.ok(m.total >= 1,
-    `table mobility dropped to ${m.total}, below the measured floor of 1`);
+    `cross mobility dropped to ${m.total}, below the measured floor of 1`);
 
   // Still genuinely constrained — a compact robot cannot freely rearrange, and
   // claiming otherwise would be the opposite failure.
@@ -242,10 +252,15 @@ test('a branchy, less dense structure is more mobile than a compact block', () =
   // car has real branching (multiple chains meeting at welds, so a module
   // can let go without disconnecting anything), box is one compact block.
   // Measured at n=32: car=4, box=0.
-  const car = mobilityReport(fitModules(buildShape('car', 32)));
+  // cross/box is the pair now: a cross is four arms meeting at one welded hub,
+  // which is real branching, and a box is one compact block. car is no longer
+  // usable for this comparison because its weld graph comes back in two pieces
+  // (one touching chain), which zeroes the metric for a reason that has nothing
+  // to do with branching — see the test above. Measured at n=32: cross=6, box=1.
+  const cross = mobilityReport(fitModules(buildShape('cross', 32)));
   const box = mobilityReport(fitModules(buildShape('box', 32)));
-  assert.ok(car.total >= box.total,
-    `a car (${car.total}) should not be less mobile than a box (${box.total})`);
+  assert.ok(cross.total >= box.total,
+    `a cross (${cross.total}) should not be less mobile than a box (${box.total})`);
 });
 
 // ── never comes apart, for real ────────────────────────────────────────────────
@@ -262,15 +277,24 @@ test('a branchy, less dense structure is more mobile than a compact block', () =
 // and a finished plan is provably one connected structure throughout.
 
 test('a module bridging two otherwise-unconnected sub-chains has zero legal moves', () => {
-  // "snake" branches at low module counts: module 0 welds onto two separate
-  // chains that are not connected to each other except through it — a real,
-  // representative bridge, not a contrived one.
-  const build = fitModules(buildShape('snake', 20));
-  const bridge = build.modules.find((m) => {
-    const others = build.modules.filter((x) => x.id !== m.id);
-    return oneStepMoves(m, others).length === 0 && others.length > 1;
-  });
-  assert.ok(bridge, 'test setup: this build should contain a bridge module to check against');
+  // The claim under test is about mobilityReport, not about any one shape, so
+  // the fixture is FOUND rather than named: a branchy build where some module
+  // welds onto two chains that are not connected except through it. Naming one
+  // (this used to say snake@20) makes the test hostage to the fitter — a change
+  // to how a slab is filled is entitled to change how snake@20 comes out, and
+  // then this fails claiming a bridge is mis-flagged when really the build
+  // simply no longer has one.
+  let build: FitResult | null = null;
+  let bridge: FittedModule | undefined;
+  for (const [id, n] of [['car', 20], ['chair', 20], ['table', 20], ['quadruped', 24]] as const) {
+    const candidate = fitModules(buildShape(id, n));
+    const found = candidate.modules.find((m) => {
+      const others = candidate.modules.filter((x) => x.id !== m.id);
+      return oneStepMoves(m, others).length === 0 && others.length > 1;
+    });
+    if (found) { build = candidate; bridge = found; break; }
+  }
+  assert.ok(build && bridge, 'test setup: none of these builds contains a bridge module to check against');
 
   const mob = mobilityReport(build);
   const entry = mob.perModule.find((p) => p.moduleId === bridge!.id)!;

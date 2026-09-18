@@ -31,6 +31,7 @@ import { type Cell, key, cellsOf, add } from '@/robotics/msrr/lattice';
 import { poseAt, cellPose, orientationAfter, IDENTITY_QUAT } from '@/robotics/msrr/executor';
 import { structureAfter } from '@/robotics/msrr/transform';
 import { buildGeometry, moduleGeometry, tweenGeometry } from './moduleGeometry';
+import { manualToFitted } from '@/robotics/msrr/manualBuild';
 
 const CELL = 1; // the sandbox draws in unit lattice space; metres are the mirror's job
 
@@ -68,6 +69,19 @@ export default function MsrrCanvas() {
     // integers for a cube to sit inside a square rather than straddling four.
     grid.position.set(0.5, -0.5, 0.5);
     scene.add(grid);
+
+    // An invisible, raycastable floor — the actual click target behind "click
+    // the ground to place a cube at y=0" (see the file header). Flat at the
+    // same y as the grid, so a hit's (x,z) rounds straight to the cell it
+    // visually sits above. Fully transparent: it exists to be picked, not
+    // seen — the grid lines already show where it is.
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(400, 400),
+      new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.position.set(0, -0.5, 0);
+    scene.add(ground);
 
     const groups = {
       modules: new THREE.Group(),
@@ -160,7 +174,7 @@ export default function MsrrCanvas() {
     const pointer = new THREE.Vector2();
 
     const st = {
-      renderer, scene, camera, controls, groups, mats, makeCube, ghostBox, grid,
+      renderer, scene, camera, controls, groups, mats, makeCube, ghostBox, grid, ground,
       raycaster, pointer, builtMats,
       rodGeo, ballGeo, domeGeo, DOME_UP, partMats,
       /** pooled meshes for real module geometry */
@@ -185,6 +199,7 @@ export default function MsrrCanvas() {
         boxGeo.dispose(); edgeGeo.dispose(); nubGeo.dispose();
         rodGeo.dispose(); ballGeo.dispose();
         domeGeo.dispose(); domeShell.dispose(); domeCap.dispose();
+        ground.geometry.dispose(); (ground.material as THREE.Material).dispose();
         for (const m of builtMats) m.dispose();
         for (const m of Object.values(partMats)) m.dispose();
         for (const m of Object.values(mats)) (m as any).dispose?.();
@@ -242,14 +257,16 @@ export default function MsrrCanvas() {
 
   // ── pointer interaction ────────────────────────────────────────────────────
   //
-  // Cubes are only ever born from a FACE of an existing cube. There is no
-  // ground-plane placement and no click-in-empty-space path, so a cube can never
-  // appear floating in mid-air disconnected from the structure — which the
-  // planner would refuse to work with anyway.
+  // A cube is born from a FACE of an existing cube, or — the only other
+  // legal start — from the ground, which places it at y=0. Both go through
+  // the same `newCell`/`normal` shape below, so a floating, disconnected
+  // placement stays impossible to author by hand either way: the ground is
+  // just cube 0's face, standing in before cube 0 exists.
   //
   //   click a face        → one cube on that face
-  //   drag off a face     → a run of cubes in that direction, one undo entry
-  //   right-click a cube  → delete it, but only if the rest stays in one piece
+  //   click empty ground   → one cube at (x, 0, z), only when nothing is under it
+  //   drag off a face      → a run of cubes in that direction, one undo entry
+  //   right-click a cube   → delete it, but only if the rest stays in one piece
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -267,22 +284,46 @@ export default function MsrrCanvas() {
       return st.raycaster.ray;
     };
 
-    /** Which cube face is under the pointer, and which cell sits on it. */
+    /**
+     * Which cube face is under the pointer, and which cell sits on it — or,
+     * failing that, which ground cell is. `source` tells the two apart:
+     * right-click delete only ever acts on a real cube (see onContextMenu),
+     * since a ground hit's `cube` is really just the cell about to be born,
+     * not anything that exists yet to remove.
+     */
     const pickFace = (ev: PointerEvent | MouseEvent):
-      { cube: Cell; normal: Cell; newCell: Cell } | null => {
+      { cube: Cell; normal: Cell; newCell: Cell; source: 'cube' | 'ground' } | null => {
       const st = stateRef.current;
       if (!st) return null;
       aimRay(ev);
+
       const hits = st.raycaster.intersectObjects(st.pickTargets, false);
-      if (!hits.length) return null;
-      const h = hits[0];
-      const cube = st.cellOfMesh.get(h.object.uuid) as Cell | undefined;
-      if (!cube || !h.face) return null;
-      const n = h.face.normal.clone().applyMatrix4(
-        new THREE.Matrix4().extractRotation(h.object.matrixWorld),
-      );
-      const normal: Cell = [Math.round(n.x), Math.round(n.y), Math.round(n.z)];
-      return { cube, normal, newCell: add(cube, normal) };
+      if (hits.length) {
+        const h = hits[0];
+        const cube = st.cellOfMesh.get(h.object.uuid) as Cell | undefined;
+        if (!cube || !h.face) return null;
+        const n = h.face.normal.clone().applyMatrix4(
+          new THREE.Matrix4().extractRotation(h.object.matrixWorld),
+        );
+        const normal: Cell = [Math.round(n.x), Math.round(n.y), Math.round(n.z)];
+        return { cube, normal, newCell: add(cube, normal), source: 'cube' };
+      }
+
+      // The ground is ONLY cube zero's face — it seeds the very first cube of
+      // an empty sandbox, exactly like clicking a face seeds every cube after
+      // it. The moment ANY cube exists, the ground stops being a valid start:
+      // without this guard, clicking open ground anywhere else on the grid
+      // would plant a second, disconnected island with no face to have grown
+      // from — precisely the "floating in mid-air, unattached" placement the
+      // face-only design existed to make impossible to author by hand, and
+      // exactly what happened before this guard was added.
+      if (useMsrrStore.getState().config.occ.size > 0) return null;
+
+      const groundHit = st.raycaster.intersectObject(st.ground, false);
+      if (!groundHit.length) return null;
+      const p = groundHit[0].point;
+      const newCell: Cell = [Math.round(p.x), 0, Math.round(p.z)];
+      return { cube: newCell, normal: [0, 1, 0], newCell, source: 'ground' };
     };
 
     /** The run of free cells starting at `from`, stopping at the first occupied one. */
@@ -372,7 +413,7 @@ export default function MsrrCanvas() {
       st.rightDown = null;
       if (moved > 4) return;
       const f = pickFace(ev);
-      if (!f) return;
+      if (!f || f.source !== 'cube') return; // nothing built there yet to delete
       const store = useMsrrStore.getState();
       const res = store.removeCellSafe(f.cube);
       if (!res.ok) store.pushLog(res.reason);
@@ -401,7 +442,7 @@ export default function MsrrCanvas() {
     <div className="msrr-canvas-wrap">
       <canvas ref={canvasRef} className="msrr-canvas" />
       <div className="msrr-canvas-hint">
-        click a cube face to add one · drag off a face to extrude a run · right-click a cube to delete
+        click the ground or a cube face to add one · drag to extrude a run · right-click a cube to delete
       </div>
     </div>
   );
@@ -416,6 +457,7 @@ export default function MsrrCanvas() {
 function syncScene(st: any) {
   const s = useMsrrStore.getState();
   const { plan, playback, config, target, locked, built, buildReveal } = s;
+  const { tab, manual } = s;
   const { transform, transformStep, transformT } = s;
 
   // Which modules to draw: mid-transformation the structure is replayed to the
@@ -429,13 +471,20 @@ function syncScene(st: any) {
   // entirely by adding modules): transformStep (0) >= moves.length (0) is
   // true, so finalModules is shown immediately rather than falling through to
   // the pre-transform build.
-  const shownModules = built
-    ? (transform
-        ? (transformStep >= transform.moves.length
-            ? transform.finalModules
-            : structureAfter(built, transform.moves, transformStep))
-        : built.modules.slice(0, buildReveal))
-    : [];
+  //
+  // The Compose tab draws its own structure instead — the one being placed by
+  // hand (manualBuild.ts). Same geometry path, same domes, same everything: the
+  // point of building by hand is to see what the hardware would really do, so
+  // anything drawn specially for it would be worth nothing.
+  const shownModules = tab === 'compose'
+    ? manualToFitted(manual)
+    : built
+      ? (transform
+          ? (transformStep >= transform.moves.length
+              ? transform.finalModules
+              : structureAfter(built, transform.moves, transformStep))
+          : built.modules.slice(0, buildReveal))
+      : [];
   const builtCubes = new Set<string>();
   for (const m of shownModules) for (const c of m.cells) builtCubes.add(key(c));
 
@@ -519,7 +568,12 @@ function syncScene(st: any) {
   // Rebuilding is keyed on everything that can change the drawing. transformT is
   // quantised so a smooth playback still redraws every frame it needs to without
   // rebuilding on float noise when nothing is actually moving.
-  const sig = shownModules.map((m) => `${m.id}@${key(m.anchorCell)}|${key(m.anchorDir)}|${m.pose.id}`).join(';')
+  // The joint angles are part of the signature, not just the pose id. A FITTED
+  // module's angles are implied by its pose id and this changes nothing for it;
+  // a HAND-BENT one keeps the same id while its joints move, so without this
+  // the viewport would quietly ignore every edit made in the Compose tab.
+  const sig = shownModules.map((m) => `${m.id}@${key(m.anchorCell)}|${key(m.anchorDir)}|${m.pose.id}`
+    + (m.baseQuat ? `|${m.pose.angles.map((a) => a.toFixed(4)).join(',')}` : '')).join(';')
     + `|${justMoved ?? ''}`
     + `|${inFlight ? `${inFlight.moduleId}@${transformStep}:${Math.round(transformT * 60)}` : ''}`;
   if (sig !== st.partSig) {

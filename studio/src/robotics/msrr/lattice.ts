@@ -149,6 +149,53 @@ export function isConnectedWithout(c: Config, cell: Cell): boolean {
 }
 
 /**
+ * Would removing `cell` split the PIECE IT IS PART OF — as opposed to
+ * `isConnectedWithout`, which asks whether the ENTIRE structure is one piece
+ * afterward and so refuses every deletion, forever, the moment the structure
+ * is already in more than one piece for any reason (an accidental disconnected
+ * placement, an interrupted edit). That is the wrong question for a manual
+ * hand-edit: a cube sitting in some OTHER, already-separate island has nothing
+ * to do with whether THIS cell is safe to remove from ITS OWN island.
+ *
+ * Scoped to `cell`'s own connected component before asking the question, so an
+ * unrelated disconnected piece elsewhere never blocks a legal deletion — and,
+ * as a side effect, deleting the LAST cell of an isolated island (or any cell
+ * from a 1-2 cube island) is always allowed, which is exactly how a stray
+ * island should be cleaned up.
+ */
+export function wouldSplitOwnPiece(c: Config, cell: Cell): boolean {
+  const k = key(cell);
+  if (!c.occ.has(k)) return false;
+
+  // The component `cell` belongs to, found by flooding from it (cell itself
+  // seeds the search so a lone island is still found even though nothing else
+  // may reach it).
+  const component = new Set<CellKey>([k]);
+  const stack: CellKey[] = [k];
+  while (stack.length) {
+    const cur = unkey(stack.pop() as CellKey);
+    for (const d of DIRS_6) {
+      const nk = key(add(cur, d));
+      if (c.occ.has(nk) && !component.has(nk)) { component.add(nk); stack.push(nk); }
+    }
+  }
+
+  if (component.size <= 2) return false; // 0 or 1 cells left either way — nothing to split
+  component.delete(k);
+  const start = component.values().next().value as CellKey;
+  const seen = new Set<CellKey>([start]);
+  const walk: CellKey[] = [start];
+  while (walk.length) {
+    const cur = unkey(walk.pop() as CellKey);
+    for (const d of DIRS_6) {
+      const nk = key(add(cur, d));
+      if (component.has(nk) && !seen.has(nk)) { seen.add(nk); walk.push(nk); }
+    }
+  }
+  return seen.size !== component.size;
+}
+
+/**
  * Cells whose removal would disconnect the structure (graph articulation points).
  * These are exactly the modules that are NOT free to move on this step — useful
  * both as a planner filter and as a viewport overlay ("locked" modules).

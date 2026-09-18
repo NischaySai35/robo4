@@ -69,7 +69,7 @@ import {
   type FittedModule, type FitResult, type PlacedConnector,
   fitModules, connectorsOf, rotationTo, inverseRotationTo, realConnectorPosOf,
 } from './fitModules';
-import { type ConnectorEnd, weldTypeIsLegal, oppositeSideEnd } from './modulink';
+import { type ConnectorEnd, weldTypeIsLegal } from './modulink';
 
 const negCell = (c: Cell): Cell => [-c[0], -c[1], -c[2]];
 const addCell = (a: Cell, b: Cell): Cell => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -246,10 +246,10 @@ interface GrabTarget extends PlacedConnector {
 
 function grabTargets(modules: FittedModule[], exclude: string): GrabTarget[] {
   // Which side connectors are ALREADY welded, from real geometry — a target
-  // module's own occupied side faces must count against the "at most two,
-  // opposite" budget even though this list only ever contains OTHER modules'
-  // connectors; the occupancy comes from the whole structure, not just what
-  // is being offered as a target.
+  // module's own occupied side faces must count against its four-side budget
+  // even though this list only ever contains OTHER modules' connectors; the
+  // occupancy comes from the whole structure, not just what is being offered
+  // as a target.
   const { occupied } = weldState(modules);
   const usedSidesOf = (moduleId: string): ConnectorEnd[] => {
     const ends: ConnectorEnd[] = ['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT'];
@@ -271,9 +271,8 @@ function grabTargets(modules: FittedModule[], exclude: string): GrabTarget[] {
 function grabbable(grabEnd: ConnectorEnd, t: GrabTarget): boolean {
   if (!weldTypeIsLegal(grabEnd, t.end)) return false;
   if (t.end === 'A' || t.end === 'B') return true;
-  // Side faces: at most two, and they must be opposite.
-  if (t.usedSides.length >= 2) return false;
-  return t.usedSides.every((u) => u === t.end || oppositeSideEnd(u) === t.end);
+  // Side faces: a module physically has four, all usable at once.
+  return t.usedSides.length < 4;
 }
 
 /**

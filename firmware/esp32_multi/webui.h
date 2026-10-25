@@ -50,6 +50,8 @@ input[type=range]{padding:0;width:150px;vertical-align:middle}
 .sgrid .c.chk{opacity:.45}
 .sgrid .c.hit{border-color:var(--ok);color:#fff;background:var(--ok);font-weight:700;opacity:1}
 input[type=number]{width:78px}
+button.nb{padding:2px 6px;font-size:10px;vertical-align:middle}
+input.tv{width:64px;text-align:right}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
 label{color:var(--dim)}
 pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px;max-height:340px;overflow:auto;margin:0;font-size:12px;white-space:pre-wrap}
@@ -81,7 +83,6 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
 <nav id="tabs">
   <button data-t="dash" class="sel">Dashboard</button>
   <button data-t="tools">Servo tools</button>
-  <button data-t="mag">Magnets</button>
   <button data-t="cfg">Config</button>
   <button data-t="wifi">Wi-Fi</button>
   <button data-t="ota">OTA update</button>
@@ -93,7 +94,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
 <section id="s-dash" class="sel">
   <div class="card"><h3>Servos</h3>
     <div class="wrap"><table><thead><tr>
-      <th class="l">#</th><th class="l">label</th><th>angle</th><th>target</th><th>err&deg;</th><th>set</th>
+      <th class="l">#</th><th class="l">ID</th><th class="l">label</th><th>angle</th><th>target</th><th>err&deg;</th><th>set</th>
       <th>spd</th><th>load</th><th>mA</th><th>V</th><th>degC</th><th>mode</th><th class="l">actions</th>
     </tr></thead><tbody id="tb"></tbody></table></div>
     <div class="row" style="margin-top:10px">
@@ -125,7 +126,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
     <div id="sgrid" class="sgrid"></div>
     <div id="sadopt" class="hint"></div>
     <div class="wrap"><table><thead><tr><th class="l">ID</th><th>baud</th><th>raw pos</th><th>angle</th><th>volt</th><th>degC</th><th>mode</th><th class="l"></th></tr></thead><tbody id="sres"></tbody></table></div>
-    <p class="hint">The servos found here <b>become</b> the controlled set: sliders on the Dashboard are
+    <p class="hint">With the box unticked, scans use the saved bus baud shown in Config. The servos found here <b>become</b> the controlled set: sliders on the Dashboard are
     rebuilt from them and the list is saved, so a reboot keeps it and only a rescan changes it.
     Torque stays OFF afterwards &mdash; discovering a servo never energises it. Scanning pauses
     telemetry and restores the working baud when it finishes.</p>
@@ -178,18 +179,10 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
   </div>
 </section>
 
-<section id="s-mag">
-  <div class="card"><h3>Electromagnets (DRV8833)</h3><div id="mags"></div>
-    <div class="row"><button class="d" onclick="api('/api/magnet?all=1&pct=0')">Release all</button></div>
-    <p class="hint">Firmware safety net: anything above the safe-hold % is tapered back down if the master goes silent.</p>
-  </div>
-</section>
-
 <section id="s-cfg">
   <div class="card"><h3>Module identity and bus</h3>
     <div class="row"><label>mDNS host</label><input id="c-host" size="12"><span class="hint">reachable as &lt;host&gt;.local</span></div>
-    <div class="row"><label>servo bus baud</label><input type="number" id="c-baud" style="width:110px">
-      <label>magnet safe hold %</label><input type="number" id="c-hold" min="0" max="100"></div>
+    <div class="row"><label>servo bus baud</label><input type="number" id="c-baud" style="width:110px"></div>
   </div>
   <div class="card"><h3>Servo table - IDs, labels, limits</h3>
     <div class="wrap"><table><thead><tr><th class="l">slot</th><th>ID</th><th class="l">label</th><th>min deg</th><th>max deg</th><th></th></tr></thead><tbody id="cfgtb"></tbody></table></div>
@@ -215,7 +208,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
     <p id="otabanner" class="hint">checking OTA partition...</p>
     <div class="row"><input type="file" id="fw" accept=".bin"><button class="p" onclick="upload()">Upload and reboot</button></div>
     <div class="row"><div class="bar"><i id="obar"></i></div><span id="ostat" class="hint">idle</span></div>
-    <p class="hint">Arduino IDE: Sketch -> Export Compiled Binary, then drop the .ino.bin here. Servos are de-torqued and magnets released before the write starts.</p>
+    <p class="hint">Arduino IDE: Sketch -> Export Compiled Binary, then drop the .ino.bin here. Servos are de-torqued before the write starts.</p>
   </div>
   <div class="card"><h3>Pull from a URL (flash many modules at once)</h3>
     <div class="row"><input id="ourl" size="46" placeholder="http://192.168.1.20:8000/firmware.bin"><button class="p" onclick="pullOta()">Fetch and flash</button></div>
@@ -274,10 +267,15 @@ function rows(d){
   const tb=el('tb');
   const sig=d.servos.map(s=>s.id+s.label).join(',');
   if(tb.dataset.sig!==sig){tb.dataset.sig=sig;tb.innerHTML='';
-    d.servos.forEach(s=>{const tr=document.createElement('tr');tr.id='r'+s.id;
-      tr.innerHTML='<td class="l">'+s.id+'</td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td><td class="er">-</td>'+
-      '<td><input type="range" min="'+s.min+'" max="'+s.max+'" step="0.5" value="180" id="sl'+s.id+'" onchange="mv('+s.id+')">'+
-      '<span id="lv'+s.id+'" style="color:var(--dim)"></span> '+
+    d.servos.forEach((s,i)=>{const tr=document.createElement('tr');tr.id='r'+s.id;
+      tr.innerHTML='<td class="l">'+(i+1)+'</td><td class="l"><b>'+s.id+'</b></td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td><td class="er">-</td>'+
+      // Fixed-width parts only, left-aligned: the old trailing value label changed width
+      // with its digit count ("80" vs "180") and pushed that row's slider out of line.
+      '<td class="l"><button class="nb" title="-2 deg" onclick="nudge('+s.id+',-2)">&#9664;</button>'+
+      '<input type="range" min="'+s.min+'" max="'+s.max+'" step="0.5" value="180" id="sl'+s.id+'" oninput="slHeld['+s.id+']=Date.now();el(\'lv'+s.id+'\').value=(+this.value).toFixed(1)" onchange="mv('+s.id+')">'+
+      '<button class="nb" title="+2 deg" onclick="nudge('+s.id+',2)">&#9654;</button> '+
+      '<input type="number" class="tv" id="lv'+s.id+'" min="'+s.min+'" max="'+s.max+'" step="0.1" title="type a target angle, Enter to send" '+
+      'oninput="slHeld['+s.id+']=Date.now()" onkeydown="if(event.key===\'Enter\')typed('+s.id+')" onchange="typed('+s.id+')"> '+
       '<button title="send this servo to 180" style="padding:2px 6px" onclick="api(\'/api/servo/home?id='+s.id+'&to180=1\')">180</button> '+
       '<button class="hb" title="send this servo to its saved home" style="padding:2px 6px" onclick="api(\'/api/servo/home?id='+s.id+'\')">home</button> '+
       '<button title="save this joint\'s CURRENT angle as its home" style="padding:2px 6px" onclick="setHomeOne('+s.id+')">set</button></td>'+
@@ -311,34 +309,34 @@ function rows(d){
       hb.style.color=s.homeSet?'var(--ok)':'var(--dim)';
       hb.title=s.homeSet?'saved home for this joint':'no home saved yet - defaults to 180';
     }
-    // While torque is OFF the joint can be moved by hand, so the slider tracks the real
-    // angle. Once torque is on the slider is an INPUT and must not be yanked around under
-    // the operator's cursor, so it is left alone.
+    // The slider always shows where the joint is meant to be: the real angle while limp
+    // (it can be moved by hand), the commanded target while torque is on, so moves made by
+    // the 180/home buttons, Home all or a sequence show up too. It only stops following
+    // while the operator is actually dragging it. (It used to freeze whenever torque was
+    // on, and also whenever it merely had focus, i.e. forever after the first drag.)
     const sl=el('sl'+s.id);
-    if(sl&&!s.torque&&s.currentAngle!=null&&document.activeElement!==sl){
-      sl.value=s.currentAngle;el('lv'+s.id).textContent=s.currentAngle.toFixed(0);}});
+    const want=s.torque?s.targetAngle:s.currentAngle;
+    const tv=el('lv'+s.id);
+    if(sl&&want!=null&&!(slHeld[s.id]&&Date.now()-slHeld[s.id]<1500)&&document.activeElement!==tv){
+      sl.value=want;tv.value=(+want).toFixed(1);}});
   const anyTorque=d.servos.some(s=>s.torque);
   const th=el('torqhint');
   if(th)th.textContent=d.servos.length===0?'no servos — run a scan in Tools'
     :anyTorque?'':'all limp — sliders follow the arm; press Turn torque ON to hold';
 }
 function homeOne(id){api('/api/command?servo='+id+'&cmd=home');}
-function mv(id){el('lv'+id).textContent=(+v('sl'+id)).toFixed(0);
+const slHeld={};   // id -> last time the operator touched that slider
+function mv(id){slHeld[id]=Date.now();el('lv'+id).value=(+v('sl'+id)).toFixed(1);
   api('/api/command?servo='+id+'&cmd=pos&angle='+v('sl'+id)+'&speed='+v('g-spd')+'&acc='+v('g-acc'));}
+// Send one joint to an exact angle, clamped to its slider limits.
+function goTo(id,a){const sl=el('sl'+id);
+  a=Math.min(+sl.max,Math.max(+sl.min,a));sl.value=a;mv(id);}
+// Arrow buttons: step 2 deg from the current target, landing on a whole degree.
+function nudge(id,d){goTo(id,Math.round(+v('sl'+id))+d);}
+function typed(id){const a=parseFloat(v('lv'+id));if(!isNaN(a))goTo(id,a);el('lv'+id).blur();}
 function sendAll(){if(!tel)return;let q='/api/batch?speed='+v('g-spd')+'&acc='+v('g-acc');
   tel.servos.forEach(s=>{q+='&'+s.id+'='+v('sl'+s.id)});api(q);}
 
-function mags(d){const box=el('mags');const sig='m'+d.magnets.length;
-  if(box.dataset.sig!==sig){box.dataset.sig=sig;
-    box.innerHTML=d.magnets.map(m=>'<div class="row"><label>ch '+m.ch+'</label>'+
-      '<input type="range" min="0" max="100" value="'+m.pct+'" '+
-      'oninput="el(\'mp'+m.ch+'\').textContent=this.value+\'%\';api(\'/api/magnet?ch='+m.ch+'&pct=\'+this.value)">'+
-      '<span id="mp'+m.ch+'">'+m.pct+'%</span>'+
-      '<button onclick="api(\'/api/magnet?ch='+m.ch+'&pct=100\')">grab 100</button>'+
-      '<button onclick="api(\'/api/magnet?ch='+m.ch+'&pct=40\')">hold 40</button>'+
-      '<button class="d" onclick="api(\'/api/magnet?ch='+m.ch+'&pct=0\')">release</button>'+
-      '<span class="hint" id="mage'+m.ch+'"></span></div>').join('');}
-  d.magnets.forEach(m=>{const e=el('mage'+m.ch);if(e)e.textContent='last cmd '+(m.ageMs/1000).toFixed(1)+'s ago';});}
 
 async function poll(){
   if(!paused){try{
@@ -359,10 +357,11 @@ async function poll(){
         ob.style.color='var(--bad)'; } }
     document.title='ROBO4 '+d.wifi.hostname+' v'+d.fw;
     el('p-fw').textContent=(d.heap/1024|0)+'k heap';
-    rows(d);mags(d);
+    rows(d);
     if(el('lauto').checked&&el('s-log').classList.contains('sel'))loadLog();
   }catch(e){el('p-wifi').className='pill off';}}
-  setTimeout(poll,paused?1000:400);
+  /* Studio is the main client; the board's own page polls gently so it never competes with it. */
+  setTimeout(poll,paused?1000:600);
 }
 
 /* ---------- scan ---------- */
@@ -388,7 +387,7 @@ function pollScan(){
     d.found.forEach(f=>{const c=el('sc'+f.id);if(c){c.className='c hit';c.title='found @ '+f.baud;}});
 
     el('sstat').textContent=d.active
-      ? 'checking id '+d.at+' of '+d.from+'-'+d.to+(d.passes>1?(' · baud pass '+d.pass+'/'+d.passes+' ('+d.baud+')'):'')+' · found '+d.found.length
+      ? 'checking id '+d.at+' of '+d.from+'-'+d.to+' · '+d.baud+' baud'+(d.passes>1?(' · pass '+d.pass+'/'+d.passes):'')+' · found '+d.found.length
       : 'done · '+d.found.length+' servo(s) found';
 
     el('sres').innerHTML=d.found.map(f=>'<tr><td class="l">'+f.id+'</td><td>'+f.baud+'</td><td>'+f.pos+'</td><td>'+
@@ -538,7 +537,7 @@ function sendId(){
 
 /* ---------- config ---------- */
 function fillCfg(){fetch('/api/config').then(r=>r.json()).then(d=>{
-  el('c-host').value=d.host;el('c-baud').value=d.baud;el('c-hold').value=d.magSafeHold;
+  el('c-host').value=d.host;el('c-baud').value=d.baud;
   el('cfgtb').innerHTML='';d.servos.forEach(s=>addRow(s));});}
 function addRow(s){s=s||{id:1,label:'J?',min:0,max:360};const tb=el('cfgtb');
   const tr=document.createElement('tr');
@@ -553,7 +552,7 @@ function saveCfg(){const rows=[...el('cfgtb').children].map(tr=>
    tr.querySelector('.ci').value+':'+tr.querySelector('.cl').value+':'+
    tr.querySelector('.cmin').value+':'+tr.querySelector('.cmax').value).join('|');
   api('/api/config/set?host='+encodeURIComponent(v('c-host'))+'&baud='+v('c-baud')+
-      '&hold='+v('c-hold')+'&servos='+encodeURIComponent(rows),1)
+      '&servos='+encodeURIComponent(rows),1)
    .then(d=>{alert('saved: '+JSON.stringify(d));fillCfg();});}
 
 /* ---------- wifi ---------- */

@@ -6,7 +6,6 @@ import { useThemeStore } from '@/state/themeStore';
 import { useModelStore } from '@/state/modelStore';
 import { useEspNodesStore } from '@/state/espNodesStore';
 import { servoRouting, sendServoCmd, sendServoBatch, estopAllNodes } from './servoLink';
-import MagnetControls from '@/features/magnets/MagnetControls';
 import './ServoController.css';
 
 // ── Dynamic servo definitions (derived from the simulator's joints) ────────────
@@ -1038,15 +1037,6 @@ export default function ServoController() {
             ))}
           </div>
         )}
-
-        {/* ── Electromagnet locks (per-module ESP32 + DRV8833) ── */}
-        <div className="sc-magnets">
-          <div className="sc-magnets-hdr">
-            <span>⬢ Electromagnet Locks</span>
-            <span className="sc-magnets-sub">multi-ESP · no feedback (commanded state)</span>
-          </div>
-          <MagnetControls variant="full" />
-        </div>
 
         {/* ── Sequence recorder ── */}
         <SequenceRecorder defs={defs} servos={servos} onCmd={sendCmd} />

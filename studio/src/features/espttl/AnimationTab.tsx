@@ -10,6 +10,8 @@ import { useEspTtlStore, currentPose, ttlTry } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
 import { playTimeline, stopPlayback, gotoFrame } from './player';
 import { sendToBoard, startOnBoard, stopOnBoard } from './sender';
+import { planTimeline, peakDegPerS, type FramePlan } from './motion';
+import { useSavedStore, type SavedAnimation } from './savedStore';
 
 export default function AnimationTab() {
   const tel      = useEspTtlStore(s => s.tel);
@@ -20,6 +22,11 @@ export default function AnimationTab() {
   const [drag, setDrag] = useState<number | null>(null);
   const [over, setOver] = useState<number | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const saved   = useSavedStore();
+  const [naming, setNaming]     = useState(false);
+  const [saveName, setSaveName] = useState('');
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameVal, setRenameVal] = useState('');
 
   const say = (m: string) => { setMsg(m); window.setTimeout(() => setMsg(x => (x === m ? '' : x)), 4000); };
   const call = async (path: string, label: string) => {
@@ -29,6 +36,8 @@ export default function AnimationTab() {
 
   const servos = tel?.servos ?? [];
   const sel    = t.frames.find(f => f.id === t.selectedId) || null;
+  const selIdx = sel ? t.frames.indexOf(sel) : -1;
+  const plans: FramePlan[] = planTimeline(t.frames, t.globalSpeed, t.globalDelayMs, t.sine, currentPose());
 
   // ── record ──────────────────────────────────────────────────────────────────
   const record = () => {
@@ -73,6 +82,31 @@ export default function AnimationTab() {
     r.readAsText(file);
   };
 
+  // ── saved animations (kept inside TETROBOT) ─────────────────────────────────
+  const commitSave = () => {
+    const e = saved.save(t.exportJson(), saveName);
+    if (!e) { say('nothing to save — the timeline is empty'); return; }
+    setNaming(false); setSaveName('');
+    say(`saved “${e.name}” (${e.data.frames.length} frames)`);
+  };
+
+  /** Put a saved animation on the timeline. Goes through importJson, so Undo brings back what was there. */
+  const loadSaved = (s: SavedAnimation): boolean => {
+    const res = t.importJson(JSON.stringify(s.data));
+    say(res.ok ? `loaded “${s.name}” — ${res.count} frame(s); Undo restores the previous timeline` : `load failed: ${res.error}`);
+    return res.ok;
+  };
+
+  const sendSaved = async (s: SavedAnimation) => {
+    if (!loadSaved(s)) return;
+    await send();
+  };
+
+  const commitRename = () => {
+    if (renaming) saved.rename(renaming, renameVal);
+    setRenaming(null);
+  };
+
   // ── drag to reorder ─────────────────────────────────────────────────────────
   const onDrop = (to: number) => {
     if (drag != null && drag !== to) t.moveFrame(drag, to);
@@ -99,11 +133,21 @@ export default function AnimationTab() {
           <label className="ettl-lbl">speed
             <input type="range" min={1} max={10} value={t.globalSpeed}
                    onChange={e => t.setGlobalSpeed(+e.target.value)} />
-            <b>{t.globalSpeed}</b>
+            <b>{t.globalSpeed}</b> <span className="ettl-dim">≤ {Math.round(peakDegPerS(t.globalSpeed))}°/s</span>
           </label>
-          <label className="ettl-lbl">frame time
-            <input type="number" min={0} step={100} value={t.globalDelayMs}
+          <label className={`ettl-toggle ${t.globalDelayMs === 0 ? 'on' : ''}`}
+                 title="Auto: each frame takes as long as its biggest joint move needs at this speed">
+            <input type="checkbox" checked={t.globalDelayMs === 0}
+                   onChange={e => t.setGlobalDelay(e.target.checked ? 0 : 2000)} />
+            <span />Auto time
+          </label>
+          <label className="ettl-lbl" style={{ opacity: t.globalDelayMs === 0 ? 0.45 : 1 }}>move time
+            <input type="number" min={0} step={100} value={t.globalDelayMs} disabled={t.globalDelayMs === 0}
                    onChange={e => t.setGlobalDelay(+e.target.value)} /> ms
+          </label>
+          <label className="ettl-lbl" title="Pause after the joints have arrived, before the next frame">pause
+            <input type="number" min={0} step={100} value={t.globalHoldMs}
+                   onChange={e => t.setGlobalHold(+e.target.value)} /> ms
           </label>
           <label className={`ettl-toggle ${t.sine ? 'on' : ''}`} title="Ease in and out instead of a flat run">
             <input type="checkbox" checked={t.sine} onChange={e => t.setSine(e.target.checked)} />
@@ -122,10 +166,54 @@ export default function AnimationTab() {
           frames and want each edit to take effect immediately.
         </p>
         <p className="ettl-hint">
-          Sine mode streams eased setpoints from the laptop, so each move starts slow, peaks
-          mid-path and settles instead of lurching. It never exceeds the speed cap — a short
-          hop simply never gets near it.
+          <b>Time is the control; speed is only a maximum.</b> Speed is the fastest any joint
+          may go (speed 4 = 72°/s), with a matching acceleration limit. Each joint gets one command per frame and
+          the servo runs the move itself; <b>Sine motion</b> gives long, soft speed-up and
+          slow-down ramps. Every joint finishes together at the move
+          time; if the move cannot fit at this speed the frame stretches (<b>⚠ 2500 → 3100 ms</b>)
+          instead of being cut off. <b>Auto time</b> = the shortest time the speed allows. The
+          next frame starts when the joints have actually arrived, then the <b>pause</b> runs.
         </p>
+      </div>
+
+      {/* ── saved animations ────────────────────────────────────────────────── */}
+      <div className="ettl-card">
+        <h4>Saved animations · {saved.items.length}</h4>
+        {!saved.items.length ? (
+          <div className="ettl-empty">
+            Nothing saved yet. Build a sequence below and press <b>Save to local</b> — it is kept
+            inside TETROBOT and comes back here, ready to load and send.
+          </div>
+        ) : (
+          <div className="ettl-saved-grid">
+            {saved.items.map(s => (
+              <div key={s.id} className="ettl-saved" onClick={() => renaming !== s.id && loadSaved(s)}
+                   title="click to load onto the timeline">
+                {renaming === s.id ? (
+                  <input autoFocus value={renameVal} maxLength={60}
+                         onClick={e => e.stopPropagation()}
+                         onChange={e => setRenameVal(e.target.value)}
+                         onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null); }}
+                         onBlur={commitRename} />
+                ) : (
+                  <div className="ettl-saved-name">{s.name}</div>
+                )}
+                <div className="ettl-saved-meta">
+                  {s.data.frames.length} frame{s.data.frames.length === 1 ? '' : 's'} · {new Date(s.savedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                </div>
+                <div className="ettl-saved-btns" onClick={e => e.stopPropagation()}>
+                  <button className="ettl-btn tiny accent" onClick={() => loadSaved(s)}>Load</button>
+                  <button className="ettl-btn tiny" disabled={!online || sending}
+                          onClick={() => void sendSaved(s)} title="Load onto the timeline and send to the board">Send</button>
+                  <button className="ettl-btn tiny" onClick={() => { setRenaming(s.id); setRenameVal(s.name); }}>Rename</button>
+                  <button className="ettl-btn tiny danger" onClick={() => {
+                    if (confirm(`Delete saved animation “${s.name}”?`)) saved.remove(s.id);
+                  }}>✕</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── transport ───────────────────────────────────────────────────────── */}
@@ -149,6 +237,8 @@ export default function AnimationTab() {
           <button className="ettl-btn" onClick={t.undo} disabled={!t.canUndo()} title="Undo">↶ Undo</button>
           <button className="ettl-btn" onClick={t.redo} disabled={!t.canRedo()} title="Redo">↷ Redo</button>
           <span className="ettl-sep" />
+          <button className="ettl-btn accent" onClick={() => setNaming(v => !v)} disabled={!t.frames.length}
+                  title="Keep this timeline inside TETROBOT (see Saved animations above)">💾 Save to local</button>
           <button className="ettl-btn" onClick={exportFile} disabled={!t.frames.length}>Export .json</button>
           <button className="ettl-btn" onClick={() => fileRef.current?.click()}>Import</button>
           <input ref={fileRef} type="file" accept=".json,.txt,application/json,text/plain"
@@ -158,6 +248,19 @@ export default function AnimationTab() {
             if (t.frames.length && confirm(`Delete all ${t.frames.length} frames? Undo can bring them back.`)) t.clearAll();
           }} disabled={!t.frames.length}>Clear</button>
         </div>
+
+        {naming && (
+          <div className="ettl-row">
+            <label className="ettl-lbl">name
+              <input autoFocus value={saveName} maxLength={60} style={{ width: 220 }}
+                     placeholder="optional — blank = automatic name"
+                     onChange={e => setSaveName(e.target.value)}
+                     onKeyDown={e => { if (e.key === 'Enter') commitSave(); if (e.key === 'Escape') setNaming(false); }} />
+            </label>
+            <button className="ettl-btn accent" onClick={commitSave}>Save</button>
+            <button className="ettl-btn" onClick={() => setNaming(false)}>Cancel</button>
+          </div>
+        )}
 
         {!t.frames.length ? (
           <div className="ettl-empty">
@@ -172,7 +275,8 @@ export default function AnimationTab() {
                 selected={t.selectedId === f.id}
                 playing={t.playIdx === i}
                 dragOver={over === i}
-                globalSpeed={t.globalSpeed} globalDelay={t.globalDelayMs}
+                globalSpeed={t.globalSpeed} globalDelay={t.globalDelayMs} globalHold={t.globalHoldMs}
+                plan={plans[i]}
                 onSelect={() => t.select(t.selectedId === f.id ? null : f.id)}
                 onGo={() => gotoFrame(f, say)}
                 onDup={() => t.duplicate(f.id)}
@@ -203,11 +307,20 @@ export default function AnimationTab() {
                      onChange={e => t.updateFrame(sel.id, { speed: e.target.value === '' ? null : +e.target.value })} />
               <span className="ettl-dim">{sel.speed == null ? `global (${t.globalSpeed})` : 'override'}</span>
             </label>
-            <label className="ettl-lbl">frame time
-              <input type="number" min={0} step={100} placeholder={String(t.globalDelayMs)}
+            <label className="ettl-lbl">move time
+              <input type="number" min={0} step={100} placeholder={t.globalDelayMs === 0 ? 'auto' : String(t.globalDelayMs)}
                      value={sel.delayMs ?? ''} style={{ width: 90 }}
                      onChange={e => t.updateFrame(sel.id, { delayMs: e.target.value === '' ? null : +e.target.value })} />
-              <span className="ettl-dim">{sel.delayMs == null ? `global (${t.globalDelayMs} ms)` : 'override'}</span>
+              <span className="ettl-dim">
+                {sel.delayMs == null ? `global (${t.globalDelayMs === 0 ? 'auto' : t.globalDelayMs + ' ms'})`
+                  : sel.delayMs === 0 ? 'auto' : 'override'} · 0 = auto
+                {plans[selIdx] && ` · plans ${plans[selIdx].ms} ms${plans[selIdx].stretched ? ' (stretched: needs ≥ ' + plans[selIdx].minMs + ')' : ''}`}
+              </span>
+            </label>
+            <label className="ettl-lbl">pause after
+              <input type="number" min={0} step={100} placeholder={String(t.globalHoldMs)}
+                     value={sel.holdMs ?? ''} style={{ width: 80 }}
+                     onChange={e => t.updateFrame(sel.id, { holdMs: e.target.value === '' ? null : +e.target.value })} /> ms
             </label>
             <button className="ettl-btn" onClick={() => {
               const pose = currentPose();
@@ -293,7 +406,7 @@ function JointRow(props: { min: number; max: number; value: number; onChange: (v
 
 function FrameCard(props: {
   f: Frame; i: number; selected: boolean; playing: boolean; dragOver: boolean;
-  globalSpeed: number; globalDelay: number;
+  globalSpeed: number; globalDelay: number; globalHold: number; plan?: FramePlan;
   onSelect: () => void; onGo: () => void; onDup: () => void; onDel: () => void; onPlayFrom: () => void;
   onDragStart: () => void; onDragOver: (e: React.DragEvent) => void; onDrop: () => void; onDragEnd: () => void;
 }) {
@@ -317,7 +430,18 @@ function FrameCard(props: {
       <div className="ettl-frame-meta">
         <span>{n} joint{n === 1 ? '' : 's'}</span>
         <span className={f.speed != null ? 'ov' : ''}>spd {f.speed ?? props.globalSpeed}</span>
-        <span className={f.delayMs != null ? 'ov' : ''}>{f.delayMs ?? props.globalDelay} ms</span>
+        <span className={f.delayMs != null ? 'ov' : ''}
+              title={props.plan?.stretched ? `needs at least ${props.plan.minMs} ms at this speed` : undefined}
+              style={props.plan?.stretched ? { color: 'var(--warn, #f59e0b)' } : undefined}>
+          {(() => {
+            const req = f.delayMs ?? props.globalDelay;
+            const p = props.plan;
+            if (!p) return `${req} ms`;
+            if (req === 0) return `auto ≈${p.ms} ms`;
+            return p.stretched ? `⚠ ${req} → ${p.ms} ms` : `${req} ms`;
+          })()}
+        </span>
+        {(f.holdMs ?? props.globalHold) > 0 && <span className={f.holdMs != null ? 'ov' : ''}>+{f.holdMs ?? props.globalHold} pause</span>}
       </div>
       <div className="ettl-frame-btns" onClick={e => e.stopPropagation()}>
         <button className="ettl-btn tiny" onClick={props.onGo} title="send the arm to this pose">go</button>

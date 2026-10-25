@@ -20,9 +20,9 @@
  */
 import { ttlUrl } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
+import { planFrame, profile } from './motion';
+import { currentPose } from '@/state/espTtlStore';
 
-/** Raised cosine: 0 at u=0, 1 at u=1, zero slope at both ends. */
-const ease = (u: number) => (1 - Math.cos(Math.PI * Math.min(1, Math.max(0, u)))) / 2;
 
 /** How often we push a setpoint while easing. 25 Hz is smooth and leaves the bus idle. */
 const STEP_MS = 40;
@@ -105,8 +105,12 @@ export async function playTimeline(startIdx = 0, onError?: (msg: string) => void
         useTimelineStore.getState().setPlayIdx(i);
 
         const speed = f.speed ?? live.globalSpeed;
-        const dwell = f.delayMs ?? live.globalDelayMs;
         const target = poseOf(f);
+        // Time is the control, speed only a cap: the planner (same maths as the board) says
+        // how long this move really takes, and 0 means "as fast as the cap allows".
+        const plan = planFrame(prev ?? currentPose(), target, speed, f.delayMs ?? live.globalDelayMs, live.sine);
+        const dwell = plan.ms;
+        const hold = f.holdMs ?? live.globalHoldMs;
 
         if (live.sine && prev && dwell >= MIN_EASE_MS) {
           // Spend the dwell moving, not waiting: the frame's time budget IS the move.
@@ -114,7 +118,7 @@ export async function playTimeline(startIdx = 0, onError?: (msg: string) => void
           for (let k = 1; k <= steps; k++) {
             if (signal.aborted) break;
             const t0 = performance.now();
-            await sendPose(lerpPose(prev, target, ease(k / steps)), speed, acc, signal);
+            await sendPose(lerpPose(prev, target, profile(k / steps, true)), speed, acc, signal);
             const spent = performance.now() - t0;
             // Subtract the request time so a slow board stretches the move rather than
             // silently running the whole sequence late.
@@ -124,6 +128,7 @@ export async function playTimeline(startIdx = 0, onError?: (msg: string) => void
           await sendPose(target, speed, acc, signal);
           await sleep(dwell, signal);
         }
+        if (hold > 0) await sleep(hold, signal);
 
         prev = { ...(prev || {}), ...target };
       }

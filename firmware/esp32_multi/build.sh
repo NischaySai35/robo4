@@ -15,15 +15,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 SKETCH_DIR="$PWD"
-OUT_BIN="esp32_multi-v0.0.0.ino.bin"      # stable name on purpose: the OTA page always
-                                          # points at the same file, so there is never a
-                                          # second candidate to pick by mistake.
 
 # The partition scheme MUST have two app slots or OTA cannot work at all. This is the same
 # "Minimal SPIFFS (1.9MB APP with OTA)" entry as in the IDE's Tools menu — NOT the similarly
 # named "Minimal (1.3MB APP/700KB SPIFFS)", which has no OTA slot.
 FQBN="esp32:esp32:esp32c3:PartitionScheme=min_spiffs,CDCOnBoot=cdc,FlashSize=4M"
-LIBS="D:/Arduino/libraries"
+# SCServo lives in the sketchbook libraries folder; D:/Arduino/libraries was the old laptop.
+LIBS="$HOME/Documents/Arduino/libraries"
+[ -d "$LIBS" ] || LIBS="D:/Arduino/libraries"
 
 # arduino-cli ships inside the Arduino IDE; fall back to one on PATH.
 CLI="C:/Program Files/Arduino IDE/resources/app/lib/backend/resources/arduino-cli.exe"
@@ -34,20 +33,32 @@ if [ -z "$CLI" ]; then
   exit 1
 fi
 
-VERSION="$(sed -n 's/^#define FW_VERSION[[:space:]]*"\(.*\)".*//p' esp32_multi.ino)"
+VERSION="$(sed -n 's/^#define FW_VERSION[[:space:]]*"\(.*\)".*/\1/p' esp32_multi.ino)"
+if [ -z "$VERSION" ]; then echo "ERROR: could not read FW_VERSION from esp32_multi.ino"; exit 1; fi
+# Named after the version inside it, so the file you pick on the OTA page says what it is.
+# Older esp32_multi-v*.bin files are deleted after a good build: one candidate, never a stale one.
+OUT_BIN="esp32_multi-v$VERSION.bin"
 
 echo "==> building esp32_multi  (FW_VERSION $VERSION)"
 echo "    $FQBN"
 START=$(date +%s)
 
-"$CLI" compile --fqbn "$FQBN" --libraries "$LIBS" --export-binaries "$SKETCH_DIR"
+# Compile in a work folder OUTSIDE the sketch. --export-binaries used to drop five .bin files
+# (app, bootloader, merged, partitions, boot_app0) into build/ here, right next to the one
+# that matters - too easy to pick the wrong one on the OTA page.
+WORK="${TMPDIR:-${TEMP:-/tmp}}/robo4-esp32_multi-build"
+"$CLI" compile --fqbn "$FQBN" --libraries "$LIBS" --build-path "$WORK" "$SKETCH_DIR"
+rm -rf build                                # leftovers from the old --export-binaries layout
 
-BUILT="build/esp32.esp32.esp32c3/esp32_multi.ino.bin"
+BUILT="$WORK/esp32_multi.ino.bin"
 if [ ! -f "$BUILT" ]; then
   echo "ERROR: compile reported success but $BUILT is missing."
   exit 1
 fi
 
+for OLD in esp32_multi-v*.bin esp32_multi-v*.ino.bin; do
+  if [ -f "$OLD" ] && [ "$OLD" != "$OUT_BIN" ]; then rm -f "$OLD"; fi
+done
 cp "$BUILT" "$OUT_BIN"
 SIZE=$(wc -c < "$OUT_BIN" | tr -d ' ')
 echo
@@ -86,7 +97,7 @@ if [ "$#" -gt 0 ]; then
   echo "waiting 12s for reboots..."
   sleep 12
   for HOST in "$@"; do
-    FW=$(curl -s --max-time 6 "http://$HOST.local/api/health" | sed -n 's/.*"fw":"\([^"]*\)".*//p')
+    FW=$(curl -s --max-time 6 "http://$HOST.local/api/health" | sed -n 's/.*"fw":"\([^"]*\)".*/\1/p')
     echo "    $HOST -> fw $FW"
   done
 fi

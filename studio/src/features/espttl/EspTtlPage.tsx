@@ -2,11 +2,12 @@
  * EspTtlPage — the laptop-side console for a module's ESP32-C3.
  *
  * Everything the board's own web page can do, done from here instead: live control,
- * servo discovery and renumbering, magnets, config, Wi-Fi, firmware upload, log — plus
+ * servo discovery and renumbering, config, Wi-Fi, firmware upload, log — plus
  * the pose timeline, which only exists here because it needs memory the board does not
  * have. The board stays a thin executor; the thinking is on this side of the wire.
  */
 import React, { useEffect, useRef, useState } from 'react';
+import { speak } from '@/features/voice/speech';
 import {
   useEspTtlStore, startTtlPoll, stopTtlPoll, ttlTry, ttlGet, ttlUrl,
   type TtlTab, type TtlServo,
@@ -18,7 +19,6 @@ const TABS: { id: TtlTab; label: string }[] = [
   { id: 'control',   label: 'Control' },
   { id: 'animation', label: 'Animation' },
   { id: 'tools',     label: 'Servo tools' },
-  { id: 'magnets',   label: 'Magnets' },
   { id: 'config',    label: 'Config' },
   { id: 'wifi',      label: 'Wi-Fi' },
   { id: 'ota',       label: 'Firmware' },
@@ -73,7 +73,6 @@ export default function EspTtlPage() {
         {tab === 'control'   && <ControlTab />}
         {tab === 'animation' && <AnimationTab />}
         {tab === 'tools'     && <ToolsTab />}
-        {tab === 'magnets'   && <MagnetsTab />}
         {tab === 'config'    && <ConfigTab />}
         {tab === 'wifi'      && <WifiTab />}
         {tab === 'ota'       && <OtaTab />}
@@ -417,33 +416,6 @@ function ToolsTab() {
   );
 }
 
-// ── Magnets ───────────────────────────────────────────────────────────────────
-function MagnetsTab() {
-  const tel = useEspTtlStore(s => s.tel);
-  const { msg, call } = useSay();
-  return (
-    <div className="ettl-card">
-      <h4>Electromagnets (DRV8833)</h4>
-      {(tel?.magnets ?? []).map(m => (
-        <div className="ettl-row" key={m.ch}>
-          <span className="ettl-lbl">ch {m.ch}</span>
-          <input type="range" min={0} max={100} value={m.pct}
-                 onChange={e => void ttlTry(`/api/magnet?ch=${m.ch}&pct=${e.target.value}`)} />
-          <b style={{ width: 46 }}>{m.pct}%</b>
-          <button className="ettl-btn" onClick={() => call(`/api/magnet?ch=${m.ch}&pct=100`, 'grab')}>grab 100</button>
-          <button className="ettl-btn" onClick={() => call(`/api/magnet?ch=${m.ch}&pct=40`, 'hold')}>hold 40</button>
-          <button className="ettl-btn danger" onClick={() => call(`/api/magnet?ch=${m.ch}&pct=0`, 'release')}>release</button>
-          <span className="ettl-dim">last cmd {(m.ageMs / 1000).toFixed(1)}s ago</span>
-        </div>
-      ))}
-      <div className="ettl-row">
-        <button className="ettl-btn danger" onClick={() => call('/api/magnet?all=1&pct=0', 'release all')}>Release all</button>
-      </div>
-      {msg && <div className="ettl-toast">{msg}</div>}
-    </div>
-  );
-}
-
 // ── Config ────────────────────────────────────────────────────────────────────
 function ConfigTab() {
   const { msg, say, call } = useSay();
@@ -456,7 +428,7 @@ function ConfigTab() {
   const save = async () => {
     const rows = (cfg.servos || []).map((s: any) => `${s.id}:${s.label}:${s.min}:${s.max}`).join('|');
     const q = `/api/config/set?host=${encodeURIComponent(cfg.host)}&baud=${cfg.baud}`
-            + `&hold=${cfg.magSafeHold}&servos=${encodeURIComponent(rows)}`;
+            + `&servos=${encodeURIComponent(rows)}`;
     const r = await ttlTry(q);
     say(r.ok ? 'config saved to the board' : 'save failed: ' + r.error);
     void load();
@@ -472,7 +444,7 @@ function ConfigTab() {
         <div className="ettl-row">
           <label className="ettl-lbl">mDNS host<input value={cfg.host} onChange={e => setCfg({ ...cfg, host: e.target.value })} style={{ width: 120 }} /></label>
           <label className="ettl-lbl">bus baud<input type="number" value={cfg.baud} onChange={e => setCfg({ ...cfg, baud: +e.target.value })} style={{ width: 110 }} /></label>
-          <label className="ettl-lbl">magnet safe hold %<input type="number" value={cfg.magSafeHold} onChange={e => setCfg({ ...cfg, magSafeHold: +e.target.value })} style={{ width: 70 }} /></label>
+
         </div>
       </div>
       <div className="ettl-card">
@@ -575,16 +547,20 @@ function OtaTab() {
     const x = new XMLHttpRequest();
     x.open('POST', `${ttlUrl()}/api/ota?size=${f.size}`);
     setErr(false);
+    speak('Uploading firmware over the air', { key: 'ota-start', cooldownMs: 0 });
+    let said = 0;                                   // spoken 25/50/75 % milestones
     x.upload.onprogress = e => {
       const p = (e.loaded / e.total) * 100;
+      const ms = Math.floor(p / 25);
+      if (ms > said && ms < 4) { said = ms; speak(`${ms * 25} percent`, { key: 'ota-pct', cooldownMs: 0 }); }
       setPct(p);
       setStat(p >= 100 ? 'sent 100% — board is verifying…' : `${p.toFixed(0)}% (${(e.loaded / 1024) | 0}/${(e.total / 1024) | 0} kB)`);
     };
     x.onload = () => {
-      if (x.status === 200) setStat('written OK — board is rebooting');
-      else { setErr(true); setStat(`FAILED (${x.status}): ${x.responseText}`); }
+      if (x.status === 200) { setStat('written OK — board is rebooting'); speak('Firmware uploaded. Module is rebooting', { key: 'ota-done', cooldownMs: 0 }); }
+      else { setErr(true); setStat(`FAILED (${x.status}): ${x.responseText}`); speak('Firmware upload failed', { key: 'ota-fail', cooldownMs: 0 }); }
     };
-    x.onerror = () => { setErr(true); setStat('connection dropped mid-upload'); };
+    x.onerror = () => { setErr(true); setStat('connection dropped mid-upload'); speak('Upload failed. Connection dropped', { key: 'ota-fail', cooldownMs: 0 }); };
     x.send(fd);
   };
 

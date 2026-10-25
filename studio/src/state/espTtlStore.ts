@@ -9,6 +9,7 @@
  * and nothing here assumes the board remembers anything between calls.
  */
 import { create } from 'zustand';
+import { speakForPath } from '@/features/voice/phrases';
 
 export interface TtlServo {
   id: number;
@@ -32,8 +33,6 @@ export interface TtlServo {
   tempC: number | null;
 }
 
-export interface TtlMagnet { ch: number; pct: number; ageMs: number }
-
 export interface TtlTelemetry {
   ok: boolean;
   fw: string;
@@ -42,7 +41,6 @@ export interface TtlTelemetry {
   scanning?: boolean;
   otaSpace?: number;
   servos: TtlServo[];
-  magnets: TtlMagnet[];
   wifi: {
     connected: boolean; mode: string; ssid: string; ip: string;
     rssi: number; drops: number; hostname: string;
@@ -50,7 +48,7 @@ export interface TtlTelemetry {
 }
 
 export type TtlTab =
-  | 'control' | 'animation' | 'tools' | 'magnets' | 'config' | 'wifi' | 'ota' | 'log';
+  | 'control' | 'animation' | 'tools' | 'config' | 'wifi' | 'ota' | 'log';
 
 const LS_URL = 'robo4:esptt:url';
 
@@ -110,7 +108,7 @@ export async function ttlGet<T = any>(path: string, timeoutMs = 6000): Promise<T
 
 /** Same, but never throws — for fire-and-forget buttons that report their own status. */
 export async function ttlTry(path: string, timeoutMs = 6000): Promise<{ ok: boolean; data?: any; error?: string }> {
-  try { return { ok: true, data: await ttlGet(path, timeoutMs) }; }
+  try { const data = await ttlGet(path, timeoutMs); speakForPath(path); return { ok: true, data }; }
   catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
 }
 

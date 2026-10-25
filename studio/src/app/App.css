@@ -126,6 +126,10 @@
   box-shadow: 0 1px 6px rgba(30,48,80,0.05);
   z-index: 50;
   position: relative;
+  min-width: 0;
+  /* The header is a size container: the tiers at the bottom of this section react to its
+     own width (not the viewport), so the layout degrades the same on any screen, zoom or DPI. */
+  container: apphdr / inline-size;
 }
 
 .app-header-brand {
@@ -197,7 +201,14 @@
   display: flex;
   align-items: center;
   gap: 4px;
+  /* Shrinkable: the nav gives up space before anything on the right is clipped, and
+     scrolls (scrollbar hidden) only as a last resort at extreme widths. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.app-nav::-webkit-scrollbar { display: none; }
 
 .app-nav-tab {
   display: flex;
@@ -215,6 +226,8 @@
   cursor: pointer;
   transition: all 0.18s;
   line-height: 1;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .app-nav-tab svg {
@@ -270,12 +283,50 @@
   box-shadow: 0 0 0 3px var(--accent);
 }
 
-.app-header-space { flex: 1; }
+.app-header-space { flex: 1 1 0; min-width: 8px; }
 
 .app-header-right {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-shrink: 0;
+}
+
+/* Overcurrent alarm is variable-length: cap it so it can never push the header wider. */
+.app-overcurrent { max-width: min(40vw, 520px); min-width: 0; }
+.app-overcurrent-names { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+
+.app-board-name { overflow: hidden; text-overflow: ellipsis; max-width: 18ch; }
+
+/* ── Responsive tiers ─────────────────────────────────────────────────────────
+   Optional header content is shed in priority order as the header narrows.
+   hdr-opt-N goes away at tier N (0 first). Nothing essential is ever hidden:
+   tab labels collapse to icons (the active tab keeps its label, others have title/aria-label),
+   and the nav scrolls if even that does not fit. */
+@container apphdr (max-width: 2000px) { .hdr-opt-0 { display: none; } }
+@container apphdr (max-width: 1800px) { .hdr-opt-1 { display: none; } }
+@container apphdr (max-width: 1650px) {
+  .hdr-opt-2 { display: none; }
+  .app-nav-tab { padding: 7px 11px; }
+  .app-header-right { gap: 8px; }
+}
+@container apphdr (max-width: 1450px) {
+  .hdr-opt-3 { display: none; }
+  .app-nav-tab:not(.active) .app-nav-label { display: none; }
+  .app-nav-tab:not(.active) { padding: 7px 10px; }
+}
+@container apphdr (max-width: 1100px) {
+  .hdr-opt-4 { display: none; }
+  .app-status-chip { padding: 7px 12px; }
+  .app-header-sep { margin: 0 8px; }
+}
+@container apphdr (max-width: 900px) {
+  .hdr-opt-5 { display: none; }
+  .app-logo { font-size: 16px; letter-spacing: 3px; }
+  .app-board-name { display: none; }
+}
+@container apphdr (max-width: 700px) {
+  .app-header-brand, .app-header-sep { display: none; }
 }
 
 .app-status-chip {

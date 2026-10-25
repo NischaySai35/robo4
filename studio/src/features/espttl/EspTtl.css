@@ -196,6 +196,26 @@
 
 .ettl-anim { display: block; }
 
+/* ── saved animations ───────────────────────────────────────────────────── */
+.ettl-saved-grid {
+  display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+}
+.ettl-saved {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 9px; cursor: pointer; min-width: 0;
+  transition: border-color .12s;
+}
+.ettl-saved:hover { border-color: var(--accent); }
+.ettl-saved-name {
+  font-size: 13px; font-weight: 600; margin-bottom: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ettl-saved-meta { color: var(--text-dim); font-size: 10.5px; margin-bottom: 8px; }
+.ettl-saved-btns { display: flex; gap: 4px; flex-wrap: wrap; }
+.ettl-saved-btns .ettl-btn.tiny { padding: 3px 8px; }
+.ettl-saved input { width: 100%; box-sizing: border-box; margin-bottom: 7px; }
+
 /* ── joint control row ──────────────────────────────────────────────────────
    The slider column absorbs all slack ("grow"); every other column shrinks to its
    content. Without this the table spread the spare width evenly and left a canyon

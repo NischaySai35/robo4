@@ -20,7 +20,6 @@ import { ModelEditor } from '@/viewport/ModelEditor';
 import { MeasureTool } from '@/viewport/MeasureTool';
 import { startMemoryMonitor } from '@/viewport/memoryMonitor';
 import { createFrameProfiler } from '@/viewport/frameProfiler';
-import { startMagnetEngine } from '@/features/magnets/magnetEngine';
 import { startEspPoll } from '@/features/servo/espPoll';
 import { useThemeStore } from '@/state/themeStore';
 import { useEditorStore } from '@/state/editorStore';
@@ -506,15 +505,12 @@ export default function SimCanvas() {
     tryRestoreFileHandle().catch(() => {}); // regain write access to last session's real file, if the browser still allows it silently
     const fitTimer = setTimeout(() => { bridge.fitCamera?.(); bridge.updateCameraLimits?.(); }, 300);
     const stopMemoryMonitor = startMemoryMonitor(() => modelEditor._doc);
-    // Master control loop for the end-lock electromagnets (energize on lock, grab→hold profile).
-    const stopMagnetEngine = startMagnetEngine();
     // Continuous multi-ESP telemetry polling (all module boards at once).
     const stopEspPoll = startEspPoll();
 
     return () => {
       cancelAnimationFrame(raf);
       prof.dispose();
-      stopMagnetEngine();
       stopEspPoll();
       clearTimeout(saveTimer);
       clearTimeout(fitTimer);

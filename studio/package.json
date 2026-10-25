@@ -21,10 +21,12 @@
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
-    "@huggingface/transformers": "^3.8.1",
+    "@huggingface/transformers": "^4.3.1",
+    "@mintplex-labs/piper-tts-web": "^1.0.5",
     "electron-updater": "^6.8.9",
     "jolt-physics": "^1.0.1",
     "occt-import-js": "^0.0.23",
+    "onnxruntime-web": "^1.31.0-dev.20260914-8d85527a0",
     "postprocessing": "6.36.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -40,13 +42,13 @@
     "@types/three": "^0.184.1",
     "@vitejs/plugin-react": "^4.3.1",
     "concurrently": "^9.1.0",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron": "^44.9.3",
+    "electron-builder": "^26.15.3",
     "png-to-ico": "^3.0.1",
     "sharp": "^0.35.1",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "vite": "^5.3.4",
+    "vite": "^8.3.4",
     "wait-on": "^8.0.1"
   },
   "build": {
@@ -87,5 +89,16 @@
       "uninstallDisplayName": "TETROBOT-Demo-NischaySai",
       "deleteAppDataOnUninstall": false
     }
+  },
+  "allowScripts": {
+    "sharp@0.34.5": true,
+    "electron@33.4.11": true,
+    "esbuild@0.21.5": true,
+    "esbuild@0.28.2": true,
+    "onnxruntime-node@1.21.0": true,
+    "protobufjs@7.6.4": true
+  },
+  "overrides": {
+    "sprintf-js": "^1.1.3"
   }
 }

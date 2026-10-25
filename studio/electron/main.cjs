@@ -136,6 +136,10 @@ function createWindow() {
   ses.setPermissionRequestHandler((_wc, _permission, cb) => cb(true));
 }
 
+// Spoken feedback fires from timers/polls, not clicks; without this Chromium blocks audio
+// until the user has interacted with the page.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 app.whenReady().then(() => {
   createWindow();
   // (The renderer runs a quiet check shortly after launch via window.tetrobot —

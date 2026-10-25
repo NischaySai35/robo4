@@ -8,6 +8,7 @@
  */
 import { ttlUrl } from '@/state/espTtlStore';
 import { useTimelineStore } from './timelineStore';
+import { speakForPath } from '@/features/voice/phrases';
 
 /** Same rolling hash the firmware computes over the payload. */
 function checksum(text: string): number {
@@ -16,20 +17,21 @@ function checksum(text: string): number {
   return h >>> 0;
 }
 
-/** Wire format: one line per frame, "timeMs speed id:deg id:deg ...". */
+/** Wire format: one line per frame, "timeMs speed holdMs id:deg id:deg ...". timeMs 0 = auto. */
 export function buildPayload(): { header: string; payload: string; frames: number } {
   const st = useTimelineStore.getState();
   const lines = st.frames.map(f => {
     const time = f.delayMs ?? st.globalDelayMs;
     const speed = f.speed ?? st.globalSpeed;
+    const hold = f.holdMs ?? st.globalHoldMs;
     const joints = Object.entries(f.pose)
       .map(([id, deg]) => `${id}:${(+deg).toFixed(1)}`)
       .join(' ');
-    return `${Math.round(time)} ${Math.round(speed)} ${joints}`;
+    return `${Math.round(time)} ${Math.round(speed)} ${Math.round(hold)} ${joints}`;
   });
   const payload = lines.join('\n') + '\n';
   return {
-    header: `V1 ${st.frames.length} ${checksum(payload)}`,
+    header: `V2 ${st.frames.length} ${checksum(payload)}`,
     payload,
     frames: st.frames.length,
   };
@@ -57,6 +59,7 @@ export async function sendToBoard(): Promise<SendResult> {
     let json: any = null;
     try { json = JSON.parse(txt); } catch { /* keep the raw text as the error */ }
     if (!res.ok || !json?.ok) return { ok: false, error: json?.error || txt || `HTTP ${res.status}` };
+    speakForPath('/api/anim/load');
     return { ok: true, frames: json.frames ?? frames };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
@@ -70,6 +73,7 @@ export async function startOnBoard(from = 0): Promise<SendResult> {
       { cache: 'no-store', signal: AbortSignal.timeout(8000) });
     const j = await res.json().catch(() => null);
     if (!res.ok || !j?.ok) return { ok: false, error: j?.error || `HTTP ${res.status}` };
+    speakForPath('/api/anim/play');
     return { ok: true };
   } catch (e: any) {
     return { ok: false, error: e?.message || String(e) };
@@ -79,5 +83,6 @@ export async function startOnBoard(from = 0): Promise<SendResult> {
 export async function stopOnBoard(): Promise<void> {
   try {
     await fetch(`${ttlUrl()}/api/anim/stop`, { cache: 'no-store', signal: AbortSignal.timeout(6000) });
+    speakForPath('/api/anim/stop');
   } catch { /* the E-STOP button is the backstop if this cannot get through */ }
 }

@@ -1,6 +1,6 @@
 # ROBO4 module firmware v2 (ESP32-C3)
 
-Replacement for `esp32/firmware.ino`. Same servo bus, same magnets, same HTTP API the React
+Replacement for `esp32/firmware.ino`. Same servo bus, same HTTP API the React
 app already uses — plus rock-solid Wi-Fi, a web UI, wireless code upload, and runtime
 configuration so you stop re-flashing to change an ID or a limit.
 
@@ -64,7 +64,7 @@ single SSID, and mDNS silently died after a drop. v2:
 
 ## 3. Wireless code upload — three ways
 
-All three de-torque the servos and release the magnets before writing, and refuse to touch
+All three de-torque the servos before writing, and refuse to touch
 the servo bus while a flash is in progress.
 
 ### a) Arduino IDE, no cable (best for your edit-test loop)
@@ -104,7 +104,7 @@ a successful CRC, so a half-finished upload just reboots into the old firmware.
 
 ## 4. Nothing is hardcoded per board any more
 
-Hostname, servo IDs, labels, per-joint angle limits, bus baud and the magnet safe-hold %
+Hostname, servo IDs, labels, per-joint angle limits, and bus baud
 live in NVS (flash), editable from the **Config** tab. So:
 
 - Flash the *identical* binary to every module.
@@ -113,7 +113,7 @@ live in NVS (flash), editable from the **Config** tab. So:
 
 Config format used by `/api/config/set` (also usable from curl):
 ```
-/api/config/set?host=mod2&baud=1000000&hold=40&servos=1:J1:0:360|2:J2:80:280|3:J3:80:280
+/api/config/set?host=mod2&baud=1000000&servos=1:J1:0:360|2:J2:80:280|3:J3:80:280
                                                       id:label:minDeg:maxDeg
 ```
 
@@ -152,7 +152,7 @@ longer needs a firmware change. ST3215 map — `5`=ID `6`=baud `9/10`=min-angle 
 ## 6. API compatibility
 
 Unchanged in shape, so the React app keeps working:
-`/api/telemetry`, `/api/command`, `/api/batch`, `/api/magnet`, `/`.
+`/api/telemetry`, `/api/command`, `/api/batch`, `/`.
 
 Telemetry gains (additive only): `fw`, `heap`, `scanning`, per-servo `min`/`max`, and
 `wifi.{connected,mode,rssi,drops}`. `/` now serves the **web UI**; the old JSON health

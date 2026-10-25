@@ -18,8 +18,10 @@ export interface Frame {
   pose: Record<number, number>;
   /** 1..10, or null to follow the global speed */
   speed: number | null;
-  /** dwell in ms before moving on, or null to follow the global delay */
+  /** how long the move should take, ms. 0 = AUTO (as fast as the speed cap allows); null = global */
   delayMs: number | null;
+  /** pause after the joints ARRIVE before the next frame starts, ms; null = global */
+  holdMs: number | null;
 }
 
 export interface TimelineFile {
@@ -28,6 +30,7 @@ export interface TimelineFile {
   savedAt: string;
   globalSpeed: number;
   globalDelayMs: number;
+  globalHoldMs?: number;
   sine: boolean;
   frames: Frame[];
 }
@@ -36,7 +39,8 @@ interface TimelineState {
   frames: Frame[];
   selectedId: string | null;
   globalSpeed: number;      // 1..10, the servo-level speed cap
-  globalDelayMs: number;    // default dwell between frames
+  globalDelayMs: number;    // default move time per frame; 0 = auto
+  globalHoldMs: number;     // default pause after arrival
   sine: boolean;            // ease in/out instead of a straight run
   loop: boolean;
   playing: boolean;
@@ -57,6 +61,7 @@ interface TimelineState {
 
   setGlobalSpeed: (n: number) => void;
   setGlobalDelay: (ms: number) => void;
+  setGlobalHold: (ms: number) => void;
   setSine: (on: boolean) => void;
   setLoop: (on: boolean) => void;
   setPlaying: (on: boolean) => void;
@@ -75,28 +80,29 @@ const LS_KEY = 'robo4:esptt:timeline';
 const uid = () => 'f' + Math.random().toString(36).slice(2, 9);
 const MAX_HISTORY = 60;
 
-function persist(s: Pick<TimelineState, 'frames' | 'globalSpeed' | 'globalDelayMs' | 'sine'>) {
+function persist(s: Pick<TimelineState, 'frames' | 'globalSpeed' | 'globalDelayMs' | 'globalHoldMs' | 'sine'>) {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({
       frames: s.frames, globalSpeed: s.globalSpeed,
-      globalDelayMs: s.globalDelayMs, sine: s.sine,
+      globalDelayMs: s.globalDelayMs, globalHoldMs: s.globalHoldMs, sine: s.sine,
     }));
   } catch { /* quota — the timeline is still usable, it just will not survive a reload */ }
 }
 
-function load(): Pick<TimelineState, 'frames' | 'globalSpeed' | 'globalDelayMs' | 'sine'> {
+function load(): Pick<TimelineState, 'frames' | 'globalSpeed' | 'globalDelayMs' | 'globalHoldMs' | 'sine'> {
   try {
     const raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (raw && Array.isArray(raw.frames)) {
       return {
         frames: raw.frames,
         globalSpeed: raw.globalSpeed ?? 5,
-        globalDelayMs: raw.globalDelayMs ?? 2000,
+        globalDelayMs: raw.globalDelayMs ?? 0,
+        globalHoldMs: raw.globalHoldMs ?? 0,
         sine: !!raw.sine,
       };
     }
   } catch { /* ignore */ }
-  return { frames: [], globalSpeed: 5, globalDelayMs: 2000, sine: true };
+  return { frames: [], globalSpeed: 5, globalDelayMs: 0, globalHoldMs: 0, sine: true };
 }
 
 export const useTimelineStore = create<TimelineState>((set, get) => {
@@ -115,6 +121,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
     selectedId: null,
     globalSpeed: init.globalSpeed,
     globalDelayMs: init.globalDelayMs,
+    globalHoldMs: init.globalHoldMs,
     sine: init.sine,
     loop: false,
     playing: false,
@@ -126,7 +133,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
       const f: Frame = {
         id: uid(),
         name: name || `Frame ${get().frames.length + 1}`,
-        pose: { ...pose }, speed: null, delayMs: null,
+        pose: { ...pose }, speed: null, delayMs: null, holdMs: null,
       };
       commit([...get().frames, f]);
       set({ selectedId: f.id });
@@ -135,7 +142,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
     insertAfter: (id, pose) => {
       const frames = get().frames;
       const i = frames.findIndex(f => f.id === id);
-      const f: Frame = { id: uid(), name: `Frame ${frames.length + 1}`, pose: { ...pose }, speed: null, delayMs: null };
+      const f: Frame = { id: uid(), name: `Frame ${frames.length + 1}`, pose: { ...pose }, speed: null, delayMs: null, holdMs: null };
       const next = [...frames];
       next.splice(i < 0 ? frames.length : i + 1, 0, f);
       commit(next);
@@ -192,6 +199,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
 
     setGlobalSpeed: (n) => { set({ globalSpeed: Math.min(10, Math.max(1, n)) }); persist(get()); },
     setGlobalDelay: (ms) => { set({ globalDelayMs: Math.max(0, ms) }); persist(get()); },
+    setGlobalHold: (ms) => { set({ globalHoldMs: Math.max(0, ms) }); persist(get()); },
     setSine: (sine) => { set({ sine }); persist(get()); },
     setLoop: (loop) => set({ loop }),
     setPlaying: (playing) => set({ playing }),
@@ -224,6 +232,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
         savedAt: new Date().toISOString(),
         globalSpeed: s.globalSpeed,
         globalDelayMs: s.globalDelayMs,
+        globalHoldMs: s.globalHoldMs,
         sine: s.sine,
         frames: s.frames,
       };
@@ -254,6 +263,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
           pose,
           speed: Number.isFinite(f.speed) ? Math.min(10, Math.max(1, Number(f.speed))) : null,
           delayMs: Number.isFinite(f.delayMs) ? Math.max(0, Number(f.delayMs)) : null,
+          holdMs: Number.isFinite(f.holdMs) ? Math.max(0, Number(f.holdMs)) : null,
         });
       }
       if (!frames.length) return { ok: false, error: 'file contained no usable frames' };
@@ -262,6 +272,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
       if (!Array.isArray(raw)) {
         if (Number.isFinite(raw.globalSpeed)) set({ globalSpeed: raw.globalSpeed });
         if (Number.isFinite(raw.globalDelayMs)) set({ globalDelayMs: raw.globalDelayMs });
+        if (Number.isFinite(raw.globalHoldMs)) set({ globalHoldMs: raw.globalHoldMs });
         if (typeof raw.sine === 'boolean') set({ sine: raw.sine });
       }
       set({ selectedId: null });

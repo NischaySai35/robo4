@@ -1,5 +1,5 @@
 /*
-   ROBO4 — per-MODULE firmware v2 (ESP32-C3 + up to 12 × ST3215 servos + 2 electromagnets)
+   ROBO4 — per-MODULE firmware v2 (ESP32-C3 + up to 12 × ST3215 servos; locks are mechanical)
 
    What v2 adds over esp32/firmware.ino:
      1. Wi-Fi that never gives up   — event-driven, non-blocking, escalating backoff,
@@ -27,7 +27,7 @@
      (any scheme with two app partitions works; "Huge APP" has only one and OTA will fail)
    The FIRST upload must still go over USB. Every upload after that can be wireless.
 
-   Existing endpoints (/api/telemetry, /api/command, /api/batch, /api/magnet, /) keep the
+   Existing endpoints (/api/telemetry, /api/command, /api/batch, /) keep the
    exact same shapes the React app already consumes — telemetry only gains extra fields.
 
    Servo bus: GPIO5 half-duplex UART (UART_MODE_RS485_HALF_DUPLEX — required for correct reads)
@@ -43,6 +43,9 @@
 #include <Preferences.h>
 #include <SCServo.h>
 #include <esp_system.h>
+#include <driver/gpio.h>
+#include <hal/gpio_ll.h>
+#include <soc/gpio_struct.h>
 #include <math.h>
 #include <stdarg.h>
 #include "types.h"
@@ -55,7 +58,7 @@
 // Defined further down with the sequence player; estopAll() needs it before then.
 void animStop();
 
-#define FW_VERSION "0.0.0"
+#define FW_VERSION "0.1.0"
 
 // ── Factory defaults (only used the very first boot; after that NVS wins) ─────
 #define DEF_SSID  "GNXS-2.4G-6809B0"
@@ -68,11 +71,6 @@ void animStop();
 
 // ── Hardware ─────────────────────────────────────────────────────────────────
 #define SERVO_PIN   5
-const uint8_t MAG_IN1[MAG_COUNT] = { 6, 8 };
-const uint8_t MAG_IN2[MAG_COUNT] = { 7, 9 };
-constexpr uint32_t MAG_PWM_FREQ    = 20000;
-constexpr uint8_t  MAG_PWM_RES     = 8;
-constexpr uint32_t MAG_GRAB_MAX_MS = 4000;
 
 // ST3215 / SMS-STS register map (numeric so we don't depend on library constants)
 #define REG_ID        5
@@ -104,7 +102,32 @@ void cfgDefaults() {
   // there and three real ones missing entirely. Discovery is the honest source of truth, and
   // it is one button press. Only a FRESH board sees this; a configured one keeps its NVS.
   cfg.servoCount = 0;
-  cfg.magSafeHold = 40;
+  cfg.reserved0 = 0;
+}
+
+// ── Module layout (rebuilt hardware) ─────────────────────────────────────────
+// 7 DOF + a servo lock at each end = 9 × ST3215 on one bus, symmetric end to end:
+//   LOCK1, T1, B1, B2, T2, B3, B4, T3, LOCK2   (T = twist, B = bend), ids 1..9 in that order.
+// Bump LAYOUT_REV whenever the physical module changes again: on the next boot (OTA included)
+// the servo table is rewritten once and stale manual homes are dropped, while Wi-Fi, host
+// and baud in NVS are kept. After that, edits made in the web UI stick as usual.
+#define LAYOUT_REV 2
+static const char* const LAYOUT_LABELS[] =
+  { "LOCK1", "T1 twist", "B1 bend", "B2 bend", "T2 twist", "B3 bend", "B4 bend", "T3 twist", "LOCK2" };
+constexpr uint8_t LAYOUT_N = sizeof(LAYOUT_LABELS) / sizeof(LAYOUT_LABELS[0]);
+
+void cfgApplyLayout() {
+  // The physical module is confirmed to use 1 Mbaud. An earlier false-positive scan
+  // could persist 500 kbaud; reset that stale bus setting with this layout migration.
+  cfg.baud = 1000000;
+  cfg.servoCount = LAYOUT_N;
+  for (uint8_t i = 0; i < MAX_SERVOS; i++) {
+    cfg.ids[i] = 0; cfg.labels[i][0] = 0; cfg.minDeg[i] = 0; cfg.maxDeg[i] = 360;
+  }
+  for (uint8_t i = 0; i < LAYOUT_N; i++) {
+    cfg.ids[i] = i + 1;
+    strlcpy(cfg.labels[i], LAYOUT_LABELS[i], sizeof(cfg.labels[i]));
+  }
 }
 
 void cfgLoad() {
@@ -197,19 +220,6 @@ void lg(const char* fmt, ...) {
   if (logCount < LOG_LINES) logCount++;
 }
 
-// ── Magnets ──────────────────────────────────────────────────────────────────
-MagnetState magnets[MAG_COUNT] = { {0, 0}, {0, 0} };
-
-void setMagnet(uint8_t ch, int pct) {
-  if (ch >= MAG_COUNT) return;
-  pct = constrain(pct, 0, 100);
-  magnets[ch].pct = (uint8_t)pct;
-  magnets[ch].lastCmdMs = millis();
-  uint32_t duty = (uint32_t)lroundf((pct / 100.0f) * ((1u << MAG_PWM_RES) - 1));
-  ledcWrite(MAG_IN1[ch], duty);
-  ledcWrite(MAG_IN2[ch], 0);
-}
-
 // ── Servos ───────────────────────────────────────────────────────────────────
 SafeSMS   st;   // SMS_STS with bounded, yielding bus reads — see types.h
 WebServer server(80);
@@ -218,7 +228,7 @@ ServoState servos[MAX_SERVOS];
 uint8_t    nServos = 0;
 
 constexpr uint16_t FAST_MS         = 60;
-constexpr uint16_t SLOW_MS         = 250;
+constexpr uint16_t SLOW_MS         = 25;    // one servo per tick: each one every 9 x 25 = ~225ms
 constexpr uint8_t  POS_MODE        = 0;
 // ── Holding-stiffness tuning (ST3215 EPROM/SRAM registers) ───────────────────
 // Steady-state position error under load is set by the servo's own position loop, not by
@@ -294,10 +304,18 @@ void busBegin(uint32_t baud) {
   delay(5);
   Serial1.begin(baud, SERIAL_8N1, SERVO_PIN, SERVO_PIN);
   Serial1.setMode((SerialMode)UART_MODE_RS485_HALF_DUPLEX);
+  // The pin is driven only while transmitting and released while servos reply — see
+  // SafeSMS::txDrive in types.h for why neither fixed mode works on this one-wire bus.
+  // The weak internal pull-up just keeps an idle, released line from floating.
+  st.pin = SERVO_PIN;
+  gpio_pullup_en((gpio_num_t)SERVO_PIN);
+  st.txDrive(false);
   Serial1.setRxBufferSize(512);
   st.pSerial = &Serial1;
   curBaud = baud;
+  st.baud = baud;
   flushBus();
+
 }
 
 // Rebuild the runtime servo table from cfg (called at boot and after a config save)
@@ -493,79 +511,94 @@ void animStop() {
 }
 
 /*
-  Motion profile, one command per frame.
+  Motion: ONE command per joint per frame; the servo's own profile does the moving.
 
-  The obvious implementation — stream interpolated setpoints every 40 ms — is what makes a
-  servo judder: each setpoint is a fresh target for the servo's OWN trapezoidal generator,
-  so it accelerates hard, arrives early, stops, and waits for the next one. Twenty-five
-  start-stops a second, which is what "sine mode" felt like.
+  Do not stream setpoints at the servo. Every new goal makes the ST3215 re-plan its move from
+  scratch (accelerate, cruise, brake), so a 50 Hz stream is fifty start-stops a second: the
+  joints squeak, fight and never settle. That was tried and it was bad.
 
-  So instead we let the servo do what it is good at, and only choose its parameters. For a
-  move of D steps that must take T seconds:
+  Instead each joint gets exactly one goal per frame with a speed and acceleration chosen so
+  its trapezoid lasts the frame's time T:
+      v = D / (T (1 - rf))       cruise velocity (steps/s)
+      a = v / (rf T)             acceleration    (steps/s^2; servo ACC unit = 100)
+  rf = the share of T spent speeding up (and again slowing down): 1/3 with Sine on (long, soft
+  ease-in/out), 0.15 with it off.
 
-      cruise speed v  =  k * D / T          (steps/s)
-      acceleration a  =  k * v / T          (steps/s^2, sent in units of 100)
+  Speed 1..10 is the PEAK joint velocity, speed/10 x ANIM_VMAX (speed 4 = 72 deg/s), and the
+  acceleration limit comes with it: reaching that peak takes at least ANIM_RAMP_S. The frame's
+  T is the longest of the time you asked for (0 = auto) and what every joint needs under both
+  limits, so all joints finish together and nothing is clipped.
 
-  with k = 1 for a flat run, and k = 1.5 for the eased one — that spends the first and last
-  third of T accelerating and decelerating, which IS the ease-in/ease-out shape, generated
-  in the servo's own control loop at its full update rate instead of over Wi-Fi at 25 Hz.
-
-  Each joint gets its own v and a from its own distance, so a joint moving 5 degrees and one
-  moving 90 both finish at T — they move together instead of the short one snapping and then
-  waiting. Speed is capped by the frame's speed setting; a move that cannot fit in T at that
-  cap simply takes longer, which is the honest outcome.
+  The frame ends when T has passed AND every joint has arrived (or a short timeout), then the
+  hold pause runs.
 */
+constexpr float    ANIM_VMAX        = 180.0f * 4096.0f / 360.0f;  // steps/s at speed 10
+constexpr float    ANIM_RAMP_S      = 0.35f;     // seconds to reach peak speed at the accel limit
+constexpr float    ANIM_RF_SINE     = 1.0f / 3.0f;
+constexpr float    ANIM_RF_LINEAR   = 0.15f;
+constexpr uint32_t ANIM_ARRIVE_TOL  = 12;        // steps (~1 deg) counts as arrived
+constexpr uint32_t ANIM_ARRIVE_WAIT = 600;       // ms to wait past the plan before moving on anyway
+
+uint32_t animPlanMs    = 0;        // planned duration of the current frame
+bool     animStretched = false;    // true when the limits made it longer than requested
+bool     animArrived   = false;
+uint32_t animArriveT   = 0;
+
 void animSendFrame(uint8_t idx) {
   const AnimFrame& f = anim[idx];
-  uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
-  uint16_t spd[MAX_SERVOS]; uint8_t  acc[MAX_SERVOS];
+  const float rf   = animSine ? ANIM_RF_SINE : ANIM_RF_LINEAR;
+  const float vCap = max(1, (int)f.speed) / 10.0f * ANIM_VMAX;
+  const float aMax = vCap / ANIM_RAMP_S;
+
+  int      slots[MAX_SERVOS];
+  uint16_t want[MAX_SERVOS];
+  float    D[MAX_SERVOS];
+  float    deg[MAX_SERVOS];
   uint8_t  n = 0;
+  float    Tmin = 0.0f;
 
-  const float T   = max(0.05f, f.timeMs / 1000.0f);
-  const float k   = animSine ? 1.5f : 1.0f;
-  const uint16_t vCap = speedScaleToRaw(f.speed);
-
-  for (uint8_t i = 0; i < f.n; i++) {
+  for (uint8_t i = 0; i < f.n && n < MAX_SERVOS; i++) {
     int slot = slotOf(f.ids[i]);
     if (slot < 0) continue;                       // not a servo on this board
     ServoState& sv = servos[slot];
-
     float lo, hi; limitsFor((uint8_t)slot, lo, hi);
     float wantDeg = clampF(f.deg10[i] / 10.0f, lo, hi);
-    uint16_t wantRaw = angleToRaw(wantDeg);
-
     // Distance from where the joint actually is, not from where we last told it to be.
     int32_t cur = sv.rawPos >= 0 ? sv.rawPos : (int32_t)sv.targetRaw;
-    int32_t D   = labs((int32_t)wantRaw - cur);
-
-    uint16_t v;
-    uint8_t  a;
-    if (D < 4) {
-      // Already there. Give it a gentle speed rather than 0, which some firmware reads
-      // as "maximum".
-      v = (uint16_t)max<uint16_t>(40, vCap / 8);
-      a = 20;
-    } else {
-      float vf = k * (float)D / T;
-      float af = k * vf / T;
-      v = (uint16_t)constrain((int)lroundf(vf), 30, (int)vCap);
-      // ACC is in units of 100 steps/s^2. Round UP: too little acceleration is what makes
-      // a move overrun its time budget.
-      a = (uint8_t)constrain((int)ceilf(af / 100.0f), 1, 150);
+    slots[n] = slot; deg[n] = wantDeg; want[n] = angleToRaw(wantDeg);
+    D[n] = (float)labs((int32_t)want[n] - cur);
+    if (D[n] >= 4.0f) {
+      float Tv = D[n] / (vCap * (1.0f - rf));                     // speed limit
+      float Ta = sqrtf(D[n] / (rf * (1.0f - rf) * aMax));         // acceleration limit
+      Tmin = max(Tmin, max(Tv, Ta));
     }
+    n++;
+  }
 
+  float Treq = f.timeMs / 1000.0f;                // 0 = auto
+  float T = max(max(Treq, Tmin), 0.12f);
+  animStretched = f.timeMs > 0 && Tmin > Treq + 0.02f;
+  animPlanMs = (uint32_t)lroundf(T * 1000.0f);
+
+  uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
+  uint16_t spd[MAX_SERVOS]; uint8_t  acc[MAX_SERVOS];
+  for (uint8_t k = 0; k < n; k++) {
+    ServoState& sv = servos[slots[k]];
+    uint16_t v; uint8_t a;
+    if (D[k] < 4.0f) {                            // already there: a gentle, non-zero speed
+      v = 60; a = 10;
+    } else {
+      float vf = D[k] / (T * (1.0f - rf));
+      float af = vf / (rf * T);
+      v = (uint16_t)constrain((int)lroundf(vf), 20, (int)vCap);
+      a = (uint8_t)constrain((int)ceilf(af / 100.0f), 1, 150);   // round UP: too soft overruns
+    }
     setHwMode(sv, POS_MODE);
     ensureTorque(sv);
-    sv.mode          = POS_MODE;
-    sv.targetDeg     = wantDeg;
-    sv.targetRaw     = wantRaw;
-    sv.speedScale    = f.speed;
-    sv.speedRaw      = v;
-    sv.acc           = a;
+    sv.mode = POS_MODE; sv.targetDeg = deg[k]; sv.targetRaw = want[k];
+    sv.speedScale = f.speed; sv.speedRaw = v; sv.acc = a;
     sv.lastCommandMs = millis();
-
-    ids[n] = sv.id; pos[n] = (int16_t)wantRaw; spd[n] = v; acc[n] = a;
-    n++;
+    ids[k] = sv.id; pos[k] = (int16_t)want[k]; spd[k] = v; acc[k] = a;
   }
 
   if (n == 1)     { st.WritePosEx(ids[0], pos[0], spd[0], acc[0]); delay(2); }
@@ -575,14 +608,34 @@ void animSendFrame(uint8_t idx) {
 void animBeginFrame(uint8_t i) {
   animIdx = i;
   animT0  = millis();
+  animArrived = false;
   animSendFrame(i);
+}
+
+// True when every joint this frame commanded is at (or within tolerance of) its target.
+bool animAllArrived(uint8_t idx) {
+  const AnimFrame& f = anim[idx];
+  for (uint8_t i = 0; i < f.n; i++) {
+    int slot = slotOf(f.ids[i]);
+    if (slot < 0) continue;
+    const ServoState& sv = servos[slot];
+    if (sv.rawPos < 0) continue;                  // no reading: cannot judge, do not stall on it
+    if ((uint32_t)labs((int32_t)sv.rawPos - (int32_t)sv.targetRaw) > ANIM_ARRIVE_TOL) return false;
+  }
+  return true;
 }
 
 void animTick() {
   if (!animPlaying || animCount == 0) return;
-  // One command per frame, so there is nothing to do mid-frame but wait for its time to
-  // elapse. The servo is running the profile itself at its own update rate.
-  if (millis() - animT0 < anim[animIdx].timeMs) return;
+  uint32_t el = millis() - animT0;
+
+  if (!animArrived) {
+    if (el < animPlanMs) return;                  // the servos are running the move themselves
+    if (!animAllArrived(animIdx) && el < animPlanMs + ANIM_ARRIVE_WAIT) return;
+    animArrived = true;
+    animArriveT = millis();
+  }
+  if (millis() - animArriveT < anim[animIdx].holdMs) return;   // the pause between poses
 
   if (animIdx + 1 < animCount) { animBeginFrame(animIdx + 1); return; }
   if (animLoop)                { animBeginFrame(0); return; }
@@ -677,7 +730,11 @@ void refreshAllFastSync() {
 
   // SCServo 1.0.2 has no syncReadBegin/End (newer forks do) and spells the word
   // decoder "ToWrod" — this uses only what the shipped library actually exposes.
+  // syncReadPacketTx does no flushing of its own: without the bracket, stale bytes and the
+  // request's own echo sat in front of the replies and slots got each other's positions.
+  st.beginTx();
   st.syncReadPacketTx(ids, nServos, SMS_STS_PRESENT_POSITION_L, 2);
+  st.endTx();
   uint8_t rx[2];
   for (uint8_t i = 0; i < nServos; i++) {
     bool got = false;
@@ -688,23 +745,40 @@ void refreshAllFastSync() {
     if (!got) {                                      // this servo missed its slot — poll it
       int pos = readRetry(ids[i], [](uint8_t id) { return st.ReadPos(id); },
                                   [](int v) { return v >= 0 && v <= 4095; }, 1);
-      if (pos >= 0) servos[i].rawPos = pos;
+      if (pos >= 0) { servos[i].rawPos = pos; got = true; }
+    }
+    // A limp joint has no goal of its own: keep its target on the measured position, so a
+    // stale target (a phantom read, an old slider value) can never linger and "Turn torque
+    // ON" or a nudge always starts from where the arm actually is.
+    if (got && !servos[i].torqueOn) {
+      servos[i].targetRaw = (uint16_t)servos[i].rawPos;
+      servos[i].targetDeg = rawToAngle((uint16_t)servos[i].rawPos);
     }
     updateMotionFlag(servos[i]);
   }
 }
 
 void refreshSlow(ServoState& sv) {
-  int spd  = readRetry(sv.id, [](uint8_t id) { return st.ReadSpeed(id);   }, [](int v) { return v != -1; });
-  int load = readRetry(sv.id, [](uint8_t id) { return st.ReadLoad(id);    }, [](int v) { return v != -1; });
-  int curr = readRetry(sv.id, [](uint8_t id) { return st.ReadCurrent(id); }, [](int v) { return v >= 0; });
-  int volt = readRetry(sv.id, [](uint8_t id) { return st.ReadVoltage(id); }, [](int v) { return v > 0; });
-  int temp = readRetry(sv.id, [](uint8_t id) { return st.ReadTemper(id);  }, [](int v) { return v > 0; });
-  if (spd  != -1) sv.rawSpeed = spd;
-  if (load != -1) { sv.rawLoad = load; sv.rawLoadAbs = abs(load); }
-  if (curr >= 0)  sv.rawCurrent = curr;
-  if (volt > 0)   sv.rawVoltage = volt;
-  if (temp > 0)   sv.rawTemp    = temp;
+  // ONE read of registers 56..70 (position, speed, load, volt, temp, ..., current) instead of
+  // five separate reads with five retries each. That made a pass ~5 bus round-trips per servo
+  // and, at one servo per 250ms, left every servo's mA/V/degC up to 2+ seconds stale. The
+  // values below are decoded from the cached block (id -1 = "use the last FeedBack").
+  unsigned long saved = st.IOTimeOut;
+  st.IOTimeOut = 15;
+  int ok = st.FeedBack(sv.id);
+  if (ok < 0) { flushBus(); ok = st.FeedBack(sv.id); }
+  st.IOTimeOut = saved;
+  if (ok < 0) return;
+  int spd  = st.ReadSpeed(-1);
+  int load = st.ReadLoad(-1);
+  int curr = st.ReadCurrent(-1);
+  int volt = st.ReadVoltage(-1);
+  int temp = st.ReadTemper(-1);
+  sv.rawSpeed = spd;
+  sv.rawLoad = load; sv.rawLoadAbs = abs(load);
+  if (curr >= 0)              sv.rawCurrent = curr;
+  if (volt > 0 && volt < 200) sv.rawVoltage = volt;
+  if (temp > 0 && temp < 150) sv.rawTemp    = temp;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1005,15 +1079,39 @@ void scanStep() {
   for (uint8_t k = 0; k < 1 && sc.active; k++) {
     uint8_t id = sc.cur;
     bc("scan ping id=%u @ %lu", id, (unsigned long)scanBaud());
-    if (st.Ping(id) != -1 && sc.nHits < 24) {
-      ScanHit& h = sc.hits[sc.nHits++];
+    // Present = answers a ping OR a position read. Ping alone missed real servos: ids 1 and 2
+    // on this bus never answered a scan ping while answering every position read, so the
+    // scan reported 7 of 9. The checksummed register reads below are the real test anyway.
+    bool alive = st.Ping(id) == id;
+    if (!alive) alive = readRetry(id, [](uint8_t i) { return st.ReadPos(i); },
+                                      [](int v) { return v >= 0 && v <= 4095; }, 2) >= 0;
+    if (alive && sc.nHits < 24) {
+      // Ping alone is not enough on this one-wire half-duplex bus: stale/echoed bytes
+      // have produced apparent replies for every probed ID. Require valid, checksummed
+      // reads from several independent registers before counting or adopting a servo.
+      ScanHit h;
       h.id   = id;
       h.baud = scanBaud();
-      h.pos  = st.ReadPos(id);
-      h.volt = st.ReadVoltage(id);
-      h.temp = st.ReadTemper(id);
-      h.mode = st.readByte(id, REG_MODE);
-      lg("  found servo id=%u baud=%lu pos=%d", id, (unsigned long)h.baud, h.pos);
+      // Each register gets a few tries: one dropped reply must not hide a real servo (that
+      // rejected every servo on the bus when all four reads had to succeed first time).
+      h.pos  = readRetry(id, [](uint8_t i) { return st.ReadPos(i); },
+                             [](int v) { return v >= 0 && v <= 4095; }, 3);
+      h.volt = readRetry(id, [](uint8_t i) { return st.ReadVoltage(i); },
+                             [](int v) { return v >= 40 && v <= 160; }, 3);
+      h.temp = readRetry(id, [](uint8_t i) { return st.ReadTemper(i); },
+                             [](int v) { return v >= 0 && v <= 125; }, 3);
+      h.mode = readRetry(id, [](uint8_t i) { return st.readByte(i, REG_MODE); },
+                             [](int v) { return v >= 0 && v <= 3; }, 3);
+      // Position plus one more independent register, each a checksummed reply in range.
+      const bool validFeedback = h.pos >= 0 && (h.volt >= 0 || h.temp >= 0);
+      if (validFeedback) {
+        sc.hits[sc.nHits++] = h;
+        lg("  found servo id=%u baud=%lu pos=%d volt=%d temp=%d mode=%d",
+           id, (unsigned long)h.baud, h.pos, h.volt, h.temp, h.mode);
+      } else {
+        lg("  rejected id=%u: invalid feedback pos=%d volt=%d temp=%d mode=%d",
+           id, h.pos, h.volt, h.temp, h.mode);
+      }
     }
     if (sc.cur >= sc.to) {
       sc.bIdx++;
@@ -1066,6 +1164,8 @@ String buildJSON() {
   j += F(",\"animFrames\":");  j += animCount;
   j += F(",\"animPlaying\":"); j += (animPlaying ? F("true") : F("false"));
   j += F(",\"animIdx\":");     j += animIdx;
+  j += F(",\"animPlanMs\":");  j += animPlanMs;
+  j += F(",\"animStretched\":"); j += (animStretched ? F("true") : F("false"));
   j += F(",\"scanning\":"); j += (sc.active ? F("true") : F("false"));
   j += F(",\"servos\":[");
 
@@ -1104,15 +1204,6 @@ String buildJSON() {
     j += '}';
   }
 
-  j += F("],\"magnets\":[");
-  for (uint8_t i = 0; i < MAG_COUNT; i++) {
-    if (i) j += ',';
-    j += F("{\"ch\":");    j += i;
-    j += F(",\"pct\":");   j += magnets[i].pct;
-    j += F(",\"ageMs\":"); j += (millis() - magnets[i].lastCmdMs);
-    j += '}';
-  }
-
   const bool up = WiFi.status() == WL_CONNECTED;
   j += F("],\"wifi\":{\"connected\":"); j += (up ? F("true") : F("false"));
   j += F(",\"mode\":\"");    j += (up ? "STA" : (apUp ? "AP" : "down"));
@@ -1146,21 +1237,6 @@ void handleLog() {
   uint8_t start = (uint8_t)((logHead + LOG_LINES - logCount) % LOG_LINES);
   for (uint8_t i = 0; i < logCount; i++) { s += logBuf[(start + i) % LOG_LINES]; s += '\n'; }
   server.send(200, "text/plain", s);
-}
-
-void handleMagnet() {
-  int pct = server.hasArg("pct") ? server.arg("pct").toInt() : 0;
-  if (server.hasArg("all") || server.arg("ch") == "all") {
-    for (uint8_t i = 0; i < MAG_COUNT; i++) setMagnet(i, pct);
-    okJson(F("{\"ok\":true,\"result\":\"all\"}"));
-    return;
-  }
-  if (!server.hasArg("ch")) { errJson(400, "missing ch"); return; }
-  int ch = server.arg("ch").toInt();
-  if (ch < 0 || ch >= MAG_COUNT) { errJson(404, "bad channel"); return; }
-  setMagnet((uint8_t)ch, pct);
-  String b = F("{\"ok\":true,\"ch\":"); b += ch; b += F(",\"pct\":"); b += magnets[ch].pct; b += '}';
-  okJson(b);
 }
 
 void applyCmd(ServoState& sv, const String& cmd) {
@@ -1282,8 +1358,9 @@ void handleHomeSet() {
 }
 
 // POST /api/anim/load   body:
-//   V1 <frameCount> <checksum>
-//   <timeMs> <speed> <id>:<deg> <id>:<deg> ...
+//   V2 <frameCount> <checksum>          (V1 is accepted too: no hold column)
+//   <timeMs> <speed> <holdMs> <id>:<deg> <id>:<deg> ...
+//   timeMs 0 = auto. speed is a velocity cap. holdMs pauses after arrival.
 //   ...
 // The header states how many frames to expect and a checksum over the body; a partial or
 // mangled upload therefore fails validation instead of being played. Nothing replaces the
@@ -1297,7 +1374,8 @@ void handleAnimLoad() {
   if (nl < 0) { errJson(400, "no header line"); return; }
   String head = body.substring(0, nl);
   head.trim();
-  if (!head.startsWith("V1 ")) { errJson(400, "bad header (expected V1)"); return; }
+  const bool v2 = head.startsWith("V2 ");
+  if (!v2 && !head.startsWith("V1 ")) { errJson(400, "bad header (expected V1 or V2)"); return; }
 
   int sp1 = head.indexOf(' ', 3);
   if (sp1 < 0) { errJson(400, "bad header fields"); return; }
@@ -1332,8 +1410,14 @@ void handleAnimLoad() {
     int sp2 = line.indexOf(' ', sp + 1);
     if (sp2 < 0) { errJson(400, "bad frame line"); return; }
     f.speed = (uint8_t)constrain(line.substring(sp + 1, sp2).toInt(), 1, 10);
-
+    f.holdMs = 0;
     int q = sp2 + 1;
+    if (v2) {
+      int sp3 = line.indexOf(' ', sp2 + 1);
+      if (sp3 < 0) { errJson(400, "bad frame line"); return; }
+      f.holdMs = (uint16_t)constrain(line.substring(sp2 + 1, sp3).toInt(), 0, 60000);
+      q = sp3 + 1;
+    }
     while (q < (int)line.length() && f.n < MAX_SERVOS) {
       int spc = line.indexOf(' ', q);
       String tok = (spc < 0) ? line.substring(q) : line.substring(q, spc);
@@ -1443,7 +1527,11 @@ void handleTorqueAll() {
 void handleIdentify() {
   if (!server.hasArg("id")) { errJson(400, "missing id"); return; }
   uint8_t id = (uint8_t)server.arg("id").toInt();
-  int base = st.ReadPos(id);
+  // A single dropped reply used to abort identify ("no reply") with nothing moving. Retry,
+  // then fall back to the position telemetry last saw for this id.
+  int base = readRetry(id, [](uint8_t i) { return st.ReadPos(i); },
+                           [](int v) { return v >= 0 && v <= 4095; }, 4);
+  if (base < 0) { ServoState* s0 = byId(id); if (s0 && s0->rawPos >= 0) base = s0->rawPos; }
   if (base < 0) { errJson(404, "no reply from that id"); return; }
   st.writeByte(id, REG_MODE, POS_MODE); delay(19);
   st.EnableTorque(id, 1); delay(2);
@@ -1457,6 +1545,47 @@ void handleIdentify() {
   if (sv) { sv->hwMode = POS_MODE; sv->torqueOn = true; sv->lastCommandMs = millis(); }
   String b = F("{\"ok\":true,\"id\":"); b += id; b += F(",\"pos\":"); b += base; b += '}';
   okJson(b);
+}
+
+// ── Raw bus capture (diagnostics) ────────────────────────────────────────────
+// GET /api/bus/raw?id=N[&n=3] — sends a plain "read position" frame to one id and records
+// every byte that comes back for 6ms, with its arrival time in microseconds after TX
+// finished. Shows directly whether our own request echoes, when the servo answers, and
+// whether the reply is intact: no library parsing in between.
+void handleBusRaw() {
+  if (!server.hasArg("id")) { errJson(400, "missing id"); return; }
+  const uint8_t id = (uint8_t)server.arg("id").toInt();
+  const int trials = server.hasArg("n") ? constrain(server.arg("n").toInt(), 1, 8) : 3;
+  // &ping=1 sends a PING (FF FF id 02 01 chk) instead of the position read.
+  const bool ping = server.hasArg("ping") && server.arg("ping") != "0";
+  uint8_t pkt[8] = { 0xFF, 0xFF, id, 4, 2, 56, 2, 0 };
+  int plen = 8;
+  if (ping) { pkt[3] = 2; pkt[4] = 1; plen = 6; }
+  uint8_t sum = 0; for (int i = 2; i < plen - 1; i++) sum += pkt[i]; pkt[plen - 1] = ~sum;
+  String j = F("{\"ok\":true,\"id\":"); j += id; j += F(",\"baud\":"); j += cfg.baud;
+  j += F(",\"sent\":\"");
+  for (int i = 0; i < plen; i++) { char h[4]; snprintf(h, sizeof(h), "%02X ", pkt[i]); j += h; }
+  j += F("\",\"trials\":[");
+  for (int t = 0; t < trials; t++) {
+    flushBus();
+    st.txDrive(true);
+    Serial1.write(pkt, plen);
+    Serial1.flush();
+    st.txDrive(false);
+    const unsigned long t0 = micros();
+    uint8_t b[48]; unsigned long at[48]; int n = 0;
+    while (micros() - t0 < 6000UL && n < 48) {
+      const int c = Serial1.read();
+      if (c != -1) { b[n] = (uint8_t)c; at[n] = micros() - t0; n++; }
+    }
+    if (t) j += ',';
+    j += F("{\"n\":"); j += n; j += F(",\"bytes\":\"");
+    for (int i = 0; i < n; i++) { char h[16]; snprintf(h, sizeof(h), "%02X@%lu ", b[i], at[i]); j += h; }
+    j += F("\"}");
+    delay(5);
+  }
+  j += F("]}");
+  okJson(j);
 }
 
 // ── Scan endpoints ───────────────────────────────────────────────────────────
@@ -1616,7 +1745,6 @@ void handleRegWrite() {
 void handleConfigGet() {
   String j = F("{\"ok\":true,\"host\":\""); j += cfg.host;
   j += F("\",\"baud\":"); j += cfg.baud;
-  j += F(",\"magSafeHold\":"); j += cfg.magSafeHold;
   j += F(",\"fw\":\""); j += FW_VERSION;
   j += F("\",\"servos\":[");
   for (uint8_t i = 0; i < nServos; i++) {
@@ -1645,7 +1773,6 @@ void handleConfigSet() {
     uint32_t b = (uint32_t)server.arg("baud").toInt();
     if (b >= 9600 && b <= 1000000) cfg.baud = b;
   }
-  if (server.hasArg("hold")) cfg.magSafeHold = (uint8_t)constrain(server.arg("hold").toInt(), 0, 100);
 
   if (server.hasArg("servos")) {
     String s = server.arg("servos");
@@ -1733,12 +1860,11 @@ void handleWifiScan() {
 // ─────────────────────────────────────────────────────────────────────────────
 //  OTA
 // ─────────────────────────────────────────────────────────────────────────────
-// Make the machine safe before we stop servicing it: torque off, magnets released,
+// Make the machine safe before we stop servicing it: torque off,
 // radio at full power, CPU at full speed so the flash write is fast and reliable.
 void prepareForOta(const char* how) {
   otaBusy = true;
-  lg("OTA (%s) starting — de-torquing servos, releasing magnets", how);
-  for (uint8_t i = 0; i < MAG_COUNT; i++) setMagnet(i, 0);
+  lg("OTA (%s) starting — de-torquing servos", how);
   for (uint8_t i = 0; i < nServos; i++) { st.EnableTorque(servos[i].id, 0); delay(2); servos[i].torqueOn = false; }
   WiFi.setSleep(false);
   // Full TX power for the transfer: the 8.5 dBm setting that keeps the C3 cool is the
@@ -1884,6 +2010,13 @@ void setup() {
   delay(300);
   cfgLoad();
   homesLoad();
+  if (prefs.getUChar("layout", 0) != LAYOUT_REV) {
+    cfgApplyLayout();
+    cfgSave();
+    homes.n = 0; homesSave();          // old homes were for the old joints; don't drive to them
+    prefs.putUChar("layout", LAYOUT_REV);
+    lg("layout rev %u applied: %u servos, manual homes cleared", LAYOUT_REV, LAYOUT_N);
+  }
   deadbandUnits = prefs.getUChar("deadband", TUNE_DEADBAND_DEFAULT);
   applyServoConfig();
   lg("ROBO4 fw %s booting as '%s' (%u servos, bus %lu baud)",
@@ -1892,11 +2025,6 @@ void setup() {
   setCpuFrequencyMhz(80);              // heat; bumped to 160 automatically during OTA
 
   busBegin(cfg.baud);
-  for (uint8_t i = 0; i < MAG_COUNT; i++) {
-    ledcAttach(MAG_IN1[i], MAG_PWM_FREQ, MAG_PWM_RES);
-    ledcAttach(MAG_IN2[i], MAG_PWM_FREQ, MAG_PWM_RES);
-    setMagnet(i, 0);
-  }
 
   wifiInit();                          // non-blocking: the server is up in milliseconds
   otaConfig();                         // begin() happens in wifiTick once we have an IP
@@ -1906,7 +2034,6 @@ void setup() {
   route("/api/telemetry",       handleTelemetry);
   route("/api/command",         handleCommand);
   route("/api/batch",           handleBatch);
-  route("/api/magnet",          handleMagnet);
   route("/api/home",            handleHome);
   route("/api/home/manual",     handleHomeManual);
   route("/api/anim/load",       handleAnimLoad);
@@ -1920,6 +2047,7 @@ void setup() {
   route("/api/servo/tune",      handleTune);
   route("/api/identify",        handleIdentify);
   route("/api/log",             handleLog);
+  route("/api/bus/raw",         handleBusRaw);
   route("/api/scan",            handleScan);
   route("/api/scan/status",     handleScanStatus);
   route("/api/servo/setid",     handleSetId);
@@ -2003,13 +2131,6 @@ void loop() {
     refreshSlow(servos[slowIdx]);
     slowIdx = (uint8_t)((slowIdx + 1) % nServos);
     server.handleClient();
-  }
-
-  for (uint8_t i = 0; i < MAG_COUNT; i++) {
-    if (magnets[i].pct > cfg.magSafeHold && (millis() - magnets[i].lastCmdMs) > MAG_GRAB_MAX_MS) {
-      lg("magnet %u tapered to safe hold %u%% (master went quiet)", i, cfg.magSafeHold);
-      setMagnet(i, cfg.magSafeHold);
-    }
   }
 
 }

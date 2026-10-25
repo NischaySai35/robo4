@@ -41,6 +41,9 @@ import OverloadCards from '@/features/analysis/OverloadCards';
 import TrainingPanel from '@/features/training/TrainingPanel';
 import Timeline from '@/features/animation/Timeline';
 import EspTtlPage from '@/features/espttl/EspTtlPage';
+import VoiceControl from '@/features/voice/VoiceControl';
+import { initVoiceAnnouncer } from '@/features/voice/announcer';
+import { batteryPct } from '@/features/voice/battery';
 import MsrrPanel from '@/features/msrr/MsrrPanel';
 import MsrrCanvas from '@/features/msrr/MsrrCanvas';
 import HardwarePanel from '@/features/hardware/HardwarePanel';
@@ -222,7 +225,7 @@ function BatteryChip() {
 
   if (servoOnlineCount === 0 || avgVoltage == null) return null;
 
-  const pct   = Math.max(0, Math.min(100, (avgVoltage - 10.8) / (12.6 - 10.8) * 100));
+  const pct   = batteryPct(avgVoltage);
   const color = pct < 10 ? '#ef4444' : pct < 30 ? '#f97316' : '#22c55e';
 
   return (
@@ -231,7 +234,7 @@ function BatteryChip() {
       <span style={{ fontSize: 13, fontWeight: 700, color, transition: 'color 0.4s', letterSpacing: '0.03em' }}>
         {pct.toFixed(0)}%
       </span>
-      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginLeft: 1 }}>
+      <span className="hdr-opt-2" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginLeft: 1 }}>
         {avgVoltage.toFixed(1)}V
       </span>
     </div>
@@ -251,7 +254,7 @@ function ServoCountChip() {
   }
   const label = Object.entries(typeCounts).map(([t, n]) => `${n} × ${t}`).join(' · ');
   return (
-    <div className="app-status-chip app-status-chip-mono" title="Actuator count by motor type">
+    <div className="app-status-chip app-status-chip-mono hdr-opt-2" title="Actuator count by motor type">
       {label}
     </div>
   );
@@ -273,7 +276,7 @@ function CurrentChip() {
     : `${Math.round(totalCurrentMA)} mA`;
 
   return (
-    <div className="app-status-chip" title={`Total current draw: ${totalCurrentMA.toFixed(0)} mA · orange>${orangeThresh}mA · red>${redThresh}mA`}>
+    <div className="app-status-chip hdr-opt-5" title={`Total current draw: ${totalCurrentMA.toFixed(0)} mA · orange>${orangeThresh}mA · red>${redThresh}mA`}>
       <svg width="11" height="17" viewBox="0 0 11 17" fill="none" style={{ flexShrink: 0 }}>
         <path d="M6.5 1L1 9.5H5.5L4.5 16L10 7.5H5.5L6.5 1Z" fill={color} />
       </svg>
@@ -293,7 +296,7 @@ function OvercurrentWarning() {
     .join('  ·  ');
 
   return (
-    <div style={{
+    <div className="app-overcurrent" style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '9px 18px',
       background: '#cc000022',
@@ -311,7 +314,7 @@ function OvercurrentWarning() {
       <span style={{ fontSize: 14, fontWeight: 900, color: '#cc0000', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
         Overcurrent
       </span>
-      <span style={{ fontSize: 14, fontWeight: 800, color: '#cc0000', letterSpacing: '0.03em' }}>
+      <span className="app-overcurrent-names" title={names} style={{ fontSize: 14, fontWeight: 800, color: '#cc0000', letterSpacing: '0.03em' }}>
         {names}
       </span>
     </div>
@@ -354,10 +357,10 @@ function AppHeader({ page, setPage }: any) {
   return (
     <header className="app-header">
       <div className="app-header-brand">
-        <span className="app-logo">TETROBOT<span className="app-logo-demo">(demo)</span></span>
+        <span className="app-logo">TETROBOT<span className="app-logo-demo hdr-opt-5">(demo)</span></span>
         <span className="app-logo-tagline">
-          <span className="app-logo-sub">modular robotics</span>
-          <span className="app-logo-byline">by nischay sai</span>
+          <span className="app-logo-sub hdr-opt-0">modular robotics</span>
+          <span className="app-logo-byline hdr-opt-1">by nischay sai</span>
         </span>
       </div>
 
@@ -372,9 +375,10 @@ function AppHeader({ page, setPage }: any) {
               className={`app-nav-tab ${page === t.id ? 'active' : ''} ${locked ? 'app-nav-tab--locked' : ''}`}
               onClick={() => handleNavClick(t.id)}
               title={locked ? 'Exit Edit Mode (Tab) to switch pages' : t.label}
+              aria-label={t.label}
             >
               {t.icon}
-              {t.label}
+              <span className="app-nav-label">{t.label}</span>
             </button>
           );
         })}
@@ -389,6 +393,7 @@ function AppHeader({ page, setPage }: any) {
 
       <div className="app-header-right">
         <OvercurrentWarning />
+        <VoiceControl />
         <BatteryChip />
         <CurrentChip />
         <div className="app-status-chip" title={`${boardName}: ${statusText}${hwSignal != null ? ` · signal ${hwSignal}%` : ''}`}>
@@ -398,12 +403,12 @@ function AppHeader({ page, setPage }: any) {
             boxShadow: `0 0 7px ${dotColor}`,
             transition: 'background 0.4s, box-shadow 0.4s',
           }} />
-          <span>{boardName}</span>
-          <span style={{ fontSize: 12, color: dotColor, marginLeft: 2, fontWeight: 700, transition: 'color 0.4s' }}>
+          <span className="app-board-name">{boardName}</span>
+          <span className="hdr-opt-4" style={{ fontSize: 12, color: dotColor, marginLeft: 2, fontWeight: 700, transition: 'color 0.4s' }}>
             · {statusText}
           </span>
           {hwSignal != null && (
-            <span style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 4 }}>{hwSignal}%</span>
+            <span className="hdr-opt-3" style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 4 }}>{hwSignal}%</span>
           )}
         </div>
         <ServoCountChip />
@@ -449,6 +454,9 @@ export default function App() {
     const id = setInterval(() => { autoSave(); }, 30_000);
     return () => clearInterval(id);
   }, []);
+
+  // Spoken feedback: module connect/drop, low battery, and (via ttlTry) every ESP-TTL button.
+  useEffect(() => { initVoiceAnnouncer(); }, []);
 
   // Quietly check for app updates a few seconds after launch (desktop only; only
   // prompts if a newer version is actually available).

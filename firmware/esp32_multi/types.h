@@ -10,7 +10,6 @@
 #include <Arduino.h>
 
 #define MAX_SERVOS  12
-#define MAG_COUNT   2
 #define CFG_VER     2
 
 // Persistent per-module configuration (stored as one blob in NVS).
@@ -25,12 +24,7 @@ struct Cfg {
   char     labels[MAX_SERVOS][14];
   int16_t  minDeg[MAX_SERVOS];
   int16_t  maxDeg[MAX_SERVOS];
-  uint8_t  magSafeHold;
-};
-
-struct MagnetState {
-  uint8_t       pct;        // last commanded power %
-  unsigned long lastCmdMs;  // when it was commanded (drives the safety taper)
+  uint8_t  reserved0;       // was the electromagnet safe-hold %; kept so the NVS blob size (and every saved setting) survives
 };
 
 struct ServoState {
@@ -56,6 +50,8 @@ struct ScanHit {
 };
 
 #include <SCServo.h>
+#include <hal/gpio_ll.h>
+#include <soc/gpio_struct.h>
 
 /**
  * SafeSMS — SMS_STS with the servo-bus reads made impossible to hang on.
@@ -82,13 +78,34 @@ struct ScanHit {
  */
 class SafeSMS : public SMS_STS {
  public:
+  uint32_t baud = 1000000;                 // kept in step with the bus by busBegin()
+  int8_t   pin  = -1;                      // the shared TX/RX pin, set by busBegin()
+
+  /* WHO DRIVES THE WIRE. One pin, two talkers. Open-drain all the time (ESP32 core 3.3.x's
+     default for a shared pin) lets the line rise too slowly at 1 Mbaud and our 1-bits arrive
+     as 0s, so servos never see a valid frame. Push-pull all the time fixes that but keeps
+     the pin forcing HIGH while a servo replies, and the servo's 0-bits come back as 1s (id 8
+     read back as 09, checksums wrong). So: push-pull exactly while we transmit, released
+     (open-drain, i.e. high-impedance when idle-high) the moment the last bit has left. */
+  void txDrive(bool on) {
+    if (pin < 0) return;
+    if (on) gpio_ll_od_disable(&GPIO, (uint32_t)pin);
+    else    gpio_ll_od_enable(&GPIO, (uint32_t)pin);
+  }
+
   int readSCS(unsigned char* nDat, int nLen) override {
+    int size = 0;
+    // Bytes the echo filter looked at but that turned out to be the servo's reply come first.
+    while (size < nLen && pbHead < pbLen) {
+      if (nDat) nDat[size] = pb[pbHead];
+      pbHead++; size++;
+    }
+    if (size >= nLen) return size;
     const unsigned long start = millis();
     // Generous next to any real reply (10 bytes at 38400 baud is under 3ms) while still
     // bounding the pathological case.
     const unsigned long hardCap = IOTimeOut * 2 + 50;
     unsigned long tBegin = start;
-    int size = 0;
     while (true) {
       const int c = pSerial->read();
       if (c != -1) {
@@ -104,20 +121,87 @@ class SafeSMS : public SMS_STS {
   }
 
   void rFlushSCS() override {
+    txLen = 0; pbLen = pbHead = 0;         // every transaction starts here
+    txDrive(false);
     const unsigned long start = millis();
     // Same hazard: "read until empty" never empties on a noisy floating line.
     while (pSerial->read() != -1) {
       if (millis() - start > 20) break;
     }
   }
+
+  /* ECHO. TX and RX share one pin, so the board can hear its own request, and SCServo's
+     wFlushSCS() is empty — the echo is then parsed as the servo's reply. A ping's echo even
+     carries a valid checksum, so a scan "found" every id it asked about, and a position read
+     returned 568 = 0x0238: the "read reg 56, 2 bytes" request bouncing back.
+
+     Whether the echo shows up is not something to guess once and trust: a count-based
+     discard that assumed an echo swallowed the servo's real reply whenever there wasn't one.
+     So the filter matches CONTENT. After TX completes it reads incoming bytes while they equal
+     what was just sent; only a complete byte-for-byte copy is dropped. Anything else — a reply
+     that shares the FF FF id header with the request — is handed back to readSCS untouched. */
+  int writeSCS(unsigned char* nDat, int nLen) override {
+    if (!nDat) return 0;
+    for (int i = 0; i < nLen; i++) remember(nDat[i]);
+    return SMS_STS::writeSCS(nDat, nLen);
+  }
+  int writeSCS(unsigned char bDat) override {
+    remember(bDat);
+    return SMS_STS::writeSCS(bDat);
+  }
+
+  void wFlushSCS() override {
+    if (txLen == 0) return;
+    const int n = txLen > TXMAX ? TXMAX : txLen;
+    const bool whole = txLen <= TXMAX;
+    txLen = 0;
+    pSerial->flush();                      // returns once the last bit has left the UART
+    txDrive(false);                        // and hand the wire to whichever servo answers
+    // Wait until the echo is complete or provably absent — never on a fixed short timer. The
+    // echo reaches the RX buffer late whenever Wi-Fi holds the CPU; a 330us window gave up
+    // half-way, the rest of the echo was parsed as the reply (a request and its reply share
+    // the same checksum), and telemetry showed 3776.5 mA (= raw 0x0245, "read reg 0x45") and
+    // positions of 568 (= 0x0238, "read reg 0x38"). Without an echo the servo's reply arrives
+    // and mismatches within a byte or two, so the long ceiling only costs time when nothing
+    // at all comes back.
+    const unsigned long window = 5000UL + (unsigned long)n * 20000000UL / baud;
+    const unsigned long start = micros();
+    pbLen = pbHead = 0;
+    while (pbLen < n && micros() - start < window) {
+      const int c = pSerial->read();
+      if (c == -1) continue;
+      pb[pbLen++] = (uint8_t)c;
+      // An echo can lose 1-bits on a slow line (FF comes back FE) but never gains any, so
+      // "no bit we didn't send" is the test, not exact equality.
+      if ((uint8_t)c & ~tx[pbLen - 1]) return;     // not our echo: keep it all for readSCS
+    }
+    // Everything seen matched what we sent: that is our echo (complete, or cut off by the
+    // ceiling) — drop it. Only a frame too long to verify is handed back.
+    if (whole) pbLen = 0;
+  }
+
+  /** Bracket for frames SCServo sends without its own flushes (syncReadPacketTx). */
+  void beginTx() { rFlushSCS(); }
+  void endTx()   { wFlushSCS(); }
+
+ private:
+  static constexpr int TXMAX = 96;
+  uint8_t tx[TXMAX]; int txLen = 0;          // bytes sent since the last flush
+  uint8_t pb[TXMAX]; int pbLen = 0, pbHead = 0;  // pushback for readSCS
+  void remember(uint8_t b) {
+    if (txLen == 0) txDrive(true);         // first byte of a frame: take the wire
+    if (txLen < TXMAX) tx[txLen] = b;
+    txLen++;
+  }
 };
 
 #define MAX_FRAMES 60
 
-/** One pose in an uploaded animation: where to go, and the time budget to get there. */
+/** One pose in an uploaded animation: where to go, and how long the move should take. */
 struct AnimFrame {
-  uint16_t timeMs;
-  uint8_t  speed;                  // 1..10 cap for this frame
+  uint16_t timeMs;                 // wanted move time; 0 = AUTO (as fast as the speed cap allows)
+  uint16_t holdMs;                 // pause after ARRIVAL before the next frame starts
+  uint8_t  speed;                  // 1..10 - a maximum velocity, never a target
   uint8_t  n;                      // joints in this frame
   uint8_t  ids[MAX_SERVOS];
   int16_t  deg10[MAX_SERVOS];      // tenths of a degree

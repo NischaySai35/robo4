@@ -1,10 +1,9 @@
 /**
  * espNodesStore — the registry of module ESP32-C3 nodes. This laptop is the master;
  * each MODULE has its own ESP (mod1.local, mod2.local, …) carrying that module's
- * servos (local ids 1..7) AND its 2 end-lock magnets (DRV8833). Both the servo layer
- * (servoLink / ServoController) and the magnet layer (magnetEngine) route through here.
+ * servos. The servo layer (servoLink / ServoController) routes through here.
  *
- * A node is bound to a module via `componentId`. Servo/magnet ids are LOCAL to each
+ * A node is bound to a module via `componentId`. Servo ids are LOCAL to each
  * ESP, so the same id 1..7 exists on every board — routing is (module → node → id).
  */
 import { create } from 'zustand';
@@ -16,7 +15,7 @@ export interface EspNode {
   componentId: string | null;   // which module (component) this board drives
   connected: boolean;
   latencyMs: number | null;
-  /** Last /api/telemetry JSON (servos[] + magnets[] + wifi). Null until first reply. */
+  /** Last /api/telemetry JSON (servos[] + wifi). Null until first reply. */
   telemetry: unknown | null;
 }
 

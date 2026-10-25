@@ -19,7 +19,6 @@ import { computeFK } from '@/kinematics/modelFK';
 import { bridge } from '@/bridge/cameraBridge';
 import { withJointValues } from '@/control/motionRuntime';
 import { useAutoGround } from '@/features/rigid/useAutoGround';
-import MagnetControls from '@/features/magnets/MagnetControls';
 
 // ── Global Rotate helper ──────────────────────────────────────────────────────
 function rotateVec3AroundAxis(v: THREE.Vector3, axis: 'x' | 'y' | 'z', angleDeg: number) {
@@ -852,20 +851,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      {/* ── Magnets (electromagnet locks) ── */}
-      <div className="alp-section">
-        {secTitle('magnets', 'MAGNETS')}
-        {!collapsed.has('magnets') && (
-          <>
-            <div className="alp-snap-hint">
-              End-lock electromagnets. AUTO energizes a magnet when its connector locks
-              (100% grab → 40% hold). Switch to ON/OFF for manual control.
-            </div>
-            <MagnetControls variant="compact" />
-          </>
         )}
       </div>
 

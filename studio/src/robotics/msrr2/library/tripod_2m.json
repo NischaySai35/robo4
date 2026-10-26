@@ -1,0 +1,131 @@
+{
+ "id": "tripod_2m",
+ "name": "Tripod (seat)",
+ "nModules": 2,
+ "topology": [
+  {
+   "a": {
+    "module": "M2",
+    "port": "A"
+   },
+   "b": {
+    "module": "M1",
+    "port": "S1B"
+   },
+   "slot": 1,
+   "locked": true
+  }
+ ],
+ "pose": {
+  "M1": {
+   "T1": 263.7425300388437,
+   "B1": 128.9135491954058,
+   "B2": 169.08567983449214,
+   "T2": 349.484443847894,
+   "B3": 266.1560869279534,
+   "B4": 262.00398886991735,
+   "T3": 180.00732784435453
+  },
+  "M2": {
+   "T1": 359.9534409617024,
+   "B1": 231.74823960142663,
+   "B2": 262.31238311105307,
+   "T2": 131.43028148385775,
+   "B3": 263.72049420699364,
+   "B4": 95.02785498549427,
+   "T3": 180.20218444206273
+  }
+ },
+ "baseFrame": {
+  "worldPose": {
+   "p": [
+    0,
+    0.3,
+    0
+   ],
+   "q": [
+    -0.12178530871043926,
+    0.989312546896838,
+    0.07958048156737167,
+    0.009796432427151254
+   ]
+  },
+  "dropToFloor": true
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 5,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 98,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 307,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 215,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 57,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 34.8,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 132,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 1.2,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 5.7,
+  "cogMarginMm": 68,
+  "minJointMarginDeg": 0
+ },
+ "source": "seed",
+ "spec": {
+  "stands_upright": {
+   "is": true
+  },
+  "ground_contacts": {
+   "min": 3
+  },
+  "height_mm": {
+   "min": 200
+  },
+  "flat_top_area_cm2": {
+   "min": 30
+  },
+  "holds_load_kg": {
+   "min": 0.2
+  }
+ },
+ "notes": "static check: PASS · MuJoCo hold: PASS (drift 0.3 mm)",
+ "sim": {
+  "ok": true,
+  "driftMm": 0.3,
+  "maxTorquePct": 21.5,
+  "reasons": []
+ }
+}

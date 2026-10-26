@@ -10,7 +10,7 @@
  *          sliding/pivoting move, every connectivity check, every stability check
  *          assumes it.
  *
- *   mod2 — MODULINK. A bendable 6-rod chain (modulink.ts) that spans about four
+ *   mod2 — TETROBOT try8. A bendable 7-joint chain (modulink.ts) that spans about four
  *          cubes fully extended and folds down to one. How many cubes it claims
  *          is computed from its joint pose (occupancy.ts), not declared.
  *
@@ -27,9 +27,9 @@
  * actually correct for, and the UI surfaces that rather than hiding it.
  */
 import {
-  MODULE_CHAIN_LENGTH, RODS_PER_MODULE, ROD_ORDER, BIG_ROD_INDEX,
+  MODULE_CHAIN_LENGTH, RODS_PER_MODULE, ROD_ORDER,
   HEMISPHERE_RADIUS, SIDE_CONNECTOR_RADIAL_OFFSET,
-  ADJACENT_SIDE_SEPARATION, ADJACENT_SIDE_CLEARANCE, REQUIRED_DOME_CLEARANCE,
+  SPINE_SIDE_SEPARATION, REQUIRED_DOME_CLEARANCE, JOINT_NAMES,
 } from './modulink';
 import {
   type PoseSummary, poseLibrary, cubeRange, MODULINK_CUBE_SIZE, DEFAULT_POSE_ID,
@@ -78,7 +78,7 @@ const MOD1: ModuleTheme = {
     id: 'rigid',
     label: 'Rigid',
     hint: 'A cube module has no internal pose — it fills its cube and that is all.',
-    angles: [0, 0, 0, 0, 0, 0],
+    angles: [0, 0, 0, 0, 0, 0, 0],
     cubes: 1,
     span: 1,
     sweptCells: [[0, 0, 0]],
@@ -96,13 +96,13 @@ function buildMod2(): ModuleTheme {
   const [min, max] = cubeRange();
   return {
     id: 'mod2',
-    label: 'mod2 — MODULINK',
-    summary: `Bendable 6-rod chain, worth ${min}–${max} cubes depending on pose`,
+    label: 'mod2 — TETROBOT try8',
+    summary: `Bendable 7-joint chain, worth ${min}–${max} cubes depending on pose`,
     detail:
-      `A serial chain of ${RODS_PER_MODULE} rods in the fixed alphabet ${ROD_ORDER.join('·')}, `
-      + `with rod ${BIG_ROD_INDEX} the double-length "big rod" spine. Connectors A and B sit at the `
-      + 'chain ends and four more ride the big rod\'s midpoint, giving six lock faces — the six '
-      + `faces of a cube. Fully extended the chain reaches across ${max} cubes; bending spends `
+      `A serial chain of ${RODS_PER_MODULE} joints in the fixed order ${JOINT_NAMES.join('·')} `
+      + `(${ROD_ORDER.join('·')}), with a spine between each pair of bends. Connectors A and B sit at the `
+      + 'chain ends and two side receivers ride each spine, on opposite faces — six connectors in all. '
+      + `Fully extended the chain reaches across ${max} cubes; bending spends `
       + `reach on turning instead of travelling, so a folded module is worth as few as ${min}. `
       + 'Those counts come from running the real kinematics, not from a constant.',
     singleCube: false,
@@ -112,11 +112,11 @@ function buildMod2(): ModuleTheme {
     plannerIsExact: false,
     dof: RODS_PER_MODULE,
     constraints: [
-      `All four side connectors may carry a weld at once. Two 90° apart sit `
-        + `${ADJACENT_SIDE_SEPARATION.toFixed(3)} apart against a ${REQUIRED_DOME_CLEARANCE.toFixed(3)} `
-        + `requirement — real clearance (${ADJACENT_SIDE_CLEARANCE.toFixed(4)}), just a thin one.`,
-      `Hemisphere radius ${HEMISPHERE_RADIUS}, side connector radial offset ${SIDE_CONNECTOR_RADIAL_OFFSET}.`,
-      'TWIST joints roll 0–360° about the chain axis; BEND joints pitch ±90°.',
+      `All four side receivers (two per spine, on opposite faces) may carry a weld at once. The two on one `
+        + `spine sit ${SPINE_SIDE_SEPARATION.toFixed(3)} apart, back to back — closer than the `
+        + `${REQUIRED_DOME_CLEARANCE.toFixed(3)} two pads need, which is fine on opposite faces of one body.`,
+      `Connector pad radius ${HEMISPHERE_RADIUS.toFixed(3)}, side receiver offset from the spine axis ${SIDE_CONNECTOR_RADIAL_OFFSET.toFixed(3)}.`,
+      'TWIST joints (T1, T2, T3) turn ±180° about the chain axis; BEND joints (B1..B4) pitch ±90°; the end locks ±45°.',
       `Straight A→B length is ${MODULE_CHAIN_LENGTH.toFixed(3)}, so one cube is ${MODULINK_CUBE_SIZE.toFixed(3)}.`,
     ],
   };

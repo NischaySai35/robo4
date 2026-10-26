@@ -13,11 +13,13 @@ import {
   type TtlTab, type TtlServo,
 } from '@/state/espTtlStore';
 import AnimationTab from './AnimationTab';
+import WalkTab from './WalkTab';
 import './EspTtl.css';
 
 const TABS: { id: TtlTab; label: string }[] = [
   { id: 'control',   label: 'Control' },
   { id: 'animation', label: 'Animation' },
+  { id: 'walk',      label: 'Walk (brain)' },
   { id: 'tools',     label: 'Servo tools' },
   { id: 'config',    label: 'Config' },
   { id: 'wifi',      label: 'Wi-Fi' },
@@ -72,6 +74,7 @@ export default function EspTtlPage() {
       <div className="ettl-body">
         {tab === 'control'   && <ControlTab />}
         {tab === 'animation' && <AnimationTab />}
+        {tab === 'walk'      && <WalkTab />}
         {tab === 'tools'     && <ToolsTab />}
         {tab === 'config'    && <ConfigTab />}
         {tab === 'wifi'      && <WifiTab />}

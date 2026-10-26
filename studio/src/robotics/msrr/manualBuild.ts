@@ -32,7 +32,7 @@
 import {
   type ModuleAngles, type ConnectorEnd, type Vec3, type Quat, type Pose,
   connectorPoses, baseQuatFor, composePoses, sampleCenterline,
-  SIDE_ENDS, BEND_LIMIT,
+  SIDE_ENDS, BEND_LIMIT, TWIST_LIMIT, JOINT_NAMES, ROD_ORDER, rotateVec, IDENTITY, isSideEnd,
 } from './modulink';
 import { MODULINK_CUBE_SIZE } from './occupancy';
 import { type LatticePose } from './chainMoves';
@@ -45,27 +45,23 @@ const S = 1 / MODULINK_CUBE_SIZE;
 /** Every connector a module offers, in the order the UI should list them. */
 export const ALL_ENDS: ConnectorEnd[] = ['A', 'B', ...SIDE_ENDS];
 
-/** The six joints, in chain order, with what each one is allowed to do. */
-export const JOINTS: { index: number; label: string; kind: 'twist' | 'bend' }[] = [
-  { index: 0, label: 'twist 0', kind: 'twist' },
-  { index: 1, label: 'bend 1', kind: 'bend' },
-  { index: 2, label: 'bend 2', kind: 'bend' },
-  { index: 3, label: 'twist 3 (big rod)', kind: 'twist' },
-  { index: 4, label: 'bend 4', kind: 'bend' },
-  { index: 5, label: 'twist 5', kind: 'twist' },
-];
+/** The seven joints, in chain order (T1 B1 B2 T2 B3 B4 T3), with what each may do. */
+export const JOINTS: { index: number; label: string; kind: 'twist' | 'bend' }[] =
+  JOINT_NAMES.map((label, index) => ({ index, label, kind: ROD_ORDER[index] }));
 
 /**
  * One hand-placed module.
  *
  * `attach` is null for the first module of a tree, which sits where it is put;
- * every other module hangs off a named connector of an earlier one, which is
- * what makes the structure a real weld tree rather than a pile of poses.
+ * every other module hangs off a named connector (`end`) of an earlier one, by
+ * one of its OWN connectors (`ownEnd`, default A), which is what makes the
+ * structure a real weld tree rather than a pile of poses. Any pairing is allowed:
+ * end-end, end-side, side-end and side-side.
  */
 export interface ManualModule {
   id: string;
   angles: ModuleAngles;
-  attach: { parentId: string; end: ConnectorEnd; roll: 0 | 1 | 2 | 3 } | null;
+  attach: { parentId: string; end: ConnectorEnd; roll: 0 | 1 | 2 | 3; ownEnd?: ConnectorEnd } | null;
   /** where the first module of a tree sits, ignored for the rest */
   rootCell: Cell;
   /** which way the first module's connector A faces, ignored for the rest */
@@ -79,7 +75,7 @@ export interface ManualBuild {
 
 export const emptyManual = (): ManualBuild => ({ modules: [], nextId: 0 });
 
-export const STRAIGHT: ModuleAngles = [0, 0, 0, 0, 0, 0];
+export const STRAIGHT: ModuleAngles = [0, 0, 0, 0, 0, 0, 0];
 
 // ── small quaternion helpers ──────────────────────────────────────────────────
 //
@@ -125,10 +121,11 @@ const quatMul = (a: Quat, b: Quat): Quat => composePoses(
   { position: [0, 0, 0], quaternion: b },
 ).quaternion;
 
-/** A quarter-turn roll about the module's own axis — what a lock allows. */
-const rollQuat = (steps: 0 | 1 | 2 | 3): Quat => {
+/** A quarter-turn roll about a connector's own axis (`axis`, a unit vector) — what a lock allows. */
+const rollQuat = (steps: 0 | 1 | 2 | 3, axis: Vec3 = [0, 0, 1]): Quat => {
   const h = (steps * Math.PI) / 4; // half of steps * 90 degrees
-  return [0, 0, Math.sin(h), Math.cos(h)];
+  const s = Math.sin(h);
+  return [axis[0] * s, axis[1] * s, axis[2] * s, Math.cos(h)];
 };
 
 // ── resolving the tree into world poses ───────────────────────────────────────
@@ -180,22 +177,31 @@ export function placeManual(build: ManualBuild): PlacedManual[] {
 
       // A module's BODY runs toward its own local -Z while connector A, at the
       // origin, faces +Z — the chain points away from the connector that
-      // anchors it (see the reach table's own note, and connectorPoses). So A's
-      // outward normal is +Z rotated by the module's orientation, and to make
-      // it face back at the parent's connector, +Z must be aimed at the
-      // OPPOSITE of that connector's normal. Aiming it along the normal instead
+      // anchors it (see the reach table's own note, and connectorPoses). So the
+      // child's own connector's outward normal, rotated by the module's
+      // orientation, has to face back at the parent's connector: aimed at the
+      // OPPOSITE of the parent's normal. Aiming it along the normal instead
       // is the obvious-looking reading and it is wrong in a way that draws
       // perfectly plausibly: every child comes out folded back over its parent,
       // welded to it by two domes pointing the same way.
-      const aim = quatFromTo([0, 0, 1], [-conn.normal[0], -conn.normal[1], -conn.normal[2]]);
+      //
+      // The child may hang by ANY of its connectors, not only A. Its own
+      // connector then has to land on the parent's point, so the module's origin
+      // is placed at (parent point) - R * (own connector's offset from the origin).
+      const ownEnd = m.attach.ownEnd ?? 'A';
+      const own = connectorPoses(m.angles, IDENTITY).find((c) => c.end === ownEnd);
+      if (!own) return null;
+      const aim = quatFromTo(own.normal, [-conn.normal[0], -conn.normal[1], -conn.normal[2]]);
+      const q = quatMul(aim, rollQuat(m.attach.roll, own.normal));
+      const off = rotateVec(q, own.position);
       here = {
         module: m,
         anchorPos: [
-          p.anchorPos[0] + conn.position[0] * S,
-          p.anchorPos[1] + conn.position[1] * S,
-          p.anchorPos[2] + conn.position[2] * S,
+          p.anchorPos[0] + conn.position[0] * S - off[0] * S,
+          p.anchorPos[1] + conn.position[1] * S - off[1] * S,
+          p.anchorPos[2] + conn.position[2] * S - off[2] * S,
         ],
-        quaternion: quatMul(aim, rollQuat(m.attach.roll)),
+        quaternion: q,
       };
     }
     done.set(m.id, here);
@@ -259,8 +265,7 @@ export function manualToFitted(build: ManualBuild): FittedModule[] {
       cells: [[0, 0, 0]],
       reach: 4,
       snapError: 0,
-      midOffset: [0, 0, 0],
-      sideDirs: [],
+      sides: [],
       anchorEnd: 'A',
     };
 
@@ -297,6 +302,7 @@ export function addRoot(build: ManualBuild, cell: Cell = [0, 0, 0], dir: Cell = 
 
 export function attachTo(
   build: ManualBuild, parentId: string, end: ConnectorEnd, roll: 0 | 1 | 2 | 3 = 0,
+  ownEnd: ConnectorEnd = 'A',
 ): ManualBuild {
   const id = `H${build.nextId}`;
   return {
@@ -304,7 +310,7 @@ export function attachTo(
     modules: [...build.modules, {
       id,
       angles: [...STRAIGHT] as ModuleAngles,
-      attach: { parentId, end, roll },
+      attach: { parentId, end, roll, ...(ownEnd === 'A' ? {} : { ownEnd }) },
       rootCell: [0, 0, 0],
       rootDir: [0, 0, 1],
     }],
@@ -375,13 +381,26 @@ export function checkManual(build: ManualBuild): ManualNote[] {
   for (const p of placed) {
     for (const [i, a] of p.module.angles.entries()) {
       const joint = JOINTS[i];
-      if (joint.kind !== 'bend') continue;
-      if (a < BEND_LIMIT[0] - 1e-9 || a > BEND_LIMIT[1] + 1e-9) {
+      const [lo, hi] = joint.kind === 'bend' ? BEND_LIMIT : TWIST_LIMIT;
+      if (a < lo - 1e-9 || a > hi + 1e-9) {
         notes.push({
           moduleId: p.module.id,
-          text: `${joint.label} is ${Math.round((a * 180) / Math.PI)}°, past the joint's ±90° limit`,
+          text: `${joint.label} is ${Math.round((a * 180) / Math.PI)}°, past the joint's `
+            + `±${Math.round((hi * 180) / Math.PI)}° limit`,
         });
       }
+    }
+  }
+
+  // A weld between two side receivers is not a weld at all: only the ENDS carry a
+  // lock rotor. Drawn as asked (this file never refuses), but flagged.
+  for (const p of placed) {
+    const at = p.module.attach;
+    if (at && isSideEnd(at.end) && isSideEnd(at.ownEnd ?? 'A')) {
+      notes.push({
+        moduleId: p.module.id,
+        text: `${at.ownEnd} on ${at.parentId}.${at.end} is side-to-side: two receivers cannot lock (only ends have a lock rotor)`,
+      });
     }
   }
 

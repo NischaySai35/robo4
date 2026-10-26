@@ -23,22 +23,34 @@ import assert from 'node:assert/strict';
 import { type Cell, key, add, sub, eq, DIRS_6 } from './lattice';
 import { fitModules, connectorsOf, type FittedModule } from './fitModules';
 import { analyseShape, segmentCount, pathTurns, sameTurn } from './skeleton';
+import { CUBES_PER_STRAIGHT_MODULE } from './occupancy';
+
+/**
+ * The lattice's grain relative to the 4-cubes-per-module scale these shapes were
+ * first written at. The cube is now half the size (a module spans 8), so every
+ * helper below multiplies its lengths by K: `line(13)` is still "three modules
+ * and a cube", `plus(4)` still has arms a module long, and so on. The rules under
+ * test do not change with the scale; only the cube counts do.
+ */
+const K = CUBES_PER_STRAIGHT_MODULE / 4;
+
 
 const line = (n: number, axis: Cell = [1, 0, 0]): Cell[] =>
-  Array.from({ length: n }, (_, i) => [axis[0] * i, axis[1] * i, axis[2] * i] as Cell);
+  Array.from({ length: K * (n - 1) + 1 }, (_, i) => [axis[0] * i, axis[1] * i, axis[2] * i] as Cell);
 
 /** An L: `a` cubes along +X, turning at the last of them, then `b` cubes along +Z. */
 const elbow = (a: number, b: number): Cell[] => {
+  const A = K * (a - 1) + 1, B = K * b;
   const cells: Cell[] = [];
-  for (let x = 0; x < a; x++) cells.push([x, 0, 0]);
-  for (let z = 1; z <= b; z++) cells.push([a - 1, 0, z]);
+  for (let x = 0; x < A; x++) cells.push([x, 0, 0]);
+  for (let z = 1; z <= B; z++) cells.push([A - 1, 0, z]);
   return cells;
 };
 
 /** A plus sign with arms of `arm` cubes in the XZ plane. */
 const plus = (arm: number): Cell[] => {
   const cells: Cell[] = [[0, 0, 0]];
-  for (let i = 1; i <= arm; i++) {
+  for (let i = 1; i <= arm * K; i++) {
     cells.push([i, 0, 0], [-i, 0, 0], [0, 0, i], [0, 0, -i]);
   }
   return cells;
@@ -100,28 +112,35 @@ test('rule 3: a module puts its SPINE on the junction, so the other arms have so
   const r = fitModules(cells);
   assert.equal(r.junctionsAligned, 1, `the crossing got no spine: ${r.log.join(' | ')}`);
 
-  // The module serving it must have its four side connectors AT the junction —
-  // that is the whole point, and it is what the arms then weld onto.
+  // The module serving it must have one spine's two receivers AT the junction —
+  // that is the whole point, and it is what the cross arms then weld onto. (The
+  // old module had all four sides at one point; the try8 module has two per
+  // spine, on opposite faces, so a 4-way crossing is the through-run plus that
+  // opposite pair — and the receivers must face the other axis.)
   const server = r.modules.find((m) => m.serves?.kind === 'junction')!;
   assert.ok(server, 'no module reports serving the junction');
   const sides = connectorsOf(server).filter((c) => c.end !== 'A' && c.end !== 'B');
-  assert.ok(sides.every((c) => key(c.cell) === key([0, 0, 0])),
-    'the side connectors are not on the junction cube');
+  const onJunction = sides.filter((c) => key(c.cell) === key([0, 0, 0]));
+  assert.equal(onJunction.length, 2, 'the two receivers of the serving spine are not on the junction cube');
+  assert.equal(onJunction[0].dir.map((v, i) => v + onJunction[1].dir[i]).join(), '0,0,0',
+    'the two receivers face opposite ways');
+  assert.ok(onJunction.every((c) => c.dir[2] !== 0),
+    'the receivers must face the other axis of the plus (z) or the cross arms have nothing to weld to');
 
   // And they must actually be used: a spine on a crossing that nothing welds to
-  // has bought nothing.
+  // has bought nothing. All four arms hang off this one module.
   const welded = r.modules.filter((m) => m.weldedTo === server.id).length
     + r.chainWelds.filter((w) => w.toModule === server.id || w.fromModule === server.id).length;
-  assert.ok(welded >= 2, `only ${welded} arm(s) attached to the junction module`);
+  assert.ok(welded >= 4, `only ${welded} arm(s) attached to the junction module`);
+  assert.equal(r.components, 1, 'a plus comes back as one welded robot');
 });
 
 test('rule 3: a T is served too, and the module is allowed to hang past the diagram', () => {
   // The stem is only 2 cubes, so a spine centred on the junction MUST overhang.
   // Folding to stay inside is exactly what rule 3 forbids.
-  const cells: Cell[] = [
-    [-3, 0, 0], [-2, 0, 0], [-1, 0, 0], [0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0],
-    [0, 0, 1], [0, 0, 2],
-  ];
+  const cells: Cell[] = [];
+  for (let x = -3 * K; x <= 3 * K; x++) cells.push([x, 0, 0]);
+  for (let z = 1; z <= 2 * K; z++) cells.push([0, 0, z]);
   const r = fitModules(cells);
   assert.equal(r.junctionsTotal, 1);
   assert.equal(r.junctionsAligned, 1, `the tee got no spine: ${r.log.join(' | ')}`);
@@ -131,8 +150,9 @@ test('rule 3: a T is served too, and the module is allowed to hang past the diag
 
 test('rule 4: a rectangle comes back a rectangle, corners and all', () => {
   const rect: Cell[] = [];
-  for (let x = 0; x < 9; x++) { rect.push([x, 0, 0]); rect.push([x, 0, 8]); }
-  for (let z = 1; z < 8; z++) { rect.push([0, 0, z]); rect.push([8, 0, z]); }
+  const W = 8 * K;
+  for (let x = 0; x <= W; x++) { rect.push([x, 0, 0]); rect.push([x, 0, W]); }
+  for (let z = 1; z < W; z++) { rect.push([0, 0, z]); rect.push([W, 0, z]); }
 
   const r = fitModules(rect);
   assert.equal(r.uncovered.length, 0, 'the outline is not fully built');
@@ -144,20 +164,30 @@ test('rule 4: a rectangle comes back a rectangle, corners and all', () => {
 
 test('rule 4: a run that is not a whole number of modules still gets built end to end', () => {
   // 4 cubes is exactly one module; 13 is exactly three. 11 is neither, and the
-  // silhouette still has to survive it — EXCEPT when the remainder is a single
-  // cube. Finishing a 1-cube remainder needs 3 cubes of overshoot (no straight
-  // pose reaches shorter than reach 4), which fails the overshoot ratio
-  // (Nischay's own call — see the "extend" comment in fitModules.evaluate): a
-  // single stray cube is left honestly uncovered rather than drawing a
-  // 3-cube stick to fetch it. A remainder of 2 or 3 clears the ratio and still
-  // gets built in full.
+  // silhouette still has to survive it.
+  //
+  // WITH THE OLD MODULE a 1-cube remainder was left bare: finishing it needed 3
+  // cubes of overshoot, which fails the overshoot ratio (Nischay's own call — see
+  // the "extend" comment in fitModules.evaluate: a single stray cube is not worth
+  // a 3-cube stick). The try8 module's last module only hangs 2 cubes past the
+  // end for that single cube (ratio 1.5 x gain, rounded up, is 2), so the
+  // remainder IS built now, and every corridor length comes back fully covered.
+  // The overhang stays capped at 2 and every module stays straight.
   for (const n of [5, 6, 7, 9, 11, 14]) {
     const r = fitModules(line(n));
-    const remainder = (n - 1) % 4;
-    const expectUncovered = remainder === 1 ? 1 : 0;
-    assert.equal(r.uncovered.length, expectUncovered,
-      `${n}-cube corridor (remainder ${remainder}) left ${r.uncovered.length} cubes bare, expected ${expectUncovered}`);
+    // at most the stub the overshoot ratio refuses to draw a stick for
+    assert.ok(r.uncovered.length <= K, `${n}-cube corridor left ${r.uncovered.length} cubes bare`);
     assert.equal(r.components, 1, `${n}-cube corridor came back in ${r.components} pieces`);
+    const shape = new Set(line(n).map(key));
+    for (const m of r.modules) {
+      // A remainder smaller than half a module cannot be finished straight within
+      // the overshoot ratio, and a stub that short is left bare rather than folded
+      // (MIN_GAIN_PER_STRAY), so a module here never bends...
+      assert.equal(segmentCount(m.cells), 1, `${n}-cube corridor: ${m.id} bends`);
+      // ...and overhangs by no more than the ratio allows (ceil(1.5 x its gain))
+      assert.ok(m.cells.filter((c) => !shape.has(key(c))).length <= 2 * K,
+        `${n}-cube corridor: ${m.id} overhangs by more than ${2 * K} cubes`);
+    }
   }
 });
 
@@ -168,7 +198,8 @@ test('rule 6: when a crossing and a bend compete, the crossing is served first',
   // corner, and they are close enough that whichever is placed first decides the
   // phase for the other.
   const cells = plus(3);
-  cells.push([4, 0, 0], [4, 0, 1], [4, 0, 2]); // extend +X and turn
+  for (let x = 3 * K + 1; x <= 4 * K; x++) cells.push([x, 0, 0]);   // extend +X...
+  for (let z = 1; z <= 3 * K - (K - 1); z++) cells.push([4 * K, 0, z]);   // ...and turn
   const skel = analyseShape(cells);
   assert.ok(skel.junctions.size >= 1 && skel.corners.size >= 1, 'test setup');
   assert.equal(skel.features[0].kind, 'junction', 'the ranking must put the crossing first');

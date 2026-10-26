@@ -1,0 +1,81 @@
+{
+ "id": "straight_on_floor_1m",
+ "name": "Straight on the floor",
+ "nModules": 1,
+ "topology": [],
+ "pose": {
+  "M1": {
+   "T1": 180,
+   "B1": 180,
+   "B2": 180,
+   "T2": 180,
+   "B3": 180,
+   "B4": 180,
+   "T3": 180
+  }
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 2,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 39,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 78,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 471,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 26.7,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 5,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 21.5,
+  "cogMarginMm": 19.6,
+  "minJointMarginDeg": 90
+ },
+ "source": "seed",
+ "spec": {
+  "height_mm": {
+   "max": 100
+  }
+ },
+ "notes": "static check: PASS · MuJoCo hold: PASS (drift 0 mm)",
+ "sim": {
+  "ok": true,
+  "driftMm": 0,
+  "maxTorquePct": 3.1,
+  "reasons": []
+ }
+}

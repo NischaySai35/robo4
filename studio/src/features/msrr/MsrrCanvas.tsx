@@ -30,8 +30,11 @@ import { useMsrrStore, configAtStep } from '@/state/msrrStore';
 import { type Cell, key, cellsOf, add } from '@/robotics/msrr/lattice';
 import { poseAt, cellPose, orientationAfter, IDENTITY_QUAT } from '@/robotics/msrr/executor';
 import { structureAfter } from '@/robotics/msrr/transform';
-import { buildGeometry, moduleGeometry, tweenGeometry } from './moduleGeometry';
+import { buildGeometry, moduleGeometry, moduleBodies, tweenGeometry } from './moduleGeometry';
+import { moduleMeshGeometries, disposeModuleMeshes } from './moduleMeshes';
 import { manualToFitted } from '@/robotics/msrr/manualBuild';
+import { useV2Store } from '@/state/msrrV2Store';
+import { CUBES_PER_METRE } from '@/features/msrr/moduleMeshes';
 
 const CELL = 1; // the sandbox draws in unit lattice space; metres are the mirror's job
 
@@ -39,6 +42,7 @@ export default function MsrrCanvas() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<any>(null);
   const theme = useThemeStore((s) => s.theme);
+  const v2Mode = useV2Store((s) => s.mode) === 'v2';
 
   // ── scene setup: once ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -162,6 +166,9 @@ export default function MsrrCanvas() {
     const domeGeo = mergeGeometries([domeShell, domeCap], false) ?? domeShell;
     const DOME_UP = new THREE.Vector3(0, 1, 0);
     const partMats = {
+      // the real try8 parts, coloured like the Editor shows them
+      pla: new THREE.MeshStandardMaterial({ color: 0xf1f1ee, roughness: 0.55, metalness: 0.05 }),
+      spine: new THREE.MeshStandardMaterial({ color: 0x8a909c, roughness: 0.5, metalness: 0.25 }),
       rod: new THREE.MeshStandardMaterial({ color: 0x9aa3b2, roughness: 0.5, metalness: 0.35 }),
       bigRod: new THREE.MeshStandardMaterial({ color: 0x7f8899, roughness: 0.45, metalness: 0.4 }),
       twist: new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.4, metalness: 0.3 }),
@@ -199,6 +206,7 @@ export default function MsrrCanvas() {
         boxGeo.dispose(); edgeGeo.dispose(); nubGeo.dispose();
         rodGeo.dispose(); ballGeo.dispose();
         domeGeo.dispose(); domeShell.dispose(); domeCap.dispose();
+        disposeModuleMeshes();
         ground.geometry.dispose(); (ground.material as THREE.Material).dispose();
         for (const m of builtMats) m.dispose();
         for (const m of Object.values(partMats)) m.dispose();
@@ -231,6 +239,7 @@ export default function MsrrCanvas() {
       const dt = Math.min(0.1, (now - last) / 1000);
       last = now;
       useMsrrStore.getState().tick(dt);
+      useV2Store.getState().tick(dt);
       syncScene(st);
       controls.update();
       renderer.render(scene, camera);
@@ -359,6 +368,7 @@ export default function MsrrCanvas() {
     };
 
     const editable = () => {
+      if (useV2Store.getState().mode === 'v2') return false; // v2 edits robots, not cubes
       const tab = useMsrrStore.getState().tab;
       return tab === 'build' || tab === 'draw';
     };
@@ -441,9 +451,9 @@ export default function MsrrCanvas() {
   return (
     <div className="msrr-canvas-wrap">
       <canvas ref={canvasRef} className="msrr-canvas" />
-      <div className="msrr-canvas-hint">
+      {!v2Mode && <div className="msrr-canvas-hint">
         click the ground or a cube face to add one · drag to extrude a run · right-click a cube to delete
-      </div>
+      </div>}
     </div>
   );
 }
@@ -476,7 +486,10 @@ function syncScene(st: any) {
   // hand (manualBuild.ts). Same geometry path, same domes, same everything: the
   // point of building by hand is to see what the hardware would really do, so
   // anything drawn specially for it would be worth nothing.
-  const shownModules = tab === 'compose'
+  // Planner v2 draws its own robot (a lock graph + joint angles), never the cubes.
+  const v2 = useV2Store.getState();
+  const v2On = v2.mode === 'v2';
+  const shownModules = v2On ? v2.view.modules : tab === 'compose'
     ? manualToFitted(manual)
     : built
       ? (transform
@@ -504,7 +517,9 @@ function syncScene(st: any) {
   }
 
   const targetSet = new Set(target.map(key));
-  const cells = cellsOf(baseConfig);
+  const cells = v2On ? [] : cellsOf(baseConfig);
+  syncV2Overlay(st, v2On ? v2.view.overlay : null);
+  syncReceivers(st, v2On ? v2.receivers : null);
 
   // Grow the pool as needed; extras are hidden rather than destroyed.
   while (st.cubePool.length < cells.length) {
@@ -574,7 +589,7 @@ function syncScene(st: any) {
   // the viewport would quietly ignore every edit made in the Compose tab.
   const sig = shownModules.map((m) => `${m.id}@${key(m.anchorCell)}|${key(m.anchorDir)}|${m.pose.id}`
     + (m.baseQuat ? `|${m.pose.angles.map((a) => a.toFixed(4)).join(',')}` : '')).join(';')
-    + `|${justMoved ?? ''}`
+    + `|${justMoved ?? ''}|v2:${v2On ? v2.view.sig : 'off'}`
     + `|${inFlight ? `${inFlight.moduleId}@${transformStep}:${Math.round(transformT * 60)}` : ''}`;
   if (sig !== st.partSig) {
     st.partSig = sig;
@@ -620,12 +635,44 @@ function syncScene(st: any) {
       return mesh;
     };
 
+    const meshGeos = moduleMeshGeometries();
     parts.forEach((g, i) => {
       const highlight = g.moduleId === justMoved || g.moduleId === inFlight?.moduleId;
       const tint = st.builtMats[i % st.builtMats.length];
 
+      // A module standing still is drawn from the REAL try8 meshes, each part
+      // riding its own joint. One in flight is drawn as the stick model: the
+      // tween interpolates the chain's centreline, not joint angles, so it has
+      // no per-part orientation to give a mesh. The two agree at both ends of
+      // every move (the module is a mesh before and after), and the stick form
+      // is only on screen while it is moving.
+      if (g.moduleId !== inFlight?.moduleId) {
+        for (const body of moduleBodies(shownModules[i])) {
+          const geo = meshGeos.get(body.name);
+          if (!geo) continue;
+          const mat = highlight ? st.mats.moving
+            : body.kind === 'rotor' ? tint
+              : body.kind === 'spine' ? st.partMats.spine : st.partMats.pla;
+          const mesh = nextMesh(geo, mat);
+          mesh.position.set(body.position[0], body.position[1], body.position[2]);
+          mesh.quaternion.set(body.quaternion[0], body.quaternion[1], body.quaternion[2], body.quaternion[3]);
+          mesh.scale.setScalar(1);
+        }
+        // Connector markers: a small cap at each of the six connection points,
+        // flat face outward, so the receivers read on the real parts.
+        for (const c of shownModules[i].bodyPoses ? [] : g.connectors) {   // physics-driven parts carry their own pose
+          const mesh = nextMesh(st.domeGeo, c.isEnd ? st.partMats.dome : st.partMats.sideDome);
+          const n = new THREE.Vector3(c.normal[0], c.normal[1], c.normal[2]);
+          if (n.lengthSq() > 1e-8) mesh.quaternion.setFromUnitVectors(st.DOME_UP, n.normalize().multiplyScalar(-1));
+          else mesh.quaternion.identity();
+          mesh.position.set(c.at[0], c.at[1], c.at[2]);
+          mesh.scale.setScalar(c.isEnd ? 0.1 : 0.08);
+        }
+        return;
+      }
+
       for (const rod of g.rods) {
-        const mesh = nextMesh(st.rodGeo, highlight ? st.mats.moving : (rod.isBigRod ? st.partMats.bigRod : st.partMats.rod));
+        const mesh = nextMesh(st.rodGeo, highlight ? st.mats.moving : (rod.isSpine ? st.partMats.bigRod : st.partMats.rod));
         setSegment(mesh, rod.from, rod.to, rod.radius);
       }
       for (const j of g.joints) {
@@ -666,11 +713,13 @@ function syncScene(st: any) {
 
   // Placement preview: where a click would put a cube, or the whole run an
   // in-progress drag would create.
-  setPreviewCells(st, st.hoverCells as Cell[]);
+  setPreviewCells(st, v2On ? [] : st.hoverCells as Cell[]);
 
   // Target ghosts: only the cells that are not already filled, so the ghost shows
   // what is left to do rather than outlining the whole answer.
-  const ghostCells: Cell[] = target.filter((c) => !baseConfig.occ.has(key(c)));
+  // Where the plan really builds it: the target moved and turned as a whole onto the robot.
+  const ghostSrc: Cell[] = v2On ? [] : transform?.alignedTarget ?? target;
+  const ghostCells: Cell[] = ghostSrc.filter((c) => !baseConfig.occ.has(key(c)));
   while (st.ghostPool.length < ghostCells.length) {
     const gh = st.ghostBox();
     st.groups.ghosts.add(gh);
@@ -682,6 +731,81 @@ function syncScene(st: any) {
     gh.visible = true;
     gh.position.set(ghostCells[i][0], ghostCells[i][1], ghostCells[i][2]);
   }
+}
+
+/**
+ * Planner v2 marks: the centre of gravity (green when the check passes, red when it
+ * fails) with a plumb line to the floor, the support polygon on the floor, the floor
+ * contacts and the locks. Rebuilt only when the overlay object changes.
+ */
+function syncV2Overlay(st: any, ov: import('@/features/msrr2/v2View').V2Overlay | null) {
+  if (st.v2OverlaySrc === ov) return;
+  st.v2OverlaySrc = ov;
+  if (!st.v2Group) { st.v2Group = new THREE.Group(); st.scene.add(st.v2Group); }
+  const g: THREE.Group = st.v2Group;
+  for (const c of [...g.children]) {
+    g.remove(c);
+    (c as any).geometry?.dispose?.();
+    (c as any).material?.dispose?.();
+  }
+  if (!ov) return;
+  const ball = (p: number[], r: number, color: number) => {
+    const m = new THREE.Mesh(new THREE.SphereGeometry(r, 16, 12), new THREE.MeshBasicMaterial({ color, depthTest: false, transparent: true, opacity: 0.9 }));
+    m.position.set(p[0], p[1], p[2]); m.renderOrder = 10; g.add(m);
+  };
+  const line = (pts: number[][], color: number, closed = false) => {
+    const geo = new THREE.BufferGeometry().setFromPoints(pts.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+    const l = closed ? new THREE.LineLoop(geo, new THREE.LineBasicMaterial({ color })) : new THREE.Line(geo, new THREE.LineBasicMaterial({ color }));
+    l.renderOrder = 9; g.add(l);
+  };
+  if (ov.com && ov.comFloor) {
+    const c = ov.comOk ? 0x2ecc71 : 0xe74c3c;
+    ball(ov.com, 0.35, c);
+    line([ov.com, ov.comFloor], c);
+    ball(ov.comFloor, 0.18, c);
+  }
+  if (ov.support.length >= 2) line(ov.support, 0xf1c40f, ov.support.length >= 3);
+  for (const p of ov.contacts) ball(p, 0.15, 0xf1c40f);
+  for (const p of ov.locks) ball(p, 0.2, 0x3498db);
+  // the real centre of gravity (the robot sags under its own weight): orange
+  if (ov.comSag && ov.com && Math.hypot(ov.comSag[0] - ov.com[0], ov.comSag[1] - ov.com[1], ov.comSag[2] - ov.com[2]) > 0.02) {
+    ball(ov.comSag, 0.22, 0xff8c1a);
+    line([ov.comSag, [ov.comSag[0], ov.comFloor ? ov.comFloor[1] : 0, ov.comSag[2]]], 0xff8c1a);
+  }
+  // floor loads: an upward arrow per touching part, length ~ newtons, with its value
+  for (const f of ov.contactForces) {
+    const h = Math.min(4, 0.3 + f.n * 0.25);
+    line([f.p, [f.p[0], f.p[1] + h, f.p[2]]], 0xf1c40f);
+    g.add(textSprite(`${f.n.toFixed(1)} N`, [f.p[0], f.p[1] + h + 0.35, f.p[2]]));
+  }
+}
+
+/** Floor receivers: a disc on the floor at each one (the real part is ~80 mm across, pads 15 mm tall). A receiver that
+ *  holds a locked end is drawn solid and labelled, so it is visible WHAT holds the robot up. */
+function syncReceivers(st: any, list: import('@/features/msrr2/physicsView').ReceiverMark[] | null) {
+  if (st.rcvSrc === list) return;
+  st.rcvSrc = list;
+  if (!st.rcvGroup) { st.rcvGroup = new THREE.Group(); st.scene.add(st.rcvGroup); }
+  const g: THREE.Group = st.rcvGroup;
+  for (const c of [...g.children]) { g.remove(c); (c as any).geometry?.dispose?.(); (c as any).material?.dispose?.(); }
+  if (!list) return;
+  const R = 0.04 * CUBES_PER_METRE, H = 0.0153 * CUBES_PER_METRE;
+  for (const r of list) {
+    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(R, R, H, 32), new THREE.MeshStandardMaterial({ color: r.locked ? 0x2f80ed : 0x8a94a6, transparent: !r.locked, opacity: r.locked ? 1 : 0.55 }));
+    mesh.position.set(r.p[0], r.p[1] + H / 2, r.p[2]); g.add(mesh);
+    if (r.locked) { const ring = new THREE.Mesh(new THREE.TorusGeometry(R * 1.25, R * 0.12, 8, 40), new THREE.MeshBasicMaterial({ color: 0x2ecc71 })); ring.rotation.x = Math.PI / 2; ring.position.set(r.p[0], r.p[1] + H, r.p[2]); g.add(ring); }
+    g.add(textSprite(r.label, [r.p[0], r.p[1] + H + 0.35, r.p[2] + R * 2]));
+  }
+}
+
+function textSprite(text: string, p: number[]): THREE.Sprite {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+  const x = c.getContext('2d')!;
+  x.fillStyle = 'rgba(20,24,32,0.75)'; x.fillRect(0, 0, 256, 64);
+  x.fillStyle = '#ffd34d'; x.font = 'bold 34px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 128, 34);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
+  sp.position.set(p[0], p[1], p[2]); sp.scale.set(1.6, 0.4, 1); sp.renderOrder = 11;
+  return sp;
 }
 
 /**

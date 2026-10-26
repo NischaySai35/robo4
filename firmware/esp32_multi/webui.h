@@ -106,7 +106,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <button onclick="api('/api/home')">Home all &rarr; 180&deg;</button>
       <button class="p" onclick="api('/api/home/manual')">Go to manual home</button>
       <button onclick="setHomeAll()" title="save every joint's current angle as its home">Set current angles as home</button>
-      <button onclick="clearHomeAll()" title="forget all saved homes - everything goes back to 180">Clear homes</button>
+      <button onclick="clearHomeAll()" title="forget all saved homes - every joint goes back to the built-in straight pose">Clear homes</button>
       <button onclick="api('/api/servo/tune',1)" title="Re-write deadband / Kp / Kd / Ki / torque limit">Re-tune hold</button>
       <span class="hint" id="torqhint"></span>
     </div>
@@ -307,7 +307,7 @@ function rows(d){
       hb.textContent='home '+(+s.home).toFixed(0)+'\u00b0';
       hb.style.borderColor=s.homeSet?'var(--ok)':'';
       hb.style.color=s.homeSet?'var(--ok)':'var(--dim)';
-      hb.title=s.homeSet?'saved home for this joint':'no home saved yet - defaults to 180';
+      hb.title=s.homeSet?'saved home for this joint':'no home saved yet - uses the built-in straight pose';
     }
     // The slider always shows where the joint is meant to be: the real angle while limp
     // (it can be moved by hand), the commanded target while torque is on, so moves made by
@@ -418,7 +418,7 @@ function setHomeAll(){
     if(d&&d.count!=null)alert('saved home for '+d.count+' servo(s)');});
 }
 function clearHomeAll(){
-  if(!confirm('Forget all saved home positions? Every joint goes back to 180.'))return;
+  if(!confirm('Forget all saved home positions? Every joint goes back to the built-in straight pose.'))return;
   api('/api/home/set?id=all&clear=1').then(()=>poll());
 }
 

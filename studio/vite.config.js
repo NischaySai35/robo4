@@ -25,5 +25,10 @@ export default defineConfig({
   // Bind IPv4 explicitly: Windows resolves "localhost" to IPv6 [::1] by default,
   // which made wait-on (watching 127.0.0.1) hang and Electron never launch.
   // strictPort: fail loudly if 5173 is taken rather than drifting to 5174.
-  server: { host: '127.0.0.1', port: 5173, strictPort: true },
+  // /ollama → the local Ollama server, so the Ask tab can reach it from a plain browser
+  // (in Electron the main process calls Ollama instead).
+  server: {
+    host: '127.0.0.1', port: 5173, strictPort: true,
+    proxy: { '/ollama': { target: 'http://127.0.0.1:11434', changeOrigin: true, rewrite: (p) => p.replace(/^\/ollama/, '') } },
+  },
 });

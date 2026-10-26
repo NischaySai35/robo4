@@ -27,13 +27,15 @@
  *    default. Nothing was deleted; it is one click away instead of unavoidable.
  *    If you are adding a paragraph here, it goes in an `info` prop, not the body.
  *
- * There is ONE kind of module: MODULINK (robotics/msrr/modulink.ts). The page
+ * There is ONE kind of module: the try8 TETROBOT module (robotics/msrr/modulink.ts). The page
  * used to offer a second "one module = one cube" abstraction and switch between
  * them; that choice is gone and the cube reading with it. The cubes on screen
  * are a shape DIAGRAM, and Build is what turns the diagram into modules.
  */
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './MsrrPanel.css';
+import V2Panel from '@/features/msrr2/V2Panel';
+import { useV2Store } from '@/state/msrrV2Store';
 import { useMsrrStore, DEFAULT_CELL_SIZE } from '@/state/msrrStore';
 import { ComposeTab } from './ComposeTab';
 import { useMsrrDrawStore } from './drawStore';
@@ -63,11 +65,25 @@ const TABS: { id: Tab; label: string }[] = [
 ];
 
 export default function MsrrPanel() {
+  const mode = useV2Store((s) => s.mode);
+  const setMode = useV2Store((s) => s.setMode);
+  const switcher = (
+    <div className="msrr-tabs" style={{ borderBottom: '2px solid #2a2f36' }}>
+      <button className={`msrr-tab ${mode === 'v2' ? 'active' : ''}`} data-testid="mode-v2" onClick={() => setMode('v2')}>Planner v2</button>
+      <button className={`msrr-tab ${mode === 'legacy' ? 'active' : ''}`} data-testid="mode-legacy" onClick={() => setMode('legacy')}>Legacy (cubes)</button>
+    </div>
+  );
+  if (mode === 'v2') return <div className="msrr-panel">{switcher}<V2Panel /></div>;
+  return <LegacyPanel switcher={switcher} />;
+}
+
+function LegacyPanel({ switcher }: { switcher: React.ReactNode }) {
   const tab = useMsrrStore((s) => s.tab);
   const setTab = useMsrrStore((s) => s.setTab);
 
   return (
     <div className="msrr-panel">
+      {switcher}
       <div className="msrr-tabs">
         {TABS.map((t) => (
           <button
@@ -320,9 +336,27 @@ function BuildTab() {
   const [budget, setBudget] = useState(count || 12);
   const [scale, setScale] = useState(1);
 
-  useEffect(() => { if (count) setBudget(count); }, [count]);
+  // The library shape the cubes on screen came from, so the sliders can regenerate it.
+  // Without this the sliders only changed a number that the NEXT shape click used,
+  // while the cubes (and the "Build N cubes" button) stayed at the old count.
+  // Cleared by anything that replaces the cubes some other way (clear, import, edits).
+  const [activeShape, setActiveShape] = useState<ShapeId | null>(null);
+  const lastMade = useRef(-1);
 
-  const apply = (id: ShapeId) => setConfigCells(buildShape(id, Math.max(1, budget), scale));
+  useEffect(() => {
+    if (count !== lastMade.current) setActiveShape(null);   // cubes changed by hand / import / undo
+    if (count && count !== lastMade.current) setBudget(count);
+  }, [count]);
+
+  const make = (id: ShapeId, b: number, sc: number) => {
+    const cells = buildShape(id, Math.max(1, b), sc);
+    lastMade.current = cells.length;
+    setConfigCells(cells);
+    setActiveShape(id);
+  };
+  const apply = (id: ShapeId) => make(id, budget, scale);
+  const changeBudget = (b: number) => { setBudget(b); if (activeShape) make(activeShape, b, scale); };
+  const changeScale = (sc: number) => { setScale(sc); if (activeShape) make(activeShape, budget, sc); };
   const applyTarget = (id: ShapeId) => setTarget(buildShape(id, Math.max(1, budget), scale));
 
   // Saving and loading the DIAGRAM, not the build — see shapeFile.ts for why the
@@ -370,17 +404,18 @@ function BuildTab() {
           <p className="msrr-note">
             ⚠ marks a shape with a cube walled in on all six sides — invisible, and
             spends a module on nothing. Everything else a module can reach directly now
-            (a hub uses up to six connectors: two chain ends plus all four sides).
+            (a spine hosts up to four directions at one cube: the two chain ends and its two
+            opposite receivers — a busier junction needs a second module through it).
           </p>
         </>
       }>
         <Row label={`Cubes: ${budget}`}>
           <input type="range" min={1} max={120} value={budget}
-                 onChange={(e) => setBudget(+e.target.value)} />
+                 onChange={(e) => changeBudget(+e.target.value)} />
         </Row>
         <Row label={`Shape scale: ${scale.toFixed(2)}x`}>
           <input type="range" min={0.5} max={3} step={0.05} value={scale}
-                 onChange={(e) => setScale(+e.target.value)} />
+                 onChange={(e) => changeScale(+e.target.value)} />
         </Row>
         <div className="msrr-shape-grid">
           {SHAPES.map((s) => {
@@ -501,7 +536,8 @@ function ShapeQualityNote() {
       </ul>
       {!q.buildable && (
         <>These are hardware limits, not planner limits: a module has two chain ends
-        plus four side faces, and only two OPPOSITE side faces can weld at once.
+        plus four side receivers (two on each spine, on opposite faces), and a cube
+        with nothing exposed has nowhere to weld.
         Build will still run and will report honestly what it could not attach.</>
       )}
     </div>
@@ -983,9 +1019,15 @@ function TransformSection() {
                  + 'shapes, not a planner that gave up.'}>
               No steps possible from here.
             </p>
+          ) : tr.complete ? (
+            <p className="msrr-note">Shape complete - no walking needed.</p>
           ) : (
-            <p className="msrr-note">
-              {tr.complete ? 'Shape complete - no walking needed.' : 'Some target cubes are still uncovered - see the log.'}
+            <p className="msrr-note warn"
+               title={'No module can fold its free end onto any other connector from this shape (see the '
+                 + 'mobility figures above), so there is nothing to animate. The added/removed modules '
+                 + 'only reconcile the module count; they are not a walk.'}>
+              0 steps: this robot cannot walk into the target (modules are frozen or have no
+              connector in reach). Only the module count was adjusted, so there is no animation.
             </p>
           )}
         </>
@@ -1127,7 +1169,7 @@ function BuildSection() {
             </div>
             {built.junctionsTotal > 0 && (
               <div className={`msrr-chip ${built.junctionsAligned === built.junctionsTotal ? 'ok' : 'warn'}`}
-                   title="A module's four side connectors all ride the midpoint of its big spine rod, so a branch point wants that midpoint ON it — then the other arms have somewhere to weld. This counts how many of the shape's junctions actually got one.">
+                   title="A module's two spines each carry a pair of receivers at their midpoint, so a branch point wants one spine's midpoint ON it, with the receivers facing the other arms — then those arms have somewhere to weld. This counts how many of the shape's junctions actually got one.">
               {built.junctionsAligned}/{built.junctionsTotal} junctions on a spine
               </div>
             )}
@@ -1182,7 +1224,7 @@ function BuildSection() {
 // ── module theme ──────────────────────────────────────────────────────────────
 
 /**
- * What a MODULINK actually is, and what the hardware will not let it do —
+ * What the TETROBOT module (try8) actually is, and what the hardware will not let it do —
  * folded away because it is reference material, not a control.
  *
  * This replaced a module-THEME picker. The page used to offer a second
@@ -1196,7 +1238,7 @@ function ModulinkSection() {
   const theme = getModuleTheme('mod2');
 
   return (
-    <Section title="MODULINK" info={
+    <Section title="TETROBOT MODULE" info={
       <>
         <p className="msrr-note">{theme.detail}</p>
         <ul className="msrr-constraints">

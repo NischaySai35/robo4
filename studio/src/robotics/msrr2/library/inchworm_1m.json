@@ -1,0 +1,105 @@
+{
+ "id": "inchworm_1m",
+ "name": "Inchworm (both ends in floor receivers)",
+ "nModules": 1,
+ "topology": [
+  {
+   "a": {
+    "floor": "F0"
+   },
+   "b": {
+    "module": "M1",
+    "port": "A"
+   },
+   "slot": 3,
+   "locked": true
+  },
+  {
+   "a": {
+    "floor": "F1"
+   },
+   "b": {
+    "module": "M1",
+    "port": "B"
+   },
+   "slot": 3,
+   "locked": true
+  }
+ ],
+ "pose": {
+  "M1": {
+   "T1": 180.0000056270792,
+   "B1": 157.57208894114078,
+   "B2": 100.41827735343287,
+   "T2": 179.99999482612083,
+   "B3": 138.71195773824098,
+   "B4": 143.29256325289379,
+   "T3": 180.00000810961947
+  }
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 2,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 154,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 326,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 89,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 45,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 170,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 3.03,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 5.5,
+  "cogMarginMm": 999,
+  "minJointMarginDeg": 10.4
+ },
+ "source": "seed",
+ "behaviour": "walk_step",
+ "notes": "the walk's double-support state: A in F0, B in F1 (250 mm apart) · static check: PASS · MuJoCo hold: PASS (drift 0 mm)",
+ "spec": {
+  "height_mm": {
+   "min": 120
+  }
+ },
+ "sim": {
+  "ok": true,
+  "driftMm": 0,
+  "maxTorquePct": 1,
+  "reasons": []
+ }
+}

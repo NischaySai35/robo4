@@ -86,8 +86,12 @@ test('an empty shape does not throw', () => {
 test('shapes this module calls unbuildable are the ones the fitter really breaks on', () => {
   // The claim worth checking: this is not a second opinion invented alongside
   // the fitter, it predicts the fitter's own failure mode. A shape flagged
-  // unbuildable (now: has a buried cube) should tend to fit incompletely or as
-  // several disconnected pieces, while a clean shape should come out whole.
+  // unbuildable (a buried cube) should tend to fit incompletely or as several
+  // disconnected pieces, while a clean shape should come out whole.
+  //
+  // (With the cube at 4 per module the try8 module could run a body through a
+  // buried cube and these fitted whole; at 8 per module a cube is about one body
+  // thickness, an interior one is genuinely walled in, and the claim holds again.)
   let cleanOnePiece = 0, cleanTotal = 0;
   let flaggedFragmented = 0, flaggedTotal = 0;
 

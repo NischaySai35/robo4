@@ -10,15 +10,16 @@
  *
  * The rules below are the hardware's, not heuristics:
  *
- *   - A module has 6 connectors: 2 chain ends (A/B) plus 4 side faces on the
- *     spine, and all four side faces may carry a weld at once (2026-09-05,
- *     Nischay's own call — a side face 90° from another clears it by 0.0085
- *     cube units, not an overlap). So one cube offers up to SIX weld
- *     directions, matching every possible face-neighbour count a cube can
- *     have (0 through 6) — no lattice cube ever asks for more directions than
- *     one hub module can give it.
- *   - A cube surrounded on all 6 sides is interior: invisible, unreachable, and
- *     pure wasted modules. The spec's "build hollow" rule.
+ *   - A module has 6 connectors: 2 chain ends (A/B) plus 4 side receivers, two
+ *     on each of its two spines, on opposite faces. One spine therefore offers
+ *     at most FOUR weld directions at one cube (the two chain directions and
+ *     two opposite sides), so a cube with five or six neighbours cannot be
+ *     served by a single module — the extra arms weld onto other modules
+ *     passing through it. That costs modules, it does not prevent the build.
+ *   - A cube surrounded on all 6 sides is interior: invisible and never a weld
+ *     site. With the try8 module a body can still run through it, so it no longer
+ *     fragments the fit (it did with the old 6-DOF module) — but it still spends
+ *     modules on nothing. The spec's "build hollow" rule.
  *   - Junctions packed adjacent to each other leave no straight run for an arm
  *     to leave along, so modules coil instead of lying straight.
  *
@@ -106,10 +107,10 @@ export function shapeQuality(cells: Cell[]): ShapeQuality {
     });
   }
 
-  // Buried cubes are the only thing left that genuinely prevents a connected
-  // build — nothing can weld to a cube with no exposed face at all. Adjacent
-  // junctions make a worse-looking fit, not an impossible one, so they do not
-  // veto either.
+  // A buried cube has no exposed face, so nothing can weld to it: it can only be
+  // covered by a body passing through, which wastes modules and is invisible.
+  // It is still the one thing flagged as not fully buildable. Adjacent junctions
+  // make a worse-looking fit, not an impossible one, so they do not veto.
   const buildable = buriedCells.length === 0;
 
   return {

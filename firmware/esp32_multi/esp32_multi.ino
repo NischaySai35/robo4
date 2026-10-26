@@ -116,6 +116,15 @@ static const char* const LAYOUT_LABELS[] =
   { "LOCK1", "T1 twist", "B1 bend", "B2 bend", "T2 twist", "B3 bend", "B4 bend", "T3 twist", "LOCK2" };
 constexpr uint8_t LAYOUT_N = sizeof(LAYOUT_LABELS) / sizeof(LAYOUT_LABELS[0]);
 
+// The module's STRAIGHT pose, per servo, in degrees x10 (ids 1..9, same order as the labels).
+// Set by hand on 2026-10-25: the horns are not mounted exactly square, so "all 180" is NOT
+// straight and these small offsets are what make the module straight. This is the default
+// manual home. A home saved from the web UI (NVS) still wins; this is what a servo falls back
+// to when it has none (fresh board, layout change, /api/home/set?clear=1), so the straight
+// pose is never lost and never silently becomes 180.
+//   LOCK1 176.8 | T1 181.4 | B1 167.9 | B2 179.9 | T2 185.1 | B3 179.7 | B4 176.9 | T3 179.3 | LOCK2 184.1
+static const int16_t LAYOUT_HOME_DEG10[LAYOUT_N] = { 1768, 1814, 1679, 1799, 1851, 1797, 1769, 1793, 1841 };
+
 void cfgApplyLayout() {
   // The physical module is confirmed to use 1 Mbaud. An earlier false-positive scan
   // could persist 500 kbaud; reset that stale bus setting with this layout migration.
@@ -275,6 +284,32 @@ static inline void flushBus() {
 static inline float clampF(float v, float lo, float hi) { return v < lo ? lo : v > hi ? hi : v; }
 static inline uint16_t angleToRaw(float d) { d = clampF(d, 0, 360); return (uint16_t)lroundf((d / 360.0f) * 4095.0f); }
 static inline float rawToAngle(uint16_t r) { return (r / 4095.0f) * 360.0f; }
+
+/* TWO ANGLE SCALES, and the firmware is the only place that knows both.
+ *
+ *   NOMINAL     what everything above the board speaks: the Studio, the sim, the planner, the
+ *               brain, animation frames, the web UI. 180 means "this joint is straight", +x means
+ *               x degrees one way from straight. They never need to know about horn error.
+ *   MECHANICAL  the angle the servo itself reports and is commanded in (0..360 on the horn).
+ *
+ * The horns are not mounted exactly square, so a straight module is NOT all-180 mechanically; the
+ * hand-set straight pose (the manual home, homeFor()) is. The difference per joint is its offset:
+ *
+ *      mechanical = nominal + (home - 180)          nominal = mechanical - (home - 180)
+ *
+ * e.g. a joint whose straight pose is 183 mechanically gets +3: told "120" it goes to 123, and when
+ * it reads 123 it reports 120. Commands are converted on the way in, readings on the way out.
+ * Raw servo-register tools, the identify wiggle, the home table itself and the angle limits
+ * written to the servo stay mechanical.
+ */
+float homeFor(uint8_t id);
+float builtinHomeFor(uint8_t id);
+/* The offset comes from the module's BUILT-IN straight pose (LAYOUT_HOME_DEG10), compiled into this
+   firmware, not from the board's saved homes: the deviation belongs to the module's hardware, so
+   each module gets its own .bin and a board can be re-flashed or swapped without it drifting. */
+static inline float offsetFor(uint8_t id) { return builtinHomeFor(id) - 180.0f; }
+static inline uint16_t nomToRaw(uint8_t id, float nominal) { return angleToRaw(nominal + offsetFor(id)); }
+static inline float rawToNom(uint8_t id, uint16_t raw) { return rawToAngle(raw) - offsetFor(id); }
 static inline uint16_t speedScaleToRaw(int s) {
   s = constrain(s, 1, 10);
   return (uint16_t)lroundf(340.0f + ((s - 1) / 9.0f) * (3400.0f - 340.0f));
@@ -325,7 +360,7 @@ void applyServoConfig() {
     ServoState& s = servos[i];
     s.id = cfg.ids[i];
     s.hwMode = 255; s.torqueOn = false; s.mode = POS_MODE;
-    s.targetDeg = 180.0f; s.targetRaw = angleToRaw(180.0f);
+    s.targetDeg = 180.0f; s.targetRaw = nomToRaw(s.id, 180.0f);
     s.speedScale = 10; s.speedRaw = speedScaleToRaw(10); s.acc = POS_ACC_DEFAULT;
     s.rawPos = s.rawSpeed = s.rawLoad = s.rawLoadAbs = -1;
     s.rawCurrent = s.rawVoltage = s.rawTemp = -1;
@@ -369,7 +404,7 @@ void cmdPos(ServoState& sv, float deg, int speedScale, uint8_t acc) {
   setHwMode(sv, POS_MODE);
   ensureTorque(sv);
   sv.targetDeg  = clampF(deg, lo, hi);
-  sv.targetRaw  = angleToRaw(sv.targetDeg);
+  sv.targetRaw  = nomToRaw(sv.id, sv.targetDeg);
   sv.speedScale = constrain(speedScale, 1, 10);
   sv.speedRaw   = speedScaleToRaw(sv.speedScale);
   sv.acc        = (uint8_t)constrain((int)acc, 1, 100);
@@ -385,7 +420,7 @@ void cmdStop(ServoState& sv) {
   sv.mode = POS_MODE; sv.lastCommandMs = millis();
   st.EnableTorque(sv.id, 0); delay(2);
   sv.torqueOn = false; sv.moving = false;
-  if (sv.rawPos >= 0) { sv.targetRaw = (uint16_t)sv.rawPos; sv.targetDeg = rawToAngle((uint16_t)sv.rawPos); }
+  if (sv.rawPos >= 0) { sv.targetRaw = (uint16_t)sv.rawPos; sv.targetDeg = rawToNom(sv.id, (uint16_t)sv.rawPos); }
 }
 void cmdTorqueToggle(ServoState& sv) {
   if (sv.torqueOn) { st.EnableTorque(sv.id, 0); delay(2); sv.torqueOn = false; sv.moving = false; }
@@ -409,6 +444,17 @@ bool tuneByteIfDiff(uint8_t id, uint8_t addr, uint8_t want, const char* name) {
   return true;
 }
 
+/* Same, for a 16-bit EPROM register (the angle limits). */
+bool tuneWordIfDiff(uint8_t id, uint8_t addr, uint16_t want, const char* name) {
+  int have = st.readWord(id, addr);
+  if (have < 0) { lg("  id%u %s: read failed", id, name); return false; }
+  if ((uint16_t)have == want) return false;
+  st.writeWord(id, addr, want);
+  delay(12);
+  lg("  id%u %s: %d -> %u", id, name, have, want);
+  return true;
+}
+
 /* Make a servo hold its position stiffly. Deadband/gains live in EPROM (needs unlock);
    the torque limit is a RAM register and is written every time, since it costs nothing. */
 void tuneServoHolding(ServoState& sv) {
@@ -419,6 +465,14 @@ void tuneServoHolding(ServoState& sv) {
   changed |= tuneByteIfDiff(sv.id, REG_KP, TUNE_KP, "Kp");
   changed |= tuneByteIfDiff(sv.id, REG_KD, TUNE_KD, "Kd");
   changed |= tuneByteIfDiff(sv.id, REG_KI, TUNE_KI, "Ki");
+  /* SINGLE-TURN position servo: angle limits 0 .. 4095. These servos' limits default to
+     whatever they were last set to, and 0/0 puts an STS servo in its multi-turn position mode,
+     where "go to 180" from 238 can be done the long way round (down through -360) because the
+     goal is taken on an unwrapped scale. Every joint on this module is a single-turn position
+     joint (twists +-180 about the 180 home, bends +-95), so pin the range to one turn and the
+     servo always takes the direct path. Written only if different, like the rest. */
+  changed |= tuneWordIfDiff(sv.id, REG_MIN_ANGLE, 0,    "min angle limit");
+  changed |= tuneWordIfDiff(sv.id, REG_MAX_ANGLE, 4095, "max angle limit");
   st.LockEprom(sv.id); delay(10);
   st.writeWord(sv.id, REG_TORQUE_LIMIT, TUNE_TORQUE_MAX);
   delay(6);
@@ -450,7 +504,7 @@ void torqueOnHold(ServoState& sv) {
   if (pos >= 0) {
     sv.rawPos     = pos;
     sv.targetRaw  = (uint16_t)pos;
-    sv.targetDeg  = rawToAngle((uint16_t)pos);
+    sv.targetDeg  = rawToNom(sv.id, (uint16_t)pos);
     st.WritePosEx(sv.id, (int16_t)pos, speedScaleToRaw(10), POS_ACC_DEFAULT);
     delay(3);
   }
@@ -488,7 +542,7 @@ void seedTargetsFromHardware() {
     if (pos < 0) continue;
     sv.rawPos    = pos;
     sv.targetRaw = (uint16_t)pos;
-    sv.targetDeg = rawToAngle((uint16_t)pos);
+    sv.targetDeg = rawToNom(sv.id, (uint16_t)pos);
   }
   st.IOTimeOut = saved;
 }
@@ -565,7 +619,7 @@ void animSendFrame(uint8_t idx) {
     float wantDeg = clampF(f.deg10[i] / 10.0f, lo, hi);
     // Distance from where the joint actually is, not from where we last told it to be.
     int32_t cur = sv.rawPos >= 0 ? sv.rawPos : (int32_t)sv.targetRaw;
-    slots[n] = slot; deg[n] = wantDeg; want[n] = angleToRaw(wantDeg);
+    slots[n] = slot; deg[n] = wantDeg; want[n] = nomToRaw(sv.id, wantDeg);
     D[n] = (float)labs((int32_t)want[n] - cur);
     if (D[n] >= 4.0f) {
       float Tv = D[n] / (vCap * (1.0f - rf));                     // speed limit
@@ -666,9 +720,17 @@ void homesLoad() {
 
 void homesSave() { prefs.putBytes("homes", &homes, sizeof(homes)); }
 
+/* The module's straight pose as compiled into this firmware (mechanical degrees). */
+float builtinHomeFor(uint8_t id) {
+  if (id >= 1 && id <= LAYOUT_N) return LAYOUT_HOME_DEG10[id - 1] / 10.0f;
+  return 180.0f;
+}
+
+/* A home saved on the board (legacy / informational), else the built-in straight pose. It no longer
+   drives motion: the nominal<->mechanical offset always comes from builtinHomeFor(). */
 float homeFor(uint8_t id) {
   for (uint8_t i = 0; i < homes.n; i++) if (homes.ids[i] == id) return homes.deg10[i] / 10.0f;
-  return 180.0f;
+  return builtinHomeFor(id);
 }
 
 bool hasHome(uint8_t id) {
@@ -700,7 +762,7 @@ void gotoDeg(uint8_t slot, float deg) {
   cmdPos(servos[slot], deg, 10, POS_ACC_DEFAULT);
 }
 
-void homeAll(bool homeManual = false) {
+void homeAll(bool homeManual = false, bool raw180 = false) {
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
   uint16_t spd[MAX_SERVOS]; uint8_t  acc[MAX_SERVOS];
   for (uint8_t i = 0; i < nServos; i++) {
@@ -708,8 +770,12 @@ void homeAll(bool homeManual = false) {
     ensureTorque(servos[i]);
     float lo, hi; limitsFor(i, lo, hi);
     servos[i].mode = POS_MODE;
-    servos[i].targetDeg = clampF(homeManual ? homeFor(servos[i].id) : 180.0f, lo, hi);
-    servos[i].targetRaw = angleToRaw(servos[i].targetDeg);
+    // Straight is nominal 180 for every joint (the offset turns that into the hand-set home), so
+    // "home" and "manual home" are now the same place. `homeManual` is kept so old callers work;
+    // raw180 asks for the MECHANICAL 180 instead (horn assembly: seat the horn at the true middle).
+    servos[i].targetDeg = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : 180.0f, lo, hi);
+    (void)homeManual;
+    servos[i].targetRaw = nomToRaw(servos[i].id, servos[i].targetDeg);
     servos[i].speedScale = 10;
     servos[i].speedRaw = speedScaleToRaw(10);
     servos[i].acc = POS_ACC_DEFAULT;
@@ -752,7 +818,7 @@ void refreshAllFastSync() {
     // ON" or a nudge always starts from where the arm actually is.
     if (got && !servos[i].torqueOn) {
       servos[i].targetRaw = (uint16_t)servos[i].rawPos;
-      servos[i].targetDeg = rawToAngle((uint16_t)servos[i].rawPos);
+      servos[i].targetDeg = rawToNom(servos[i].id, (uint16_t)servos[i].rawPos);
     }
     updateMotionFlag(servos[i]);
   }
@@ -1041,7 +1107,7 @@ void adoptScanResults() {
       if (sc.hits[i].pos < 0) break;
       servos[k].rawPos    = sc.hits[i].pos;
       servos[k].targetRaw = (uint16_t)sc.hits[i].pos;
-      servos[k].targetDeg = rawToAngle((uint16_t)sc.hits[i].pos);
+      servos[k].targetDeg = rawToNom(servos[k].id, (uint16_t)sc.hits[i].pos);
       break;
     }
   }
@@ -1183,7 +1249,10 @@ String buildJSON() {
     j += F(",\"torque\":"); j += (sv.torqueOn ? F("true") : F("false"));
     j += F(",\"moving\":"); j += (sv.moving   ? F("true") : F("false"));
     j += F(",\"currentAngle\":");
+    if (sv.rawPos >= 0) j += String(rawToNom(sv.id, (uint16_t)sv.rawPos), 2); else j += F("null");
+    j += F(",\"mechAngle\":");
     if (sv.rawPos >= 0) j += String(rawToAngle((uint16_t)sv.rawPos), 2); else j += F("null");
+    j += F(",\"offset\":"); j += String(offsetFor(sv.id), 1);
     j += F(",\"targetAngle\":");
     if (sv.mode == POS_MODE) j += String(sv.targetDeg, 2); else j += F("null");
     j += F(",\"rawPos\":");  j += sv.rawPos;
@@ -1297,7 +1366,7 @@ void handleBatch() {
     setHwMode(sv, POS_MODE);
     ensureTorque(sv);
     sv.targetDeg     = clampF(server.arg(key).toFloat(), lo, hi);
-    sv.targetRaw     = angleToRaw(sv.targetDeg);
+    sv.targetRaw     = nomToRaw(sv.id, sv.targetDeg);
     sv.speedScale    = spd;
     sv.speedRaw      = speedScaleToRaw(spd);
     sv.acc           = acc;
@@ -1312,22 +1381,26 @@ void handleBatch() {
   okJson(b);
 }
 
-// GET /api/home            all servos -> 180
-// GET /api/home?manual=1    all servos -> their stored home (180 where unset)
+// GET /api/home[?raw=1]    all servos -> straight (nominal 180); raw=1: mechanical 180
+// GET /api/home?manual=1    all servos -> their stored home (the built-in straight pose where unset)
+// Everything above the board speaks NOMINAL angles (180 = straight), so "home" is the straight
+// pose whichever way it is asked for. ?raw=1 sends every joint to the MECHANICAL 180 instead
+// (seating a horn at the true middle of the servo's travel).
 void handleHome() {
   bool manual = server.hasArg("manual") && server.arg("manual") != "0";
-  bc(manual ? "home all (manual)" : "home all -> 180");
-  homeAll(manual);
+  bool raw = server.hasArg("raw") && server.arg("raw") != "0";
+  bc(raw ? "home all -> mechanical 180" : "home all -> straight (nominal 180)");
+  homeAll(manual, raw);
   okTrue();
 }
 
 // GET /api/home/manual                 same as /api/home?manual=1
-void handleHomeManual() { bc("home all (manual)"); homeAll(true); okTrue(); }
+void handleHomeManual() { bc("home all -> straight (nominal 180)"); homeAll(true); okTrue(); }
 
 // GET /api/home/set                    capture EVERY servo's current angle as its home
 // GET /api/home/set?id=N               just this one
 // GET /api/home/set?id=N&deg=142.5     set it to an explicit angle instead
-// GET /api/home/set?id=N&clear=1       forget it (back to 180)
+// GET /api/home/set?id=N&clear=1       forget it (back to the built-in straight pose, LAYOUT_HOME_DEG10)
 void handleHomeSet() {
   bool clear = server.hasArg("clear") && server.arg("clear") != "0";
   String out = F("{\"ok\":true,\"homes\":[");
@@ -1344,8 +1417,10 @@ void handleHomeSet() {
       // Capture what the joint is ACTUALLY at. A servo that never answered has no angle
       // to capture, so it is skipped rather than silently homed to a stale reading.
       if (sv.rawPos < 0) continue;
-      setHomeFor(sv.id, rawToAngle((uint16_t)sv.rawPos));
+      setHomeFor(sv.id, rawToAngle((uint16_t)sv.rawPos));   // the home is MECHANICAL: where the horn really is
     }
+    // the offset just changed, so the nominal view of where the joint is/was sent has moved
+    sv.targetDeg = rawToNom(sv.id, sv.targetRaw);
     if (n++) out += ',';
     out += F("{\"id\":");   out += sv.id;
     out += F(",\"home\":"); out += String(homeFor(sv.id), 1);
@@ -1502,14 +1577,16 @@ void handleDeadband() {
   okJson(r);
 }
 
-// GET /api/servo/home?id=N[&to180=1]   send one servo to its home
+// GET /api/servo/home?id=N[&raw=1]   send one servo to straight (nominal 180); raw=1: mechanical 180
 void handleServoHome() {
   if (!server.hasArg("id")) { errJson(400, "need id"); return; }
   uint8_t id = (uint8_t)server.arg("id").toInt();
   int slot = slotOf(id);
   if (slot < 0) { errJson(404, "servo not in the current list"); return; }
-  bool to180 = server.hasArg("to180") && server.arg("to180") != "0";
-  float target = to180 ? 180.0f : homeFor(id);
+  // nominal 180 IS the straight pose, so "180" and "home" are the same place now; raw=1 is the
+  // mechanical 180 (nominal 180 minus this joint's offset)
+  bool raw = server.hasArg("raw") && server.arg("raw") != "0";
+  float target = raw ? 180.0f - offsetFor(id) : 180.0f;
   gotoDeg((uint8_t)slot, target);
   String r = F("{\"ok\":true,\"id\":"); r += id;
   r += F(",\"target\":"); r += String(target, 1); r += '}';

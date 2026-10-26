@@ -21,11 +21,13 @@
  */
 import {
   type ModuleAngles, type Pose, type Vec3, type Quat,
-  moduleFrames, connectorPoses, ROD_ORDER, BIG_ROD_INDEX,
+  moduleFrames, connectorPoses, ROD_ORDER, SPINE_ROD_INDICES, PREFIX_LENGTH,
+  composePoses, translateZ, FLIP_X_180, ZERO_ANGLES, IDENTITY,
   HEMISPHERE_RADIUS, SIDE_CONNECTOR_RADIAL_OFFSET,
   ROD_RADIUS as SPEC_ROD_RADIUS,
 } from '@/robotics/msrr/modulink';
-import { anchoredBase } from '@/robotics/msrr/chainMoves';
+import { anchoredBase, invertPose } from '@/robotics/msrr/chainMoves';
+import { restBodies } from '@/robotics/msrr/restLayout';
 import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
 import type { Cell } from '@/robotics/msrr/lattice';
 import type { FittedModule } from '@/robotics/msrr/fitModules';
@@ -56,9 +58,9 @@ export const baseQuatFor = (dir: Cell): Quat =>
 export interface RodSegment {
   from: Vec3;
   to: Vec3;
-  /** rods are not all the same thickness — the big rod reads as the spine */
   radius: number;
-  isBigRod: boolean;
+  /** true for the two spines (the rods that carry side receivers) */
+  isSpine: boolean;
 }
 
 /** A joint between two rods, drawn as a knuckle. */
@@ -80,19 +82,20 @@ export interface ConnectorMarker {
 
 export interface ModuleGeometry {
   moduleId: string;
+  /**
+   * Eight contiguous segments: the end lock (connector A to the T1 axis), then one
+   * per joint T1 B1 B2 T2 B3 B4 T3, each running to the next joint (the last to
+   * connector B). The joints touch — there are no gaps between segments.
+   */
   rods: RodSegment[];
+  /** one knuckle per joint, at the start of its segment (joints[i] sits at rods[i + 1].from) */
   joints: JointMarker[];
   connectors: ConnectorMarker[];
-  /**
-   * The chain as a polyline, alternating rod ends: every rod's start AND end, so
-   * twelve points for six rods. The inter-rod gaps matter — the module is not a
-   * continuous line, it is rods separated by SEGMENT_GAP, and a polyline that
-   * skipped those could not be rebuilt at true lengths.
-   */
+  /** the chain as a polyline: connector A, every joint, connector B — nine points */
   points: Vec3[];
-  /** distance between consecutive points: rod, gap, rod, gap, ... */
+  /** distance between consecutive points: one per segment */
   segLengths: number[];
-  /** just the six rod lengths, for callers that want them without the gaps */
+  /** the segment lengths again, for callers that want them under that name */
   rodLengths: number[];
 }
 
@@ -112,7 +115,7 @@ const S = 1 / MODULINK_CUBE_SIZE;
 // placement bug at all, a size one. Spec sizes touch; invented sizes float.
 const ROD_RADIUS_CUBES = SPEC_ROD_RADIUS * S;
 // The spine is longer, not thicker — same radius as every other rod.
-const BIG_ROD_RADIUS = ROD_RADIUS_CUBES;
+const SPINE_RADIUS = ROD_RADIUS_CUBES;
 const ROD_RADIUS = ROD_RADIUS_CUBES;
 // Joints are the knuckles between rods; drawn just proud of the rod so the
 // articulation is visible without inventing a diameter the spec does not give.
@@ -162,14 +165,19 @@ export function moduleGeometry(m: FittedModule): ModuleGeometry {
 
   const frames = moduleFrames(angles, base);
 
-  const rods: RodSegment[] = frames.map((f) => ({
-    from: toCube(f.start.position),
-    to: toCube(f.end.position),
-    radius: f.index === BIG_ROD_INDEX ? BIG_ROD_RADIUS : ROD_RADIUS,
-    isBigRod: f.index === BIG_ROD_INDEX,
-  }));
+  // The end lock: connector A to the T1 axis, which has no joint of its own.
+  const lock = composePoses(composePoses(base, FLIP_X_180), translateZ(PREFIX_LENGTH));
+  const rods: RodSegment[] = [
+    { from: toCube(base.position), to: toCube(lock.position), radius: ROD_RADIUS, isSpine: false },
+    ...frames.map((f) => ({
+      from: toCube(f.start.position),
+      to: toCube(f.end.position),
+      radius: SPINE_ROD_INDICES.includes(f.index) ? SPINE_RADIUS : ROD_RADIUS,
+      isSpine: SPINE_ROD_INDICES.includes(f.index),
+    })),
+  ];
 
-  // A knuckle at the proximal end of every rod — that is where its joint acts.
+  // A knuckle at the proximal end of every joint's segment — where it acts.
   const joints: JointMarker[] = frames.map((f) => ({
     at: toCube(f.start.position),
     radius: JOINT_RADIUS,
@@ -186,11 +194,8 @@ export function moduleGeometry(m: FittedModule): ModuleGeometry {
     };
   });
 
-  const points: Vec3[] = [];
-  for (const f of frames) {
-    points.push(toCube(f.start.position));
-    points.push(toCube(f.end.position));
-  }
+  const points: Vec3[] = [toCube(base.position), toCube(lock.position)];
+  for (const f of frames) points.push(toCube(f.end.position));
   const segLengths: number[] = [];
   for (let i = 1; i < points.length; i++) {
     segLengths.push(Math.hypot(
@@ -204,6 +209,67 @@ export function moduleGeometry(m: FittedModule): ModuleGeometry {
   ));
 
   return { moduleId: m.id, rods, joints, connectors, points, segLengths, rodLengths };
+}
+
+/** One of the module's ten rigid bodies, placed in the viewport. */
+export interface BodyPlacement {
+  /** body name in the Studio document, e.g. Spine1_B1B2 */
+  name: string;
+  kind: 'housing' | 'spine' | 'lock' | 'rotor';
+  /** the body's origin, in cube units, in the viewport frame */
+  position: Vec3;
+  /**
+   * Orientation to apply to the body's mesh AFTER it has been rotated into the
+   * MSRR model frame (moduleMeshes.ts bakes that rotation into the geometry).
+   */
+  quaternion: Quat;
+}
+
+/**
+ * Where each of the module's ten bodies is for this fitted module — the real
+ * meshes' placement, driven by the same forward kinematics as everything else.
+ *
+ * Each body is carried by one joint of the chain (restLayout.ts). At rest the
+ * body sits at a known place in the model frame; when the joints move, the whole
+ * body rides its carrier's frame:
+ *
+ *     placement = F(q) * F(0)^-1 * rest
+ *
+ * where F(q) is the carrier's frame at the current angles, F(0) at zero angles
+ * with an identity base, and `rest` the body origin at rest. At q = 0 this is
+ * the rest layout exactly, and for any q the body stays rigidly attached to its
+ * joint — which a test checks against the connector positions at random poses.
+ */
+export function moduleBodies(m: FittedModule): BodyPlacement[] {
+  if (m.bodyPoses) {
+    const bp = m.bodyPoses;
+    return restBodies().filter((b) => bp[b.name]).map((b) => ({ name: b.name, kind: b.kind, position: bp[b.name].position, quaternion: bp[b.name].quaternion }));
+  }
+  const base: Pose = m.baseQuat
+    ? { position: [0, 0, 0], quaternion: m.baseQuat }
+    : anchoredBase(m.pose, baseQuatFor(m.anchorDir));
+  const anchor = m.anchorPos ?? m.anchorCell;
+  const frames = moduleFrames(m.pose.angles, base);
+  const restFrames = moduleFrames(ZERO_ANGLES, IDENTITY);
+  const baseFrame = composePoses(base, FLIP_X_180);
+  const restBase = FLIP_X_180;
+
+  return restBodies().map((b) => {
+    const fq = b.carrier < 0 ? baseFrame : frames[b.carrier].start;
+    const f0 = b.carrier < 0 ? restBase : restFrames[b.carrier].start;
+    const carried = composePoses(fq, invertPose(f0));
+    const placed = composePoses(carried, { position: b.position, quaternion: [0, 0, 0, 1] });
+    return {
+      name: b.name,
+      kind: b.kind,
+      position: [
+        anchor[0] + placed.position[0] * S,
+        anchor[1] + placed.position[1] * S,
+        anchor[2] + placed.position[2] * S,
+      ] as Vec3,
+      quaternion: placed.quaternion,
+    };
+  });
 }
 
 /**
@@ -261,8 +327,8 @@ export function tweenGeometry(
     p[2] + (b.points[i][2] - p[2]) * e,
   ]);
 
-  // Walk the chain out from the shared (pinned) end, forcing every segment —
-  // rods AND the gaps between them — back to its real length.
+  // Walk the chain out from the shared (pinned) end, forcing every segment back
+  // to its real length.
   const walked: Vec3[] = [target[0]];
   for (let i = 0; i < aSegLengths.length; i++) {
     const from = walked[i];
@@ -277,14 +343,15 @@ export function tweenGeometry(
   // pin the correct end.
   const fixed = farIsShared ? [...walked].reverse() : walked;
 
-  // Rods are the even segments; the odd ones are the gaps between them.
+  // Segment i runs from point i to point i + 1; joint j sits at the start of
+  // segment j + 1 (segment 0 is the end lock, which has no joint).
   const rods: RodSegment[] = a.rods.map((r, i) => ({
-    from: fixed[i * 2],
-    to: fixed[i * 2 + 1],
+    from: fixed[i],
+    to: fixed[i + 1],
     radius: r.radius,
-    isBigRod: r.isBigRod,
+    isSpine: r.isSpine,
   }));
-  const joints: JointMarker[] = a.joints.map((j, i) => ({ ...j, at: fixed[i * 2] }));
+  const joints: JointMarker[] = a.joints.map((j, i) => ({ ...j, at: fixed[i + 1] }));
 
   // Connectors ride the chain: the two ends sit at its tips, the side faces on
   // the big rod's midpoint. Interpolating their normals is not worth the cost

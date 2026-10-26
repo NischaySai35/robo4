@@ -1,38 +1,49 @@
 /**
- * modulink.ts — the MODULINK module: a bendable 6-rod chain, not a cube.
+ * modulink.ts — the TETROBOT module ("try8"): a 7-DOF bendable chain, not a cube.
  *
  * WHY THIS FILE EXISTS
  * The classic MSRR abstraction says one module is one lattice cube. That is true
  * for the mod1 theme and it is what makes the reconfiguration planner tractable.
- * It is NOT true for a MODULINK module: this thing is a serial chain roughly four
- * cube-lengths long when fully extended, and it FOLDS. Straight, it lies across
- * four cubes. Elbowed, three. Doubled back, two. Coiled, one.
+ * It is NOT true for this module: it is a serial chain roughly four cube-lengths
+ * long when fully extended, and it FOLDS. Straight, it lies across four cubes.
+ * Elbowed, three. Doubled back, two. Coiled, one.
  *
- * That variability is the whole point and it is a property of the module's POSE,
- * not of the lattice. The lattice stays uniformly cubic. What changes is how many
- * of those cubes one module's body actually passes through, which is answered by
- * running real forward kinematics over the joint angles and voxelising the result
- * (see occupancy.ts).
+ * That variability is a property of the module's POSE, not of the lattice. The
+ * lattice stays uniformly cubic. What changes is how many of those cubes one
+ * module's body actually passes through, which is answered by running real
+ * forward kinematics over the joint angles and voxelising the result (see
+ * occupancy.ts).
  *
- * STRUCTURE (fixed, asserted — a module is always exactly this)
+ * THE MODULE (source of truth: assets/tetrobot-module/module_spec.json)
  *
- *   Connector A ─ rod0 ─ rod1 ─ rod2 ─ rod3(BIG) ─ rod4 ─ rod5 ─ Connector B
- *                                  │
- *                       4 side connectors (UP/RIGHT/DOWN/LEFT)
- *                       ride the midpoint of rod3, facing radially out
+ *   End A lock ─ T1 ─ B1 ─ [Spine1] ─ B2 ─ T2 ─ B3 ─ [Spine2] ─ B4 ─ T3 ─ End B lock
+ *                          S1A,S1B                   S2A,S2B
  *
- * Rod-kind sequence is fixed: TWIST · BEND · BEND · TWIST · BEND · TWIST.
- * Rod index 3 is the "big rod" — the twist rod flanked by BEND on both sides,
- * twice as long as the other twists (length only, same radius). It is the spine,
- * and the four side connectors branch from its midpoint.
+ * Seven joints, in this fixed order: TWIST · BEND · BEND · TWIST · BEND · BEND ·
+ * TWIST. Two spines — the bodies between the two bends of a pair — each carry TWO
+ * side receivers on opposite faces. So there are six connectors: the two end
+ * connectors A and B (facing outward along the chain) and four side receivers
+ * S1A, S1B (spine 1) and S2A, S2B (spine 2).
  *
- * Six lock faces = the six faces of a cube: A, B, UP, RIGHT, DOWN, LEFT. All six
- * have identical geometry. A connector is a lock point, not a joint — welding two
- * connectors forces them to the same point with opposed outward normals.
+ * This REPLACES the old 6-DOF "MODULINK" model (three bends, one double-length
+ * spine carrying all four side connectors at one point, like cube faces). That
+ * design is discarded; the old file is in git history. Differences that matter
+ * to everything built on this file:
+ *   - 7 joints, not 6: four bends (B1..B4) and three twists (T1..T3).
+ *   - side connectors are at TWO places along the chain and only two per place,
+ *     on opposite faces (normals along the bend axis), not four at one point.
+ *   - the six connectors are no longer "the six faces of a cube": at most four
+ *     arms leave one spine (two chain ends and two sides), not six.
+ *   - twist is +-180 deg, bend +-90 deg, the end locks +-45 deg.
  *
- * DOF: 6 revolute per module. TWIST rolls about local Z (0…360°), BEND pitches
- * about local X (−90°…+90°). TWIST-BEND pairs behave like a 2-DOF universal
- * joint; the three twists also give end-to-end roll control.
+ * UNITS. Everything is in "module units" = metres * UNITS_PER_M, chosen so the
+ * straight A->B length stays ~3.79 and a cube (a quarter of it) stays ~0.95 —
+ * the lattice, reach table and fitter were all tuned at that scale and keep it.
+ *
+ * LOCAL FRAME (differs from the CAD/Studio frame, mapping is in the spec):
+ * the chain runs along local +Z after the base flip, TWIST rolls about Z, BEND
+ * pitches about X. Studio has the long axis along +X and bends about Y; the side
+ * receivers face along the bend axis, i.e. local +-X here.
  *
  * Framework-free by design: no THREE, no React. Pose maths is a compact local
  * implementation so this file can be unit-tested and reused by the planner.
@@ -44,168 +55,172 @@ export interface Pose { position: Vec3; quaternion: Quat }
 
 // ── physical constants ────────────────────────────────────────────────────────
 
-export const TWIST_ROD_LENGTH = 0.5;
-export const BEND_ROD_LENGTH = 0.55;
-/** rod 3 is a twist rod at double length — the spine */
-export const BIG_ROD_LENGTH_SCALE = 2;
-export const SEGMENT_GAP = 0.02;
-export const HEMISPHERE_RADIUS = 0.42;
-export const SIDE_CONNECTOR_RADIAL_OFFSET = 0.6;
-/**
- * Rod cylinder radius, from the hardware spec. Every rod is this thick, the
- * big spine rod included — the spine is LONGER (BIG_ROD_LENGTH_SCALE), not
- * fatter.
- *
- * This matters geometrically, not just cosmetically: a side connector rides
- * at SIDE_CONNECTOR_RADIAL_OFFSET (0.6) from the rod axis with a dome of
- * HEMISPHERE_RADIUS (0.42), so the dome's inner edge lands at 0.6 - 0.42 =
- * 0.18, just INSIDE this 0.2 rod surface. That overlap is what makes a side
- * dome read as mounted flush on the spine. Drawing either radius smaller
- * than spec opens a visible gap and the dome appears to float in mid-air
- * beside the rod, attached to nothing.
- */
-export const ROD_RADIUS = 0.2;
+/** module units per metre — keeps the straight length ~3.79 like the old module */
+export const UNITS_PER_M = 5.5;
+const u = (metres: number) => metres * UNITS_PER_M;
 
-export const RODS_PER_MODULE = 6;
-export const BIG_ROD_INDEX = 3;
+/**
+ * Chain segment lengths in metres, from the HINGE positions in the Studio default
+ * doc (single-module-demo.json: joint origin is in the parent body's frame, the
+ * hinge sits at parent position + origin). Measured from connector A they are
+ * T1 0.06697, B1 0.13540, B2 0.29611, T2 0.36453, B3 0.39083, B4 0.55155,
+ * T3 0.61996, connector B 0.68693. NOT the `x_m` values in module_spec.json:
+ * those are body origins, which sit a few centimetres off the hinges.
+ *
+ * The module is mirror-symmetric end to end (prefix 0.06697 = last rod 0.06697),
+ * and each spine's receivers are at the exact midpoint of the spine, between its
+ * two bend axes: 0.2158 m (spine 1) and 0.4712 m (spine 2) from connector A.
+ *
+ * PREFIX is connector A -> the T1 axis. Then, per rod i, joint i acts at the
+ * rod's start and the rod runs to the next joint:
+ *   rod 0  T1 -> B1          rod 4  B3 -> B4  (Spine2)
+ *   rod 1  B1 -> B2 (Spine1) rod 5  B4 -> T3
+ *   rod 2  B2 -> T2          rod 6  T3 -> connector B
+ *   rod 3  T2 -> B3
+ */
+const PREFIX_M = 0.066972;
+const ROD_LENGTHS_M = [0.068424, 0.16071, 0.068420, 0.0263, 0.16072, 0.068410, 0.066974];
+
+/** Joints sit flush against their rods now — there is no gap between segments. */
+export const SEGMENT_GAP = 0;
+
+/** Connector pad radius: the end lock body is ~80 mm across. */
+export const HEMISPHERE_RADIUS = u(0.04);
+/**
+ * How far a side receiver's seating point is off the spine axis (31.3 mm in the
+ * spec: the receiver is recessed in the spine's face, which is ~63 mm across).
+ */
+export const SIDE_CONNECTOR_RADIAL_OFFSET = u(0.0313);
+/**
+ * How far along its spine rod (from the rod's start, the bend hinge) the two side
+ * receivers sit: the midpoint of the spine, 0.0804 m (the two spines are the same
+ * part). That puts them 0.2158 m and 0.4712 m from connector A, which is the
+ * "~0.22 m / ~0.48 m" the module spec quotes.
+ */
+export const SIDE_ALONG_ROD = u(0.08036);
+/** Body radius, from the mesh sizes (spine ~63 mm, housings ~75 mm). */
+export const ROD_RADIUS = u(0.035);
+
+export const RODS_PER_MODULE = 7;
+/** Rods that are spines — the ones carrying side receivers. */
+export const SPINE_ROD_INDICES: readonly number[] = Object.freeze([1, 4]);
 
 export type RodKind = 'twist' | 'bend';
 
-/** The one legal rod alphabet. A module always has exactly these six, in this order. */
+/** The one legal rod alphabet. A module always has exactly these seven, in this order. */
 export const ROD_ORDER: readonly RodKind[] = Object.freeze([
-  'twist', 'bend', 'bend', 'twist', 'bend', 'twist',
+  'twist', 'bend', 'bend', 'twist', 'bend', 'bend', 'twist',
 ] as RodKind[]);
 
-/** Joint limits, radians. TWIST is unlimited roll; BEND is ±90°. */
-export const TWIST_LIMIT: [number, number] = [0, Math.PI * 2];
-export const BEND_LIMIT: [number, number] = [-Math.PI / 2, Math.PI / 2];
+/** Joint names in chain order, for UI and logs. */
+export const JOINT_NAMES: readonly string[] = Object.freeze(['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3']);
 
-export const rodLength = (index: number): number => {
-  const kind = ROD_ORDER[index];
-  if (kind === 'bend') return BEND_ROD_LENGTH;
-  return TWIST_ROD_LENGTH * (index === BIG_ROD_INDEX ? BIG_ROD_LENGTH_SCALE : 1);
-};
+/** Joint limits, radians. TWIST is +-180 deg, BEND +-90 deg, the end locks +-45 deg (module_spec.json). */
+export const TWIST_LIMIT: [number, number] = [-Math.PI, Math.PI];
+export const BEND_LIMIT: [number, number] = [-Math.PI / 2, Math.PI / 2];
+export const LOCK_LIMIT: [number, number] = [-Math.PI / 4, Math.PI / 4];
+
+export const rodLength = (index: number): number => u(ROD_LENGTHS_M[index]);
+/** Distance from connector A to the first joint (T1). */
+export const PREFIX_LENGTH = u(PREFIX_M);
 
 /**
- * Straight-line A→B distance with every joint at zero: the sum of all six rod
- * lengths plus seven gaps (one before each rod, one trailing to connector B).
- * 2*0.5 + 2*0.5(big) + 3*0.55 + 7*0.02 = 3.79
+ * Straight-line A->B distance with every joint at zero: the prefix plus all seven
+ * rods. 0.68694 m * 5.5 = 3.778 (the old module was 3.79; a cube is a quarter of it)
  */
 export const MODULE_CHAIN_LENGTH =
-  ROD_ORDER.reduce((sum, _, i) => sum + rodLength(i), 0) + (RODS_PER_MODULE + 1) * SEGMENT_GAP;
+  PREFIX_LENGTH + ROD_LENGTHS_M.reduce((sum, _, i) => sum + rodLength(i), 0);
 
-/** Centre-to-centre distance between two side connectors 90° apart on the same rod. */
-export const ADJACENT_SIDE_SEPARATION = SIDE_CONNECTOR_RADIAL_OFFSET * Math.SQRT2;
-/** Centre-to-centre distance two connector domes need before they interpenetrate. */
+/**
+ * Centre-to-centre distance two connector pads need before they interpenetrate:
+ * one pad diameter. The two receivers on one spine are the exception — they face
+ * opposite ways on opposite faces of the same body, back to back by design, so
+ * they are exempt (see `connectorsMayShareBody`).
+ */
 export const REQUIRED_DOME_CLEARANCE = 2 * HEMISPHERE_RADIUS;
-
-/**
- * Fraction of the dome clearance kept in hand before two connectors are called
- * safe. Bare geometric non-overlap is not clearance: parts have tolerances, the
- * domes are the mating surfaces, and a plan that banks on a sub-millimetre gap
- * is a plan that fails in metal.
- */
-export const DOME_CLEARANCE_MARGIN = 0.05;
-
-/**
- * Whether two side connectors 90° apart clear a manufacturing-tolerance MARGIN
- * on top of their bare geometric minimum — NOT whether they physically overlap.
- * They do not: `ADJACENT_SIDE_CLEARANCE` below is positive. This is kept as
- * information only; nothing in this file enforces it any more (Nischay's own
- * call, 2026-09-05, after building and inspecting adjacent-side welds directly
- * — see fitModules.ts's changelog). A module may use any and all four of its
- * side connectors at once now, not just one opposite pair.
- *
- * A NOTE ON A STALE CITATION THIS COMMENT USED TO CARRY. An earlier version of
- * this file cited an external write-up claiming "10 overlapping pairs, 0.642
- * units deep" measured at real junctions, and treated that as the reason to
- * enforce a margin regardless of the bare arithmetic. That figure is not
- * computed anywhere in this codebase, is roughly 1.5x a full dome radius (far
- * larger than anything the geometry here produces), and — per the same
- * project's own notes elsewhere — was written against a DIFFERENT codebase
- * entirely. It should not be trusted as a live fact about this module.
- */
-export const ADJACENT_SIDE_FACES_CLASH =
-  ADJACENT_SIDE_SEPARATION < REQUIRED_DOME_CLEARANCE * (1 + DOME_CLEARANCE_MARGIN);
-
-/** How much room is actually left between two adjacent side domes. Negative = overlap. */
-export const ADJACENT_SIDE_CLEARANCE = ADJACENT_SIDE_SEPARATION - REQUIRED_DOME_CLEARANCE;
+/** Separation of the two receivers on one spine (they are on opposite faces). */
+export const SPINE_SIDE_SEPARATION = 2 * SIDE_CONNECTOR_RADIAL_OFFSET;
 
 // ── connectors ────────────────────────────────────────────────────────────────
 
-export type ConnectorEnd = 'A' | 'B' | 'UP' | 'RIGHT' | 'DOWN' | 'LEFT';
+export type ConnectorEnd = 'A' | 'B' | 'S1A' | 'S1B' | 'S2A' | 'S2B';
 
 export const CONNECTOR_ENDS: readonly ConnectorEnd[] =
-  Object.freeze(['A', 'B', 'UP', 'RIGHT', 'DOWN', 'LEFT'] as ConnectorEnd[]);
+  Object.freeze(['A', 'B', 'S1A', 'S1B', 'S2A', 'S2B'] as ConnectorEnd[]);
 
 export const SIDE_ENDS: readonly ConnectorEnd[] =
-  Object.freeze(['UP', 'RIGHT', 'DOWN', 'LEFT'] as ConnectorEnd[]);
+  Object.freeze(['S1A', 'S1B', 'S2A', 'S2B'] as ConnectorEnd[]);
 
 export const isSideEnd = (end: ConnectorEnd) => end !== 'A' && end !== 'B';
 
-/** Radial direction each side connector faces, in the big rod's local frame. */
-const SIDE_DIRECTION: Record<string, Vec3> = {
-  UP: [0, 1, 0],
-  RIGHT: [1, 0, 0],
-  DOWN: [0, -1, 0],
-  LEFT: [-1, 0, 0],
+/** Studio connector id (module_spec.json) for each end, for markers and docs. */
+export const CONNECTOR_IDS: Record<ConnectorEnd, string> = {
+  A: 'conn-endA', B: 'conn-endB', S1A: 'conn-s1a', S1B: 'conn-s1b', S2A: 'conn-s2a', S2B: 'conn-s2b',
 };
 
-/**
- * The two side faces 90° away from `end`.
- *
- * Kept for callers that want to reason about adjacency itself (it is still a
- * true geometric relationship); it is no longer used to forbid a weld. See
- * `sideWeldsAreLegal`.
- */
-export function adjacentSideEnds(end: ConnectorEnd): ConnectorEnd[] {
-  switch (end) {
-    case 'UP':
-    case 'DOWN': return ['RIGHT', 'LEFT'];
-    case 'RIGHT':
-    case 'LEFT': return ['UP', 'DOWN'];
-    default: return []; // A and B are on the chain axis, they clash with nothing
-  }
-}
+/** Which spine rod a side receiver rides on, and which way it faces in that rod's frame. */
+interface SideSite { rod: number; normal: Vec3 }
+const SIDE_SITES: Record<string, SideSite> = {
+  // The receivers face along the bend axis (local X). Studio's "A" faces -Y and
+  // "B" +Y with bends about -Y; the mapping to local X keeps A and B opposite.
+  S1A: { rod: 1, normal: [1, 0, 0] },
+  S1B: { rod: 1, normal: [-1, 0, 0] },
+  S2A: { rod: 4, normal: [1, 0, 0] },
+  S2B: { rod: 4, normal: [-1, 0, 0] },
+};
 
-/** The face directly opposite `end`. */
+/** The two receivers of one spine, or the other face of the same spine. */
 export function oppositeSideEnd(end: ConnectorEnd): ConnectorEnd | null {
   switch (end) {
-    case 'UP': return 'DOWN';
-    case 'DOWN': return 'UP';
-    case 'RIGHT': return 'LEFT';
-    case 'LEFT': return 'RIGHT';
+    case 'S1A': return 'S1B';
+    case 'S1B': return 'S1A';
+    case 'S2A': return 'S2B';
+    case 'S2B': return 'S2A';
     default: return null;
   }
 }
 
-/**
- * Are these side welds simultaneously buildable on one module?
- *
- * All four side connectors may be used at once now — 2026-09-05, Nischay's own
- * call, made after building an adjacent-pair weld and inspecting it directly
- * (fitModules' `allowAdjacentSideWelds` toggle, since folded into the default).
- * Two side domes 90° apart clear each other by 0.0085 cube units
- * (`ADJACENT_SIDE_CLEARANCE`) — real, if thin, clearance, not an
- * interpenetration. The only thing this still refuses is a physical
- * impossibility: more than four sides on a module that only has four.
- */
-export function sideWeldsAreLegal(ends: ConnectorEnd[]): boolean {
-  const sides = ends.filter(isSideEnd);
-  return sides.length <= SIDE_ENDS.length;
+/** Spine number (1 or 2) a side receiver belongs to, or null for an end connector. */
+export function spineOf(end: ConnectorEnd): 1 | 2 | null {
+  if (end === 'S1A' || end === 'S1B') return 1;
+  if (end === 'S2A' || end === 'S2B') return 2;
+  return null;
 }
 
 /**
- * Which connector pairings the hardware can actually weld.
+ * Faces 90 deg to `end` on the same body. The two receivers of a spine are 180 deg
+ * apart and the two spines are far apart, so nothing is ever adjacent: kept so
+ * callers that reason about adjacency keep working, and always empty.
+ */
+export function adjacentSideEnds(_end: ConnectorEnd): ConnectorEnd[] { return []; }
+
+/**
+ * May these two connectors of ONE module sit closer than a pad diameter? Only the
+ * two receivers on one spine: opposite faces of the same body, back to back.
+ */
+export function connectorsMayShareBody(a: ConnectorEnd, b: ConnectorEnd): boolean {
+  return oppositeSideEnd(a) === b;
+}
+
+/**
+ * Are these side welds simultaneously buildable on one module? Each of the four
+ * receivers can carry one weld, so any subset is fine; it only refuses a weld
+ * list that names the same receiver twice or more than four sides.
+ */
+export function sideWeldsAreLegal(ends: ConnectorEnd[]): boolean {
+  const sides = ends.filter(isSideEnd);
+  return sides.length <= SIDE_ENDS.length && new Set(sides).size === sides.length;
+}
+
+/**
+ * Which connector pairings the hardware can weld.
  *
- *   end ↔ end   — the common case: modules chain nose to tail through A/B.
- *   end ↔ side  — allowed: a free end grabs another module's flank. This is the
- *                 move that lets a chain branch and that the gait below depends on.
- *   side ↔ side — NEVER. Two side connectors cannot mate with each other.
- *
- * So every weld has at least one END (A or B) in it. That single rule is what
- * makes the locomotion gait below the shape it is: a module always travels on
- * its ends, and a side connector is only ever something to travel TO.
+ *   end  <-> end    chain a module nose to tail
+ *   end  <-> side   a free end grabs another module's spine — the walking move
+ *   side <-> end    the same weld seen from the receiver's module
+ *   side <-> side   IMPOSSIBLE. Only the two ENDS carry a lock rotor; a spine
+ *                   receiver is passive, so two receivers have nothing to lock
+ *                   them together. (An earlier version allowed this; it was wrong.)
  */
 export function weldTypeIsLegal(a: ConnectorEnd, b: ConnectorEnd): boolean {
   return !(isSideEnd(a) && isSideEnd(b));
@@ -218,8 +233,8 @@ export function weldTypeIsLegal(a: ConnectorEnd, b: ConnectorEnd): boolean {
  * welded while the other reaches, exactly like an inchworm:
  *
  *   1. anchored by one end (say A), the free end (B) is somewhere in space
- *   2. the module BENDS — its six joints re-pose to swing B toward a target
- *   3. B welds onto the target, usually another module's SIDE connector,
+ *   2. the module BENDS — its seven joints re-pose to swing B toward a target
+ *   3. B welds onto the target, usually another module's SIDE receiver,
  *      sometimes another module's end
  *   4. only now does A release
  *   5. the module is anchored at B, A is free, and the cycle repeats
@@ -227,11 +242,6 @@ export function weldTypeIsLegal(a: ConnectorEnd, b: ConnectorEnd): boolean {
  * Step 4 coming after step 3 is the whole safety property: there is never an
  * instant where the module is holding nothing, so it can neither fall off nor
  * split the structure. `canReleaseEnd` is that invariant in code.
- *
- * Note this is a fundamentally different move model from the sliding-cube and
- * pivoting-cube abstractions in moves.ts. Those relocate a rigid cube between
- * adjacent lattice cells. This relocates a multi-cube bendable body between
- * CONNECTORS, and its reach is set by the joint limits, not by cell adjacency.
  */
 export interface ChainWeld {
   /** this module's connector that is welded */
@@ -246,17 +256,18 @@ export interface ChainWeld {
 export function weldSetIsLegal(welds: ChainWeld[]): { ok: boolean; reason: string } {
   for (const w of welds) {
     if (!weldTypeIsLegal(w.own, w.toEnd)) {
-      return {
-        ok: false,
-        reason: `${w.own}↔${w.toEnd} is a side-to-side weld, which this connector design cannot make`,
-      };
+      return { ok: false, reason: `${w.own}<->${w.toEnd} cannot be welded` };
     }
   }
   if (!sideWeldsAreLegal(welds.map((w) => w.own))) {
     return {
       ok: false,
-      reason: 'a module has only four side connectors and cannot carry more than four side welds',
+      reason: 'a module has four side receivers (two per spine) and each can carry one weld',
     };
+  }
+  const own = welds.map((w) => w.own);
+  if (new Set(own).size !== own.length) {
+    return { ok: false, reason: 'a connector can carry only one weld' };
   }
   return { ok: true, reason: '' };
 }
@@ -292,12 +303,7 @@ export const IDENTITY: Pose = { position: [0, 0, 0], quaternion: [0, 0, 0, 1] };
  * Lives here rather than in the renderer because the FITTER needs it too: real
  * connector positions come from running forward kinematics from this base, and
  * a weld is defined in real space ("same point, opposed normals"), not by cube
- * membership. Two copies of this table would be two chances to disagree about
- * where a connector physically is.
- *
- * These are the quaternion counterparts of fitModules.ROTATIONS, which does the
- * same job for integer cells; the two are cross-checked against each other in
- * moduleGeometry.test.ts rather than trusted by inspection.
+ * membership.
  */
 const BASE_Q = Math.SQRT1_2;
 const BASE_QUAT: Record<string, Quat> = {
@@ -362,19 +368,19 @@ export const forwardOf = (p: Pose): Vec3 => rotateVec(p.quaternion, [0, 0, 1]);
 
 // ── joint angles ──────────────────────────────────────────────────────────────
 
-/** Six joint angles in radians, indexed to match ROD_ORDER. */
-export type ModuleAngles = [number, number, number, number, number, number];
+/** Seven joint angles in radians, indexed to match ROD_ORDER: T1 B1 B2 T2 B3 B4 T3. */
+export type ModuleAngles = [number, number, number, number, number, number, number];
 
-export const ZERO_ANGLES: ModuleAngles = [0, 0, 0, 0, 0, 0];
+export const ZERO_ANGLES: ModuleAngles = [0, 0, 0, 0, 0, 0, 0];
 
 export const limitsFor = (index: number): [number, number] =>
   (ROD_ORDER[index] === 'twist' ? TWIST_LIMIT : BEND_LIMIT);
 
-/** Clamp one joint into its limits. Twist wraps rather than clamps — it is a full roll. */
+/** Clamp one joint into its limits. Twist wraps rather than clamps — it covers a full turn. */
 export function clampAngle(index: number, angle: number): number {
   if (ROD_ORDER[index] === 'twist') {
     const twoPi = Math.PI * 2;
-    return ((angle % twoPi) + twoPi) % twoPi;
+    return ((((angle + Math.PI) % twoPi) + twoPi) % twoPi) - Math.PI;
   }
   return Math.max(BEND_LIMIT[0], Math.min(BEND_LIMIT[1], angle));
 }
@@ -383,18 +389,18 @@ export const clampAngles = (a: ModuleAngles): ModuleAngles =>
   a.map((v, i) => clampAngle(i, v)) as ModuleAngles;
 
 /**
- * Throws if a rod list is not the one legal alphabet. Ported from the MODULINK
- * source deliberately: every downstream assumption (which rod is the spine, where
- * the side connectors ride, how many DOF exist) depends on this order holding.
+ * Throws if a rod list is not the one legal alphabet. Every downstream assumption
+ * (which rods are the spines, where the side receivers ride, how many DOF exist)
+ * depends on this order holding.
  */
 export function assertCanonicalRodOrder(kinds: readonly RodKind[]): void {
   if (kinds.length !== RODS_PER_MODULE) {
-    throw new Error(`MODULINK module needs exactly ${RODS_PER_MODULE} rods, got ${kinds.length}`);
+    throw new Error(`TETROBOT module needs exactly ${RODS_PER_MODULE} rods, got ${kinds.length}`);
   }
   for (let i = 0; i < RODS_PER_MODULE; i++) {
     if (kinds[i] !== ROD_ORDER[i]) {
       throw new Error(
-        `MODULINK rod ${i} must be ${ROD_ORDER[i]}, got ${kinds[i]} — canonical order is ${ROD_ORDER.join('·')}`,
+        `TETROBOT rod ${i} must be ${ROD_ORDER[i]}, got ${kinds[i]} — canonical order is ${ROD_ORDER.join('·')}`,
       );
     }
   }
@@ -413,16 +419,16 @@ export interface RodFrame {
 }
 
 /**
- * Walk the chain: gap → joint rotation → rod length, per rod, starting from the
- * base pose flipped 180° about X (connector A faces backwards out of the module).
+ * Walk the chain: the prefix (connector A to the T1 axis), then per rod the joint
+ * rotation and the rod length, starting from the base pose flipped 180 deg about X
+ * (connector A faces backwards out of the module).
  */
 export function moduleFrames(angles: ModuleAngles, base: Pose = IDENTITY): RodFrame[] {
   const q = clampAngles(angles);
-  let frame = composePoses(base, FLIP_X_180);
+  let frame = composePoses(composePoses(base, FLIP_X_180), translateZ(PREFIX_LENGTH));
   const out: RodFrame[] = [];
 
   for (let i = 0; i < RODS_PER_MODULE; i++) {
-    frame = composePoses(frame, translateZ(SEGMENT_GAP));
     const kind = ROD_ORDER[i];
     frame = composePoses(frame, kind === 'twist' ? rotateZ(q[i]) : rotateX(q[i]));
     const start = frame;
@@ -433,10 +439,10 @@ export function moduleFrames(angles: ModuleAngles, base: Pose = IDENTITY): RodFr
   return out;
 }
 
-/** Pose at connector B: the chain end plus the trailing gap. */
+/** Pose at connector B: the end of the last rod. */
 export function endPose(angles: ModuleAngles, base: Pose = IDENTITY): Pose {
   const frames = moduleFrames(angles, base);
-  return composePoses(frames[frames.length - 1].end, translateZ(SEGMENT_GAP));
+  return frames[frames.length - 1].end;
 }
 
 export interface ConnectorPose {
@@ -446,11 +452,11 @@ export interface ConnectorPose {
   normal: Vec3;
 }
 
-/** All six lock faces in world space for a given pose. */
+/** All six connectors in world space for a given pose. */
 export function connectorPoses(angles: ModuleAngles, base: Pose = IDENTITY): ConnectorPose[] {
   const frames = moduleFrames(angles, base);
   const startFrame = composePoses(base, FLIP_X_180);
-  const bPose = composePoses(frames[frames.length - 1].end, translateZ(SEGMENT_GAP));
+  const bPose = frames[frames.length - 1].end;
 
   const out: ConnectorPose[] = [
     // A sits at the module origin facing back out of the chain.
@@ -458,18 +464,18 @@ export function connectorPoses(angles: ModuleAngles, base: Pose = IDENTITY): Con
     { end: 'B', position: bPose.position, normal: forwardOf(bPose) },
   ];
 
-  // Side connectors ride the MIDPOINT of the big rod, facing radially out.
-  const big = frames[BIG_ROD_INDEX];
-  const mid = composePoses(big.start, translateZ(big.length / 2));
+  // Side receivers ride their spine rod, on the faces along the bend axis.
   for (const end of SIDE_ENDS) {
-    const dir = SIDE_DIRECTION[end];
-    const normal = rotateVec(mid.quaternion, dir);
+    const site = SIDE_SITES[end];
+    const rod = frames[site.rod];
+    const at = composePoses(rod.start, translateZ(SIDE_ALONG_ROD));
+    const normal = rotateVec(at.quaternion, site.normal);
     out.push({
       end,
       position: [
-        mid.position[0] + normal[0] * SIDE_CONNECTOR_RADIAL_OFFSET,
-        mid.position[1] + normal[1] * SIDE_CONNECTOR_RADIAL_OFFSET,
-        mid.position[2] + normal[2] * SIDE_CONNECTOR_RADIAL_OFFSET,
+        at.position[0] + normal[0] * SIDE_CONNECTOR_RADIAL_OFFSET,
+        at.position[1] + normal[1] * SIDE_CONNECTOR_RADIAL_OFFSET,
+        at.position[2] + normal[2] * SIDE_CONNECTOR_RADIAL_OFFSET,
       ],
       normal,
     });
@@ -491,6 +497,9 @@ export function sampleCenterline(
 ): Vec3[] {
   const frames = moduleFrames(angles, base);
   const pts: Vec3[] = [base.position];
+  // the prefix (connector A to the T1 axis), which has no joint of its own
+  const pre = composePoses(composePoses(base, FLIP_X_180), translateZ(PREFIX_LENGTH));
+  pts.push(pre.position);
   for (const f of frames) {
     for (let s = 1; s <= samplesPerRod; s++) {
       const p = composePoses(f.start, translateZ((f.length * s) / samplesPerRod));

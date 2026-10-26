@@ -64,25 +64,24 @@ export const W_ADJACENT_LINE = 100;
 export const W_LINE_LENGTH = 10;
 
 /**
- * How many lines a snake's U-turn steps over. Two, because one cannot be built.
+ * How many lines a snake's U-turn steps over. One: into the line right next door,
+ * which is the rule as it was always meant.
  *
- * Nischay's rule says turn into the line right next door, and his reasoning
- * about the joints is right — three bend joints, ninety degrees each, is
- * plenty of travel to double back. What stops it is his own sphere rule.
- * Solved exactly (not sampled from the reach table) in all four fold planes
- * and at every offset along the line, a reversal into the NEIGHBOURING line
- * brings the module's connector A to 0.715 cubes of its own UP side dome,
- * where two domes need 0.887. Short by about a sixth of a cube, every time,
- * with no route round it. At two lines' pitch the same reversal is clean and
- * the solver finds twenty-nine of them. uTurnCatalogue in fitModules.ts is
- * where that measurement lives, and the test beside it pins it.
+ * With the OLD 6-DOF module this had to be two. Nischay's rule said turn into the
+ * neighbouring line and his reasoning about the joints was right, but the sphere
+ * rule stopped it: a reversal into the neighbouring line brought connector A to
+ * 0.715 cubes of its own UP side dome where two domes need 0.887. The try8
+ * module has no such dome on the inside of a bend (its receivers are on the
+ * spines, facing along the bend axis, and the two on one spine are exempt from
+ * each other), so the same reversal now clears with ~0.98 cubes to spare. The
+ * test beside uTurnCatalogue in fitModules.ts pins it.
  *
- * Two has its own cost, which is why the default fill is a spiral rather than
- * a snake (see FILL_PATTERN): a two-line U-turn passes THROUGH the line it
- * steps over, and in a patch one cube thick that line then has built courses
- * on both sides and nothing welded can ever get back into it.
+ * Note a two-line U-turn also passed THROUGH the line it stepped over, which in a
+ * patch one cube thick left that line with built courses on both sides and
+ * nothing welded able to get back into it — one more reason the default fill is
+ * a spiral rather than a snake (see FILL_PATTERN), and a reason one is better.
  */
-export const U_TURN_PITCH = 2;
+export const U_TURN_PITCH = 1;
 
 /** A fill route: an ordered walk covering one solid patch. */
 export interface SerpentineRoute {

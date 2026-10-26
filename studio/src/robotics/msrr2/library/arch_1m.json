@@ -1,0 +1,106 @@
+{
+ "id": "arch_1m",
+ "name": "Arch",
+ "nModules": 1,
+ "topology": [],
+ "pose": {
+  "M1": {
+   "T1": 210.43661630258595,
+   "B1": 258.35710252157514,
+   "B2": 214.394362652577,
+   "T2": 337.3344244392415,
+   "B3": 147.7778194739197,
+   "B4": 232.6306142793489,
+   "T3": 187.5599433553198
+  }
+ },
+ "baseFrame": {
+  "worldPose": {
+   "p": [
+    0,
+    0.3,
+    0
+   ],
+   "q": [
+    0.6019557569495948,
+    -0.2896811422394396,
+    0.32268145723201197,
+    0.6705302227824778
+   ]
+  },
+  "dropToFloor": true
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 2,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 99,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 219,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 98,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 14.4,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 288,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 1.74,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 11,
+  "cogMarginMm": 25.4,
+  "minJointMarginDeg": 11.6
+ },
+ "source": "seed",
+ "notes": "stands on its two ends · static check: PASS · MuJoCo hold: FAIL — M1.Spine1_B1B2 sags 71 mm from the planned pose (backlash + flex; limit 60 mm, estimate)",
+ "spec": {
+  "spans_gap_mm": {
+   "min": 250
+  },
+  "ground_contacts": {
+   "min": 2,
+   "max": 2
+  },
+  "height_mm": {
+   "min": 150
+  }
+ },
+ "sim": {
+  "ok": false,
+  "driftMm": 0.6,
+  "maxTorquePct": 9.7,
+  "reasons": [
+   "M1.Spine1_B1B2 sags 71 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+  ]
+ }
+}

@@ -37,18 +37,24 @@
 import { type Cell, key, manhattan } from './lattice';
 import {
   type ModuleAngles, type ConnectorEnd, type ConnectorPose, type Vec3, type Pose, type Quat,
-  IDENTITY, sampleCenterline, rodLength, SEGMENT_GAP,
+  IDENTITY, sampleCenterline, rodLength, PREFIX_LENGTH,
   isSideEnd, weldTypeIsLegal,
-  moduleFrames, composePoses, translateZ, rotateVec, BIG_ROD_INDEX, SIDE_ENDS,
+  moduleFrames, composePoses, rotateVec,
   endPose, connectorPoses,
 } from './modulink';
-import { MODULINK_POSES, MODULINK_CUBE_SIZE } from './occupancy';
+import { MODULINK_POSES, MODULINK_CUBE_SIZE, CUBES_PER_STRAIGHT_MODULE } from './occupancy';
 
-/** Twist joints can only seat every 90° — the connectors are four-fold symmetric. */
+/**
+ * Twist joints can only seat every 90° — the connectors are four-fold symmetric
+ * (slots at 45 + 90k deg). Written 0..270 deg; the joint covers +-180, so 270 is
+ * the same pose as -90 and is what the table stores.
+ */
 export const TWIST_STEPS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
 
 /**
- * Bend resolution, in degrees, swept over the full ±90° range.
+ * Bend resolution, in degrees, swept over the ±90° range (the joint itself goes to
+ * ±90°, the joint's full range). Four bends, not three, so
+ * the sweep is coarser than it used to be: 13^4 combinations per twist.
  *
  * Unlike twist, bend is NOT quantized by the hardware — it is a continuous
  * revolute joint. It is enumerated at a fine step here because the canonical
@@ -61,10 +67,10 @@ export const TWIST_STEPS = [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2];
  * IK at runtime. It just means the table is built by enumerating joint space
  * rather than by trusting six hand-picked poses.
  */
-export const BEND_STEP_DEG = 10;
+export const BEND_STEP_DEG = 22.5;
 
 /** How many alternative body routes to keep per landing spot, for collision slack. */
-export const ALTERNATES_PER_TARGET = 4;
+export const ALTERNATES_PER_TARGET = 2;
 
 /**
  * How far off a lattice point a pose's free end may land and still be counted.
@@ -73,6 +79,15 @@ export const ALTERNATES_PER_TARGET = 4;
  * would put unreachable moves into plans.
  */
 export const MAX_SNAP_ERROR = 0.3;
+
+/**
+ * Positional tolerances that are about the PHYSICAL weld (how close two pads must
+ * be to seat), not about lattice snapping, are written in the cubes the lattice
+ * was first tuned at (4 per module) and rescaled by this so they keep meaning the
+ * same number of centimetres when the cube is halved. MAX_SNAP_ERROR itself is
+ * left alone: a finer lattice should snap more tightly, not less.
+ */
+export const PHYSICAL_TOLERANCE_SCALE = CUBES_PER_STRAIGHT_MODULE / 4;
 
 /** How closely the free end's facing must line up with a lattice axis to seat. */
 export const MIN_AXIS_ALIGNMENT = 0.9;
@@ -127,7 +142,7 @@ export interface LatticePose {
   id: string;
   /** which canonical bend pattern this is built on */
   bendPoseId: string;
-  /** the quantized twist angles, in 90° steps, for rods 0 / 3 / 5 */
+  /** the quantized twist angles, in 90° steps, for the three twists T1 / T2 / T3 */
   twistSteps: [number, number, number];
   angles: ModuleAngles;
   /** free end's cube, relative to the anchor's cube at [0,0,0] */
@@ -141,20 +156,17 @@ export interface LatticePose {
   /** how far the true kinematic endpoint sat from the snapped lattice point, in cubes */
   snapError: number;
   /**
-   * Cube holding the big rod's midpoint, relative to the anchor. The four side
-   * connectors ride here.
-   */
-  midOffset: Cell;
-  /**
-   * Lattice directions the four side connectors face from `midOffset`.
+   * The four side receivers: which cube each one is filed under and which lattice
+   * direction it faces. Two per spine, so S1A/S1B share a cube and S2A/S2B share
+   * another (usually a different one).
    *
-   * A side connector physically sits 0.6 units out from the rod axis, which is
-   * about two thirds of a cube — it is NOT at a cube centre. Modelling it as
-   * "the midpoint cube, facing this way" is the lattice's approximation of it,
-   * and it is why a side weld is looser than an end weld. Recorded per pose so
-   * the error is at least explicit rather than assumed away.
+   * A receiver sits a few centimetres off its spine's axis, so it is nearly at
+   * the rod's centreline, but along the chain it is NOT at a cube centre, so the
+   * cube it is filed under is the lattice's approximation of it. Weld checks use
+   * the real position (fitModules.connectorsOf), never this.
+   * A direction the pose does not leave on a lattice axis is left out.
    */
-  sideDirs: Cell[];
+  sides: SideSite[];
   /**
    * Which physical connector this pose is held by. 'A' and 'B' are bookkeeping
    * labels for whichever end is held versus free (see fitModules.ts) — nothing
@@ -163,6 +175,9 @@ export interface LatticePose {
    */
   anchorEnd: 'A' | 'B';
 }
+
+/** One side receiver as the lattice sees it. */
+export interface SideSite { end: ConnectorEnd; offset: Cell; dir: Cell }
 
 /**
  * The correct BASE POSE for recomputing a placed module's real, continuous
@@ -182,7 +197,7 @@ export interface LatticePose {
  * transform, re-bases the chain so physical B — not A — sits at the local
  * origin facing local +Z, matching the convention `outer` already expects to
  * rotate into world space. This is exactly what table-build time already did
- * for these poses' `cells`/`midOffset`/`sideDirs` (`invB` below), which is why
+ * for these poses' `cells`/`sides` (`invB` below), which is why
  * the LATTICE bookkeeping for one was always fine while re-deriving continuous
  * geometry from scratch, ignoring this, was not.
  *
@@ -247,7 +262,7 @@ let tableCache: { cubeSize: number; poses: LatticePose[] } | null = null;
 
 /**
  * Allocation-free forward kinematics for the table build's inner loop, with
- * t0 = t5 = 0 (both are recovered by symmetry — see reachTable).
+ * T1 = T3 = 0 (T1 is recovered by symmetry, T3 cannot move the end — see reachTable).
  *
  * This is the same walk as modulink.moduleFrames — gap, joint, rod length, per
  * rod, from a base flipped 180° about X — but with the quaternion algebra
@@ -288,23 +303,40 @@ function _rotX(a: number) {
   _qx = x; _qy = y; _qz = z; _qw = w;
 }
 
-const ROD_LENGTHS: number[] = [0, 1, 2, 3, 4, 5].map(rodLength);
+const ROD_LENGTHS: number[] = [0, 1, 2, 3, 4, 5, 6].map(rodLength);
 
 /** Leaves the result in the module scratch; read it with `fastPosition`/`fastForward`. */
-function fastEndPose(b1: number, b2: number, t3: number, b4: number): void {
+function fastEndPose(b1: number, b2: number, t2: number, b3: number, b4: number): void {
   // Start at FLIP_X_180: quaternion (1,0,0,0).
   _qx = 1; _qy = 0; _qz = 0; _qw = 0;
   _px = 0; _py = 0; _pz = 0;
 
-  const G = SEGMENT_GAP;
-  // rod 0 twist (t0 = 0, no rotation), rods 1/2 bend, rod 3 twist, rod 4 bend, rod 5 twist (t5 = 0)
-  _stepZ(G); _stepZ(ROD_LENGTHS[0]);
-  _stepZ(G); _rotX(b1); _stepZ(ROD_LENGTHS[1]);
-  _stepZ(G); _rotX(b2); _stepZ(ROD_LENGTHS[2]);
-  _stepZ(G); _rotZ(t3); _stepZ(ROD_LENGTHS[3]);
-  _stepZ(G); _rotX(b4); _stepZ(ROD_LENGTHS[4]);
-  _stepZ(G); _stepZ(ROD_LENGTHS[5]);
-  _stepZ(G);
+  // connector A -> T1 axis, then per rod: joint rotation, rod length. T1 and T3 are
+  // fixed at 0 here (see reachTable): T1 is recovered by symmetry, T3 cannot move
+  // the end connector at all.
+  _stepZ(PREFIX_LENGTH);
+  _stepZ(ROD_LENGTHS[0]);                        // T1 (0), rod T1 -> B1
+  _rotX(b1); _stepZ(ROD_LENGTHS[1]);             // B1, Spine1
+  _rotX(b2); _stepZ(ROD_LENGTHS[2]);             // B2
+  _rotZ(t2); _stepZ(ROD_LENGTHS[3]);             // T2
+  _rotX(b3); _stepZ(ROD_LENGTHS[4]);             // B3, Spine2
+  _rotX(b4); _stepZ(ROD_LENGTHS[5]);             // B4
+  _stepZ(ROD_LENGTHS[6]);                        // T3 (0), rod T3 -> connector B
+}
+
+/**
+ * Allocation-free end position and facing for ANY first twist (not just the table's
+ * quarter turns), as [px, py, pz, fx, fy, fz]. T1 turns the whole chain about world Z
+ * (see reachTable), so it is the T1 = 0 result rotated by -t1 about Z. The IK solver calls
+ * this thousands of times per query; the generic quaternion FK was most of its cost.
+ */
+export function fastEndState(t1: number, b1: number, b2: number, t2: number, b3: number, b4: number, out: number[]): number[] {
+  fastEndPose(b1, b2, t2, b3, b4);
+  const c = Math.cos(t1), s = Math.sin(t1);
+  const fx = 2 * (_qx * _qz + _qw * _qy), fy = 2 * (_qy * _qz - _qw * _qx), fz = 1 - 2 * (_qx * _qx + _qy * _qy);
+  out[0] = _px * c + _py * s; out[1] = -_px * s + _py * c; out[2] = _pz;
+  out[3] = fx * c + fy * s; out[4] = -fx * s + fy * c; out[5] = fz;
+  return out;
 }
 
 const fastPosition = (): Vec3 => [_px, _py, _pz];
@@ -350,11 +382,12 @@ export function reachTable(cubeSize = MODULINK_CUBE_SIZE): LatticePose[] {
     (v) => [-v[1], v[0], v[2]],
   ];
 
-  for (const t3 of TWIST_STEPS) {
+  for (const t2 of TWIST_STEPS) {
     for (const b1 of bendSteps) {
       for (const b2 of bendSteps) {
-        for (const b4 of bendSteps) {
-          fastEndPose(b1, b2, t3, b4);
+        for (const b3 of bendSteps) {
+         for (const b4 of bendSteps) {
+          fastEndPose(b1, b2, t2, b3, b4);
           const basePos = fastPosition();
           const baseFwd = fastForward();
 
@@ -375,12 +408,13 @@ export function reachTable(cubeSize = MODULINK_CUBE_SIZE): LatticePose[] {
             const endDir = snapDir(fwd);
             if (!endDir) continue;
 
-            const angles: ModuleAngles = [TWIST_STEPS[ti], b1, b2, t3, b4, 0];
+            const angles: ModuleAngles = [TWIST_STEPS[ti], b1, b2, t2, b3, b4, 0];
             const k = `${key(endOffset)}|${key(endDir)}`;
             const list = bySpot.get(k);
             if (list) list.push({ angles, endOffset, endDir, snapError });
             else bySpot.set(k, [{ angles, endOffset, endDir, snapError }]);
           }
+         }
         }
       }
     }
@@ -398,14 +432,14 @@ export function reachTable(cubeSize = MODULINK_CUBE_SIZE): LatticePose[] {
       const sig = cells.map(key).sort().join(',');
       if (routes.has(sig)) continue;
       routes.add(sig);
-      const { midOffset, sideDirs } = bigRodSides(c.angles, cubeSize);
+      const sides = sideSites(c.angles, cubeSize);
       out.push({
         id: `${key(c.endOffset)}@${key(c.endDir)}#${routes.size}`,
         bendPoseId: nearestNamedPose(c.angles),
         twistSteps: [
           TWIST_STEPS.indexOf(c.angles[0]),
           TWIST_STEPS.indexOf(c.angles[3]),
-          TWIST_STEPS.indexOf(c.angles[5]),
+          TWIST_STEPS.indexOf(c.angles[6]),
         ] as [number, number, number],
         angles: c.angles,
         endOffset: c.endOffset,
@@ -413,8 +447,7 @@ export function reachTable(cubeSize = MODULINK_CUBE_SIZE): LatticePose[] {
         cells,
         reach: manhattan([0, 0, 0], c.endOffset),
         snapError: c.snapError,
-        midOffset,
-        sideDirs,
+        sides,
         anchorEnd: 'A',
       });
     }
@@ -466,14 +499,14 @@ export function reachTable(cubeSize = MODULINK_CUBE_SIZE): LatticePose[] {
       const sig = cells.map(key).sort().join(',');
       if (routes.has(sig)) continue;
       routes.add(sig);
-      const { midOffset, sideDirs } = bigRodSides(c.angles, cubeSize, invB);
+      const sides = sideSites(c.angles, cubeSize, invB);
       mirrored.push({
         id: `${key(c.endOffset)}@${key(c.endDir)}#B${routes.size}`,
         bendPoseId: nearestNamedPose(c.angles),
         twistSteps: [
           TWIST_STEPS.indexOf(c.angles[0]),
           TWIST_STEPS.indexOf(c.angles[3]),
-          TWIST_STEPS.indexOf(c.angles[5]),
+          TWIST_STEPS.indexOf(c.angles[6]),
         ] as [number, number, number],
         angles: c.angles,
         endOffset: c.endOffset,
@@ -481,8 +514,7 @@ export function reachTable(cubeSize = MODULINK_CUBE_SIZE): LatticePose[] {
         cells,
         reach: manhattan([0, 0, 0], c.endOffset),
         snapError: c.snapError,
-        midOffset,
-        sideDirs,
+        sides,
         anchorEnd: 'B',
       });
     }
@@ -495,30 +527,30 @@ export function reachTable(cubeSize = MODULINK_CUBE_SIZE): LatticePose[] {
 }
 
 /**
- * Where the big rod's midpoint lands, and which way its four side connectors
- * face — both snapped to the lattice. The side directions are the rod's own
- * radial axes, so they are always perpendicular to the chain at that point.
+ * Where each side receiver lands, as the lattice sees it: the cube it is filed
+ * under (the receiver's position rounded to a cube centre) and the lattice axis
+ * it faces. A receiver whose normal is not within the axis tolerance of a lattice
+ * direction is left out — it cannot be welded to from a lattice-aligned pose.
  */
-export function bigRodSides(
+export function sideSites(
   angles: ModuleAngles, cubeSize: number, base: Pose = IDENTITY,
-): { midOffset: Cell; sideDirs: Cell[] } {
-  const frames = moduleFrames(angles, base);
-  const big = frames[BIG_ROD_INDEX];
-  const mid = composePoses(big.start, translateZ(big.length / 2));
-  const midOffset: Cell = [
-    Math.round(mid.position[0] / cubeSize),
-    Math.round(mid.position[1] / cubeSize),
-    Math.round(mid.position[2] / cubeSize),
-  ];
-  const radial: Record<string, Vec3> = {
-    UP: [0, 1, 0], RIGHT: [1, 0, 0], DOWN: [0, -1, 0], LEFT: [-1, 0, 0],
-  };
-  const sideDirs: Cell[] = [];
-  for (const end of SIDE_ENDS) {
-    const d = snapDir(rotateVec(mid.quaternion, radial[end]));
-    if (d) sideDirs.push(d);
+): SideSite[] {
+  const out: SideSite[] = [];
+  for (const c of connectorPoses(angles, base)) {
+    if (!isSideEnd(c.end)) continue;
+    const dir = snapDir(c.normal);
+    if (!dir) continue;
+    out.push({
+      end: c.end,
+      offset: [
+        Math.round(c.position[0] / cubeSize),
+        Math.round(c.position[1] / cubeSize),
+        Math.round(c.position[2] / cubeSize),
+      ],
+      dir,
+    });
   }
-  return { midOffset, sideDirs };
+  return out;
 }
 
 /** Closest canonical pose by bend angles — a readable label, not a constraint. */
@@ -636,8 +668,8 @@ const negCell = (a: Cell): Cell => [-a[0], -a[1], -a[2]];
  * A candidate survives only if all of these hold:
  *   - some pose lands the free end exactly on the target connector's cube
  *   - the two connectors face each other (a weld opposes outward normals)
- *   - the weld type is possible at all (never side-to-side)
- *   - grabbing it would not put two welds on adjacent side faces of the target
+ *   - the weld type is possible at all
+ *   - the receiver being grabbed is not already carrying a weld
  *   - no cube of the module's body collides with anything already there
  */
 export function legalChainMoves(
@@ -655,14 +687,9 @@ export function legalChainMoves(
     if (target.moduleId === moduleId) continue; // a module cannot weld to itself
     if (!weldTypeIsLegal(moveEnd, target.end)) continue;
 
-    // Grabbing a side face is blocked if a face 90° from it is already welded.
-    if (isSideEnd(target.end)) {
-      const clash = target.usedSides.some(
-        (s) => s !== target.end && !isOppositeSide(s, target.end),
-      );
-      if (clash) continue;
-      if (target.usedSides.length >= 2) continue;
-    }
+    // Each receiver carries one weld; its twin on the other face of the spine is
+    // independent of it.
+    if (isSideEnd(target.end) && target.usedSides.includes(target.end)) continue;
 
     const wantedOffset: Cell = [
       target.cell[0] - anchorCell[0],
@@ -700,11 +727,6 @@ export function legalChainMoves(
     }
   }
   return out;
-}
-
-function isOppositeSide(a: ConnectorEnd, b: ConnectorEnd): boolean {
-  return (a === 'UP' && b === 'DOWN') || (a === 'DOWN' && b === 'UP')
-    || (a === 'LEFT' && b === 'RIGHT') || (a === 'RIGHT' && b === 'LEFT');
 }
 
 /** One-line description of a move, for the plan list and the hardware log. */

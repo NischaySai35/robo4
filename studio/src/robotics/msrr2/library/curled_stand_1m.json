@@ -1,0 +1,102 @@
+{
+ "id": "curled_stand_1m",
+ "name": "Curled stand",
+ "nModules": 1,
+ "topology": [],
+ "pose": {
+  "M1": {
+   "T1": 108.73150637542068,
+   "B1": 186.96221145459975,
+   "B2": 232.18098228907695,
+   "T2": 95.23258033516257,
+   "B3": 95.1889412659553,
+   "B4": 129.8368642657296,
+   "T3": 157.05432832461221
+  }
+ },
+ "baseFrame": {
+  "worldPose": {
+   "p": [
+    0,
+    0.3,
+    0
+   ],
+   "q": [
+    0.30021551944616837,
+    0.953261166387704,
+    -0.03253884804663247,
+    0.010247629414630597
+   ]
+  },
+  "dropToFloor": true
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 2,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 105,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 306,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 149,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 54,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 11.7,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 0.63,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 4,
+  "cogMarginMm": 21.7,
+  "minJointMarginDeg": 5.2
+ },
+ "source": "seed",
+ "spec": {
+  "stands_upright": {
+   "is": true
+  },
+  "height_mm": {
+   "min": 300
+  }
+ },
+ "notes": "static check: PASS · MuJoCo hold: FAIL — M1.EndB_LockModule sags 69 mm from the planned pose (backlash + flex; limit 60 mm, estimate)",
+ "sim": {
+  "ok": false,
+  "driftMm": 4.6,
+  "maxTorquePct": 7.9,
+  "reasons": [
+   "M1.EndB_LockModule sags 69 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+  ]
+ }
+}

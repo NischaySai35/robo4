@@ -15,10 +15,10 @@ import {
   type ConnectorEnd,
   ZERO_ANGLES, endPose, forwardOf, IDENTITY, MODULE_CHAIN_LENGTH, FLIP_X_180,
 } from './modulink';
-import { MODULINK_CUBE_SIZE } from './occupancy';
+import { MODULINK_CUBE_SIZE, CUBES_PER_STRAIGHT_MODULE } from './occupancy';
 import {
   type OpenConnector, type MoveContext,
-  reachTable, reachTargets, reachSummary, posesReaching, legalChainMoves,
+  reachTable, reachTargets, reachSummary, posesReaching, legalChainMoves, fastEndState,
   describeChainMove, invalidateReachTable,
   TWIST_STEPS, MAX_SNAP_ERROR, MIN_AXIS_ALIGNMENT,
 } from './chainMoves';
@@ -101,28 +101,30 @@ test('every B-anchored (mirrored) entry re-derives from an independently inverte
 });
 
 test('the last twist cannot move the free end — which is why it is dropped', () => {
-  // t5 rotates rod 5 about its own axis and rod 5 is a twist rod, so the
-  // translation after it runs along the same axis. Dropping t5 from the
-  // enumeration is a 4x saving that costs nothing; this is that claim.
+  // T3 rotates the last rod about its own axis and that rod is a straight run
+  // along the same axis, so the translation after it does not move. Dropping T3
+  // from the enumeration is a 4x saving that costs nothing; this is that claim.
   const base = endPose(ZERO_ANGLES, IDENTITY);
-  for (const t5 of TWIST_STEPS) {
-    const e = endPose([0, 0, 0, 0, 0, t5], IDENTITY);
+  for (const t3 of TWIST_STEPS) {
+    const e = endPose([0, 0, 0, 0, 0, 0, t3], IDENTITY);
     for (let i = 0; i < 3; i++) {
       assert.ok(Math.abs(e.position[i] - base.position[i]) < 1e-9,
-        `t5=${t5} moved the endpoint, so it cannot be dropped from the enumeration`);
+        `t3=${t3} moved the endpoint, so it cannot be dropped from the enumeration`);
     }
     const f = forwardOf(e), fb = forwardOf(base);
     for (let i = 0; i < 3; i++) {
-      assert.ok(Math.abs(f[i] - fb[i]) < 1e-9, `t5=${t5} changed the end facing`);
+      assert.ok(Math.abs(f[i] - fb[i]) < 1e-9, `t3=${t3} changed the end facing`);
     }
   }
 });
 
 test('the first twist is exactly a quarter turn about world Z', () => {
-  // reachTable derives all four t0 settings from the t0 = 0 solve by axis swaps,
+  // reachTable derives all four T1 settings from the T1 = 0 solve by axis swaps,
   // relying on Rx(pi)*Rz(a) == Rz(-a)*Rx(pi). If that is wrong the whole table is.
-  const bends: [number, number, number] = [0.4, -0.7, 0.9];
-  const base = endPose([0, bends[0], bends[1], 0, bends[2], 0], IDENTITY);
+  // The middle twist T2 is NOT symmetric and is enumerated, so it is non-zero here.
+  const bends: [number, number, number, number] = [0.4, -0.7, 0.9, -0.3];
+  const t2 = Math.PI / 2;
+  const base = endPose([0, bends[0], bends[1], t2, bends[2], bends[3], 0], IDENTITY);
   const turns: ((v: [number, number, number]) => [number, number, number])[] = [
     (v) => v,
     (v) => [v[1], -v[0], v[2]],
@@ -130,13 +132,30 @@ test('the first twist is exactly a quarter turn about world Z', () => {
     (v) => [-v[1], v[0], v[2]],
   ];
   for (let ti = 1; ti < TWIST_STEPS.length; ti++) {
-    const actual = endPose([TWIST_STEPS[ti], bends[0], bends[1], 0, bends[2], 0], IDENTITY);
+    const actual = endPose([TWIST_STEPS[ti], bends[0], bends[1], t2, bends[2], bends[3], 0], IDENTITY);
     const predicted = turns[ti](base.position as [number, number, number]);
     for (let i = 0; i < 3; i++) {
       assert.ok(
         Math.abs(actual.position[i] - predicted[i]) < 1e-9,
-        `t0 step ${ti}: predicted ${predicted} but FK gives ${actual.position}`,
+        `T1 step ${ti}: predicted ${predicted} but FK gives ${actual.position}`,
       );
+    }
+  }
+});
+
+test('fastEndState (the solver FK) equals the reference kinematics at any angles', () => {
+  let seed = 99;
+  const rnd = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
+  const out = [0, 0, 0, 0, 0, 0];
+  for (let i = 0; i < 200; i++) {
+    const a = [(rnd() * 2 - 1) * Math.PI, (rnd() * 2 - 1) * 1.55, (rnd() * 2 - 1) * 1.55, (rnd() * 2 - 1) * Math.PI,
+      (rnd() * 2 - 1) * 1.55, (rnd() * 2 - 1) * 1.55];   // inside the +-90 bend limit (endPose clamps, the fast path does not)
+    const e = endPose([a[0], a[1], a[2], a[3], a[4], a[5], 0], IDENTITY);
+    const f = forwardOf(e);
+    fastEndState(a[0], a[1], a[2], a[3], a[4], a[5], out);
+    for (let k = 0; k < 3; k++) {
+      assert.ok(Math.abs(out[k] - e.position[k]) < 1e-9, `position ${k} differs`);
+      assert.ok(Math.abs(out[3 + k] - f[k]) < 1e-9, `facing ${k} differs`);
     }
   }
 });
@@ -147,15 +166,15 @@ test('the table covers short folds as well as long reaches', () => {
   const s = reachSummary();
   assert.ok(s.reachRange[0] <= 2, `shortest reach is ${s.reachRange[0]}, expected a tight fold to exist`);
   assert.ok(s.reachRange[1] >= 4, `longest reach is ${s.reachRange[1]}, expected a straight module to reach 4+`);
-  assert.ok(s.targetCount > 20, `only ${s.targetCount} landing spots — the move set is too sparse to plan with`);
+  assert.ok(s.targetCount > 100, `only ${s.targetCount} landing spots — the move set is too sparse to plan with`);
   assert.ok(s.worstSnap <= MAX_SNAP_ERROR);
 });
 
-test('a straight module reaches four cubes dead ahead', () => {
-  const straightish = posesReaching([0, 0, -4], [0, 0, -1]);
+test('a straight module reaches a whole module length dead ahead', () => {
+  const straightish = posesReaching([0, 0, -CUBES_PER_STRAIGHT_MODULE], [0, 0, -1]);
   assert.ok(straightish.length > 0, 'the straight-ahead landing must be in the table');
   // And that matches the module's own physical length.
-  assert.ok(Math.abs(MODULE_CHAIN_LENGTH / MODULINK_CUBE_SIZE - 4) < 1e-9);
+  assert.ok(Math.abs(MODULE_CHAIN_LENGTH / MODULINK_CUBE_SIZE - CUBES_PER_STRAIGHT_MODULE) < 1e-9);
 });
 
 test('every landing is a real lattice spot with an axis-aligned facing', () => {
@@ -212,8 +231,8 @@ function contextReaching(end: ConnectorEnd, usedSides: ConnectorEnd[] = []): {
   return { ctx: { occupied: new Set<string>(), open: [target] }, target };
 }
 
-test('a free end can grab another module end, and another module side', () => {
-  for (const end of ['A', 'UP'] as ConnectorEnd[]) {
+test('a free end can grab another module end, and any of its four side receivers', () => {
+  for (const end of ['A', 'B', 'S1A', 'S1B', 'S2A', 'S2B'] as ConnectorEnd[]) {
     const { ctx } = contextReaching(end);
     const moves = legalChainMoves('me', 'A', 'B', [0, 0, 0], ctx);
     assert.ok(moves.length > 0, `a free end should be able to grab a ${end} connector`);
@@ -221,28 +240,25 @@ test('a free end can grab another module end, and another module side', () => {
   }
 });
 
-test('a free SIDE can never grab another side', () => {
-  const { ctx } = contextReaching('UP');
-  // moveEnd is itself a side connector here, so this is a side-to-side attempt.
-  const moves = legalChainMoves('me', 'A', 'DOWN', [0, 0, 0], ctx);
-  assert.equal(moves.length, 0, 'side-to-side welds must never be generated');
+test('a receiver already carrying a weld cannot be grabbed again', () => {
+  const { ctx } = contextReaching('S1A', ['S1A']);
+  assert.equal(legalChainMoves('me', 'A', 'B', [0, 0, 0], ctx).length, 0);
 });
 
 test('a module cannot weld to itself', () => {
   const spot = reachTargets()[0];
-  const target = openAt('me', 'UP', spot.offset, [-spot.dir[0], -spot.dir[1], -spot.dir[2]]);
+  const target = openAt('me', 'S1A', spot.offset, [-spot.dir[0], -spot.dir[1], -spot.dir[2]]);
   const moves = legalChainMoves('me', 'A', 'B', [0, 0, 0], { occupied: new Set(), open: [target] });
   assert.equal(moves.length, 0);
 });
 
-test('a side already flanked by an adjacent weld cannot be grabbed', () => {
-  // UP is free, but RIGHT is welded — and adjacent side domes interpenetrate.
-  const { ctx } = contextReaching('UP', ['RIGHT']);
-  assert.equal(legalChainMoves('me', 'A', 'B', [0, 0, 0], ctx).length, 0);
-
-  // DOWN welded is fine: it is the opposite face, so UP is still free.
-  const ok = contextReaching('UP', ['DOWN']);
+test('the twin receiver on the other face of the spine is independent', () => {
+  // S1B welded does not stop S1A being grabbed: they are on opposite faces.
+  const ok = contextReaching('S1A', ['S1B']);
   assert.ok(legalChainMoves('me', 'A', 'B', [0, 0, 0], ok.ctx).length > 0);
+  // ...and another spine's receivers are irrelevant too.
+  const other = contextReaching('S1A', ['S2A', 'S2B']);
+  assert.ok(legalChainMoves('me', 'A', 'B', [0, 0, 0], other.ctx).length > 0);
 });
 
 test('a body route blocked by an existing module is rejected', () => {
@@ -263,10 +279,10 @@ test('a body route blocked by an existing module is rejected', () => {
 });
 
 test('a move reads back as a hand-over-hand step', () => {
-  const { ctx } = contextReaching('UP');
+  const { ctx } = contextReaching('S2A');
   const m = legalChainMoves('me', 'A', 'B', [0, 0, 0], ctx)[0];
   const text = describeChainMove(m, 0);
   assert.match(text, /hold A/);
-  assert.match(text, /swing B onto other\.UP/);
+  assert.match(text, /swing B onto other\.S2A/);
   assert.match(text, /then release B/);
 });

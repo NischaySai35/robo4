@@ -14,7 +14,7 @@
  *
  * ONE CELL IS ONE CUBE OF THE LATTICE, AND A MODULE IS NOT A CUBE
  * `config`/`target` hold cube-cell coordinates — a shape DIAGRAM, not modules.
- * A module is a MODULINK: a bendable 6-rod chain spanning up to four cubes
+ * A module is the try8 TETROBOT module: a bendable 7-joint chain spanning up to four cubes
  * depending on its pose (robotics/msrr/modulink.ts, moduleThemes.ts). Turning
  * the diagram into real modules is what `build` does, and how many it takes is
  * an output of that fit, never an input.

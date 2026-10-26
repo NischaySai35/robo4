@@ -140,7 +140,7 @@ export function inSolidPatch(cell: Cell, arms: Cell[], occ: Set<CellKey>): boole
  * it only needs to know which arm is the longer one and whether an arm is long
  * enough for a module to lie along.
  */
-export const ARM_SCAN_CAP = 8;
+export const ARM_SCAN_CAP = 16;
 
 export function armLength(cell: Cell, dir: Cell, occ: Set<CellKey>): number {
   let n = 0;

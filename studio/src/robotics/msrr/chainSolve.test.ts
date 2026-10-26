@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 
 import { type Cell, key, configFromCells, isConnected } from './lattice';
 import { endPose, forwardOf, IDENTITY, weldTypeIsLegal } from './modulink';
-import { MODULINK_CUBE_SIZE } from './occupancy';
+import { MODULINK_CUBE_SIZE, CUBES_PER_STRAIGHT_MODULE } from './occupancy';
 import { reachTable, posesReaching, MAX_SNAP_ERROR } from './chainMoves';
 import {
   solveLandingPose, solveLandingPoses, solveLandingPoseCached, clearSolveCache,
@@ -52,15 +52,16 @@ test('a solved pose actually reaches the requested cell and facing', () => {
 });
 
 test('joint limits are respected — no solved pose exceeds +/-90 degrees bend', () => {
+  const K = CUBES_PER_STRAIGHT_MODULE / 4;
   const cases: [Cell, Cell][] = [
-    [[0, 0, -4], [0, 0, -1]], [[1, 2, -1], [0, 1, 0]], [[3, 0, -1], [1, 0, 0]],
+    [[0, 0, -4 * K], [0, 0, -1]], [[1 * K, 2 * K, -1 * K], [0, 1, 0]], [[3 * K, 0, -1 * K], [1, 0, 0]],
   ];
   for (const [offset, dir] of cases) {
     const pose = solveLandingPose(offset, dir);
     if (!pose) continue;
-    for (const i of [1, 2, 4]) {
+    for (const i of [1, 2, 4, 5]) {
       assert.ok(Math.abs(pose.angles[i]) <= Math.PI / 2 + 1e-6,
-        `solved bend at rod ${i} is ${pose.angles[i]}, outside +/-90 degrees`);
+        `solved bend at joint ${i} is ${pose.angles[i]}, outside +/-90 degrees`);
     }
   }
 });
@@ -146,12 +147,12 @@ test('alternates: several distinct body routes are offered per reachable target'
   // whose body collides with another module; with one candidate a collision
   // means the target is unreachable, which is what made an earlier revision
   // REDUCE measured mobility when wired into the planner.
-  const routes = solveLandingPoses([0, 0, -4], [0, 0, -1]);
+  const routes = solveLandingPoses([0, 0, -CUBES_PER_STRAIGHT_MODULE], [0, 0, -1]);
   assert.ok(routes.length > 0, 'the straight-ahead landing must be solvable');
 
   // Every route must genuinely reach the same target...
   for (const r of routes) {
-    assert.equal(key(r.endOffset), key([0, 0, -4] as Cell));
+    assert.equal(key(r.endOffset), key([0, 0, -CUBES_PER_STRAIGHT_MODULE] as Cell));
     assert.equal(key(r.endDir), key([0, 0, -1] as Cell));
   }
   // ...via a genuinely different set of swept cubes, or it is not an alternative.
@@ -160,7 +161,7 @@ test('alternates: several distinct body routes are offered per reachable target'
 
   // Straightest first, so a caller taking [0] gets the least-folded option.
   for (let i = 1; i < routes.length; i++) {
-    const bend = (p: typeof routes[0]) => Math.abs(p.angles[1]) + Math.abs(p.angles[2]) + Math.abs(p.angles[4]);
+    const bend = (p: typeof routes[0]) => Math.abs(p.angles[1]) + Math.abs(p.angles[2]) + Math.abs(p.angles[4]) + Math.abs(p.angles[5]);
     assert.ok(bend(routes[i]) >= bend(routes[i - 1]) - 1e-9, 'routes must be ordered straightest-first');
   }
 });

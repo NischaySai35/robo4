@@ -1,0 +1,4 @@
+logs/
+__pycache__/
+*.npz
+robot_config_TEST.json

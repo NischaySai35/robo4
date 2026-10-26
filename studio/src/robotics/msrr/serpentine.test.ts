@@ -21,7 +21,7 @@ import {
 } from './serpentine';
 import { uTurnCatalogue } from './fitModules';
 import { findLandingPoses } from './chainSolve';
-import { connectorPoses, baseQuatFor, HEMISPHERE_RADIUS } from './modulink';
+import { connectorPoses, baseQuatFor, HEMISPHERE_RADIUS, connectorsMayShareBody } from './modulink';
 import { MODULINK_CUBE_SIZE } from './occupancy';
 
 const CUBES_PER_UNIT = 1 / MODULINK_CUBE_SIZE;
@@ -33,6 +33,8 @@ function tightestOwnDomePair(angles: Parameters<typeof connectorPoses>[0]) {
   let best = { gap: Infinity, pair: '' };
   for (let i = 0; i < cp.length; i++) {
     for (let j = i + 1; j < cp.length; j++) {
+      // the two receivers of one spine are back to back by design
+      if (connectorsMayShareBody(cp[i].end, cp[j].end)) continue;
       const a = cp[i].position, b = cp[j].position;
       const gap = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * CUBES_PER_UNIT;
       if (gap < best.gap) best = { gap, pair: `${cp[i].end}-${cp[j].end}` };
@@ -94,13 +96,19 @@ test('a snake fill turns round; the spiral only does so where a strip is left ov
   assert.equal(typeof routeReverses(wide), 'boolean');
 });
 
-test('the module cannot U-turn into the neighbouring line, but can into the next one', () => {
+test('the module CAN U-turn into the neighbouring line (the old 6-DOF module could not)', () => {
   // Local frame: connector A at the origin facing +Z, the body running toward
   // -Z. A reversal therefore ends facing +Z, offset across the line. Solved
   // exactly rather than sampled from the reach table, because a clean reversal
-  // is not one of the table's ten-degree samples.
+  // is not one of the table's samples.
+  //
+  // The old module's reversal into the NEIGHBOURING line brought connector A to
+  // 0.715 cubes of its own UP side dome (0.887 needed), so snakes had to skip a
+  // line (pitch 2). The try8 module has no side dome on the inside of a bend, so
+  // the same reversal clears with room to spare and the pitch is the one line
+  // Nischay's rule always asked for.
   const perps: Cell[] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]];
-  let tightest = { gap: -1, pair: '' };
+  let widest = { gap: -1, pair: '' };
   let clearAtOnePitch = 0;
   let reachableAtOnePitch = 0;
 
@@ -110,24 +118,17 @@ test('the module cannot U-turn into the neighbouring line, but can into the next
       for (const pose of findLandingPoses(end, [0, 0, 1], undefined, 40)) {
         reachableAtOnePitch++;
         const t = tightestOwnDomePair(pose.angles);
-        if (t.gap > tightest.gap) tightest = t;
+        if (t.gap > widest.gap) widest = t;
         if (t.gap >= DOME_DIAMETER_CUBES - 1e-9) clearAtOnePitch++;
       }
     }
   }
 
-  assert.ok(reachableAtOnePitch > 0,
-    'test setup: the joints should reach a one-line reversal even though it collides');
-  assert.equal(clearAtOnePitch, 0,
-    `a one-line U-turn passed the sphere rule (best own-dome gap ${tightest.gap.toFixed(3)} cubes)`);
-  // And it is close, not wild — worth pinning, because a change to the dome
-  // radius or the rod lengths could plausibly move it either way.
-  assert.ok(tightest.gap > 0.6 && tightest.gap < DOME_DIAMETER_CUBES,
-    `expected the one-line U-turn to fail narrowly, got ${tightest.gap.toFixed(3)} `
-    + `against ${DOME_DIAMETER_CUBES.toFixed(3)} needed (closest pair ${tightest.pair})`);
-
-  // Two lines' pitch is clean, and that is what U_TURN_PITCH records.
-  assert.equal(U_TURN_PITCH, 2);
+  assert.ok(reachableAtOnePitch > 0, 'test setup: the joints should reach a one-line reversal');
+  assert.ok(clearAtOnePitch > 0,
+    `no one-line U-turn passes the sphere rule (best own-pad gap ${widest.gap.toFixed(3)} cubes `
+    + `against ${DOME_DIAMETER_CUBES.toFixed(3)} needed, closest pair ${widest.pair})`);
+  assert.equal(U_TURN_PITCH, 1);
   assert.ok(uTurnCatalogue().length > 0,
     'no buildable U-turn at all — a snake fill would have nothing to turn with');
 });

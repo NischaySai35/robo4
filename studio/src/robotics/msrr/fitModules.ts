@@ -38,12 +38,14 @@
  *     (CORNER_ARMS) — which is what its joints at ~0.6, ~1.2 and ~2.9 cubes
  *     from connector A physically permit.
  *
- *  3. A SPINE GOES ON A JUNCTION. All four side connectors ride the midpoint of
- *     the big rod, so a T or a + wants that midpoint ON the branch cube: two
- *     chain ends plus all four side connectors is up to six directions out of
- *     one place, matching every possible arm count a cube can have. Whatever of
- *     the module hangs past the shape is left hanging (OVERSHOOT_CAP) rather
- *     than folded away.
+ *  3. A SPINE GOES ON A JUNCTION. Each spine carries two receivers on opposite
+ *     faces at its midpoint, so a T or a + wants a spine's midpoint ON the branch
+ *     cube with its receivers facing the other arms: the two chain directions
+ *     plus the opposite pair is up to FOUR directions out of one place (a busier
+ *     junction needs a second module through it). A junction only counts as
+ *     served when the receivers really face its arms. Whatever of the module
+ *     hangs past the shape is left hanging (OVERSHOOT_CAP) rather than folded
+ *     away.
  *
  *  4. THE SILHOUETTE MATTERS MORE THAN THE EXACT FIT. A run is rarely a whole
  *     number of modules. When it is not, the surplus is spent on overshoot at
@@ -78,7 +80,9 @@
 import {
   type Cell, type CellKey, key, unkey, DIRS_6, add, sub, neg, eq, manhattan,
 } from './lattice';
-import { type LatticePose, reachTable, MIN_AXIS_ALIGNMENT, bookkeepingConnectors } from './chainMoves';
+import {
+  type LatticePose, reachTable, MIN_AXIS_ALIGNMENT, bookkeepingConnectors, snapDir as snapDirOrNull,
+} from './chainMoves';
 import { findLandingPoses } from './chainSolve';
 import {
   type ShapeFeature, type ShapeSkeleton,
@@ -87,9 +91,19 @@ import {
 import { withRouteFeatures, serpentineRoutes, routeReverses, U_TURN_PITCH } from './serpentine';
 import {
   type ConnectorEnd, type Vec3, type Quat, SIDE_ENDS, weldTypeIsLegal,
-  baseQuatFor, connectorPoses, REQUIRED_DOME_CLEARANCE,
+  baseQuatFor, connectorPoses, REQUIRED_DOME_CLEARANCE, connectorsMayShareBody, ZERO_ANGLES,
 } from './modulink';
-import { MODULINK_CUBE_SIZE } from './occupancy';
+import { MODULINK_CUBE_SIZE, CUBES_PER_STRAIGHT_MODULE } from './occupancy';
+
+/**
+ * Cubes a straight module spans (the lattice's grain). Every cap and arm length
+ * below that was tuned in whole cubes is written against this, so halving the
+ * cube (8 per module instead of 4) rescales them together instead of silently
+ * leaving a 2-cube overshoot cap that now means half the length.
+ */
+const N = CUBES_PER_STRAIGHT_MODULE;
+/** how many times finer the lattice is than the 4-cube-per-module one the caps were tuned on */
+const K = N / 4;
 
 // ── lattice rotations ─────────────────────────────────────────────────────────
 
@@ -198,6 +212,12 @@ export interface FittedModule {
    * the fitter builds, which is why it is optional rather than required.
    */
   baseQuat?: Quat;
+  /**
+   * Physics playback (Planner v2 "Gravity"): every part's pose straight from MuJoCo, in viewport
+   * units, keyed by body name. When set, the parts are drawn exactly there (flex, sag, falling)
+   * instead of being computed from the joint angles.
+   */
+  bodyPoses?: Record<string, { position: Vec3; quaternion: Quat }>;
 }
 
 /** A connector on a placed module, in world lattice coordinates. */
@@ -205,19 +225,20 @@ export interface PlacedConnector {
   moduleId: string;
   end: ConnectorEnd;
   /**
-   * Cube it sits in. LATTICE bookkeeping only — all four side connectors of a
-   * module report the SAME cell (the spine's midpoint cube) even though they
-   * are physically ~0.63 cube units apart in four different directions. Never
-   * use this to decide whether two connectors touch; use `pos`.
+   * Cube it sits in. LATTICE bookkeeping only — a side receiver is filed under
+   * the cube its position rounds to, which can be up to half a cube from where
+   * it really is, and the two receivers of one spine share a cube while facing
+   * opposite ways. Never use this to decide whether two connectors touch; use `pos`.
    */
   cell: Cell;
   /** outward normal */
   dir: Cell;
   /**
-   * Where the dome actually is, in cube units — the truth a weld is defined
-   * against ("same point in space, outward normals opposed"). For A and B this
-   * coincides with the centre of `cell`; for the four side connectors it does
-   * not, and that difference is exactly the bug this field exists to fix.
+   * Where the connector actually is, in cube units — the truth a weld is defined
+   * against ("same point in space, outward normals opposed"). For A and B it
+   * coincides with the centre of `cell` when the chain is lattice-aligned; for the
+   * four side receivers it generally does not, and that difference is exactly the
+   * bug this field exists to fix.
    */
   pos: Vec3;
 }
@@ -235,6 +256,13 @@ export interface ChainWeldLink {
 const CUBES_PER_UNIT = 1 / MODULINK_CUBE_SIZE;
 
 /**
+ * The module's orientation. A fitted module points along one of six lattice
+ * directions, which `anchorDir` says; a hand-placed one can face anywhere and
+ * carries its own rotation (`baseQuat`), which then takes precedence.
+ */
+const baseQuatOf = (m: FittedModule): Quat => m.baseQuat ?? baseQuatFor(m.anchorDir);
+
+/**
  * Where a placed module's connector B REALLY is, in cube units.
  *
  * The next module in a chain welds its A onto exactly this point, so the chain
@@ -246,7 +274,7 @@ const CUBES_PER_UNIT = 1 / MODULINK_CUBE_SIZE;
  * through keeps every weld exact no matter how long the chain.
  */
 function realEndPos(m: FittedModule): Vec3 {
-  const poses = bookkeepingConnectors(m.pose, baseQuatFor(m.anchorDir));
+  const poses = bookkeepingConnectors(m.pose, baseQuatOf(m));
   const b = poses.find((c) => c.end === 'B');
   if (!b) return [m.endCell[0], m.endCell[1], m.endCell[2]];
   return [
@@ -265,7 +293,7 @@ function realEndPos(m: FittedModule): Vec3 {
  * connector end so callers cannot mispair them by index.
  */
 function realConnectorPositions(m: FittedModule): Map<ConnectorEnd, Vec3> {
-  const poses = bookkeepingConnectors(m.pose, baseQuatFor(m.anchorDir));
+  const poses = bookkeepingConnectors(m.pose, baseQuatOf(m));
   const out = new Map<ConnectorEnd, Vec3>();
   for (const c of poses) {
     out.set(c.end, [
@@ -280,14 +308,17 @@ function realConnectorPositions(m: FittedModule): Map<ConnectorEnd, Vec3> {
 /**
  * All six connectors of a placed module, in world cubes.
  *
- * A and B are exact — they sit at cube centres by construction. The four side
- * connectors are the lattice's approximation: physically they stand 0.6 units
- * off the rod axis, about two thirds of a cube, so "the big rod's midpoint cube,
- * facing outward" is where they are treated as being. That looseness is real and
- * is why a side weld found here should be verified in continuous space before it
- * is trusted in metal.
+ * A and B are exact — they sit at cube centres by construction when the chain is
+ * lattice-aligned. The four side receivers are the lattice's approximation: each
+ * is filed under the cube its real position rounds to, and faces the lattice axis
+ * its normal is nearest. They are NOT on cube centres (a receiver sits partway
+ * along its spine, a few centimetres off the axis), which is why a side weld found
+ * from these cells must be verified against the real `pos` before it is trusted.
+ * A receiver whose normal does not line up with a lattice axis in this pose is
+ * left out: nothing lattice-aligned can weld to it.
  */
 export function connectorsOf(m: FittedModule): PlacedConnector[] {
+  if (m.baseQuat) return manualConnectorsOf(m);
   const real = realConnectorPositions(m);
   const at = (end: ConnectorEnd, fallback: Cell): Vec3 =>
     real.get(end) ?? [fallback[0], fallback[1], fallback[2]];
@@ -297,12 +328,37 @@ export function connectorsOf(m: FittedModule): PlacedConnector[] {
     { moduleId: m.id, end: 'B', cell: m.endCell, dir: m.endDir, pos: at('B', m.endCell) },
   ];
   const rot = rotationTo(m.anchorDir);
-  const midCell = add(m.anchorCell, rot(m.pose.midOffset));
-  m.pose.sideDirs.forEach((d, i) => {
-    const end = SIDE_ENDS[i] ?? 'UP';
-    out.push({ moduleId: m.id, end, cell: midCell, dir: rot(d), pos: at(end, midCell) });
-  });
+  for (const site of m.pose.sides) {
+    const cell = add(m.anchorCell, rot(site.offset));
+    out.push({ moduleId: m.id, end: site.end, cell, dir: rot(site.dir), pos: at(site.end, cell) });
+  }
   return out;
+}
+
+/**
+ * Connectors of a HAND-PLACED module: positions and facings straight from its
+ * own forward kinematics. Its sides cannot come from the lattice (`pose.sides`),
+ * because a hand-bent module need not be lattice-aligned at all, so each
+ * receiver is filed under the cube its real position rounds to and given the
+ * lattice axis its normal is nearest.
+ */
+function manualConnectorsOf(m: FittedModule): PlacedConnector[] {
+  const roundDir = (n: Vec3): Cell => {
+    const d = snapDirOrNull(n);
+    return d ?? [Math.round(n[0]), Math.round(n[1]), Math.round(n[2])] as Cell;
+  };
+  return connectorPoses(m.pose.angles, { position: [0, 0, 0], quaternion: m.baseQuat as Quat }).map((c) => {
+    const pos: Vec3 = [
+      m.anchorPos[0] + c.position[0] * CUBES_PER_UNIT,
+      m.anchorPos[1] + c.position[1] * CUBES_PER_UNIT,
+      m.anchorPos[2] + c.position[2] * CUBES_PER_UNIT,
+    ];
+    return {
+      moduleId: m.id, end: c.end,
+      cell: [Math.round(pos[0]), Math.round(pos[1]), Math.round(pos[2])] as Cell,
+      dir: roundDir(c.normal), pos,
+    };
+  });
 }
 
 export interface FitResult {
@@ -369,7 +425,7 @@ interface FitState {
    * connector domes through each other, which is what produced spheres with
    * chunks chewed out of them.
    */
-  domes: Map<CellKey, { pos: Vec3; normal: Vec3; moduleId: string }[]>;
+  domes: Map<CellKey, { pos: Vec3; normal: Vec3; moduleId: string; end: ConnectorEnd }[]>;
   /**
    * Which of EACH module's own side connectors are already claimed by
    * something welded onto it. A module physically has four; all four may be
@@ -480,7 +536,7 @@ interface FitState {
 
 // ── geometry: domes and clearance ─────────────────────────────────────────────
 
-interface DomeAt { pos: Vec3; normal: Vec3 }
+interface DomeAt { pos: Vec3; normal: Vec3; end: ConnectorEnd }
 
 /**
  * Dome centres a candidate pose would put in the world, in cube units.
@@ -498,6 +554,7 @@ function candidateDomes(pose: LatticePose, anchorDir: Cell, anchorPos: Vec3): Do
       anchorPos[2] + c.position[2] * CUBES_PER_UNIT,
     ] as Vec3,
     normal: [c.normal[0], c.normal[1], c.normal[2]] as Vec3,
+    end: c.end,
   }));
 }
 
@@ -567,6 +624,9 @@ function poseSelfClear(pose: LatticePose): boolean {
   let ok = true;
   for (let i = 0; ok && i < cp.length; i++) {
     for (let j = i + 1; j < cp.length; j++) {
+      // The two receivers of one spine are back to back on opposite faces of the
+      // same body — closer than a pad diameter by design, not a collision.
+      if (connectorsMayShareBody(cp[i].end, cp[j].end)) continue;
       const a = cp[i].position, b = cp[j].position;
       const d = Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) * CUBES_PER_UNIT;
       if (d < DOME_DIAMETER_CUBES - 1e-9) { ok = false; break; }
@@ -585,7 +645,7 @@ function registerDomes(m: FittedModule, st: FitState): void {
   for (const d of real) {
     const k = domeBucket(d.pos);
     const list = st.domes.get(k);
-    const entry = { pos: d.pos, normal: d.normal, moduleId: m.id };
+    const entry = { pos: d.pos, normal: d.normal, moduleId: m.id, end: d.end };
     if (list) list.push(entry); else st.domes.set(k, [entry]);
   }
 }
@@ -604,7 +664,7 @@ function registerDomes(m: FittedModule, st: FitState): void {
  */
 const DOME_DIAMETER_CUBES = REQUIRED_DOME_CLEARANCE * CUBES_PER_UNIT;
 /** Coincident-enough to be the intended weld rather than a clash. */
-const WELD_SAME_POINT = 0.35;
+const WELD_SAME_POINT = 0.35 * K;
 
 /**
  * How closely two coincident domes must oppose each other to be a real lock.
@@ -624,9 +684,9 @@ const WELD_SAME_POINT = 0.35;
  */
 const WELD_NORMAL_DOT = -MIN_AXIS_ALIGNMENT;
 
-function domesClear(cand: DomeAt[], st: FitState): boolean {
+function domesClear(cand: DomeAt[], st: FitState, host: PlacedConnector | null = null): boolean {
   for (const v of cand) {
-    const near: { pos: Vec3; normal: Vec3; moduleId: string }[] = [];
+    const near: { pos: Vec3; normal: Vec3; moduleId: string; end: ConnectorEnd }[] = [];
     const b: Cell = [Math.round(v.pos[0]), Math.round(v.pos[1]), Math.round(v.pos[2])];
     for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
       const list = st.domes.get(key([b[0] + dx, b[1] + dy, b[2] + dz] as Cell));
@@ -652,6 +712,16 @@ function domesClear(cand: DomeAt[], st: FitState): boolean {
         v.pos[0] - other.pos[0], v.pos[1] - other.pos[1], v.pos[2] - other.pos[2],
       );
       if (d < WELD_SAME_POINT) continue; // already judged as a weld above
+      // Welding onto one receiver of a spine puts the new module's pad a few
+      // centimetres from the host's OTHER receiver, on the far face of the same
+      // body. They are back to back through the spine, not touching.
+      if (host && v.end === 'A' && other.moduleId === host.moduleId
+        && connectorsMayShareBody(other.end, host.end)) continue;
+      // ...and the same goes for whatever is welded onto that other receiver: its
+      // pad sits ON the twin's point, so it is equally far behind the spine.
+      if (host && v.end === 'A' && other.moduleId !== host.moduleId
+        && near.some((t) => t.moduleId === host.moduleId && connectorsMayShareBody(t.end, host.end)
+          && Math.hypot(t.pos[0] - other.pos[0], t.pos[1] - other.pos[1], t.pos[2] - other.pos[2]) < WELD_SAME_POINT)) continue;
       // Strict: nothing else may come within a diameter of this dome. No
       // exemption for the module being welded onto — see poseSelfClear for why
       // that exemption was a bug and not a convenience.
@@ -667,13 +737,14 @@ function domesClear(cand: DomeAt[], st: FitState): boolean {
  * The module's three clean single-bend corner forms, as (arm into the corner,
  * arm out of it) in cubes.
  *
- * These are not a preference, they are the hardware. The bend joints sit about
- * 0.6, 1.2 and 2.9 cubes along from connector A, and connector B is 4 cubes
- * along, so the only ways to put ONE bend on a lattice corner and leave both
- * arms lying straight are 3+1, 1+3 and 2+2. Every other split either needs two
- * bends (a staircase, not a corner) or is outside the module's envelope
- * entirely — verified by solving for all of 1..3 x 1..3 and keeping what came
- * back with a real turn on the right cube.
+ * These are not a preference, they are the hardware. The four bend joints sit
+ * about 0.96, 1.89, 2.44 and 3.37 cubes along from connector A (B1, B2, B3, B4),
+ * and connector B is 4 cubes along, so the clean single-bend forms are 1+3 (B1),
+ * 2+2 (B2) and 3+1 (B4); B3 at 2.44 is not near a whole cube. Every other split
+ * either needs two bends (a staircase, not a corner) or is outside the module's
+ * envelope entirely — verified by solving for all of 1..3 x 1..3 and keeping
+ * what came back with a real turn on the right cube. usableCornerSplits asks the
+ * solver which of these survive.
  *
  * ORDER MATTERS, and it is not the obvious one. 1+3 comes first because it is
  * the only split whose straightest route also keeps the module's own domes
@@ -682,7 +753,8 @@ function domesClear(cand: DomeAt[], st: FitState): boolean {
  * same corner is reachable as 1+3 by approaching from the other arm, so nothing
  * is lost. The catalogue filters on that rather than trusting this order.
  */
-const CORNER_ARMS: readonly (readonly [number, number])[] = [[1, 3], [2, 2], [3, 1]];
+const CORNER_ARMS: readonly (readonly [number, number])[] =
+  Array.from({ length: N - 1 }, (_, i) => [i + 1, N - 1 - i] as const);
 
 /** The four directions a corner can turn toward, in the module's own frame. */
 const LOCAL_PERPS: readonly Cell[] = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]];
@@ -752,14 +824,12 @@ function cornerCatalogue(): Map<string, LatticePose[]> {
  * the courses it already laid. That is what a wall was doing.
  *
  * WHAT THE SPHERE RULE SAYS ABOUT THE PITCH. Asked for a reversal into the
- * IMMEDIATELY neighbouring line, the solver does find routes — the three bend
- * joints have the travel to double back, ninety degrees each — and every one
- * of them is rejected here, because doubling back that tightly brings the
- * module's own connector A to 0.715 cubes of its own UP side dome where two
- * domes need 0.887. Short by about a sixth of a cube, in every fold plane, at
- * every offset along the line. At two lines' pitch the same reversal is clean
- * and there are dozens. That is not a preference this file expresses, it is
- * the hardware answering, and it is why U_TURN_PITCH is what it is.
+ * IMMEDIATELY neighbouring line, the solver finds routes and — with the try8
+ * module — they are clean: nothing of the module's own comes within a pad's
+ * width of anything else (the two receivers of a spine are back to back by
+ * design and exempt), so U_TURN_PITCH is one line. The old 6-DOF module had a
+ * side dome on the inside of the bend that pushed this to two. The measurement
+ * lives in serpentine.test.ts.
  */
 let uTurnCache: LatticePose[] | null = null;
 
@@ -841,7 +911,7 @@ export function usableCornerSplits(): (readonly [number, number])[] {
  * How far a placement laying part of a solid patch's FILL may hang off the
  * diagram. See the cap in evaluate for why it is separate and why it is small.
  */
-const FILL_OVERSHOOT_CAP = 4;
+const FILL_OVERSHOOT_CAP = 4 * K;
 
 /**
  * How many body cubes a placement laying a FLAT fill may put outside that
@@ -865,16 +935,16 @@ const FILL_OVERSHOOT_CAP = 4;
  * wall. Three buys real coverage and spends the look to get it, which is the
  * trade Nischay should make rather than this file.
  */
-const OFF_PLANE_CAP = 2;
+const OFF_PLANE_CAP = 2 * K;
 
-const OVERSHOOT_CAP = 2;
+const OVERSHOOT_CAP = 2 * K;
 
 /**
  * The ceiling for a module that is not inventing any bends. Six is past the
  * longest body the module has, so in practice this is "as far as it likes" —
  * written as a number only so the candidate loop can still bail early.
  */
-const STRAIGHT_OVERSHOOT_CAP = 6;
+const STRAIGHT_OVERSHOOT_CAP = 6 * K;
 
 /**
  * The overshoot allowed when the only alternative is an unwelded chain: none at
@@ -989,7 +1059,7 @@ const W_STRAY_BEND = -1_500;
  * judgment the overshoot ratio makes for a straight finish, applied here to a
  * bent one: a lone stub (gain 1) never clears it, a genuine run (gain 2+) does.
  */
-const MIN_GAIN_PER_STRAY = 1;
+const MIN_GAIN_PER_STRAY = K;   // one OLD cube's worth: the cube is K times finer now, so a lone stub still never clears it
 const W_OUTSIDE = -60;      // per body cube off the diagram — the cheapest thing to give up
 const W_SNAP = -10;         // per tenth of a cube of lattice snap error
 /**
@@ -1072,13 +1142,32 @@ function evaluate(
   // hardware can hold, and every broken-looking lock traced back to one.
   if (!poseSelfClear(pose)) return null;
 
-  // What does this placement SERVE? A junction is served by putting the big
-  // rod's midpoint — where all four side connectors are — on it. A corner is
+  // What does this placement SERVE? A junction is served by putting one of the
+  // module's two spines — where its side receivers are — on it. A corner is
   // served by putting one of the module's own bends on it, turning the same
   // way the shape turns.
-  const midCell = add(anchorCell, rot(pose.midOffset));
-  let serves: ShapeFeature | null = st.pendingJunctions.get(key(midCell)) ?? null;
-  if (serves && !cells.some((c) => eq(c, midCell))) serves = null; // spine must reach it
+  //
+  // A spine carries only TWO receivers, on opposite faces, so unlike a hub with
+  // four sides it can only serve the arms its receivers actually face. A junction
+  // counts as served when the module's body runs through it AND its receivers
+  // face the junction's other arms — otherwise the arms have nothing to weld to
+  // and the "served" junction buys nothing. `junctionArms` is how many of the
+  // junction's arms (the through-run plus the receivers) this pose can host.
+  let serves: ShapeFeature | null = null;
+  let junctionArms = 0;
+  for (const site of pose.sides) {
+    const midCell = add(anchorCell, rot(site.offset));
+    const j = st.pendingJunctions.get(key(midCell));
+    if (!j || !cells.some((c) => eq(c, midCell))) continue; // spine must reach it
+    const faces = pose.sides
+      .filter((x) => eq(add(anchorCell, rot(x.offset)), midCell))
+      .map((x) => rot(x.dir));
+    const hosted = j.arms.filter((a) =>
+      cells.some((c) => eq(c, add(midCell, a))) || faces.some((d) => eq(d, a))).length;
+    if (hosted >= Math.min(j.degree, MAX_ARMS_PER_SPINE) && hosted > junctionArms) {
+      serves = j; junctionArms = hosted;
+    }
+  }
   if (!serves) {
     for (const t of pathTurns(cells)) {
       const corner = st.pendingCorners.get(key(t.cell));
@@ -1211,7 +1300,7 @@ function evaluate(
 
   // HARD: connector domes may not interpenetrate. Checked last, because it
   // costs a forward-kinematics run and everything above is set lookups.
-  if (!domesClear(candidateDomes(pose, anchorDir, anchorPos), st)) return null;
+  if (!domesClear(candidateDomes(pose, anchorDir, anchorPos), st, host)) return null;
 
   const endCell = add(anchorCell, rot(pose.endOffset));
   const endDir = rot(pose.endDir);
@@ -1226,7 +1315,7 @@ function evaluate(
     + (host === null && closesALock(anchorCell, anchorDir, 'A', st) ? 1 : 0);
 
   let score = 0;
-  if (serves?.kind === 'junction') score += W_JUNCTION * (serves.degree - 2);
+  if (serves?.kind === 'junction') score += W_JUNCTION * (Math.max(junctionArms, 3) - 2);
   else if (serves?.kind === 'corner') score += serves.fill ? W_FILL_CORNER : W_CORNER;
   score += phase * W_PHASE;
   score += gain * W_COVER;
@@ -1477,7 +1566,7 @@ function armParityBonus(cornerCell: Cell, arm: Cell, used: number, st: FitState)
   const cat = cornerCatalogue();
   const inv = inverseRotationTo(backArm);
   for (const [kFar, mFar] of usableCornerSplits()) {
-    if (remaining < kFar || (remaining - kFar) % 4 !== 0) continue;
+    if (remaining < kFar || (remaining - kFar) % N !== 0) continue;
     if (cat.get(cornerKey(kFar, mFar, inv(farOut)))) return W_RUN_PARITY;
   }
   return -W_RUN_PARITY;
@@ -1557,11 +1646,14 @@ function proposeRoot(st: FitState): Proposal | null {
 
   for (const f of st.pending.slice(0, ROOT_FEATURES_TRIED)) {
     if (f.kind === 'junction') {
-      // Straddle it: anchor two cubes back along an arm so the spine's midpoint
-      // — where the side connectors are — lands on the junction itself.
+      // Straddle it: anchor 1-3 cubes back along an arm so one of the spines —
+      // where the side receivers are, ~1.4 and ~2.9 cubes from connector A —
+      // lands on the junction itself.
       for (const a of DIRS_6) {
-        const anchor = subCell(f.cell, scale(a, 2));
-        best = better(best, proposeFromTable(anchor, a, cellPos(anchor), null, st));
+        for (const back of JUNCTION_ANCHOR_BACKS) {
+          const anchor = subCell(f.cell, scale(a, back));
+          best = better(best, proposeFromTable(anchor, a, cellPos(anchor), null, st));
+        }
       }
     } else if (f.kind === 'corner') {
       for (const inArm of f.arms) {
@@ -1624,20 +1716,43 @@ function proposeRoot(st: FitState): Proposal | null {
  */
 const ROOT_FEATURES_TRIED = 6;
 
+/**
+ * Most arms one spine can host: the two chain directions plus its two opposite
+ * receivers. A junction of higher degree needs further modules welded on.
+ */
+const MAX_ARMS_PER_SPINE = 4;
+
+/**
+ * How many cubes back from a junction a module may be anchored so that one of
+ * its spines lands on it. Spine 1's receivers sit ~1.4 cubes from connector A and
+ * spine 2's ~2.9, so 1, 2 and 3 cubes back cover both (a lattice anchor can only
+ * be a whole number of cubes away; the rest is absorbed by the pose's own bends).
+ */
+const JUNCTION_ANCHOR_BACKS: readonly number[] = (() => {
+  // distance of each spine's receivers from connector A, in cubes, rounded both
+  // ways (a lattice anchor is a whole number of cubes away; the pose's own
+  // bends absorb the fraction)
+  const out = new Set<number>();
+  for (const c of connectorPoses(ZERO_ANGLES, { position: [0, 0, 0], quaternion: baseQuatFor([0, 0, 1]) })) {
+    if (c.end === 'A' || c.end === 'B') continue;
+    const d = Math.abs(c.position[2]) / MODULINK_CUBE_SIZE;
+    out.add(Math.floor(d)); out.add(Math.ceil(d));
+  }
+  return [...out].filter((v) => v >= 1).sort((a, b) => a - b);
+})();
+
 const cellPos = (c: Cell): Vec3 => [c[0], c[1], c[2]];
 
 // ── committing a placement ────────────────────────────────────────────────────
 
 /**
- * Would welding a new module onto `conn` still leave its host within its side
- * budget? A/B ends have no budget — the chain's own two ends are unlimited by
- * this rule. All four SIDE faces may be used at once (modulink.sideWeldsAreLegal,
- * 2026-09-05) — the only remaining limit is that a module physically has four.
+ * Is this receiver still free? A/B ends have no budget of their own. Each of the
+ * four side receivers (two per spine) carries one weld, independently of the rest.
  */
 function sideAvailable(conn: PlacedConnector, st: FitState): boolean {
   if (conn.end === 'A' || conn.end === 'B') return true;
   const used = st.usedSides.get(conn.moduleId) ?? [];
-  return used.length < SIDE_ENDS.length;
+  return !used.includes(conn.end);
 }
 
 /** Record that `conn` is now claimed by a real weld, for sideAvailable's count. */
@@ -1774,7 +1889,7 @@ function refreshPlan(st: FitState): void {
       // a corner, which is precisely the ordering rule 6 exists to prevent.
       if (f.kind !== 'junction') continue;
       for (const a of f.throughAxes.length ? f.throughAxes : f.arms) {
-        for (let i = -2; i <= 2; i++) hold(add(f.cell, scale(a, i)), f.priority);
+        for (let i = -3; i <= 3; i++) hold(add(f.cell, scale(a, i)), f.priority);
       }
     }
   }
@@ -1801,7 +1916,9 @@ function refreshPlan(st: FitState): void {
       // spine running down through the hip and its lower half overhanging, was
       // never advertised, so no chain ever arrived there and the junction went
       // unserved while a leg's corner took its cube instead.
-      for (const a of DIRS_6) want(subCell(f.cell, scale(a, 2)), a, f.priority);
+      for (const a of DIRS_6) {
+        for (const back of JUNCTION_ANCHOR_BACKS) want(subCell(f.cell, scale(a, back)), a, f.priority);
+      }
     } else {
       // Which (k, m) splits are usable AT ALL, in principle, is only half the
       // question — the catalogue is keyed on the ACTUAL turn direction too, and
@@ -1907,9 +2024,9 @@ function findTouchingSeed(st: FitState, skip: Set<CellKey>): Cell | null {
 /**
  * Weld separate chains into one robot.
  *
- * A FREE END reaches onto another module's connector. End-to-end and end-to-side
- * are both allowed; side-to-side never is, so a weld always has at least one
- * free end in it.
+ * Any connector of one module that lands on a connector of another — same point,
+ * opposed normals — is a weld: end-to-end, end-to-side, side-to-end, and
+ * side-to-side where the geometry happens to line up.
  *
  * Greedy and union-find guided: only welds that actually merge two different
  * chains are taken, so no effort is spent adding redundant links inside a chain
@@ -1963,8 +2080,7 @@ export function weldChains(modules: FittedModule[]): {
   const coincident = (a: Vec3, b: Vec3) =>
     Math.abs(a[0] - b[0]) < 0.35 && Math.abs(a[1] - b[1]) < 0.35 && Math.abs(a[2] - b[2]) < 0.35;
 
-  // Sides already carrying a weld, so a module never gets asked to hold a
-  // fifth — the only limit now that all four may be used at once.
+  // Receivers already carrying a weld: each carries exactly one.
   const usedSides = new Map<string, ConnectorEnd[]>();
   const sidesOf = (id: string) => usedSides.get(id) ?? [];
   const noteSide = (id: string, end: ConnectorEnd) => {
@@ -1973,7 +2089,7 @@ export function weldChains(modules: FittedModule[]): {
   };
   const sideBlocked = (id: string, end: ConnectorEnd) => {
     if (end === 'A' || end === 'B') return false;
-    return sidesOf(id).length >= SIDE_ENDS.length;
+    return sidesOf(id).includes(end);
   };
 
   const welds: ChainWeldLink[] = [];
@@ -1983,7 +2099,6 @@ export function weldChains(modules: FittedModule[]): {
   // ways. That is also how the chain's own end-to-end welds sit: the next
   // module's A occupies the cube the previous module's B ended in.
   for (const from of all) {
-    if (from.end !== 'A' && from.end !== 'B') continue; // only a free END travels
     const meetCell = from.cell;
     for (const to of candidatesNear(from.pos)) {
       if (to.moduleId === from.moduleId) continue;
@@ -2130,7 +2245,7 @@ export function fitModules(cells: Cell[], options: FitOptions = {}): FitResult {
     chain: 0,
     conn: new Map<CellKey, PlacedConnector[]>(),
     free: [],
-    domes: new Map<CellKey, { pos: Vec3; normal: Vec3; moduleId: string }[]>(),
+    domes: new Map<CellKey, { pos: Vec3; normal: Vec3; moduleId: string; end: ConnectorEnd }[]>(),
     usedSides: new Map<string, ConnectorEnd[]>(),
     skeleton,
     pending: [],
@@ -2196,7 +2311,7 @@ export function fitModules(cells: Cell[], options: FitOptions = {}): FitResult {
   if (skeleton.degenerate) {
     const dir: Cell = cells.length === 2 ? sub(cells[1], cells[0]) : [1, 0, 0];
     const straight = reachTable()
-      .filter((p) => p.reach === 4 && segmentCount(p.cells) === 1)
+      .filter((p) => p.reach === N && segmentCount(p.cells) === 1)
       .sort((a, b) => a.snapError - b.snapError);
     let placed: Proposal | null = null;
     for (const pose of straight) {

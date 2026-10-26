@@ -1,0 +1,122 @@
+{
+ "id": "t_stand_2m",
+ "name": "T-stand (end onto spine)",
+ "nModules": 2,
+ "topology": [
+  {
+   "a": {
+    "module": "M2",
+    "port": "A"
+   },
+   "b": {
+    "module": "M1",
+    "port": "S1B"
+   },
+   "slot": 0,
+   "locked": true
+  }
+ ],
+ "pose": {
+  "M1": {
+   "T1": 179.12750932182146,
+   "B1": 180.0064359707478,
+   "B2": 259.83723889519956,
+   "T2": 170.25000214759726,
+   "B3": 225.1515698765245,
+   "B4": 187.36159716798838,
+   "T3": 179.90411629299393
+  },
+  "M2": {
+   "T1": 179.74372661095825,
+   "B1": 221.43409337690144,
+   "B2": 268.0512989027085,
+   "T2": 180.03954153865303,
+   "B3": 229.2151447369057,
+   "B4": 158.56538991929185,
+   "T3": 180.03758936329595
+  }
+ },
+ "baseFrame": {
+  "worldPose": {
+   "p": [
+    0,
+    0.3,
+    0
+   ],
+   "q": [
+    0,
+    0,
+    0.0009260459526744557,
+    0.9999995712193548
+   ]
+  },
+  "dropToFloor": true
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 7,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 90,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 374,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 169,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 55,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 44.7,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 0.92,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 17.2,
+  "cogMarginMm": 88.6,
+  "minJointMarginDeg": 1.9
+ },
+ "source": "seed",
+ "spec": {
+  "stands_upright": {
+   "is": true
+  },
+  "height_mm": {
+   "min": 350
+  }
+ },
+ "notes": "static check: PASS · MuJoCo hold: PASS (drift 0.3 mm)",
+ "sim": {
+  "ok": true,
+  "driftMm": 0.3,
+  "maxTorquePct": 18,
+  "reasons": []
+ }
+}

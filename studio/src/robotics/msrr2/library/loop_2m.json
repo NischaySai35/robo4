@@ -1,0 +1,139 @@
+{
+ "id": "loop_2m",
+ "name": "Low loop / crawler",
+ "nModules": 2,
+ "topology": [
+  {
+   "a": {
+    "module": "M1",
+    "port": "B"
+   },
+   "b": {
+    "module": "M2",
+    "port": "A"
+   },
+   "slot": 2,
+   "locked": true
+  },
+  {
+   "a": {
+    "module": "M2",
+    "port": "B"
+   },
+   "b": {
+    "module": "M1",
+    "port": "A"
+   },
+   "slot": 2,
+   "locked": true
+  }
+ ],
+ "pose": {
+  "M1": {
+   "T1": 359.4055750065098,
+   "B1": 203.7560929448249,
+   "B2": 252.90013352562084,
+   "T2": 180.00009333570748,
+   "B3": 268.2,
+   "B4": 183.65549656026022,
+   "T3": 188.080271192885
+  },
+  "M2": {
+   "T1": 351.9197815316827,
+   "B1": 184.6530820580492,
+   "B2": 268.2,
+   "T2": 360,
+   "B3": 92.65898234310698,
+   "B4": 188.7058205419009,
+   "T3": 0.6105766959491348
+  }
+ },
+ "baseFrame": {
+  "worldPose": {
+   "p": [
+    0,
+    0.3,
+    0
+   ],
+   "q": [
+    0.07493340980032345,
+    0.0004848980122870819,
+    -0.006452723310186679,
+    0.9971675442629973
+   ]
+  },
+  "dropToFloor": true
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 2,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 93,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 220,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 146,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 0,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 28.4,
+  "cogMarginMm": -7,
+  "minJointMarginDeg": 0
+ },
+ "source": "seed",
+ "notes": "two locks close a ring · static check: FAIL — centre of gravity is -7 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — M1.Spine1_B1B2 sags 165 mm from the planned pose (backlash + flex; limit 60 mm, estimate)",
+ "spec": {
+  "encloses": {
+   "is": true
+  },
+  "ground_contacts": {
+   "min": 2
+  },
+  "height_mm": {
+   "max": 250
+  }
+ },
+ "sim": {
+  "ok": false,
+  "driftMm": 1,
+  "maxTorquePct": 19.1,
+  "reasons": [
+   "M1.Spine1_B1B2 sags 165 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+  ]
+ }
+}

@@ -117,7 +117,7 @@ test('deleting a module takes everything hanging off it', () => {
   build = attachTo(build, a, 'B');
   const b = build.modules[1].id;
   build = attachTo(build, b, 'B');
-  build = attachTo(build, a, 'UP');
+  build = attachTo(build, a, 'S1A');
   assert.equal(build.modules.length, 4);
 
   const pruned = removeModule(build, b);
@@ -188,7 +188,7 @@ test('saving and loading returns the same structure', () => {
   let build = addRoot(emptyManual());
   const a = build.modules[0].id;
   build = setAngle(build, a, 1, Math.PI / 4);
-  build = attachTo(build, a, 'RIGHT', 3);
+  build = attachTo(build, a, 'S2B', 3);
   build = setAngle(build, build.modules[1].id, 4, -Math.PI / 6);
 
   const back = manualFromJSON(manualToJSON(build));
@@ -213,6 +213,7 @@ test('loading something that is not a hand-built structure fails clearly', () =>
 
 test('the joint list matches the module the hardware actually has', () => {
   assert.equal(JOINTS.length, STRAIGHT.length);
-  assert.deepEqual(JOINTS.map((j) => j.kind), ['twist', 'bend', 'bend', 'twist', 'bend', 'twist']);
-  assert.equal(ALL_ENDS.length, 6, 'two ends and four sides');
+  assert.deepEqual(JOINTS.map((j) => j.kind), ['twist', 'bend', 'bend', 'twist', 'bend', 'bend', 'twist']);
+  assert.deepEqual(JOINTS.map((j) => j.label), ['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3']);
+  assert.equal(ALL_ENDS.length, 6, 'two ends and four side receivers');
 });

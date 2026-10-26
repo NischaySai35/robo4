@@ -1,0 +1,335 @@
+{
+ "name": "TETROBOT module try8",
+ "dof": 7,
+ "servos": 9,
+ "chain": [
+  "End A lock",
+  "T1 twist",
+  "B1 bend",
+  "B2 bend",
+  "T2 twist",
+  "B3 bend",
+  "B4 bend",
+  "T3 twist",
+  "End B lock"
+ ],
+ "rod_order": [
+  "twist",
+  "bend",
+  "bend",
+  "twist",
+  "bend",
+  "bend",
+  "twist"
+ ],
+ "spines": [
+  "Spine1_B1B2 (between B1,B2)",
+  "Spine2_B3B4 (between B3,B4)"
+ ],
+ "side_receivers_per_spine": 2,
+ "side_receivers_total": 4,
+ "frame_note": "studio = Rz(+90deg) of CAD: (x,y,z)_studio = (y_cad, -x_cad, z_cad); module long axis = +X; bends rotate about Y; twist & lock about X",
+ "limits_deg": {
+  "twist": [
+   -180,
+   180
+  ],
+  "bend": [
+   -90,
+   90
+  ],
+  "lock": [
+   -45,
+   45
+  ]
+ },
+ "servo": {
+  "model": "ST3215",
+  "stall_torque_Nm_usable": 2.7,
+  "no_load_rad_s_12V": 4.71,
+  "battery": "3S LiPo 11.1V"
+ },
+ "mass_kg_total": 1.1336600000000001,
+ "mass_real_kg": 1.134,
+ "straight_length_m": 0.6703339498024075,
+ "end_to_end_pad_tip_m": 0.6869299415990009,
+ "bodies_x_m": {
+  "EndA_LockModule": 0.0,
+  "L1_LockRotor_A": -0.0010510082034069779,
+  "T1_Housing_B1Fork": 0.05762399179659339,
+  "Spine1_B1B2": 0.12604411337862428,
+  "T2_Housing_B2Fork_GROUND": 0.28675582001695826,
+  "T2_Ring_B3Fork": 0.35517594159898946,
+  "Spine2_B3B4": 0.38147594159898957,
+  "T3_Housing_B4Fork": 0.5421878200169703,
+  "EndB_LockModule": 0.6106079415990009,
+  "L2_LockRotor_B": 0.6692829415990005
+ },
+ "joints": [
+  {
+   "name": "J_L1_lock",
+   "parent": "EndA_LockModule",
+   "child": "L1_LockRotor_A",
+   "kind": "lock",
+   "axis_studio": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "x_m": -0.0010510082034069779
+  },
+  {
+   "name": "J_T1_twist",
+   "parent": "EndA_LockModule",
+   "child": "T1_Housing_B1Fork",
+   "kind": "twist",
+   "axis_studio": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "x_m": 0.05762399179659339
+  },
+  {
+   "name": "J_B1_bend",
+   "parent": "T1_Housing_B1Fork",
+   "child": "Spine1_B1B2",
+   "kind": "bend",
+   "axis_studio": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "x_m": 0.12604411337862428
+  },
+  {
+   "name": "J_B2_bend",
+   "parent": "Spine1_B1B2",
+   "child": "T2_Housing_B2Fork_GROUND",
+   "kind": "bend",
+   "axis_studio": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "x_m": 0.28675582001695826
+  },
+  {
+   "name": "J_T2_twist",
+   "parent": "T2_Housing_B2Fork_GROUND",
+   "child": "T2_Ring_B3Fork",
+   "kind": "twist",
+   "axis_studio": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "x_m": 0.35517594159898946
+  },
+  {
+   "name": "J_B3_bend",
+   "parent": "T2_Ring_B3Fork",
+   "child": "Spine2_B3B4",
+   "kind": "bend",
+   "axis_studio": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "x_m": 0.38147594159898957
+  },
+  {
+   "name": "J_B4_bend",
+   "parent": "Spine2_B3B4",
+   "child": "T3_Housing_B4Fork",
+   "kind": "bend",
+   "axis_studio": [
+    0.0,
+    -1.0,
+    0.0
+   ],
+   "x_m": 0.5421878200169703
+  },
+  {
+   "name": "J_T3_twist",
+   "parent": "T3_Housing_B4Fork",
+   "child": "EndB_LockModule",
+   "kind": "twist",
+   "axis_studio": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "x_m": 0.6106079415990009
+  },
+  {
+   "name": "J_L2_lock",
+   "parent": "EndB_LockModule",
+   "child": "L2_LockRotor_B",
+   "kind": "lock",
+   "axis_studio": [
+    1.0,
+    0.0,
+    0.0
+   ],
+   "x_m": 0.6692829415990005
+  }
+ ],
+ "connectors": {
+  "EndA_LockModule": [
+   {
+    "id": "conn-endA",
+    "name": "End A lock",
+    "position": [
+     -0.03938648757934571,
+     0.0039100006103515595,
+     -3.522491455078125e-05
+    ],
+    "normal": [
+     -1,
+     0,
+     0
+    ],
+    "roll": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "symmetry": 4,
+    "kind": "end"
+   }
+  ],
+  "Spine1_B1B2": [
+   {
+    "id": "conn-s1a",
+    "name": "Side receiver 1A",
+    "position": [
+     4.414618502075751e-05,
+     -0.031369371414184576,
+     6.484222412109375e-05
+    ],
+    "normal": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "roll": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "symmetry": 4,
+    "kind": "side"
+   },
+   {
+    "id": "conn-s1b",
+    "name": "Side receiver 1B",
+    "position": [
+     4.414618502075751e-05,
+     0.031230628585815427,
+     6.484222412109375e-05
+    ],
+    "normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "roll": [
+     0.0,
+     0.0,
+     -1.0
+    ],
+    "symmetry": 4,
+    "kind": "side"
+   }
+  ],
+  "Spine2_B3B4": [
+   {
+    "id": "conn-s2a",
+    "name": "Side receiver 2A",
+    "position": [
+     4.397138414583002e-05,
+     -0.031369371414184576,
+     6.484222412109375e-05
+    ],
+    "normal": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "roll": [
+     0.0,
+     0.0,
+     1.0
+    ],
+    "symmetry": 4,
+    "kind": "side"
+   },
+   {
+    "id": "conn-s2b",
+    "name": "Side receiver 2B",
+    "position": [
+     4.397138414583002e-05,
+     0.031230628585815427,
+     6.484222412109375e-05
+    ],
+    "normal": [
+     0.0,
+     1.0,
+     0.0
+    ],
+    "roll": [
+     0.0,
+     0.0,
+     -1.0
+    ],
+    "symmetry": 4,
+    "kind": "side"
+   }
+  ],
+  "EndB_LockModule": [
+   {
+    "id": "conn-endB",
+    "name": "End B lock",
+    "position": [
+     0.03938449176989936,
+     0.0039100006103515595,
+     -3.522491455078125e-05
+    ],
+    "normal": [
+     1,
+     0,
+     0
+    ],
+    "roll": [
+     0.0,
+     -1.0,
+     0.0
+    ],
+    "symmetry": 4,
+    "kind": "end"
+   }
+  ]
+ },
+ "receiver": {
+  "note": "side receiver = the same receiver as the floor ones, recessed in the spine face; registered to CAD 0.24 mm",
+  "cad_origin_in_spine_m": [
+   0.025,
+   0.0804,
+   0.0
+  ],
+  "seat_gap_m": 0.0063,
+  "top_m": 0.0153,
+  "lugs": 4,
+  "slots_deg": [
+   45,
+   135,
+   225,
+   315
+  ],
+  "magnets_per_connector": 8,
+  "magnet": "8x8mm x1mm, N on pad segments, S on gap segments"
+ },
+ "meshes_dir": "assets/tetrobot-module/meshes",
+ "source_cad": "Fusion doc try8"
+}

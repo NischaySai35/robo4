@@ -1,0 +1,128 @@
+{
+ "id": "l_stand_2m",
+ "name": "L-stand (end to end)",
+ "nModules": 2,
+ "topology": [
+  {
+   "a": {
+    "module": "M1",
+    "port": "B"
+   },
+   "b": {
+    "module": "M2",
+    "port": "A"
+   },
+   "slot": 0,
+   "locked": true
+  }
+ ],
+ "pose": {
+  "M1": {
+   "T1": 183.49553928033657,
+   "B1": 120.83766691635734,
+   "B2": 263.35676691037486,
+   "T2": 360,
+   "B3": 152.82942042021193,
+   "B4": 91.80749862363953,
+   "T3": 208.6673335915549
+  },
+  "M2": {
+   "T1": 360,
+   "B1": 109.8709105441769,
+   "B2": 125.46382136483142,
+   "T2": 166.53544696530525,
+   "B3": 141.36766517866013,
+   "B4": 92.92870701781985,
+   "T3": 345.82542809072027
+  }
+ },
+ "baseFrame": {
+  "worldPose": {
+   "p": [
+    0,
+    0.3,
+    0
+   ],
+   "q": [
+    -0.094751362010861,
+    0.8983221057886477,
+    0.4266317258690985,
+    0.044999379223394156
+   ]
+  },
+  "dropToFloor": true
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 2,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 196,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 406,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 245,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 73,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 0,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 58.4,
+  "cogMarginMm": -18.9,
+  "minJointMarginDeg": 0
+ },
+ "source": "seed",
+ "spec": {
+  "stands_upright": {
+   "is": true
+  },
+  "height_mm": {
+   "min": 400
+  },
+  "ground_contacts": {
+   "min": 2
+  }
+ },
+ "notes": "static check: FAIL — centre of gravity is -19 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 28 mm/s (falling or sliding)",
+ "sim": {
+  "ok": false,
+  "driftMm": 28,
+  "maxTorquePct": 35.1,
+  "reasons": [
+   "it keeps moving while holding: 28 mm/s (falling or sliding)",
+   "M1.EndA_LockModule sags 514 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+  ]
+ }
+}

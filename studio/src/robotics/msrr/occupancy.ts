@@ -49,7 +49,7 @@ import {
  * other pose's cube count then falls out of the kinematics rather than being
  * declared.
  */
-export const CUBES_PER_STRAIGHT_MODULE = 4;
+export const CUBES_PER_STRAIGHT_MODULE = 8;
 export const MODULINK_CUBE_SIZE = MODULE_CHAIN_LENGTH / CUBES_PER_STRAIGHT_MODULE;
 
 /** Which cube contains a world point. */
@@ -186,10 +186,11 @@ export interface ModulePoseDef {
 const D = (deg: number) => (deg * Math.PI) / 180;
 
 /**
- * Canonical poses, ordered most-extended to most-folded — 4 cubes of reach down
- * to 1.
+ * Canonical poses, ordered most-extended to most-folded by the reach their
+ * kinematics give (a straight module is CUBES_PER_STRAIGHT_MODULE cubes; the
+ * tightest coil is about a quarter of that).
  *
- * Only BEND joints are used here. Twists roll the chain about its own axis, which
+ * Only BEND joints are used here (B1..B4). Twists roll the chain about its own axis, which
  * reorients where a later bend points but does not by itself change how far the
  * module reaches — so bends are what actually spend reach, and keeping twists at
  * zero makes each pose easy to reason about and to draw.
@@ -203,37 +204,37 @@ export const MODULINK_POSES: ModulePoseDef[] = [
     id: 'straight',
     label: 'Straight',
     hint: 'Fully extended. Reaches furthest, claims the most cubes.',
-    angles: [0, 0, 0, 0, 0, 0],
-  },
-  {
-    id: 'gentle',
-    label: 'Gentle arc',
-    hint: 'Every bend part-way over — a smooth curve rather than a corner.',
-    angles: [0, D(35), D(35), 0, D(35), 0],
+    angles: [0, 0, 0, 0, 0, 0, 0],
   },
   {
     id: 'elbow',
     label: 'Elbow',
     hint: 'One bend hard over: an L corner. The standard turn.',
-    angles: [0, 0, D(90), 0, 0, 0],
+    angles: [0, 0, D(90), 0, 0, 0, 0],
   },
   {
     id: 'zigzag',
     label: 'Zigzag',
     hint: 'Opposed bends — the chain doglegs and comes back onto its own axis.',
-    angles: [0, D(90), -D(90), 0, D(90), 0],
+    angles: [0, D(90), -D(90), 0, D(90), -D(90), 0],
+  },
+  {
+    id: 'gentle',
+    label: 'Gentle arc',
+    hint: 'Every bend part-way over — a smooth curve rather than a corner.',
+    angles: [0, D(35), D(35), 0, D(35), D(35), 0],
   },
   {
     id: 'hook',
     label: 'Hook',
     hint: 'Two bends the same way: the chain doubles back on itself.',
-    angles: [0, D(90), D(90), 0, 0, 0],
+    angles: [0, D(90), D(90), 0, 0, 0, 0],
   },
   {
     id: 'coil',
     label: 'Coil',
     hint: 'Every bend hard over — the tightest fold, the smallest footprint.',
-    angles: [0, D(90), D(90), 0, D(90), 0],
+    angles: [0, D(90), D(90), 0, D(90), D(90), 0],
   },
 ];
 

@@ -238,11 +238,12 @@ ipcMain.handle('ai:anthropic', async (_evt, { system, prompt } = {}) => {
 // Local offline AI via Ollama (https://ollama.com). Runs a small model entirely on
 // the user's machine — no internet, no API key. We talk to it from the main process
 // so there are no CORS issues. Enable by installing Ollama and pulling a small model,
-// e.g.  `ollama pull qwen2.5:1.5b`  (or set OLLAMA_MODEL).
-ipcMain.handle('ai:ollama', async (_evt, { system, prompt } = {}) => {
+// e.g.  `ollama pull qwen3.5:9b`  (or set OLLAMA_MODEL). Callers may pass their own
+// model, a JSON Schema `format` (constrained output) and `think` (qwen reasoning).
+ipcMain.handle('ai:ollama', async (_evt, { system, prompt, model: wanted, format, think } = {}) => {
   if (!prompt) return { ok: false, error: 'Prompt is required.' };
   const host = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
-  const model = process.env.OLLAMA_MODEL || 'qwen2.5:1.5b';
+  const model = wanted || process.env.OLLAMA_MODEL || 'qwen3.5:9b';
   try {
     const res = await fetch(`${host}/api/chat`, {
       method: 'POST',
@@ -251,7 +252,8 @@ ipcMain.handle('ai:ollama', async (_evt, { system, prompt } = {}) => {
         model,
         stream: false,
         options: { temperature: 0.1 },
-        format: 'json',                       // ask the model for strict JSON
+        format: format || 'json',             // strict JSON, or a JSON Schema
+        ...(think !== undefined ? { think } : {}),
         messages: [
           ...(system ? [{ role: 'system', content: system }] : []),
           { role: 'user', content: prompt },
@@ -277,7 +279,7 @@ ipcMain.handle('ai:ollama-status', async () => {
     if (!res.ok) return { ok: false };
     const json = await res.json().catch(() => null);
     const models = (json?.models || []).map((m) => m.name);
-    return { ok: true, models, model: process.env.OLLAMA_MODEL || 'qwen2.5:1.5b' };
+    return { ok: true, models, model: process.env.OLLAMA_MODEL || 'qwen3.5:9b' };
   } catch {
     return { ok: false };
   }

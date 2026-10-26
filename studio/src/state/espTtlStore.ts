@@ -48,7 +48,7 @@ export interface TtlTelemetry {
 }
 
 export type TtlTab =
-  | 'control' | 'animation' | 'tools' | 'config' | 'wifi' | 'ota' | 'log';
+  | 'control' | 'animation' | 'walk' | 'tools' | 'config' | 'wifi' | 'ota' | 'log';
 
 const LS_URL = 'robo4:esptt:url';
 

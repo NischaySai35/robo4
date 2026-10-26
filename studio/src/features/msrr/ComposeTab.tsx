@@ -44,6 +44,9 @@ export function ComposeTab() {
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   const [end, setEnd] = useState<ConnectorEnd>('B');
+  // which of the NEW module's own connectors hangs on it: any of the six, so
+  // end-end, end-side, side-end and side-side welds are all one click
+  const [ownEnd, setOwnEnd] = useState<ConnectorEnd>('A');
   const [roll, setRollChoice] = useState<0 | 1 | 2 | 3>(0);
 
   const current = manual.modules.find((m) => m.id === selected) ?? null;
@@ -53,7 +56,7 @@ export function ComposeTab() {
   const edit = (next: ManualBuild) => setManual(next);
 
   const add = () => {
-    const next = current ? attachTo(manual, current.id, end, roll) : addRoot(manual);
+    const next = current ? attachTo(manual, current.id, end, roll, ownEnd) : addRoot(manual);
     edit(next);
     select(next.modules[next.modules.length - 1].id);
   };
@@ -84,9 +87,11 @@ export function ComposeTab() {
       <Section title="Build it yourself" info={
         <>
           <p className="msrr-note">
-            Add a module, pick one of its six connectors, weld the next module onto it,
-            and bend the joints however you like. The viewport draws real hardware
-            geometry — the same rods, knuckles and domes a fitted build gets.
+            Add a module, pick one of its six connectors (two ends, and two receivers on
+            each spine), choose which connector of the NEXT module goes on it, and bend
+            the seven joints however you like. Any pairing is a weld: end to end, end to
+            side, side to end, and side to side (crossed, so the bodies clear). The
+            viewport draws the real try8 module — the same meshes the Editor shows.
           </p>
           <p className="msrr-note warn">
             Nothing here is checked. Modules may pass through each other and joints may
@@ -106,7 +111,7 @@ export function ComposeTab() {
 
         <div className="msrr-row-btns">
           <button className="msrr-btn primary" onClick={add}>
-            {current ? `Add module on ${current.id}.${end}` : 'Add first module'}
+            {current ? `Add module: its ${ownEnd} on ${current.id}.${end}` : 'Add first module'}
           </button>
           <button
             className="msrr-btn ghost"
@@ -139,6 +144,17 @@ export function ComposeTab() {
                 {ALL_ENDS.map((c) => <option key={c} value={c}>{c}</option>)}
               </select>
             </Row>
+            <Row label="…by its own connector">
+              <select
+                className="msrr-select"
+                value={ownEnd}
+                onChange={(e) => setOwnEnd(e.target.value as ConnectorEnd)}
+              >
+                {/* side-to-side is not a weld (only ends have a lock rotor) */}
+                {ALL_ENDS.filter((c) => c === 'A' || c === 'B' || end === 'A' || end === 'B')
+                  .map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </Row>
             <Row label={`Its roll about that lock: ${roll * 90}°`}>
               <input
                 type="range" min={0} max={3} step={1} value={roll}
@@ -158,7 +174,7 @@ export function ComposeTab() {
               onClick={() => select(m.id)}
             >
               <b>{m.id}</b>
-              <span>{m.attach ? `on ${m.attach.parentId}.${m.attach.end}` : 'root'}</span>
+              <span>{m.attach ? `${m.attach.ownEnd ?? 'A'} on ${m.attach.parentId}.${m.attach.end}` : 'root'}</span>
               <span className="msrr-manual-angles">{m.angles.map(deg).join(' / ')}</span>
             </button>
           ))}
@@ -171,19 +187,19 @@ export function ComposeTab() {
       {current && (
         <Section title={`${current.id} joints`} info={
           <p className="msrr-note">
-            Six joints in chain order. The twists roll the chain about its own axis and
-            only seat every 90° on real hardware — the connectors are four-fold
-            symmetric — so they step in quarters. The bends pitch, and the hardware
-            allows ±90° on each.
+            Seven joints in chain order: T1 B1 B2 T2 B3 B4 T3. The three twists roll the
+            chain about its own axis (±180°); the four bends pitch (±90°). A spine sits
+            between each pair of bends and carries two receivers on opposite faces, so
+            twisting T1 swings the receivers of both spines round the chain.
           </p>
         }>
           {JOINTS.map((j) => (
             <Row key={j.index} label={`${j.label}: ${deg(current.angles[j.index])}°`}>
               <input
                 type="range"
-                min={j.kind === 'twist' ? 0 : -90}
-                max={j.kind === 'twist' ? 270 : 90}
-                step={j.kind === 'twist' ? 90 : 5}
+                min={j.kind === 'twist' ? -180 : -90}
+                max={j.kind === 'twist' ? 180 : 90}
+                step={j.kind === 'twist' ? 15 : 5}
                 value={deg(current.angles[j.index])}
                 onChange={(e) => edit(setAngle(
                   manual, current.id, j.index, (Number(e.target.value) * Math.PI) / 180,

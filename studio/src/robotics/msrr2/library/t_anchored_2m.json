@@ -1,0 +1,116 @@
+{
+ "id": "t_anchored_2m",
+ "name": "T on a standing module (anchored)",
+ "nModules": 2,
+ "topology": [
+  {
+   "a": {
+    "floor": "F1"
+   },
+   "b": {
+    "module": "M2",
+    "port": "A"
+   },
+   "slot": 2,
+   "locked": true
+  },
+  {
+   "a": {
+    "module": "M1",
+    "port": "B"
+   },
+   "b": {
+    "module": "M2",
+    "port": "S1B"
+   },
+   "slot": 0,
+   "locked": true
+  }
+ ],
+ "pose": {
+  "M1": {
+   "T1": 180.01092037230407,
+   "B1": 93.53510790299612,
+   "B2": 262.61141669081724,
+   "T2": 240.19757487949934,
+   "B3": 138.6533980063132,
+   "B4": 91.8,
+   "T3": 201.6549280068281
+  },
+  "M2": {
+   "T1": 180.00370717804043,
+   "B1": 180,
+   "B2": 181.20531419771805,
+   "T2": 180.17109461221773,
+   "B3": 179.9898940166273,
+   "B4": 179.97012772461332,
+   "T3": 180.0380959111666
+  }
+ },
+ "tags": {
+  "ground_contacts": {
+   "value": 1,
+   "measuredBy": "static"
+  },
+  "cog_height_mm": {
+   "value": 377,
+   "measuredBy": "static"
+  },
+  "height_mm": {
+   "value": 693,
+   "measuredBy": "static"
+  },
+  "stands_upright": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "has_free_end": {
+   "value": true,
+   "measuredBy": "static"
+  },
+  "reach_mm": {
+   "value": 75,
+   "measuredBy": "static"
+  },
+  "flat_top_area_cm2": {
+   "value": 48,
+   "measuredBy": "static"
+  },
+  "stable_on_tilt_deg": {
+   "value": 45,
+   "measuredBy": "static"
+  },
+  "encloses": {
+   "value": false,
+   "measuredBy": "static"
+  },
+  "spans_gap_mm": {
+   "value": 0,
+   "measuredBy": "static"
+  },
+  "holds_load_kg": {
+   "value": 5,
+   "measuredBy": "static"
+  }
+ },
+ "margins": {
+  "maxTorquePct": 9.8,
+  "cogMarginMm": 999,
+  "minJointMarginDeg": 1.8
+ },
+ "source": "seed",
+ "notes": "M2 stands in a floor receiver, M1 hangs by its end on the spine of M2 · static check: PASS · MuJoCo hold: FAIL — a joint holds 100% of stall (budget 70%)",
+ "spec": {
+  "height_mm": {
+   "min": 300
+  }
+ },
+ "sim": {
+  "ok": false,
+  "driftMm": 1.8,
+  "maxTorquePct": 100,
+  "reasons": [
+   "a joint holds 100% of stall (budget 70%)"
+  ]
+ }
+}

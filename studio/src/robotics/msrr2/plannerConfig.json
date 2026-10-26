@@ -1,0 +1,109 @@
+{
+  "_comment": "Physical limits and MEASURED verb statistics for the v2 planner. Update the verbs block from C:\\TETROBOT\\logs when new sweeps finish (see docs/TRANSFORM_PLANNER_V2_PROMPT.md section 4).",
+  "limits": {
+    "bendDeg": 90,
+    "bendPlanMarginPct": 2,
+    "twistDeg": 180,
+    "lockDeg": 45,
+    "stallTorqueNm": 2.7,
+    "torqueBudgetPct": 70,
+    "cogMarginMm": 15,
+    "maxJointDegS": 35,
+    "goInMmS": 25,
+    "peelTiltDeg": 12,
+    "peelLiftMm": 20
+  },
+  "verbs": {
+    "walk_step": {
+      "successP": 0.99,
+      "durationS": 21,
+      "note": "GPU-measured 103/103 finished OK (gpu_walk_mag1.json); planning value (ok+1)/(n+2)"
+    },
+    "dock_end_side": {
+      "successP": 0.952,
+      "durationS": 13.3,
+      "note": "GPU-measured 19/19 finished OK (gpu_multi_es_ee46.json, gpu_multi_es_ee46_s23.json); planning value (ok+1)/(n+2)"
+    },
+    "dock_end_end": {
+      "successP": 0.0,
+      "durationS": 20,
+      "note": "GPU-measured 0/3 finished OK (gpu_multi_ee_ee46.json, gpu_multi_ee_prerot.json); planning value (ok+1)/(n+2)"
+    },
+    "dock_air": {
+      "successP": 0.35,
+      "durationS": 25,
+      "note": "target held up by another module: 30-39%"
+    },
+    "dock_floor": {
+      "successP": 0.99,
+      "durationS": 21,
+      "note": "GPU-measured 103/103 finished OK (gpu_walk_mag1.json); planning value (ok+1)/(n+2)"
+    },
+    "undock_peel": {
+      "successP": 0.98,
+      "durationS": 8,
+      "note": "peel 12 deg about the rim then lift 20 mm; estimate"
+    },
+    "pose_move": {
+      "successP": 0.995,
+      "durationS": 6,
+      "note": "joint move with all locks held; estimate"
+    },
+    "lock": {
+      "successP": 0.99,
+      "durationS": 2,
+      "note": "estimate"
+    },
+    "unlock": {
+      "successP": 0.99,
+      "durationS": 2,
+      "note": "estimate"
+    }
+  },
+  "compliance": {
+    "_source": "C:/TETROBOT/sim/physics_params.json + train_v2.xml (the MuJoCo module the GPU runs use)",
+    "servoKpNmPerRad": 80.0,
+    "backlashBendDeg": 0.2,
+    "backlashTwistDeg": 0.5,
+    "flexBendPerpNmPerRad": 39.44,
+    "flexBendInPlaneNmPerRad": 67.57,
+    "flexTwistPerpNmPerRad": 59.16,
+    "flexMaxDeg": 3.0,
+    "receiverTiltNmPerRad": 175.0,
+    "receiverTiltMaxDeg": 1.5,
+    "receiverTwistNmPerRad": 300.0,
+    "receiverTwistMaxDeg": 0.4
+  },
+  "robustness": {
+    "_note": "ESTIMATES (not measured): a light finger touch / bump. Free-standing shapes must need at least minTipPushN at their top to tip over; any shape must take touchN at its top without a servo slipping.",
+    "minTipPushN": 2.0,
+    "touchN": 3.0
+  },
+  "lambdaPerSecond": 0.002,
+  "floorAnchors": [
+    {
+      "id": "F0",
+      "x": 0.0,
+      "z": 0.0,
+      "yawDeg": 0
+    },
+    {
+      "id": "F1",
+      "x": 0.25,
+      "z": 0.0,
+      "yawDeg": 0
+    },
+    {
+      "id": "F2",
+      "x": 0.5,
+      "z": 0.0,
+      "yawDeg": 0
+    },
+    {
+      "id": "F3",
+      "x": 0.75,
+      "z": 0.0,
+      "yawDeg": 0
+    }
+  ]
+}

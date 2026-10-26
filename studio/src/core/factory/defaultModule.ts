@@ -4,7 +4,8 @@
  * happens to contain the hand-built original).
  *
  * The default is the bundled Single-Module snapshot (single-module-demo.json:
- * 8 bodies, 7 joints, 1 Component, 4 mesh assets). Users can override it with
+ * 10 bodies, 9 joints (7 DOF + 2 end locks), 1 Component, 10 CAD mesh assets, connectors on
+ * both ends + 4 spine side receivers). Source files: D:\robo4\assets\tetrobot-module\ (meshes/, module_spec.json). Users can override it with
  * their own edited module via saveDefaultModule() — persisted to localStorage so
  * it survives across projects and sessions. getDefaultModuleDoc() returns the
  * override if present, else the bundled snapshot.
@@ -13,7 +14,10 @@ import type { Document } from '@/core/model/index';
 import { uid } from '@/core/model/index';
 import bundledModuleDoc from './single-module-demo.json';
 
-const LS_KEY = 'tetrobot.defaultModule.v1';
+// v2: the bundled module is now the real 7-DOF try8 module (T1-B1-B2-T2-B3-B4-T3, 2 spines x 2 side receivers).
+// Any override saved under the old v1 key was an edit of the discarded 6-DOF prototype -> dropped on load.
+const LS_KEY = 'tetrobot.defaultModule.v2';
+try { localStorage.removeItem('tetrobot.defaultModule.v1'); } catch { /* no storage */ }
 
 /** The module Document used as the "Add Module" / "Edit Default Module" source. */
 export function getDefaultModuleDoc(): Document {

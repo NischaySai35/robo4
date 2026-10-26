@@ -1,0 +1,1489 @@
+[
+ {
+  "id": "topo2_01",
+  "name": "M1.A→M2.S1A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 2,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 360,
+    "B1": 220.56452241101618,
+    "B2": 111.46467942079202,
+    "T2": 353.22531635355693,
+    "B3": 159.08968347820465,
+    "B4": 262.8490024224811,
+    "T3": 179.92444499900753
+   },
+   "M2": {
+    "T1": 179.9936437830197,
+    "B1": 123.95648440356612,
+    "B2": 229.33288367251913,
+    "T2": 347.707152984235,
+    "B3": 124.75171567860971,
+    "B4": 205.14563010597826,
+    "T3": 183.32178887828294
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     0.5583756205653096,
+     0.3290417397129417,
+     -0.3866287719342416,
+     0.6560993770745452
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 5,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 200,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 611,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 186,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 115,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 15.3,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 1.08,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 15.2,
+   "cogMarginMm": 54.5,
+   "minJointMarginDeg": 0
+  },
+  "source": "generator",
+  "notes": "1 lock(s) · static check: PASS · MuJoCo hold: PASS (drift 0.6 mm)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": true,
+   "driftMm": 0.6,
+   "maxTorquePct": 18.1,
+   "reasons": []
+  }
+ },
+ {
+  "id": "topo2_02",
+  "name": "M1.A→M2.A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "A"
+    },
+    "slot": 2,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 142.62699023167323,
+    "B1": 149.2407178526165,
+    "B2": 102.74390364637416,
+    "T2": 174.83074477090102,
+    "B3": 130.4970253630375,
+    "B4": 254.19699926889803,
+    "T3": 180.1348819325243
+   },
+   "M2": {
+    "T1": 199.64127649539125,
+    "B1": 199.30305228849167,
+    "B2": 261.50708842282984,
+    "T2": 314.93421726200233,
+    "B3": 91.8,
+    "B4": 161.72449147042647,
+    "T3": 181.36663565800663
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     0.10823929541421545,
+     -0.8085049326854512,
+     -0.5733346284463368,
+     -0.07675566803714963
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 2,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 315,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 632,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 306,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 120,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 24.4,
+   "cogMarginMm": -15,
+   "minJointMarginDeg": 1.8
+  },
+  "source": "generator",
+  "notes": "1 lock(s) · static check: FAIL — centre of gravity is -15 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: PASS (drift 0.7 mm)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": true,
+   "driftMm": 0.7,
+   "maxTorquePct": 24,
+   "reasons": []
+  }
+ },
+ {
+  "id": "topo2_03",
+  "name": "M1.A→M2.S1A + M2.B→M1.S1A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 0,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M2",
+     "port": "B"
+    },
+    "b": {
+     "module": "M1",
+     "port": "S1A"
+    },
+    "slot": 2,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 52.72175590052646,
+    "B1": 91.8,
+    "B2": 172.64719864007327,
+    "T2": 177.5861821012255,
+    "B3": 143.53194719660314,
+    "B4": 170.45693333542684,
+    "T3": 360
+   },
+   "M2": {
+    "T1": 358.36225098075204,
+    "B1": 92.27661240089978,
+    "B2": 142.84406419469946,
+    "T2": 79.38258850842371,
+    "B3": 92.11421906099943,
+    "B4": 91.8,
+    "T3": 347.68066021348704
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     0.35898101606076804,
+     0.9205368073535716,
+     -0.14356283186025806,
+     0.05598508483100982
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 1,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 288,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 601,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 245,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 68,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 47.6,
+   "cogMarginMm": -1.5,
+   "minJointMarginDeg": 0
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · static check: FAIL — centre of gravity is -1 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 53 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 52.5,
+   "maxTorquePct": 43.9,
+   "reasons": [
+    "it keeps moving while holding: 53 mm/s (falling or sliding)",
+    "M1.EndB_LockModule sags 478 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_04",
+  "name": "M1.A→M2.S1A + M2.A→M1.S1A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 3,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M2",
+     "port": "A"
+    },
+    "b": {
+     "module": "M1",
+     "port": "S1A"
+    },
+    "slot": 0,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 319.6105082440688,
+    "B1": 91.8,
+    "B2": 225.40511483973125,
+    "T2": 179.99999998591238,
+    "B3": 185.93279024381496,
+    "B4": 211.01379116762004,
+    "T3": 205.07828000614577
+   },
+   "M2": {
+    "T1": 360,
+    "B1": 91.8,
+    "B2": 180.00000000006162,
+    "T2": 165.1507947273182,
+    "B3": 180.00000000006295,
+    "B4": 155.37084978809955,
+    "T3": 96.93007713734767
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     0.5059144606640615,
+     0,
+     0,
+     0.8625836530395135
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 7,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 181,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 605,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 340,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 52,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 46.4,
+   "cogMarginMm": -5.2,
+   "minJointMarginDeg": 0
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · unmet: stands_upright should be true · static check: FAIL — centre of gravity is -5 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 74 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 74.3,
+   "maxTorquePct": 18,
+   "reasons": [
+    "it keeps moving while holding: 74 mm/s (falling or sliding)",
+    "M1.EndB_LockModule sags 731 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_05",
+  "name": "M1.A→M2.S1A + M2.B→M1.S2A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 0,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M2",
+     "port": "B"
+    },
+    "b": {
+     "module": "M1",
+     "port": "S2A"
+    },
+    "slot": 3,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 231.69088914369115,
+    "B1": 267.79630884851144,
+    "B2": 183.3805268001616,
+    "T2": 79.85295254832032,
+    "B3": 230.93277136799014,
+    "B4": 268.2,
+    "T3": 152.24586336638728
+   },
+   "M2": {
+    "T1": 181.33755599797016,
+    "B1": 143.46141215257452,
+    "B2": 224.7392145960623,
+    "T2": 79.78588247756599,
+    "B3": 173.8875585612265,
+    "B4": 96.04024669671446,
+    "T3": 136.11694115288375
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     0.13447216059152933,
+     -0.032194124273527955,
+     0.230594848787217,
+     0.9631753693387861
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 1,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 357,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 649,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 143,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 64,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 15.2,
+   "cogMarginMm": -6.1,
+   "minJointMarginDeg": 1.8
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · static check: FAIL — centre of gravity is -6 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 59 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 58.9,
+   "maxTorquePct": 15.7,
+   "reasons": [
+    "it keeps moving while holding: 59 mm/s (falling or sliding)",
+    "M1.EndB_LockModule sags 806 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_06",
+  "name": "M1.A→M2.A + M1.B→M2.S2A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "A"
+    },
+    "slot": 0,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M1",
+     "port": "B"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S2A"
+    },
+    "slot": 0,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 36.9951527996993,
+    "B1": 93.79608567603935,
+    "B2": 106.50691120931931,
+    "T2": 167.1902525935497,
+    "B3": 170.52714766597785,
+    "B4": 167.36512721841254,
+    "T3": 161.8441982089739
+   },
+   "M2": {
+    "T1": 127.59612561446306,
+    "B1": 145.0995995760441,
+    "B2": 127.43028480374905,
+    "T2": 265.72973213981265,
+    "B3": 104.6031900459008,
+    "B4": 234.05171120994467,
+    "T3": 184.64095121769628
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     -0.46320365828251187,
+     0.14136109014101358,
+     0.2553771088657997,
+     0.8368046040834071
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 1,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 286,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 509,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 322,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 235,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 30.5,
+   "cogMarginMm": -40.7,
+   "minJointMarginDeg": 3.8
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · static check: FAIL — centre of gravity is -41 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — M2.EndB_LockModule sags 500 mm from the planned pose (backlash + flex; limit 60 mm, estimate)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 1.6,
+   "maxTorquePct": 9.6,
+   "reasons": [
+    "M2.EndB_LockModule sags 500 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_07",
+  "name": "M1.A→M2.A + M1.B→M2.S1A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "A"
+    },
+    "slot": 0,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M1",
+     "port": "B"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 3,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 214.19661983350932,
+    "B1": 268.2,
+    "B2": 268.2,
+    "T2": 333.2209822328823,
+    "B3": 181.9683225321387,
+    "B4": 91.8,
+    "T3": 356.88015511920923
+   },
+   "M2": {
+    "T1": 209.49430683502385,
+    "B1": 91.8,
+    "B2": 221.27533638688166,
+    "T2": 193.47033767642193,
+    "B3": 268.2,
+    "B4": 173.77028597063693,
+    "T3": 314.9409199317394
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     -0.276864524599335,
+     0.71764348805745,
+     0.5961809387910632,
+     0.2300046679729074
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 4,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 264,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 607,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 65,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 55,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 1.2,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 33.3,
+   "cogMarginMm": 5.3,
+   "minJointMarginDeg": 1.8
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · unmet: stands_upright should be true · static check: FAIL — centre of gravity is 5 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 64 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 63.7,
+   "maxTorquePct": 28.9,
+   "reasons": [
+    "it keeps moving while holding: 64 mm/s (falling or sliding)",
+    "M2.EndB_LockModule sags 769 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_08",
+  "name": "M1.A→M2.S1A + M1.B→M2.S2A",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 2,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M1",
+     "port": "B"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S2A"
+    },
+    "slot": 2,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 186.02316927195687,
+    "B1": 92.13306413185771,
+    "B2": 155.29303448648307,
+    "T2": 328.8821836876506,
+    "B3": 230.30545465988564,
+    "B4": 260.144905619238,
+    "T3": 276.9481657498068
+   },
+   "M2": {
+    "T1": 179.22402687359605,
+    "B1": 218.62990989547876,
+    "B2": 120.87256434143367,
+    "T2": 110.6401805497604,
+    "B3": 232.39307667182678,
+    "B4": 183.77594368407782,
+    "T3": 180.05741977007787
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     -0.07478856063076618,
+     0.3809622163146631,
+     0.9042999648071246,
+     0.1775275600835858
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 2,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 226,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 554,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 115,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 49,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 152,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 25.5,
+   "cogMarginMm": -3.5,
+   "minJointMarginDeg": 2.1
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · unmet: height_mm 554 < 600 · static check: FAIL — centre of gravity is -4 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 152 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 152.2,
+   "maxTorquePct": 14.9,
+   "reasons": [
+    "it keeps moving while holding: 152 mm/s (falling or sliding)",
+    "M2.EndB_LockModule sags 585 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_09",
+  "name": "M1.A→M2.S1A + M1.B→M2.S2B",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 3,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M1",
+     "port": "B"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S2B"
+    },
+    "slot": 0,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 270.96854180271976,
+    "B1": 221.00595164178932,
+    "B2": 211.77916437735414,
+    "T2": 0,
+    "B3": 94.49098767289763,
+    "B4": 158.29655703321555,
+    "T3": 178.19149022782875
+   },
+   "M2": {
+    "T1": 180.28166131372367,
+    "B1": 145.3645434347402,
+    "B2": 180.25003384735885,
+    "T2": 359.99855205378384,
+    "B3": 177.47342883526122,
+    "B4": 142.63357301686312,
+    "T3": 180.0261892354925
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     -0.7655008125224567,
+     -0.6265239573966976,
+     0.09281776066436033,
+     -0.11340679054048455
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 1,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 345,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 635,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 185,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 54,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 27.8,
+   "cogMarginMm": -5.6,
+   "minJointMarginDeg": 0
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · static check: FAIL — centre of gravity is -6 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 55 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 54.8,
+   "maxTorquePct": 15.2,
+   "reasons": [
+    "it keeps moving while holding: 55 mm/s (falling or sliding)",
+    "M2.EndB_LockModule sags 799 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_10",
+  "name": "M1.A→M2.S1A + M1.B→M2.S1B",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1A"
+    },
+    "slot": 3,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M1",
+     "port": "B"
+    },
+    "b": {
+     "module": "M2",
+     "port": "S1B"
+    },
+    "slot": 3,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 0.006963459644822478,
+    "B1": 268.2,
+    "B2": 262.89165416362766,
+    "T2": 360,
+    "B3": 143.30855209188155,
+    "B4": 91.8,
+    "T3": 89.99048986204853
+   },
+   "M2": {
+    "T1": 122.56236594996481,
+    "B1": 91.8,
+    "B2": 185.33630399059308,
+    "T2": 251.43773163607636,
+    "B3": 247.8852389072879,
+    "B4": 113.95916841611243,
+    "T3": 307.3302234619086
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     0.9177709185715559,
+     -0.19424112775050442,
+     0.07171705670529793,
+     0.33885629563586966
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 2,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 131,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 341,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 358,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 58,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 1.4,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 42.8,
+   "cogMarginMm": 3.2,
+   "minJointMarginDeg": 0
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · unmet: stands_upright should be true; height_mm 341 < 600 · static check: FAIL — centre of gravity is 3 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 16 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 16,
+   "maxTorquePct": 22.9,
+   "reasons": [
+    "it keeps moving while holding: 16 mm/s (falling or sliding)",
+    "M1.Spine2_B3B4 sags 230 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ },
+ {
+  "id": "topo2_11",
+  "name": "M1.A→M2.A + M1.B→M2.B",
+  "nModules": 2,
+  "topology": [
+   {
+    "a": {
+     "module": "M1",
+     "port": "A"
+    },
+    "b": {
+     "module": "M2",
+     "port": "A"
+    },
+    "slot": 3,
+    "locked": true
+   },
+   {
+    "a": {
+     "module": "M1",
+     "port": "B"
+    },
+    "b": {
+     "module": "M2",
+     "port": "B"
+    },
+    "slot": 1,
+    "locked": true
+   }
+  ],
+  "pose": {
+   "M1": {
+    "T1": 134.77202361066063,
+    "B1": 155.67351037698407,
+    "B2": 98.94089219794205,
+    "T2": 347.60970974958684,
+    "B3": 244.05382805828455,
+    "B4": 212.76508726211125,
+    "T3": 161.76781934393864
+   },
+   "M2": {
+    "T1": 32.69294885589329,
+    "B1": 185.51501749581215,
+    "B2": 268.2,
+    "T2": 155.78771203760394,
+    "B3": 268.2,
+    "B4": 185.7262373456212,
+    "T3": 96.59860714302232
+   }
+  },
+  "baseFrame": {
+   "worldPose": {
+    "p": [
+     0,
+     0.3,
+     0
+    ],
+    "q": [
+     -0.26993924585063395,
+     -0.6906216833056433,
+     -0.6249110598856525,
+     0.24425531996306923
+    ]
+   },
+   "dropToFloor": true
+  },
+  "tags": {
+   "ground_contacts": {
+    "value": 1,
+    "measuredBy": "static"
+   },
+   "cog_height_mm": {
+    "value": 326,
+    "measuredBy": "static"
+   },
+   "height_mm": {
+    "value": 641,
+    "measuredBy": "static"
+   },
+   "stands_upright": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "has_free_end": {
+    "value": false,
+    "measuredBy": "static"
+   },
+   "reach_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "flat_top_area_cm2": {
+    "value": 108,
+    "measuredBy": "static"
+   },
+   "stable_on_tilt_deg": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "encloses": {
+    "value": true,
+    "measuredBy": "static"
+   },
+   "spans_gap_mm": {
+    "value": 0,
+    "measuredBy": "static"
+   },
+   "holds_load_kg": {
+    "value": 0,
+    "measuredBy": "static"
+   }
+  },
+  "margins": {
+   "maxTorquePct": 22.2,
+   "cogMarginMm": -20.8,
+   "minJointMarginDeg": 1.8
+  },
+  "source": "generator",
+  "notes": "2 lock(s) · static check: FAIL — centre of gravity is -21 mm inside the support area, counting the sag (needs ≥ 15 mm) · MuJoCo hold: FAIL — it keeps moving while holding: 95 mm/s (falling or sliding)",
+  "spec": {
+   "stands_upright": {
+    "is": true
+   },
+   "height_mm": {
+    "min": 600,
+    "weight": 0.3
+   }
+  },
+  "sim": {
+   "ok": false,
+   "driftMm": 95.1,
+   "maxTorquePct": 23.3,
+   "reasons": [
+    "it keeps moving while holding: 95 mm/s (falling or sliding)",
+    "M2.Spine2_B3B4 sags 750 mm from the planned pose (backlash + flex; limit 60 mm, estimate)"
+   ]
+  }
+ }
+]

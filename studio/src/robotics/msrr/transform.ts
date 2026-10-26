@@ -64,12 +64,13 @@
 import { type Cell, key, manhattan, bestAlignment, translateCells } from './lattice';
 import { type LatticePose } from './chainMoves';
 import { type Vec3 } from './modulink';
-import { findLandingPoses } from './chainSolve';
+import { findLandingPoses, solveLandingPosesCached } from './chainSolve';
+import { PHYSICAL_TOLERANCE_SCALE } from './chainMoves';
 import {
   type FittedModule, type FitResult, type PlacedConnector,
   fitModules, connectorsOf, rotationTo, inverseRotationTo, realConnectorPosOf,
 } from './fitModules';
-import { type ConnectorEnd, weldTypeIsLegal } from './modulink';
+import { type ConnectorEnd, weldTypeIsLegal, SIDE_ENDS } from './modulink';
 
 const negCell = (c: Cell): Cell => [-c[0], -c[1], -c[2]];
 const addCell = (a: Cell, b: Cell): Cell => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -111,6 +112,13 @@ export interface TransformMove {
 
 export interface TransformResult {
   moves: TransformMove[];
+  /**
+   * The target where the plan actually builds it: moved AND turned as a whole to
+   * sit best on the robot (see bestPlacement). The viewport draws the target ghost
+   * from this, not from the shape as drawn, or the robot would be shown walking
+   * toward a ghost that is somewhere else.
+   */
+  alignedTarget: Cell[];
   /** the build the transformation is aiming at, for reference */
   targetBuild: FitResult;
   /** true only when every target cube ends up under a module */
@@ -158,7 +166,7 @@ interface WeldState {
  * lattice target, and this sits well inside a dome radius (~0.44) so two
  * merely-adjacent domes can never be mistaken for a locked pair.
  */
-const WELD_COINCIDENCE = 0.35;
+const WELD_COINCIDENCE = 0.35 * PHYSICAL_TOLERANCE_SCALE;
 
 const near = (a: Vec3, b: Vec3) =>
   Math.abs(a[0] - b[0]) < WELD_COINCIDENCE
@@ -252,8 +260,7 @@ function grabTargets(modules: FittedModule[], exclude: string): GrabTarget[] {
   // as a target.
   const { occupied } = weldState(modules);
   const usedSidesOf = (moduleId: string): ConnectorEnd[] => {
-    const ends: ConnectorEnd[] = ['A', 'B', 'UP', 'DOWN', 'LEFT', 'RIGHT'];
-    return ends.filter((e) => e !== 'A' && e !== 'B' && occupied.has(`${moduleId}:${e}`));
+    return SIDE_ENDS.filter((e) => occupied.has(`${moduleId}:${e}`));
   };
 
   const out: GrabTarget[] = [];
@@ -271,8 +278,72 @@ function grabTargets(modules: FittedModule[], exclude: string): GrabTarget[] {
 function grabbable(grabEnd: ConnectorEnd, t: GrabTarget): boolean {
   if (!weldTypeIsLegal(grabEnd, t.end)) return false;
   if (t.end === 'A' || t.end === 'B') return true;
-  // Side faces: a module physically has four, all usable at once.
-  return t.usedSides.length < 4;
+  // A side receiver carries one weld; its twin on the spine's other face is independent.
+  return !t.usedSides.includes(t.end);
+}
+
+
+/**
+ * How far from a weld point a body cube is still "the weld", in cubes. A module's
+ * end is a pad about a cube wide (0.9 of a cube at 8 per module), so the cubes
+ * within that distance of a weld point are the weld itself — the two bodies meet
+ * there by construction — not a collision.
+ */
+const WELD_ZONE = 1.0;
+
+/**
+ * Does this route's body run through something it should not? It may share the
+ * cube it is anchored in and the cube it is grabbing, and — because a receiver
+ * sits on the surface of a neighbour's body, not at the middle of a cube — every
+ * cube within WELD_ZONE of either weld point. Anything else already occupied is a
+ * collision. Without the zone, a dock onto a spine receiver was rejected whenever
+ * the module's last few centimetres rounded into the neighbouring cube of the very
+ * body it was docking onto.
+ */
+function bodyHits(
+  cells: Cell[], anchorCell: Cell, endCell: Cell, anchorPos: Vec3, targetPos: Vec3, blocked: Set<string>,
+): boolean {
+  const ak = key(anchorCell), ek = key(endCell);
+  const near = (c: Cell, p: Vec3) => Math.hypot(c[0] - p[0], c[1] - p[1], c[2] - p[2]) <= WELD_ZONE;
+  return cells.some((c) => {
+    const k = key(c);
+    if (k === ak || k === ek || !blocked.has(k)) return false;
+    return !(near(c, anchorPos) || near(c, targetPos));
+  });
+}
+
+/**
+ * Routes that put m's free end ON connector `t`, solved against the connector's
+ * REAL position, not the lattice cell it is filed under.
+ *
+ * Side connectors ride ~0.63 cube units off their cube's centre, and the free
+ * end of a module welded to one is off-lattice too. The integer-offset lookup
+ * (findLandingPoses) can only ever land on a cube centre, so for a side connector
+ * every route it returned missed the real dome by ~1 cube and was thrown away by
+ * the geometric truth check in oneStepMoves: mobilityReport counted the moves
+ * (it never ran that check), the search found none, and every plan came back with
+ * 0 steps. Cube-centre targets (chain ends on the lattice) still use the table.
+ */
+function routesTo(
+  m: FittedModule, t: GrabTarget, invRot: (c: Cell) => Cell, alternates?: number,
+): LatticePose[] {
+  const real = invRot(subCell(t.pos as unknown as Cell, m.anchorPos as unknown as Cell));
+  const wantedDir = invRot(negCell(t.dir));
+  const rounded: Cell = [Math.round(real[0]), Math.round(real[1]), Math.round(real[2])];
+  const onLattice = Math.hypot(real[0] - rounded[0], real[1] - rounded[1], real[2] - rounded[2]) < 0.05;
+  const cands = findLandingPoses(rounded, wantedDir, undefined, alternates);
+  if (!onLattice) {
+    cands.push(...solveLandingPosesCached(real, wantedDir, undefined, alternates)
+      .map((p) => ({ ...p, endOffset: rounded })));
+  }
+  // The geometric truth check: the travelling dome must REALLY coincide with the
+  // target dome. Applied here so oneStepMoves and mobilityReport agree on what
+  // counts as a move (mobilityReport used to skip it and over-report).
+  return cands.filter((pose) => {
+    const g = realConnectorPosOf(pose, m.anchorDir, m.anchorPos, 'B');
+    return !!g && Math.abs(g[0] - t.pos[0]) <= WELD_COINCIDENCE
+      && Math.abs(g[1] - t.pos[1]) <= WELD_COINCIDENCE && Math.abs(g[2] - t.pos[2]) <= WELD_COINCIDENCE;
+  });
 }
 
 /**
@@ -326,16 +397,13 @@ export function oneStepMoves(m: FittedModule, others: FittedModule[]): Transform
     // keeps ONE spare route for a body-collision fallback (the whole reason
     // alternates exist at all — see chainSolve.ts) while cutting well below
     // that.
-    for (const pose of findLandingPoses(wantedOffset, wantedDir, undefined, 2)) {
+    for (const pose of routesTo(m, t, invRot, 4)) {
       const endCell = t.cell;
       const endDir = negCell(t.dir);
       // Body must clear the static structure. It may share the cube it anchors
       // in and the cube it is grabbing — those are welds, not collisions.
       const cells = pose.cells.map((c) => addCell(m.anchorCell, rot(c)));
-      const hits = cells.some((c) => {
-        const k = key(c);
-        return k !== key(m.anchorCell) && k !== key(endCell) && blocked.has(k);
-      });
+      const hits = bodyHits(cells, m.anchorCell, endCell, m.anchorPos, t.pos, blocked);
       if (hits) continue; // this route is blocked; try the next one
 
       // GEOMETRIC TRUTH CHECK. The solver reasons in INTEGER cube offsets, but
@@ -381,6 +449,8 @@ interface SearchNode {
   modules: FittedModule[];
   moves: TransformMove[];
   coverage: number;
+  /** distanceToGo of this state — how far the modules still are from the uncovered target cubes */
+  dist: number;
 }
 
 /** Identifies a whole-robot configuration by every module's held connector and
@@ -492,7 +562,10 @@ async function beamSearchTransform(
   opts: TransformOptions,
   onProgress?: (p: SearchProgress) => void,
 ): Promise<{ best: SearchNode; expansions: number; rounds: number; timedOut: boolean }> {
-  let beam: SearchNode[] = [{ modules: start, moves: [], coverage: coverageOf(start, targetCells) }];
+  let beam: SearchNode[] = [{
+    modules: start, moves: [], coverage: coverageOf(start, targetCells),
+    dist: distanceToGo(start, targetCells, targetCellList),
+  }];
   const visited = new Set<string>([stateSignature(start)]);
   let best = beam[0];
   let expansions = 0;
@@ -580,10 +653,20 @@ async function beamSearchTransform(
             modules: nextModules,
             moves: [...node.moves, nextMove],
             coverage: coverageOf(nextModules, targetCells),
+            dist: distanceToGo(nextModules, targetCells, targetCellList),
           };
           successors.push(next);
+          // THE BEST STATE IS THE ONE CLOSEST TO DONE, not only the one that covers most.
+          // Coverage alone said "no progress" for every state on the way to a shape that
+          // needs a module to walk several steps before it covers its first new cube, so a
+          // robot with legal moves came back with a 0-step plan and the Transform button
+          // appeared dead. Coverage still wins; among equal coverage, a state whose modules
+          // are strictly nearer the cubes still to cover beats the start (and a shorter
+          // route beats a longer one to the same distance).
           if (next.coverage > best.coverage
-            || (next.coverage === best.coverage && next.moves.length < best.moves.length)) {
+            || (next.coverage === best.coverage
+              && (next.dist < best.dist
+                || (next.dist === best.dist && next.moves.length < best.moves.length)))) {
             best = next;
           }
           expansions++;
@@ -603,6 +686,117 @@ async function beamSearchTransform(
 
   report(null, 0, 0);
   return { best, expansions, rounds: round, timedOut };
+}
+
+// ── where to build the target ────────────────────────────────────────────────
+
+type Mat3 = [Cell, Cell, Cell];
+const applyMat = (m: Mat3, c: Cell): Cell => [
+  m[0][0] * c[0] + m[0][1] * c[1] + m[0][2] * c[2],
+  m[1][0] * c[0] + m[1][1] * c[1] + m[1][2] * c[2],
+  m[2][0] * c[0] + m[2][1] * c[1] + m[2][2] * c[2],
+];
+
+/** The 24 proper rotations of the cube (axis permutations with signs, determinant +1). */
+const CUBE_ROTATIONS: Mat3[] = (() => {
+  const out: Mat3[] = [];
+  const perms = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
+  for (const p of perms) {
+    for (let sx = -1; sx <= 1; sx += 2) for (let sy = -1; sy <= 1; sy += 2) for (let sz = -1; sz <= 1; sz += 2) {
+      const sg = [sx, sy, sz];
+      const m: Mat3 = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+      for (let r = 0; r < 3; r++) m[r][p[r]] = sg[r];
+      const det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+      if (det === 1) out.push(m);
+    }
+  }
+  return out;
+})();
+
+/** World up on the lattice: the ground is the y = 0 plane. */
+const UP: Cell = [0, 1, 0];
+
+/**
+ * How much a tilted placement (the shape laid on its side) must beat an upright one
+ * by, as a fraction of the shape, before it is chosen. A target is a SHAPE, so it may
+ * be moved and turned as a whole to suit the robot — but the user drew it standing a
+ * certain way, so turning it about the vertical is free, laying it on its side has to
+ * be clearly worth it, and turning it upside down is never offered.
+ */
+const TILT_PENALTY = 0.2;
+
+/**
+ * Where to build the target: the whole shape moved AND turned (never cut up, never
+ * mirrored) to sit on the robot with the most cubes already covered, standing on the
+ * same ground as it was drawn on.
+ *
+ *   - turned about the vertical: any of four headings, free;
+ *   - laid on its side: OFF by default (a bridge lying flat is not a bridge any more);
+ *     with allowTilt it is allowed when it covers clearly more (TILT_PENALTY);
+ *   - upside down: never.
+ *
+ * Moving it is restricted to sliding along the ground (x and z): the shape keeps its
+ * lowest cube on the ground plane it was drawn on, so a standing shape is never
+ * planned floating in the air or sunk into the floor. Translation used to be free in
+ * all three axes and maximised overlap alone, which happily lifted a target off the
+ * ground to meet a robot lying on it.
+ */
+export function bestPlacement(
+  bodyCells: Cell[], target: Cell[], allowTilt = false,
+): { cells: Cell[]; label: string; overlap: number } {
+  if (!target.length || !bodyCells.length) return { cells: target, label: 'as drawn', overlap: 0 };
+  const ground = Math.min(...target.map((c) => c[1]));
+  const body = new Set(bodyCells.map(key));
+  let best = { cells: target, label: 'as drawn', overlap: -1, score: -Infinity, dist: Infinity };
+
+  for (const R of CUBE_ROTATIONS) {
+    const up = applyMat(R, UP);
+    if (up[1] === -1) continue;                      // upside down: never
+    const tilted = up[1] !== 1;
+    if (tilted && !allowTilt) continue;              // on its side: only when asked for
+    const rot = target.map((c) => applyMat(R, c));
+    const lift = ground - Math.min(...rot.map((c) => c[1]));
+    const placedY = rot.map((c) => [c[0], c[1] + lift, c[2]] as Cell);
+
+    // Votes for each sliding offset (x, z): one per body cube a target cube would land on.
+    const votes = new Map<string, number>();
+    for (const t of placedY) {
+      for (const b of bodyCells) {
+        if (b[1] !== t[1]) continue;
+        const k = `${b[0] - t[0]},${b[2] - t[2]}`;
+        votes.set(k, (votes.get(k) ?? 0) + 1);
+      }
+    }
+    // The best few offsets are compared properly (overlap, then how near the rest of
+    // the shape is to the robot), so a tie does not fall to whichever came first.
+    const top = [...votes.entries()].sort((a, b) => b[1] - a[1]).slice(0, 6);
+    if (!top.length) top.push(['0,0', 0]);
+    for (const [k] of top) {
+      const [dx, dz] = k.split(',').map(Number);
+      const cells = placedY.map((c) => [c[0] + dx, c[1], c[2] + dz] as Cell);
+      const overlap = cells.filter((c) => body.has(key(c))).length;
+      const score = overlap - (tilted ? TILT_PENALTY * target.length : 0);
+      let dist = 0;
+      for (const c of cells) {
+        if (body.has(key(c))) continue;
+        let m = Infinity;
+        for (const b of bodyCells) { const d = manhattan(b, c); if (d < m) m = d; }
+        dist += m;
+      }
+      if (score > best.score || (score === best.score && dist < best.dist)) {
+        const heading = (() => {
+          if (tilted) return 'laid on its side';
+          const x = applyMat(R, [1, 0, 0]);
+          const deg = x[0] === 1 ? 0 : x[2] === -1 ? 90 : x[0] === -1 ? 180 : 270;
+          return deg ? `turned ${deg} deg about the vertical` : 'as drawn';
+        })();
+        best = { cells, label: `${heading}, slid by (${dx},0,${dz})`, overlap, score, dist };
+      }
+    }
+  }
+  return { cells: best.cells, label: best.label, overlap: Math.max(0, best.overlap) };
 }
 
 // ── module-count reconciliation ───────────────────────────────────────────────
@@ -673,15 +867,17 @@ function reconcileModuleCount(
       // hanging in empty space, which coverage math alone cannot see.
       let bestIdx = -1;
       let bestScore = -Infinity;
+      // ONLY a module that welds onto what is already there. A module that would not
+      // touch the robot is not part of it — it is a part hanging in the air — so it is
+      // not added at all (the shortfall is reported below instead). Taking the attached
+      // ones first in a loop lets each new module open attachment points for the next.
       pool.forEach((c, i) => {
+        if (!connectsToAny(c, modules)) return;
         const gain = c.cells.filter((cell) => stillMissing.has(key(cell))).length;
-        const connects = connectsToAny(c, modules);
-        const score = gain + (connects ? 1000 : 0);
-        if (score > bestScore) { bestScore = score; bestIdx = i; }
+        if (gain > bestScore) { bestScore = gain; bestIdx = i; }
       });
+      if (bestIdx < 0) { addedDisconnected = deficit - added.length; break; }
       const chosen = pool.splice(bestIdx, 1)[0];
-      const willConnect = connectsToAny(chosen, modules);
-      if (!willConnect) addedDisconnected++;
       const newId = `A${added.length}-${chosen.id}`;
       const placed: FittedModule = { ...chosen, id: newId, weldedTo: null };
       modules = [...modules, placed];
@@ -695,16 +891,17 @@ function reconcileModuleCount(
     );
     if (addedDisconnected > 0) {
       log.push(
-        `WARNING: ${addedDisconnected} of those added module(s) do not weld onto anything else in the `
-        + 'final structure — no candidate in the target build reached far enough to connect. The shape '
-        + 'is covered but the robot would be in pieces; this is reported, not hidden.',
+        `${addedDisconnected} more module(s) would be needed for the full target, but none of the remaining `
+        + 'ones would weld onto the robot from here, so they were NOT added — a module that touches nothing '
+        + 'would be hanging in the air. Those target cubes stay uncovered.',
       );
     }
   }
 
   if (modules.length > targetBuild.modules.length) {
     const surplus = modules.length - targetBuild.modules.length;
-    let removedBridge = 0;
+    const removedBridge = 0;
+    let keptSurplus = 0;
     for (let i = 0; i < surplus && modules.length > 0; i++) {
       const coverageCount = new Map<string, number>();
       for (const m of modules) for (const c of m.cells) {
@@ -723,19 +920,28 @@ function reconcileModuleCount(
         }))
         .sort((a, b) => a.unique - b.unique);
 
-      let pickIdx = ranked[0]?.idx ?? 0;
-      let safe = false;
+      // Only a module that is truly surplus goes: it covers no target cube nobody else
+      // covers, AND taking it off leaves the rest in one piece. A module that is the only
+      // one on part of the shape is not surplus however many the target "needs" — taking
+      // it away would uncover the shape just to make a count match, which is the wrong way
+      // round (it once dropped a plan from 13 covered cubes to 4).
+      let pickIdx = -1;
       for (const r of ranked) {
+        if (r.unique > 0) break;
         const candidate = modules[r.idx];
         const rest = modules.filter((_, idx) => idx !== r.idx);
-        if (staysConnectedWithout(candidate, rest)) { pickIdx = r.idx; safe = true; break; }
+        if (staysConnectedWithout(candidate, rest)) { pickIdx = r.idx; break; }
       }
-      if (!safe) removedBridge++;
+      if (pickIdx < 0) { keptSurplus = surplus - i; break; }
 
       const gone = modules.splice(pickIdx, 1)[0];
       removed.push(gone.id);
     }
-    log.push(`removed ${removed.length} surplus module(s) not needed for this shape (${removed.join(', ')})`);
+    if (removed.length) log.push(`removed ${removed.length} surplus module(s) not needed for this shape (${removed.join(', ')})`);
+    if (keptSurplus) {
+      log.push(`kept ${keptSurplus} module(s) more than the target's own build uses: each one still covers part `
+        + 'of the shape or holds the robot together, so removing it would make the result worse');
+    }
     if (removedBridge > 0) {
       log.push(
         `WARNING: ${removedBridge} removal(s) had no safe (non-fragmenting) candidate available and `
@@ -785,11 +991,11 @@ export async function planTransform(
   // the saving comes from.
   const bodyCells: Cell[] = [];
   for (const m of current.modules) bodyCells.push(...m.cells);
-  const shift: Cell = bodyCells.length ? bestAlignment(bodyCells, targetShape) : [0, 0, 0];
-  const alignedTarget = translateCells(targetShape, shift);
-  if (shift[0] || shift[1] || shift[2]) {
-    log.push(`target aligned onto the robot by (${shift.join(',')}) for maximum overlap`);
-  }
+  const placed = bodyCells.length
+    ? bestPlacement(bodyCells, targetShape)
+    : { cells: targetShape, label: 'as drawn', overlap: 0 };
+  const alignedTarget = placed.cells;
+  log.push(`target placed ${placed.label} (${placed.overlap} cube(s) already under the robot)`);
 
   const targetBuild = fitModules(alignedTarget);
   log.push(
@@ -800,7 +1006,7 @@ export async function planTransform(
   if (!targetBuild.modules.length) {
     log.push('the target shape could not be built at all — nothing to transform into');
     return {
-      moves: [], targetBuild, complete: false, covered: 0, targetCubes: targetShape.length, log,
+      moves: [], alignedTarget, targetBuild, complete: false, covered: 0, targetCubes: targetShape.length, log,
       finalModules: current.modules, added: [], removed: [],
     };
   }
@@ -861,6 +1067,7 @@ export async function planTransform(
 
   return {
     moves,
+    alignedTarget,
     targetBuild,
     complete,
     covered: endCovered,
@@ -956,7 +1163,7 @@ export function mobilityReport(build: FitResult): MobilityReport {
       if (seen.has(sk)) continue;
       seen.add(sk);
 
-      const routes = findLandingPoses(wantedOffset, wantedDir);
+      const routes = routesTo(m, t, invRot);
       if (!routes.length) { wrongFacing++; continue; } // no fold reaches it at all
 
       // Reachable if ANY route gets there without the body hitting something.
@@ -964,10 +1171,7 @@ export function mobilityReport(build: FitResult): MobilityReport {
       for (const pose of routes) {
         const endCell = addCell(m.anchorCell, rot(pose.endOffset));
         const cells = pose.cells.map((c) => addCell(m.anchorCell, rot(c)));
-        const hits = cells.some((c) => {
-          const k = key(c);
-          return k !== key(m.anchorCell) && k !== key(endCell) && blocked.has(k);
-        });
+        const hits = bodyHits(cells, m.anchorCell, endCell, m.anchorPos, t.pos, blocked);
         if (!hits) { cleared = true; break; }
       }
       if (cleared) reachable++;

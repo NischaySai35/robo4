@@ -13,19 +13,30 @@ import { type Cell, key, configFromCells, isConnected } from './lattice';
 import { fitModules, rotationTo } from './fitModules';
 import { analyseShape } from './skeleton';
 import { buildShape } from './shapes';
-import { MODULINK_CUBE_SIZE } from './occupancy';
+import { MODULINK_CUBE_SIZE, CUBES_PER_STRAIGHT_MODULE } from './occupancy';
 
-const line = (n: number): Cell[] => Array.from({ length: n }, (_, i) => [i, 0, 0] as Cell);
+/**
+ * The lattice's grain relative to the 4-cubes-per-module scale these shapes were
+ * first written at. The cube is now half the size (a module spans 8), so every
+ * helper below multiplies its lengths by K: `line(13)` is still "three modules
+ * and a cube", `plus(4)` still has arms a module long, and so on. The rules under
+ * test do not change with the scale; only the cube counts do.
+ */
+const K = CUBES_PER_STRAIGHT_MODULE / 4;
+
+
+const line = (n: number): Cell[] => Array.from({ length: K * (n - 1) + 1 }, (_, i) => [i, 0, 0] as Cell);
 
 // ── the skeleton the fit reads ──────────────────────────────────────
 
 test('a straight corridor has no junctions and no corners — only two tips', () => {
-  const s = analyseShape(line(13));
+  const cells = line(13);
+  const s = analyseShape(cells);
   assert.equal(s.junctions.size, 0);
   assert.equal(s.corners.size, 0);
   assert.equal(s.features.filter((f) => f.kind === 'tip').length, 2);
   assert.equal(s.runs.length, 1, 'one straight run');
-  assert.equal(s.runs[0].cells.length, 13);
+  assert.equal(s.runs[0].cells.length, cells.length);
 });
 
 test('an L is one corner, and the corner knows which way it turns', () => {
@@ -92,7 +103,7 @@ test('a straight 13-cube run takes three modules, not thirteen', () => {
   assert.equal(r.uncovered.length, 0, 'a straight corridor must be fully covered');
   assert.equal(r.modules.length, 3, `expected 3 modules, got ${r.modules.length}`);
   for (const m of r.modules) {
-    assert.equal(m.reach, 4, 'a straight module bridges four cubes');
+    assert.equal(m.reach, CUBES_PER_STRAIGHT_MODULE, 'a straight module bridges a whole module length of cubes');
   }
 });
 
@@ -102,7 +113,10 @@ test('module count is far below cube count on every library shape', () => {
     const r = fitModules(cells);
     assert.ok(r.modules.length > 0, `${id}: nothing was built`);
     assert.ok(
-      r.modules.length < cells.length / 2,
+      // 0.6, not 0.5: a spine hosts only two side receivers (the old hub hosted
+      // four), so branching shapes need a few more modules. Still far from one
+      // module per cube, which is the claim.
+      r.modules.length < cells.length * 0.6,
       `${id}: ${r.modules.length} modules for ${cells.length} cubes — a module is not a cube`,
     );
   }
@@ -216,11 +230,11 @@ test('rule 1: one cube gets one module, straight, overhang and all', () => {
   const one = fitModules([[0, 0, 0]]);
   assert.equal(one.modules.length, 1, 'a single cube still says SOMETHING is here');
   assert.equal(one.uncovered.length, 0);
-  assert.equal(one.modules[0].reach, 4, 'straight — it must not fold itself to fit the cube');
+  assert.equal(one.modules[0].reach, CUBES_PER_STRAIGHT_MODULE, 'straight — it must not fold itself to fit the cube');
 
   const two = fitModules([[0, 0, 0], [1, 0, 0]]);
   assert.equal(two.modules.length, 1, 'two cubes is still one module');
-  assert.equal(two.modules[0].reach, 4);
+  assert.equal(two.modules[0].reach, CUBES_PER_STRAIGHT_MODULE);
 });
 
 test('the fit reports what it could not do', () => {
@@ -233,11 +247,14 @@ test('the fit reports what it could not do', () => {
   }
 });
 
-test('cube size is the module length quartered, so reach and cubes agree', () => {
-  // The fit's whole arithmetic rests on this: four cubes of reach IS a straight
-  // module, so a 13-cube corridor is three modules with one cube shared per weld.
+test('cube size is the module length divided by the grain, so reach and cubes agree', () => {
+  // The fit's whole arithmetic rests on this: CUBES_PER_STRAIGHT_MODULE cubes of
+  // reach IS a straight module, so "13 cubes" (K*12+1 cells) is three modules with
+  // one cube shared per weld.
   assert.ok(MODULINK_CUBE_SIZE > 0);
-  const r = fitModules(line(13));
+  const cells = line(13);
+  const r = fitModules(cells);
   const spanned = r.modules.reduce((n, m) => n + m.reach, 0);
-  assert.equal(spanned, 12, 'three modules of reach 4 span 12 gaps across 13 cubes');
+  assert.equal(spanned, 3 * CUBES_PER_STRAIGHT_MODULE, 'three modules of full reach span their own length');
+  assert.equal(cells.length - 1, spanned, 'the corridor is exactly as long as the three modules');
 });

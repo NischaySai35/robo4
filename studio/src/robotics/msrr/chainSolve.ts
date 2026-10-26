@@ -21,9 +21,10 @@
  *
  * WHAT STAYS DISCRETE
  * The connectors seat every 90 degrees (four-fold symmetry) — that is the
- * hardware, not a resolution choice — so TWIST (t0, and the flanking t3 on the
- * big rod) stays enumerated over the same four steps as before. Only the three
- * BEND joints (which are genuinely continuous revolute joints) are solved for.
+ * hardware, not a resolution choice. The twists T1, T2 and T3 (the module has
+ * seven joints: T1 B1 B2 T2 B3 B4 T3) can hold any angle, though; in practice
+ * they are solved for along with the four bends (T3 only rolls the end, so it is
+ * left out).
  * This file is therefore still "discrete move set, chosen deliberately" in the
  * sense that matters: every solved pose is checked against real joint limits and
  * a real lattice snap tolerance before being handed back, so a plan built on it
@@ -44,12 +45,12 @@ import {
 import { MODULINK_CUBE_SIZE } from './occupancy';
 import {
   type LatticePose,
-  MAX_SNAP_ERROR, MIN_AXIS_ALIGNMENT,
-  sweptCellsCentred, bigRodSides, nearestNamedPose, posesReaching,
+  MAX_SNAP_ERROR, MIN_AXIS_ALIGNMENT, PHYSICAL_TOLERANCE_SCALE,
+  sweptCellsCentred, sideSites, nearestNamedPose, posesReaching, fastEndState,
 } from './chainMoves';
 
 /**
- * Starting guesses, as [t0, b1, b2, t3, b4].
+ * Starting guesses, as [t1, b1, b2, t2, b3, b4].
  *
  * The twists start on quarter turns because that is a good spread of the
  * chain's overall direction — but unlike the old enumeration they are now free
@@ -70,12 +71,12 @@ import {
  */
 const Q = Math.PI / 2;
 const SEEDS: Vars[] = [
-  [0, 0, 0, 0, 0],
-  [0, 0.6, -0.6, 0, 0.6],
-  [Q, 0.6, 0.6, 0, -0.6],
-  [2 * Q, 0.6, -0.6, 0, 0.6],
-  [3 * Q, 0.6, 0.6, 0, 0.6],
-  [0, 1.2, -1.2, 2 * Q, 1.2],
+  [0, 0, 0, 0, 0, 0],
+  [0, 0.6, -0.6, 0, 0.6, -0.6],
+  [Q, 0.6, 0.6, 0, -0.6, -0.6],
+  [2 * Q, 0.6, -0.6, Q, 0.6, 0.6],
+  [3 * Q, 0.6, 0.6, 2 * Q, 0.6, -0.6],
+  [0, 1.2, 1.2, 2 * Q, 1.2, 1.2],
 ];
 
 const clampBend = (a: number) => Math.max(BEND_LIMIT[0], Math.min(BEND_LIMIT[1], a));
@@ -112,17 +113,20 @@ const EARLY_EXIT_FRACTION = 0.15;
 export const WELD_ALIGNMENT_MIN = 0.995;
 
 /**
- * The five joints that can move the free end.
+ * The six joints that can move the free end.
  *
- * t0, b1, b2, t3, b4. NOT t5: it is the roll about the end connector's own axis,
- * so it changes neither where that connector sits nor which way it points — it
- * only keys the connector into its socket, where the four-fold symmetry applies.
- * Leaving it out costs nothing and removes a whole dimension from the search.
+ * t1, b1, b2, t2, b3, b4. NOT t3: it is the roll about the end connector's own
+ * axis, so it changes neither where that connector sits nor which way it points —
+ * it only keys the connector into its socket, where the four-fold symmetry
+ * applies. Leaving it out costs nothing and removes a whole dimension from the
+ * search. Six unknowns against four constraints (3 position + facing) leaves a
+ * two-parameter family of solutions, which is why this module reaches so much
+ * more than its predecessor did with five.
  */
-type Vars = [number, number, number, number, number];
-const NVARS = 5;
+type Vars = [number, number, number, number, number, number];
+const NVARS = 6;
 
-const toAngles = (v: Vars): ModuleAngles => [v[0], v[1], v[2], v[3], v[4], 0];
+const toAngles = (v: Vars): ModuleAngles => [v[0], v[1], v[2], v[3], v[4], v[5], 0];
 
 /**
  * Bends clamp at +/-90; twists are continuous full-turn joints and wrap.
@@ -139,12 +143,14 @@ const toAngles = (v: Vars): ModuleAngles => [v[0], v[1], v[2], v[3], v[4], 0];
  * solutions, and reachability improves accordingly.
  */
 const clampVars = (v: Vars): Vars => [
-  wrapTwist(v[0]), clampBend(v[1]), clampBend(v[2]), wrapTwist(v[3]), clampBend(v[4]),
+  wrapTwist(v[0]), clampBend(v[1]), clampBend(v[2]), wrapTwist(v[3]), clampBend(v[4]), clampBend(v[5]),
 ];
 const wrapTwist = (a: number) => {
   const twoPi = Math.PI * 2;
-  return ((a % twoPi) + twoPi) % twoPi;
+  return ((((a + Math.PI) % twoPi) + twoPi) % twoPi) - Math.PI;
 };
+
+const SCRATCH: number[] = [0, 0, 0, 0, 0, 0];
 
 /**
  * Residual for one joint guess: 3 position components (cube units) plus one
@@ -154,13 +160,13 @@ const wrapTwist = (a: number) => {
 function residual(
   v: Vars, targetPos: Vec3, wantedDir: Cell, cubeSize: number,
 ): { r: [number, number, number, number]; posErr: Vec3; dot: number } {
-  const e = endPose(toAngles(v), IDENTITY);
+  const st = fastEndState(v[0], v[1], v[2], v[3], v[4], v[5], SCRATCH);
   const posErr: Vec3 = [
-    (targetPos[0] - e.position[0]) / cubeSize,
-    (targetPos[1] - e.position[1]) / cubeSize,
-    (targetPos[2] - e.position[2]) / cubeSize,
+    (targetPos[0] - st[0]) / cubeSize,
+    (targetPos[1] - st[1]) / cubeSize,
+    (targetPos[2] - st[2]) / cubeSize,
   ];
-  const f = forwardOf(e);
+  const f: Vec3 = [st[3], st[4], st[5]];
   const len = Math.hypot(f[0], f[1], f[2]) || 1;
   const dot = (f[0] * wantedDir[0] + f[1] * wantedDir[1] + f[2] * wantedDir[2]) / len;
   return { r: [posErr[0], posErr[1], posErr[2], (1 - dot) * FACING_WEIGHT], posErr, dot };
@@ -201,7 +207,7 @@ function dampedSolve(
    * convergence rather than the first steps.
    */
   const comfortable = () =>
-    Math.hypot(cur.posErr[0], cur.posErr[1], cur.posErr[2]) <= MAX_SNAP_ERROR * EARLY_EXIT_FRACTION
+    Math.hypot(cur.posErr[0], cur.posErr[1], cur.posErr[2]) <= MAX_SNAP_ERROR * PHYSICAL_TOLERANCE_SCALE * EARLY_EXIT_FRACTION
     && cur.dot >= WELD_ALIGNMENT_MIN;
 
   for (let iter = 0; iter < MAX_LM_ITER; iter++) {
@@ -316,27 +322,65 @@ function findBendSolutions(
   const found: BestBends[] = [];
   const routes = new Set<string>();
 
-  for (const seed of SEEDS) {
-    if (found.length >= wantAlternates) break;
+  // How close the best FAILED attempt got. Extra restarts are only worth their cost when a
+  // fixed seed came near (a target that is a hairpin or an arch away); a target nowhere near
+  // reachable would pay a dozen more solves to be told no again.
+  let nearMiss = false;
+  const solveFrom = (list: Vars[]) => {
+    for (const seed of list) {
+      if (found.length >= wantAlternates) break;
 
-    const solved = dampedSolve(seed, targetPos, wantedDir, cubeSize);
-    // Acceptance uses the REAL tolerances, not the solver's internal weighted
-    // residual — the weighting is only a search heuristic.
-    if (solved.posErr > MAX_SNAP_ERROR) continue;
-    if (solved.dot < WELD_ALIGNMENT_MIN) continue;
+      const solved = dampedSolve(seed, targetPos, wantedDir, cubeSize);
+      // Acceptance uses the REAL tolerances, not the solver's internal weighted
+      // residual — the weighting is only a search heuristic.
+      if (solved.posErr <= 1.5 * PHYSICAL_TOLERANCE_SCALE && solved.dot > 0.5) nearMiss = true;
+      if (solved.posErr > MAX_SNAP_ERROR * PHYSICAL_TOLERANCE_SCALE) continue;
+      if (solved.dot < WELD_ALIGNMENT_MIN) continue;
 
-    const angles = toAngles(solved.vars);
-    const sig = sweptCellsCentred(angles, cubeSize).map(key).sort().join(',');
-    if (routes.has(sig)) continue; // same cubes swept — not an alternative
-    routes.add(sig);
+      const angles = toAngles(solved.vars);
+      const sig = sweptCellsCentred(angles, cubeSize).map(key).sort().join(',');
+      if (routes.has(sig)) continue; // same cubes swept — not an alternative
+      routes.add(sig);
 
-    found.push({
-      angles,
-      snapError: solved.posErr,
-      bendCost: Math.abs(angles[1]) + Math.abs(angles[2]) + Math.abs(angles[4]),
-    });
-  }
+      found.push({
+        angles,
+        snapError: solved.posErr,
+        bendCost: Math.abs(angles[1]) + Math.abs(angles[2]) + Math.abs(angles[4]) + Math.abs(angles[5]),
+      });
+    }
+  };
+
+  // The fixed seeds first (cheap, and enough for most targets). If NONE of them
+  // lands a route, try a few deterministic pseudo-random restarts before calling
+  // the target unreachable: with six unknowns the solution set is a curved
+  // surface and a handful of hand-picked starts misses real, exact solutions near
+  // the edge of the module's reach (a 1.5-cube sideways arch has an exact
+  // solution that all six fixed seeds converge past).
+  solveFrom(SEEDS);
+  if (!found.length && nearMiss) solveFrom(randomSeeds(targetPos, EXTRA_SEEDS));
   return sortByBend(found);
+}
+
+/** Extra starts tried only when the fixed seeds all fail. */
+const EXTRA_SEEDS = 12;
+
+/**
+ * Deterministic pseudo-random starting points, seeded from the target so the same
+ * query always gives the same answer (results are cached and tests must not flake).
+ */
+function randomSeeds(target: Vec3, n: number): Vars[] {
+  let h = 2166136261;
+  for (const v of target) h = Math.imul(h ^ Math.round(v * 1000), 16777619);
+  const rnd = () => { h = (Math.imul(h, 1664525) + 1013904223) >>> 0; return h / 4294967296; };
+  const out: Vars[] = [];
+  const lim = BEND_LIMIT[1] * 0.9;
+  for (let i = 0; i < n; i++) {
+    out.push([
+      (rnd() * 2 - 1) * Math.PI, (rnd() * 2 - 1) * lim, (rnd() * 2 - 1) * lim,
+      (rnd() * 2 - 1) * Math.PI, (rnd() * 2 - 1) * lim, (rnd() * 2 - 1) * lim,
+    ]);
+  }
+  return out;
 }
 
 /** Straightest first — the least-folded route is the one to try before the others. */
@@ -354,7 +398,7 @@ function toLatticePose(
   b: BestBends, wantedOffset: Cell, wantedDir: Cell, cubeSize: number, index: number,
 ): LatticePose {
   const cells = sweptCellsCentred(b.angles, cubeSize);
-  const { midOffset, sideDirs } = bigRodSides(b.angles, cubeSize);
+  const sides = sideSites(b.angles, cubeSize);
   return {
     id: `solved@${key(wantedOffset)}|${key(wantedDir)}#${index}`,
     bendPoseId: nearestNamedPose(b.angles),
@@ -368,8 +412,7 @@ function toLatticePose(
     cells,
     reach: manhattan([0, 0, 0], wantedOffset),
     snapError: b.snapError,
-    midOffset,
-    sideDirs,
+    sides,
     anchorEnd: 'A',
   };
 }

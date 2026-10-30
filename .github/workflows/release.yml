@@ -1,0 +1,92 @@
+name: Release
+
+# Builds the desktop app on real Windows, macOS and Ubuntu 24.04 machines (a Mac app can only
+# be built on macOS). Pushing a tag v1.2.3 uploads all three into a new draft release.
+# Run by hand (Actions tab, "Run workflow"): with "upload_to" empty it only builds and keeps the
+# files as a test artifact; with an existing tag it adds the Mac and Linux files to that release,
+# leaving its Windows files alone.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      upload_to:
+        description: 'Existing release tag to add Mac and Linux files to, e.g. v1.0.4 (empty = test build only)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  draft:
+    name: create draft release
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match studio/package.json
+        run: |
+          want="v$(node -p "require('./studio/package.json').version")"
+          test "$GITHUB_REF_NAME" = "$want" || { echo "::error::tag $GITHUB_REF_NAME but package.json says $want"; exit 1; }
+
+      # Made once, before any upload: v1.0.4 lost its exe because parallel uploads each found
+      # no release and each created their own, splitting the files across two releases.
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
+
+  build:
+    name: build (${{ matrix.os }})
+    needs: draft
+    if: ${{ !cancelled() && needs.draft.result != 'failure' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-24.04]
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # --legacy-peer-deps: same peer conflict as ci.yml.
+      - name: Install
+        run: npm install --legacy-peer-deps --no-audit --no-fund
+
+      - name: Build the web app
+        run: npm run build
+
+      - name: Package
+        run: npx electron-builder --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload to the release
+        if: ${{ startsWith(github.ref, 'refs/tags/') || (inputs.upload_to != '' && runner.os != 'Windows') }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.upload_to || github.ref_name }}
+        run: |
+          shopt -s nullglob
+          gh release upload "$TAG" --clobber release2/*.{exe,dmg,zip,AppImage,deb,blockmap} release2/latest*.yml
+
+      - name: Keep the test build
+        if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.upload_to == '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: tetrobot-${{ matrix.os }}
+          retention-days: 7
+          path: |
+            studio/release2/*.exe
+            studio/release2/*.dmg
+            studio/release2/*.AppImage
+            studio/release2/*.deb

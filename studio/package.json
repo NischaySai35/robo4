@@ -4,6 +4,7 @@
   "private": true,
   "description": "TETROBOT - GUI-first modular robotics modeling and simulation platform",
   "author": "Nischay Sai <nischaysai35@gmail.com>",
+  "homepage": "https://github.com/NischaySai35/robo4",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -54,6 +55,7 @@
   "build": {
     "appId": "com.nischaysai.tetrobot",
     "productName": "TETROBOT-Demo-NischaySai",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -70,6 +72,23 @@
         "repo": "robo4"
       }
     ],
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": ["x64", "arm64"] },
+        { "target": "zip", "arch": ["x64", "arm64"] }
+      ],
+      "icon": "electron/icon.png",
+      "category": "public.app-category.developer-tools"
+    },
+    "linux": {
+      "target": [
+        { "target": "AppImage", "arch": ["x64"] },
+        { "target": "deb", "arch": ["x64"] }
+      ],
+      "icon": "electron/icon.png",
+      "category": "Development",
+      "synopsis": "Modular robot modeling and simulation"
+    },
     "win": {
       "target": "nsis",
       "icon": "electron/icon.ico"

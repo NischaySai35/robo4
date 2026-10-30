@@ -1,14 +1,14 @@
 import './ConnectionWindow.css';
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
+import { beginDrag } from '@/features/common/drag';
 
-export default function ConnectionWindow({ isOpen, onClose, children }: any) {
+/** Floating, draggable, corner-resizable window (header drag, ✕ close). */
+export default function ConnectionWindow({ isOpen, onClose, title = 'SIM → ESP', children }: any) {
   const [pos,     setPos]     = useState<any>(null);          // null = CSS default (top-right)
   const [size,    setSize]    = useState({ w: 300, h: 430 });
   const [visible, setVisible] = useState(false);
 
   const windowRef = useRef<any>(null);
-  const sizeRef   = useRef({ w: 300, h: 430 });
-  useEffect(() => { sizeRef.current = size; }, [size]);
 
   // CSS open/close animation
   useEffect(() => {
@@ -20,58 +20,20 @@ export default function ConnectionWindow({ isOpen, onClose, children }: any) {
   }, [isOpen]);
 
   // Drag from header
-  const startDrag = useCallback((e: any) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
+  const startDrag = (e: React.MouseEvent) => {
     const rect = windowRef.current?.getBoundingClientRect();
     if (!rect) return;
-    const offX = e.clientX - rect.left;
-    const offY = e.clientY - rect.top;
-    document.body.style.cursor = 'grabbing';
-    document.body.style.userSelect = 'none';
-
-    const onMove = (e: any) => {
-      setPos({
-        x: Math.max(0, Math.min(window.innerWidth  - 80, e.clientX - offX)),
-        y: Math.max(0, Math.min(window.innerHeight - 40, e.clientY - offY)),
-      });
-    };
-    const onUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',   onUp);
-  }, []);
+    beginDrag(e, 'grabbing', (dx, dy) => setPos({
+      x: Math.max(0, Math.min(window.innerWidth  - 80, rect.left + dx)),
+      y: Math.max(0, Math.min(window.innerHeight - 40, rect.top + dy)),
+    }));
+  };
 
   // Resize from bottom-right corner
-  const startResize = useCallback((e: any) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    e.stopPropagation();
-    const { w: startW, h: startH } = sizeRef.current;
-    const startX = e.clientX;
-    const startY = e.clientY;
-    document.body.style.cursor = 'nwse-resize';
-    document.body.style.userSelect = 'none';
-
-    const onMove = (e: any) => {
-      setSize({
-        w: Math.max(240, startW + (e.clientX - startX)),
-        h: Math.max(280, startH + (e.clientY - startY)),
-      });
-    };
-    const onUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',   onUp);
-  }, []);
+  const startResize = (e: React.MouseEvent) => {
+    const { w, h } = size;
+    beginDrag(e, 'nwse-resize', (dx, dy) => setSize({ w: Math.max(240, w + dx), h: Math.max(280, h + dy) }));
+  };
 
   // pos=null → use CSS default positioning (right:12px, top:80px)
   const posStyle = pos
@@ -94,7 +56,7 @@ export default function ConnectionWindow({ isOpen, onClose, children }: any) {
           <circle cx="7"  cy="7" r="1.4" fill="currentColor" opacity="0.45"/>
           <circle cx="12" cy="7" r="1.4" fill="currentColor" opacity="0.45"/>
         </svg>
-        <span className="conn-window-title">SIM → ESP</span>
+        <span className="conn-window-title">{title}</span>
         <button
           className="conn-close-btn"
           onMouseDown={e => e.stopPropagation()}

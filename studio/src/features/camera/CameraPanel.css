@@ -1,13 +1,4 @@
-.cam-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-family: var(--font-ui);
-}
+/* .cam-panel card base: styles/index.css (shared dock-panel card) */
 
 .cam-section {
   font-family: var(--font-mono); font-size: 11px; font-weight: 700;
@@ -57,13 +48,12 @@
   display: flex; align-items: center; justify-content: space-between;
   font-size: 12px; color: var(--text-dim); gap: 8px;
 }
-.cam-text, .cam-sel {
+.cam-text {
   flex: 1; min-width: 0; max-width: 60%;
   background: var(--bg); color: var(--text);
   border: 1px solid var(--border); border-radius: 6px;
   font-size: 11px; padding: 3px 6px;
 }
-
 .cam-seg { display: flex; gap: 0; }
 .cam-seg button {
   flex: 1; padding: 5px 8px; font-size: 11px; cursor: pointer;

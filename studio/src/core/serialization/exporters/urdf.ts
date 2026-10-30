@@ -11,12 +11,12 @@
 import * as THREE from 'three';
 import { bodyMass, inertiaTensor } from '../../../kinematics/analysis';
 import type { Document } from '@/core/model/index';
+import { mat as mat4 } from '../../../kinematics/modelFK';
+import { san, n, limitRange, jointTree } from './common';
 
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 
-const san = (s: any) => String(s ?? 'x').replace(/[^A-Za-z0-9_]/g, '_');
-const n = (v: any) => (Math.abs(v) < 1e-9 ? '0' : (+v).toFixed(6));
 
 function rpy(quat: any) {
   _q.set(quat[0], quat[1], quat[2], quat[3]);
@@ -24,15 +24,6 @@ function rpy(quat: any) {
   return `${n(_e.x)} ${n(_e.y)} ${n(_e.z)}`;
 }
 const xyz = (p: any) => `${n(p[0])} ${n(p[1])} ${n(p[2])}`;
-
-/** origin/transform-like { position, quaternion } → Matrix4 (scale ignored). */
-function mat4(o: any) {
-  return new THREE.Matrix4().compose(
-    new THREE.Vector3(...(o?.position ?? [0, 0, 0])),
-    new THREE.Quaternion(...(o?.quaternion ?? [0, 0, 0, 1])),
-    new THREE.Vector3(1, 1, 1),
-  );
-}
 
 /**
  * Geometry XML with the body's transform scale baked into the dimensions — URDF
@@ -124,20 +115,10 @@ function jointXML(j: any, doc: any) {
 
 export function exportURDF(doc: Document, name = 'tetrobot') {
   const bodies = Object.values(doc.bodies);
-  const allJoints = Object.values(doc.joints);
   if (bodies.length === 0) return `<?xml version="1.0"?>\n<robot name="${san(name)}"/>\n`;
 
   // First joint per child = its parent; the rest are loop closures.
-  const childParent = new Map<string, any>();
-  const treeJoints: any[] = [];
-  const loopJoints: any[] = [];
-  for (const j of allJoints) {
-    const pid = j.parentBodyId, cid = j.childBodyId;
-    if (!pid || !cid || !doc.bodies[pid] || !doc.bodies[cid]) continue;
-    if (childParent.has(cid)) loopJoints.push(j);
-    else { childParent.set(cid, j); treeJoints.push(j); }
-  }
-  const roots = bodies.filter((b) => !childParent.has(b.id));
+  const { treeJoints, loopJoints, roots } = jointTree(doc);
 
   // URDF needs exactly ONE root link. When our graph has several roots (or none,
   // i.e. all-cycle), synthesize a `base_link` and fix every root under it at its

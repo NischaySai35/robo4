@@ -1,7 +1,7 @@
 """Record one full walk (MuJoCo physics + the real walking code) for replay in Isaac Sim.
 Saves every body's pose every 60 ms + the robot/connector shapes -> D:\robo4\brain\walk_record.npz"""
 import sys, os, math, numpy as np, mujoco
-sys.path.insert(0, r'D:\robo4\brain')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from walk import Walker
 from walk_env import WalkEnv
 XML = os.environ.get('XML', r'D:\robo4\brain\walk_train.xml')

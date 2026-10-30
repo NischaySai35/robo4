@@ -9,11 +9,10 @@
 import * as THREE from 'three';
 import { bodyMass, inertiaTensor } from '../../../kinematics/analysis';
 import type { Document } from '@/core/model/index';
+import { san, n, limitRange, jointTree } from './common';
 
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
-const san = (s: any) => String(s ?? 'x').replace(/[^A-Za-z0-9_]/g, '_');
-const n = (v: any) => (Math.abs(v) < 1e-9 ? '0' : (+v).toFixed(6));
 function pose(p: any, quat: any) {
   _q.set(quat[0], quat[1], quat[2], quat[3]); _e.setFromQuaternion(_q, 'XYZ');
   return `${n(p[0])} ${n(p[1])} ${n(p[2])} ${n(_e.x)} ${n(_e.y)} ${n(_e.z)}`;
@@ -49,7 +48,7 @@ function jointXML(j: any, doc: any) {
   const type = j.type === 'continuous' ? 'revolute' : j.type === 'fixed' ? 'fixed' : j.type;
   const ax = j.axis ?? [0, 0, 1];
   const limXML = (j.type === 'revolute' || j.type === 'prismatic')
-    ? `<limit><lower>${n(lim.lower ?? -3.14)}</lower><upper>${n(lim.upper ?? 3.14)}</upper><effort>${n(lim.effort ?? 0)}</effort><velocity>${n(lim.velocity ?? 0)}</velocity></limit>` : '';
+    ? `<limit><lower>${n(limitRange(j)[0])}</lower><upper>${n(limitRange(j)[1])}</upper><effort>${n(lim.effort ?? 0)}</effort><velocity>${n(lim.velocity ?? 0)}</velocity></limit>` : '';
   return `    <joint name="${san(j.name)}" type="${type}">
       <parent>${san(p.name)}</parent>
       <child>${san(c.name)}</child>
@@ -59,15 +58,7 @@ function jointXML(j: any, doc: any) {
 
 export function exportSDF(doc: Document, name = 'tetrobot') {
   const bodies = Object.values(doc.bodies);
-  const allJoints = Object.values(doc.joints);
-  // graph→tree (first joint per child wins)
-  const childParent = new Map<string, any>();
-  const treeJoints: any[] = [];
-  for (const j of allJoints) {
-    const pid = (j as any).parentBodyId, cid = (j as any).childBodyId;
-    if (!pid || !cid || !doc.bodies[pid] || !doc.bodies[cid]) continue;
-    if (!childParent.has(cid)) { childParent.set(cid, j); treeJoints.push(j); }
-  }
+  const { treeJoints } = jointTree(doc); // graph→tree (first joint per child wins)
   // FK world poses for link <pose>
   // (lazy import avoided; analysis already pulls FK — but we compute here directly)
   const links = bodies.map((b) => {

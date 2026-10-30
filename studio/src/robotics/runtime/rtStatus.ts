@@ -9,6 +9,8 @@
  * The actual transport (websocket/DDS bridge) is future work; whatever it is, it calls
  * `parseRtControllerStatus` and feeds the result into the status store.
  */
+import { num } from '@/shared/coerce';
+
 export interface RtControllerStatus {
   format: 'rtcore.controller_status';
   version: number;
@@ -21,7 +23,6 @@ export interface RtControllerStatus {
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
-const num = (v: unknown, d = 0) => (Number.isFinite(Number(v)) ? Number(v) : d);
 
 /** Parse RT Core controller-status JSON (string or already-parsed object). Throws on a bad format. */
 export function parseRtControllerStatus(input: string | unknown): RtControllerStatus {

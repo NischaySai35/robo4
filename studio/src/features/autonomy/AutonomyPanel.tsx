@@ -29,13 +29,13 @@ import { Sequence, Repeat, Action, runTree, type Blackboard } from '@/robotics/b
 import { bridge } from '@/bridge/cameraBridge';
 import { actions } from '@/runtime/actions';
 import type { Planner } from '@/control/motionRuntime';
+import { withJointValues } from '@/core/model/index';
 
 const fmt = (n: number, d = 2) => (Number.isFinite(n) ? n.toFixed(d) : '—');
 const MAX_RANGE = 8;
 
 function withJoints(doc: any, vals: Record<string, number>, rootId?: string, rootPos?: number[]) {
-  const joints: any = { ...doc.joints };
-  for (const [id, v] of Object.entries(vals)) { const j = joints[id]; if (j) joints[id] = { ...j, state: { ...j.state, value: v } }; }
+  const { joints } = withJointValues(doc, vals);
   let bodies = doc.bodies;
   if (rootId && rootPos && doc.bodies[rootId]) {
     const b = doc.bodies[rootId];

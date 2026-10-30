@@ -10,12 +10,8 @@
 import { solveModelIK, chainJoints } from '@/kinematics/modelIK';
 import { computeFK } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
+import { withJointValues } from '@/core/model/index';
 
-function withJointValues(doc: any, vals: Record<string, number>): any {
-  const joints: any = { ...doc.joints };
-  for (const [id, v] of Object.entries(vals)) { const j = joints[id]; if (j) joints[id] = { ...j, state: { ...j.state, value: v } }; }
-  return { ...doc, joints };
-}
 
 export interface CartesianResult {
   /** joint-value vectors (chain order) for each achieved waypoint */

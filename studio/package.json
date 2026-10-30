@@ -56,7 +56,9 @@
     "productName": "TETROBOT-Demo-NischaySai",
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "tools/gpuWatcher.cjs",
+      "tools/psStream.cjs"
     ],
     "directories": {
       "output": "release2"

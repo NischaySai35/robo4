@@ -59,15 +59,6 @@
   color: rgba(255, 255, 255, 0.85);
 }
 
-.vp-stats-noisy {
-  font-size: 7px;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  color: #f87171;
-  margin-left: 5px;
-  vertical-align: middle;
-  animation: vp-blink 0.7s ease-in-out infinite alternate;
-}
 @keyframes vp-blink { from { opacity: 1 } to { opacity: 0.3 } }
 
 .vp-stats-bar-wrap {

@@ -1,13 +1,4 @@
-.hw-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-family: var(--font-ui);
-}
+/* .hw-panel card base: styles/index.css (shared dock-panel card) */
 
 .hw-head { display: flex; align-items: center; justify-content: space-between; }
 .hw-title { font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 2px; color: var(--text-dim); }

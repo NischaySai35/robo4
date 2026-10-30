@@ -19,18 +19,16 @@
  * workaround for a compiled model's fixed topology).
  */
 import * as THREE from 'three';
+import { joltPose } from '@/physics/joltPose';
+import { JoltBoxes } from '@/physics/joltBoxes';
+import { mat as matOf } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
 import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
 import { makeJoltShape } from '@/physics/joltShapes';
 import { createJoint, setHingeTargetAngle, setHingeTargetVelocity, type CreatedJoint } from '@/physics/joltJoints';
-import { restPoseExcludePairs } from '@/features/gravity/rigidGeomXml';
+import { restPoseExcludePairs } from '@/physics/restPoseExclude';
 import { FIXED_DT } from './physicsConfig';
 
-const matOf = (t: any) => new THREE.Matrix4().compose(
-  new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
-  new THREE.Quaternion(...(t?.quaternion ?? [0, 0, 0, 1])),
-  new THREE.Vector3(1, 1, 1),
-);
 
 interface JointEntry extends CreatedJoint {
   mode: 'position' | 'velocity';
@@ -54,8 +52,7 @@ export class PhysicsSim {
     this._bodyInterface = bodyInterface;
     this.joints = new Map<string, JointEntry>();
     this._bodies = new Map<string, any>(); // bodyId -> Jolt Body
-    this._boxHandles = new Map<number, any>(); // handle -> Jolt Body
-    this._nextBoxHandle = 1;
+    this._boxes = new JoltBoxes(Jolt, bodyInterface);
     this._spinning = new Set<string>();
 
     // Ground: a large static plane-like box, same convention every other sim used.
@@ -203,65 +200,19 @@ export class PhysicsSim {
     return n;
   }
 
-  // ── Falling-box API — real independent bodies, no pool needed ──────────────
+  // ── Falling-box API (shared JoltBoxes) ─────────────────────────────────────
   spawnBox(pos: [number, number, number], half: [number, number, number], density: number): number {
-    const Jolt = this._Jolt;
-    const shape = new Jolt.BoxShapeSettings(new Jolt.Vec3(half[0], half[1], half[2]), 0.02).Create().Get();
-    const bs = new Jolt.BodyCreationSettings(
-      shape, new Jolt.RVec3(pos[0], pos[1], pos[2]), Jolt.Quat.prototype.sIdentity(), Jolt.EMotionType_Dynamic, JOLT_LAYER_MOVING,
-    );
-    bs.set_mOverrideMassProperties(Jolt.EOverrideMassProperties_CalculateInertia);
-    const mp = new Jolt.MassProperties();
-    mp.set_mMass(density * (2 * half[0]) * (2 * half[1]) * (2 * half[2]));
-    bs.set_mMassPropertiesOverride(mp);
-    const rb = this._bodyInterface.CreateBody(bs);
-    this._bodyInterface.AddBody(rb.GetID(), Jolt.EActivation_Activate);
-    const handle = this._nextBoxHandle++;
-    this._boxHandles.set(handle, rb);
-    return handle;
+    return this._boxes.spawn(pos, half, density);
   }
-
-  boxPoses(): Map<number, { pos: [number, number, number]; quat: [number, number, number, number] }> {
-    const out = new Map<number, any>();
-    for (const [handle, rb] of this._boxHandles) {
-      // Extract every primitive immediately after each call — see poses() below for why.
-      const px = rb.GetPosition().GetX(), py = rb.GetPosition().GetY(), pz = rb.GetPosition().GetZ();
-      const qx = rb.GetRotation().GetX(), qy = rb.GetRotation().GetY(), qz = rb.GetRotation().GetZ(), qw = rb.GetRotation().GetW();
-      out.set(handle, { pos: [px, py, pz], quat: [qx, qy, qz, qw] });
-    }
-    return out;
-  }
-
-  removeBox(handle: number) {
-    const rb = this._boxHandles.get(handle);
-    if (!rb) return;
-    this._bodyInterface.RemoveBody(rb.GetID());
-    this._bodyInterface.DestroyBody(rb.GetID());
-    this._boxHandles.delete(handle);
-  }
-
-  removeAllBoxes() {
-    for (const handle of [...this._boxHandles.keys()]) this.removeBox(handle);
-  }
+  boxPoses() { return this._boxes.poses(); }
+  removeBox(handle: number) { this._boxes.remove(handle); }
+  removeAllBoxes() { this._boxes.removeAll(); }
 
   poses() {
     const out = new Map();
     for (const [id, rb] of this._bodies) {
-      // Extract every primitive IMMEDIATELY after each Jolt call — even holding both
-      // GetPosition()'s and GetRotation()'s return values before reading either (as this
-      // used to do) is risky: some WASM bindings reuse a shared scratch buffer for
-      // struct-valued returns, so the GetRotation() call can silently corrupt the position
-      // already "captured" in `p` before its components are read. This is the Editor's main
-      // per-frame render feed — this exact bug here would show up as visibly wrong/jittering
-      // body poses under physics.
-      const px = rb.GetPosition().GetX(), py = rb.GetPosition().GetY(), pz = rb.GetPosition().GetZ();
-      const qx = rb.GetRotation().GetX(), qy = rb.GetRotation().GetY(), qz = rb.GetRotation().GetZ(), qw = rb.GetRotation().GetW();
-      const matrix = new THREE.Matrix4().compose(
-        new THREE.Vector3(px, py, pz),
-        new THREE.Quaternion(qx, qy, qz, qw),
-        new THREE.Vector3(1, 1, 1),
-      );
-      out.set(id, { position: [px, py, pz], quaternion: [qx, qy, qz, qw], matrix });
+      const pose = joltPose(rb); // safe read (WASM scratch buffer), see joltPose.ts
+      out.set(id, { ...pose, matrix: matOf(pose) });
     }
     return out;
   }
@@ -280,7 +231,7 @@ export class PhysicsSim {
 
 /** Rough volume estimate for mass computation (density * volume) from a body's
  *  declared geometry — Jolt's CalculateInertia override still needs a starting
- *  mass; this mirrors the half-extent estimate colliderFactory.ts used. */
+ *  mass; same half-extent estimate as joltShapes.ts. */
 function shapeVolumeEstimate(body: any): number {
   const g = body.visual?.geometry ?? {};
   const s = body.transform?.scale ?? [1, 1, 1];

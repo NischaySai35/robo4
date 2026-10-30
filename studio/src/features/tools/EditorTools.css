@@ -1,13 +1,4 @@
-.et-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-  font-family: var(--font-ui);
-}
+/* .et-panel card base: styles/index.css (shared dock-panel card) */
 
 .et-row { display: flex; align-items: center; gap: 8px; }
 .et-label { font-size: 12px; color: var(--text-dim); font-weight: 600; min-width: 40px; }
@@ -47,47 +38,7 @@
   color: #fff;
 }
 
-.et-result {
-  font-size: 13px;
-  color: var(--text);
-  text-align: center;
-  padding: 4px;
-  background: var(--accent-glow);
-  border-radius: 6px;
-}
-.et-result strong { font-family: var(--font-mono); color: var(--accent); }
-
-.et-sim {
-  padding: 9px;
-  border: 1px solid var(--success);
-  border-radius: 8px;
-  background: transparent;
-  color: var(--success);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.et-sim:hover { background: color-mix(in srgb, var(--success) 15%, transparent); }
-.et-sim--on { background: var(--danger); border-color: var(--danger); color: #fff; }
-
 .et-gravity { gap: 6px; }
-.et-grav-toggle {
-  flex: 1;
-  padding: 7px 8px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg-card);
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.15s;
-  white-space: nowrap;
-}
-.et-grav-toggle--on { color: var(--accent); border-color: var(--accent); background: var(--accent-glow); }
 .et-num:disabled { opacity: 0.45; cursor: not-allowed; }
 .et-unit { font-size: 11px; color: var(--text-dim); font-family: var(--font-mono); }
 

@@ -50,6 +50,8 @@
  * flat ground plane.
  */
 import * as THREE from 'three';
+import { joltPose } from '@/physics/joltPose';
+import { mat as matOf } from '@/kinematics/modelFK';
 import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
 import { makeJoltShapeSettings } from '@/physics/joltShapes';
 import { jointWorldGeom } from '@/physics/joltJoints';
@@ -79,11 +81,6 @@ const FALLBACK_DENSITY = 400; // kg/m^3, used only when a body has no explicit i
  *  See the hinge motor's note below for why this is no longer clamped down to 1. */
 const MOTOR_MAX_TORQUE = 5;
 
-const matOf = (t: any) => new THREE.Matrix4().compose(
-  new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
-  new THREE.Quaternion(...(t?.quaternion ?? [0, 0, 0, 1])),
-  new THREE.Vector3(1, 1, 1),
-);
 
 function diagEnabled(): boolean {
   try { return localStorage.getItem('robo_physics_diag') === '1'; } catch { return false; }
@@ -654,10 +651,8 @@ export class DynamicSim {
           // shared scratch buffer for struct-valued returns, so interleaving
           // GetPosition()/GetRotation() calls across two different bodies before reading
           // any of them back can silently read back the WRONG body's data.
-          const paX = jd.bodyA.GetPosition().GetX(), paY = jd.bodyA.GetPosition().GetY(), paZ = jd.bodyA.GetPosition().GetZ();
-          const raX = jd.bodyA.GetRotation().GetX(), raY = jd.bodyA.GetRotation().GetY(), raZ = jd.bodyA.GetRotation().GetZ(), raW = jd.bodyA.GetRotation().GetW();
-          const pbX = jd.bodyB.GetPosition().GetX(), pbY = jd.bodyB.GetPosition().GetY(), pbZ = jd.bodyB.GetPosition().GetZ();
-          const rbX = jd.bodyB.GetRotation().GetX(), rbY = jd.bodyB.GetRotation().GetY(), rbZ = jd.bodyB.GetRotation().GetZ(), rbW = jd.bodyB.GetRotation().GetW();
+          const { position: [paX, paY, paZ], quaternion: [raX, raY, raZ, raW] } = joltPose(jd.bodyA);
+          const { position: [pbX, pbY, pbZ], quaternion: [rbX, rbY, rbZ, rbW] } = joltPose(jd.bodyB);
           qA.set(raX, raY, raZ, raW);
           qB.set(rbX, rbY, rbZ, rbW);
           tmpA.copy(jd.localA).applyQuaternion(qA).add(new THREE.Vector3(paX, paY, paZ));
@@ -719,8 +714,7 @@ export class DynamicSim {
       // shaking/parts-clipping-through-the-floor reported all along: each frame potentially
       // rendering one body's position paired with a different body's rotation, or a stale
       // value from whichever body's data last occupied the shared buffer.
-      const cpx = rb.GetPosition().GetX(), cpy = rb.GetPosition().GetY(), cpz = rb.GetPosition().GetZ();
-      const cqx = rb.GetRotation().GetX(), cqy = rb.GetRotation().GetY(), cqz = rb.GetRotation().GetZ(), cqw = rb.GetRotation().GetW();
+      const { position: [cpx, cpy, cpz], quaternion: [cqx, cqy, cqz, cqw] } = joltPose(rb);
       const clusterM = new THREE.Matrix4().compose(
         new THREE.Vector3(cpx, cpy, cpz),
         new THREE.Quaternion(cqx, cqy, cqz, cqw),

@@ -318,7 +318,8 @@ const BASE_QUAT: Record<string, Quat> = {
 export const baseQuatFor = (dir: readonly number[]): Quat =>
   BASE_QUAT[`${dir[0]},${dir[1]},${dir[2]}`] ?? [0, 0, 0, 1];
 
-function quatMul(a: Quat, b: Quat): Quat {
+/** Hamilton product a·b of [x, y, z, w] quaternions. */
+export function quatMul(a: Quat, b: Quat): Quat {
   const [ax, ay, az, aw] = a;
   const [bx, by, bz, bw] = b;
   return [

@@ -35,7 +35,7 @@
  * dynamic imports inside pure functions.
  */
 import * as THREE from 'three';
-import { computeFK, resolveRoot, mat, buildChildJointMap } from './modelFK';
+import { computeFK, resolveRoot, mat, buildChildJointMap, originMat } from './modelFK';
 import type { Document, Body, Geometry } from '@/core/model/index';
 import { getJointActuator } from '@/core/model/index';
 import { getMotorSpec } from './motorDatabase';
@@ -58,14 +58,6 @@ export function estimateCurrent(torqueNm: number, motor = getMotorSpec('ST3215')
 
 // ── Geometry helpers ────────────────────────────────────────────────────────
 
-function originMat(o: any) {
-  const oo = o ?? {};
-  return new THREE.Matrix4().compose(
-    new THREE.Vector3(...(oo.position ?? [0, 0, 0])),
-    new THREE.Quaternion(...(oo.quaternion ?? [0, 0, 0, 1])),
-    new THREE.Vector3(1, 1, 1),
-  );
-}
 
 /** Volume (m³) of a body's geometry including its scale. */
 export function geometryVolume(g: Partial<Geometry> = {}, s = [1, 1, 1]) {

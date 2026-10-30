@@ -16,6 +16,7 @@ import { useWorkspaceStore } from '@/state/workspaceStore';
 import { bridge } from '@/bridge/cameraBridge';
 import { getActiveSpins } from '@/core/motor/spinState';
 import { makeDocument } from '../model/index';
+import { num } from '@/shared/coerce';
 
 export const PROJECT_FORMAT  = 'tetrobot-project';
 export const PROJECT_VERSION = 1;
@@ -53,7 +54,6 @@ export function serializeProject() {
   };
 }
 
-const num = (v: any, d = 0) => (Number.isFinite(+v) ? +v : d);
 
 /**
  * Validate + normalize an arbitrary parsed object into a clean scene:

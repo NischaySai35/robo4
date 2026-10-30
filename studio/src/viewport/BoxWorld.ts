@@ -14,6 +14,7 @@
  * chart reads each sample to show impact spikes.
  */
 import * as THREE from 'three';
+import { JoltBoxes } from '@/physics/joltBoxes';
 import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
 import { makeJoltShape } from '@/physics/joltShapes';
 
@@ -36,9 +37,7 @@ export class BoxWorld {
     this._world = world;
     this._doc = doc;
     this._fk = fk;
-    this._boxHandles = new Map<number, any>(); // handle -> Jolt Body
-    this._nextBoxHandle = 1;
-    this._prevSpeed = new Map<number, number>();
+    this._boxes = new JoltBoxes(Jolt, bodyInterface, { restitution: 0.42, friction: 0.65 });
     this._acc = 0;
 
     // Ground
@@ -91,28 +90,14 @@ export class BoxWorld {
   }
 
   spawnBox(pos: [number, number, number], half: [number, number, number], density: number): number {
-    const Jolt = this._world.Jolt;
-    const shape = new Jolt.BoxShapeSettings(new Jolt.Vec3(half[0], half[1], half[2]), 0.02).Create().Get();
-    const bs = new Jolt.BodyCreationSettings(shape, new Jolt.RVec3(pos[0], pos[1], pos[2]), Jolt.Quat.prototype.sIdentity(), Jolt.EMotionType_Dynamic, JOLT_LAYER_MOVING);
-    bs.set_mOverrideMassProperties(Jolt.EOverrideMassProperties_CalculateInertia);
-    const mp = new Jolt.MassProperties();
-    mp.set_mMass(density * (2 * half[0]) * (2 * half[1]) * (2 * half[2]));
-    bs.set_mMassPropertiesOverride(mp);
-    bs.set_mRestitution(0.42);
-    bs.set_mFriction(0.65);
-    const rb = this._world.bodyInterface.CreateBody(bs);
-    this._world.bodyInterface.AddBody(rb.GetID(), Jolt.EActivation_Activate);
-    const handle = this._nextBoxHandle++;
-    this._boxHandles.set(handle, rb);
-    this._prevSpeed.set(handle, 0);
-    return handle;
+    return this._boxes.spawn(pos, half, density);
   }
 
   stepFor(dt: number) {
     this._acc += Math.min(dt, 0.1);
 
     const pre = new Map<number, number>();
-    for (const [h, rb] of this._boxHandles) {
+    for (const [h, rb] of this._boxes.bodies) {
       const v = rb.GetLinearVelocity();
       pre.set(h, Math.sqrt(v.GetX() ** 2 + v.GetY() ** 2 + v.GetZ() ** 2));
     }
@@ -126,7 +111,7 @@ export class BoxWorld {
       else extraContactTorques.set(k, next);
     }
 
-    for (const [h, rb] of this._boxHandles) {
+    for (const [h, rb] of this._boxes.bodies) {
       const vPre = pre.get(h) ?? 0;
       const v = rb.GetLinearVelocity();
       const vPost = Math.sqrt(v.GetX() ** 2 + v.GetY() ** 2 + v.GetZ() ** 2);
@@ -157,31 +142,9 @@ export class BoxWorld {
     }
   }
 
-  boxPoses(): Map<number, { pos: [number, number, number]; quat: [number, number, number, number] }> {
-    const out = new Map<number, any>();
-    for (const [h, rb] of this._boxHandles) {
-      // Extract every primitive immediately after each call — see dynamicSim.ts's
-      // _readPoses() for why (WASM scratch-buffer reuse across sequential struct-valued
-      // Jolt calls before either is read).
-      const px = rb.GetPosition().GetX(), py = rb.GetPosition().GetY(), pz = rb.GetPosition().GetZ();
-      const qx = rb.GetRotation().GetX(), qy = rb.GetRotation().GetY(), qz = rb.GetRotation().GetZ(), qw = rb.GetRotation().GetW();
-      out.set(h, { pos: [px, py, pz], quat: [qx, qy, qz, qw] });
-    }
-    return out;
-  }
-
-  removeBox(handle: number) {
-    const rb = this._boxHandles.get(handle);
-    if (!rb) return;
-    this._world.bodyInterface.RemoveBody(rb.GetID());
-    this._world.bodyInterface.DestroyBody(rb.GetID());
-    this._boxHandles.delete(handle);
-    this._prevSpeed.delete(handle);
-  }
-
-  removeAllBoxes() {
-    for (const h of [...this._boxHandles.keys()]) this.removeBox(h);
-  }
+  boxPoses() { return this._boxes.poses(); }
+  removeBox(handle: number) { this._boxes.remove(handle); }
+  removeAllBoxes() { this._boxes.removeAll(); }
 
   dispose() {
     this.removeAllBoxes();

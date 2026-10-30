@@ -25,6 +25,7 @@
 import * as THREE from 'three';
 import { computeFK } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
+import { withJointValues } from '@/core/model/index';
 
 const MARGIN = 1.0;             // no inflation — tolerance handles slop instead
 const DEFAULT_TOLERANCE = 0.005; // 5 mm: below this, "touching" is not a collision
@@ -60,7 +61,8 @@ function shapeOf(body: any): Shape {
   }
 }
 
-function worldAabb(half: [number, number, number], M: THREE.Matrix4) {
+/** World AABB of a box with local half extents `half` under transform `M`. */
+export function worldAabb(half: [number, number, number], M: THREE.Matrix4) {
   const [hx, hy, hz] = half;
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   const v = new THREE.Vector3();
@@ -179,9 +181,7 @@ export class CollisionModel {
 
   /** True if the configuration (jointId→value overrides) is collision-free. */
   collisionFree(values: Record<string, number>): boolean {
-    const joints: any = { ...this.doc.joints };
-    for (const [id, v] of Object.entries(values)) { const j = joints[id]; if (j) joints[id] = { ...j, state: { ...j.state, value: v } }; }
-    const fk = computeFK({ ...this.doc, joints });
+    const fk = computeFK(withJointValues(this.doc, values));
     const boxes = new Map<string, any>();
     const mats = new Map<string, THREE.Matrix4>();
     for (const id of this.ids) {

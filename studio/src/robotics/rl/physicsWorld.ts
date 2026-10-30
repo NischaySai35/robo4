@@ -12,10 +12,12 @@
  * collide only with the ground) — see the "robot-only" group setup below.
  */
 import * as THREE from 'three';
+import { mat as matOf } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
 import { ensureJolt, createJoltWorldSync, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltModule, type JoltWorld } from '@/physics/joltLoader';
 import { makeJoltShape } from '@/physics/joltShapes';
-import { jointWorldGeom } from '@/physics/joltJoints';
+import { createJoint } from '@/physics/joltJoints';
+import { joltPose, joltQuat, type JoltPose } from '@/physics/joltPose';
 
 // Callers (locomotionTask.ts, TrainingPanel.tsx, trainers that construct a fresh
 // RLPhysicsWorld per episode) rely on the ORIGINAL calling convention: await
@@ -27,29 +29,6 @@ import { jointWorldGeom } from '@/physics/joltJoints';
 let _Jolt: JoltModule | null = null;
 export const initPhysics = () => ensureJolt().then((m) => { _Jolt = m; });
 
-/** Converts a WORLD point into `body`'s LOCAL (COM-relative) frame — extracts every
- *  primitive immediately after each Jolt call rather than holding wrapper objects across
- *  further calls (verified live in dynamicSim.ts/joltJoints.ts that some WASM bindings
- *  reuse a scratch buffer for struct-valued returns, corrupting interleaved reads). */
-function worldPointToLocal(body: any, world: THREE.Vector3): THREE.Vector3 {
-  const px = body.GetPosition().GetX(), py = body.GetPosition().GetY(), pz = body.GetPosition().GetZ();
-  const rx = body.GetRotation().GetX(), ry = body.GetRotation().GetY(), rz = body.GetRotation().GetZ(), rw = body.GetRotation().GetW();
-  const q = new THREE.Quaternion(rx, ry, rz, rw).invert();
-  return world.clone().sub(new THREE.Vector3(px, py, pz)).applyQuaternion(q);
-}
-
-/** Converts a WORLD-space direction into `body`'s LOCAL frame (rotation only, no translation). */
-function worldDirToLocal(body: any, world: THREE.Vector3): THREE.Vector3 {
-  const rx = body.GetRotation().GetX(), ry = body.GetRotation().GetY(), rz = body.GetRotation().GetZ(), rw = body.GetRotation().GetW();
-  const q = new THREE.Quaternion(rx, ry, rz, rw).invert();
-  return world.clone().applyQuaternion(q);
-}
-
-const matOf = (t: any) => new THREE.Matrix4().compose(
-  new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
-  new THREE.Quaternion(...(t?.quaternion ?? [0, 0, 0, 1])),
-  new THREE.Vector3(1, 1, 1),
-);
 
 interface JointEntry { jointId: string; constraint: any; lo: number; hi: number }
 interface InitialBody { id: string; pos: THREE.Vector3; quat: THREE.Quaternion }
@@ -118,53 +97,15 @@ export class RLPhysicsWorld {
     for (const j of Object.values(doc.joints) as any[]) {
       const bodyA = this.bodyIdx.get(j.parentBodyId), bodyB = this.bodyIdx.get(j.childBodyId);
       if (!bodyA || !bodyB) continue;
-      if (j.type !== 'revolute' && j.type !== 'continuous' && j.type !== 'prismatic') {
-        // Fixed / other: rigid weld.
-        const { pivot } = jointWorldGeom(j, worldMat(j.parentBodyId));
-        const fs = new Jolt.FixedConstraintSettings();
-        // LocalToBodyCOM, not WorldSpace — verified live in dynamicSim.ts's identical
-        // constraint code that this binding's Create() doesn't correctly convert WorldSpace
-        // mPoint1/mPoint2 per body (both ended up using the same body's transform). Pre-
-        // computing each body's local anchor ourselves sidesteps that broken conversion.
-        fs.set_mSpace(Jolt.EConstraintSpace_LocalToBodyCOM);
-        fs.set_mPoint1(new Jolt.RVec3(...worldPointToLocal(bodyA, pivot).toArray() as [number, number, number]));
-        fs.set_mPoint2(new Jolt.RVec3(...worldPointToLocal(bodyB, pivot).toArray() as [number, number, number]));
-        physicsSystem.AddConstraint(fs.Create(bodyA, bodyB));
-        continue;
-      }
-
-      const { pivot, axis } = jointWorldGeom(j, worldMat(j.parentBodyId));
-      const localA = worldPointToLocal(bodyA, pivot), localB = worldPointToLocal(bodyB, pivot);
-      const axisA = worldDirToLocal(bodyA, axis), axisB = worldDirToLocal(bodyB, axis);
-      const v0 = j.state?.value ?? 0;
       const lo = j.limit?.lower ?? -Math.PI, hi = j.limit?.upper ?? Math.PI;
-
-      let constraint: any;
-      if (j.type === 'prismatic') {
-        const ss = new Jolt.SliderConstraintSettings();
-        ss.set_mSpace(Jolt.EConstraintSpace_LocalToBodyCOM);
-        ss.set_mPoint1(new Jolt.RVec3(localA.x, localA.y, localA.z));
-        ss.set_mPoint2(new Jolt.RVec3(localB.x, localB.y, localB.z));
-        ss.set_mSliderAxis1(new Jolt.Vec3(axisA.x, axisA.y, axisA.z));
-        ss.set_mSliderAxis2(new Jolt.Vec3(axisB.x, axisB.y, axisB.z));
-        ss.mLimitsMin = lo; ss.mLimitsMax = hi;
-        constraint = Jolt.castObject(ss.Create(bodyA, bodyB), Jolt.SliderConstraint);
-        physicsSystem.AddConstraint(constraint);
-        constraint.SetMotorState(Jolt.EMotorState_Position);
-        constraint.SetTargetPosition(v0);
-      } else {
-        const hs = new Jolt.HingeConstraintSettings();
-        hs.set_mSpace(Jolt.EConstraintSpace_LocalToBodyCOM);
-        hs.set_mPoint1(new Jolt.RVec3(localA.x, localA.y, localA.z));
-        hs.set_mPoint2(new Jolt.RVec3(localB.x, localB.y, localB.z));
-        hs.set_mHingeAxis1(new Jolt.Vec3(axisA.x, axisA.y, axisA.z));
-        hs.set_mHingeAxis2(new Jolt.Vec3(axisB.x, axisB.y, axisB.z));
-        hs.mLimitsMin = lo; hs.mLimitsMax = hi;
-        constraint = Jolt.castObject(hs.Create(bodyA, bodyB), Jolt.HingeConstraint);
-        physicsSystem.AddConstraint(constraint);
-        constraint.SetMotorState(Jolt.EMotorState_Position);
-        constraint.SetTargetAngle(v0);
-      }
+      // RL keeps Jolt's stock motor and always clamps to [lo, hi] (its training contract).
+      const { constraint, type } = createJoint(Jolt, physicsSystem, j, bodyA, bodyB, worldMat(j.parentBodyId),
+        { limits: [lo, hi], stockMotor: true });
+      if (type === 'fixed') continue; // rigid weld, not an actuated DOF
+      const v0 = j.state?.value ?? 0;
+      constraint.SetMotorState(Jolt.EMotorState_Position);
+      if (type === 'prismatic') constraint.SetTargetPosition(v0);
+      else constraint.SetTargetAngle(v0);
       this.joints.push({ jointId: j.id, constraint, lo, hi });
       this.jointValues.push(v0);
       this._initialJointValues.push(v0);
@@ -214,20 +155,16 @@ export class RLPhysicsWorld {
   baseId_() { return this.baseId; }
 
   /** Base body world pose, for replaying a learned gait through the model's FK root. */
-  basePose(): { position: number[]; quaternion: number[] } {
+  basePose(): JoltPose {
     const rb = this.bodyIdx.get(this.baseId)!;
-    // Extract every primitive immediately after each call — see poses() below for why.
-    const px = rb.GetPosition().GetX(), py = rb.GetPosition().GetY(), pz = rb.GetPosition().GetZ();
-    const qx = rb.GetRotation().GetX(), qy = rb.GetRotation().GetY(), qz = rb.GetRotation().GetZ(), qw = rb.GetRotation().GetW();
-    return { position: [px, py, pz], quaternion: [qx, qy, qz, qw] };
+    return joltPose(rb);
   }
 
   /** Base body world up-axis (for an "upright" reward) + height. */
   baseUp(): [number, number, number] {
     const rb = this.bodyIdx.get(this.baseId);
     if (!rb) return [0, 1, 0];
-    const q = rb.GetRotation();
-    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(new THREE.Quaternion(q.GetX(), q.GetY(), q.GetZ(), q.GetW()));
+    const up = new THREE.Vector3(0, 1, 0).applyQuaternion(joltQuat(rb));
     return [up.x, up.y, up.z];
   }
 
@@ -254,15 +191,7 @@ export class RLPhysicsWorld {
   poses() {
     const out = new Map<string, any>();
     for (const [id, rb] of this.bodyIdx) {
-      // Extract every primitive IMMEDIATELY after each call, never holding a returned
-      // wrapper across another Jolt call on a DIFFERENT body — this loop runs every frame
-      // across every body and feeds the renderer directly; some WASM bindings reuse a
-      // shared scratch buffer for struct-valued returns (verified live in dynamicSim.ts),
-      // so interleaving GetPosition()/GetRotation() across bodies before reading them back
-      // can silently mix up which body's data ends up where.
-      const px = rb.GetPosition().GetX(), py = rb.GetPosition().GetY(), pz = rb.GetPosition().GetZ();
-      const qx = rb.GetRotation().GetX(), qy = rb.GetRotation().GetY(), qz = rb.GetRotation().GetZ(), qw = rb.GetRotation().GetW();
-      out.set(id, { position: [px, py, pz], quaternion: [qx, qy, qz, qw] });
+      out.set(id, joltPose(rb)); // safe read, see joltPose.ts
     }
     return out;
   }

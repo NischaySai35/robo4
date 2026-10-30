@@ -14,12 +14,8 @@ import assert from 'node:assert/strict';
 import { makeDocument, makeGeometry, GeometryType, JointType } from '@/core/model/index';
 import { buildSerialChain } from '@/core/model/builders';
 import { DynamicSim } from './dynamicSim';
+import { restFK } from '@/testing/fixtures';
 
-function fkOf(doc: any) {
-  const fk = new Map<string, { position: number[]; quaternion: number[] }>();
-  for (const b of Object.values(doc.bodies) as any[]) fk.set(b.id, { position: b.transform.position, quaternion: b.transform.quaternion });
-  return fk;
-}
 
 test('a rigid multi-body cluster resting near the ground settles ON it, not through it', async () => {
   const box = makeGeometry(GeometryType.BOX, { size: [0.3, 0.15, 0.3] });
@@ -40,7 +36,7 @@ test('a rigid multi-body cluster resting near the ground settles ON it, not thro
   ];
   const { doc } = buildSerialChain(makeDocument({ name: 'Chassis' }), { name: 'Chassis', links, joints });
 
-  const sim = await DynamicSim.create(doc, fkOf(doc), GROUND_Y, () => null, null);
+  const sim = await DynamicSim.create(doc, restFK(doc), GROUND_Y, () => null, null);
   assert.ok(sim);
 
   let poses = new Map<string, { position: number[]; quaternion: number[] }>();

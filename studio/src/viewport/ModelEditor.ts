@@ -11,10 +11,10 @@
  * own handles are the only viewport pointer surface it owns.
  */
 import type { Document } from '@/core/model/index';
-import { GeometryType } from '@/core/model/index';
+import { GeometryType, bodyConnectors } from '@/core/model/index';
 import * as THREE from 'three';
 import { getAssetObject } from '@/viewport/renderers/AssetCache';
-import { convexHullPoints } from '@/viewport/colliderFactory';
+import { convexHullPoints } from '@/robotics/geometry/convexHull';
 import { TransformControls } from 'three/examples/jsm/controls/TransformControls.js';
 import { physicsBridge } from '@/bridge/physicsBridge';
 import { BodyRenderer } from '@/viewport/renderers/BodyRenderer';
@@ -45,6 +45,7 @@ import { bridge } from '@/bridge/cameraBridge';
 import { mateBridge, type MateAnimRequest } from '@/bridge/mateBridge';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { jointLoads, centerOfMass, bodyStressField } from '@/kinematics/analysis';
+import { withJointValues } from '@/core/model/index';
 // PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
 // Play, so it stays out of the initial bundle and the app starts up fast.
 
@@ -1331,24 +1332,13 @@ export class ModelEditor {
   }
 
   _fkWithOverrides(doc: Document, values: any) {
-    const joints: Record<string, any> = {};
-    for (const [id, j] of Object.entries(doc.joints)) {
-      joints[id] = id in values ? { ...j, state: { ...j.state, value: values[id] } } : j;
-    }
-    return computeFK({ ...doc, joints });
+    return computeFK(withJointValues(doc, values));
   }
 
   /** Immutable doc with the given joint values applied (for animation playback). */
   _withJointValues(doc: Document, values: any) {
-    const joints: Record<string, any> = { ...doc.joints };
-    let changed = false;
-    for (const [id, v] of Object.entries(values)) {
-      const j = joints[id];
-      if (!j) continue;
-      joints[id] = { ...j, state: { ...j.state, value: v } };
-      changed = true;
-    }
-    return changed ? { ...doc, joints } : doc;
+    // Same doc object when nothing applies, so callers can skip unchanged frames.
+    return Object.keys(values).some((id) => doc.joints[id]) ? withJointValues(doc, values) : doc;
   }
 
   /** Doc with animation joint VALUES + CONNECTION state applied. A joint keyed OFF gets
@@ -2203,7 +2193,7 @@ export class ModelEditor {
     const doc: Document = this._doc ?? useModelStore.getState().doc;
     const body = doc.bodies[att.bodyId];
     if (!body) return;
-    const conns = (body.meta?.connectors as any[] | undefined) ?? [];
+    const conns = bodyConnectors(body);
     const idx = conns.findIndex((c) => c.id === att.connectorId);
     if (idx < 0) return;
 

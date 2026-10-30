@@ -100,3 +100,21 @@ export function convexHull(points: Vec3[]): Hull | null {
     inside: (q: Vec3, eps = 1e-6) => faces.every((f) => dot(f.n, q) - f.off <= eps),
   };
 }
+
+/**
+ * Convex-hull vertices (flat [x,y,z,…]) of a mesh's positions, for a tight Rapier
+ * convexHull collider instead of a bounding box. Very dense meshes are stride-sampled
+ * (a convex proxy doesn't need every vertex). Returns null if the cloud is degenerate.
+ */
+export function convexHullPoints(positions: ArrayLike<number>, maxInput = 4000): Float32Array | null {
+  const n = Math.floor(positions.length / 3);
+  if (n < 4) return null;
+  const step = n > maxInput ? Math.ceil(n / maxInput) : 1;
+  const pts: Vec3[] = [];
+  for (let i = 0; i < n; i += step) pts.push([positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]);
+  const hull = convexHull(pts);
+  if (!hull || hull.vertices.length < 4) return null;
+  const out = new Float32Array(hull.vertices.length * 3);
+  hull.vertices.forEach((v, k) => { out[k * 3] = v[0]; out[k * 3 + 1] = v[1]; out[k * 3 + 2] = v[2]; });
+  return out;
+}

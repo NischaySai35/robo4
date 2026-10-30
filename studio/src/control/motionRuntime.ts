@@ -14,6 +14,7 @@ import { actions } from '@/runtime/actions';
 import { services } from '@/runtime/services';
 import { params } from '@/runtime/params';
 import { getDoc, applyTransient } from '@/core/model/modelPort';
+import { withJointValues } from '@/core/model/index';
 import { chainJoints } from '@/kinematics/modelIK';
 import { computeFK } from '@/kinematics/modelFK';
 import { CollisionModel } from '@/robotics/collision';
@@ -37,15 +38,6 @@ export interface ChainContext {
   collisionFree: (q: number[]) => boolean;
 }
 
-/** Apply joint values to a doc immutably (transient execution helper). */
-export function withJointValues(doc: any, vals: Record<string, number>): any {
-  const joints: any = { ...doc.joints };
-  for (const [id, v] of Object.entries(vals)) {
-    const j = joints[id];
-    if (j) joints[id] = { ...j, state: { ...j.state, value: v } };
-  }
-  return { ...doc, joints };
-}
 
 export function chainContext(doc: Document, tipId: string): ChainContext | null {
   const chain = chainJoints(doc, tipId);

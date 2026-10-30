@@ -16,7 +16,7 @@ YOU MUST FILL: SERVO_ID / SIGN / HOME and the measured receiver pose RX_POS / RX
 No firmware change needed.
 """
 import sys, os, time, math, json, urllib.request, numpy as np
-sys.path.insert(0, r'D:\\robo4\\brain')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tetro_env2 import TetroDockEnv, RX_GAP, RX_TOP, VMAX
 
 ESP = 'http://mod1.local'

@@ -4,28 +4,16 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeDocument, makeGeometry, GeometryType } from '@/core/model/index';
-import { buildSerialChain } from '@/core/model/builders';
 import { CollisionModel } from '@/robotics/collision';
 import { planCartesian } from '@/robotics/planning/cartesian';
 import { computeFK } from '@/kinematics/modelFK';
 import { timeParameterize } from '@/robotics/planning/trajectory';
 import { JointTrajectoryController, EffortTrajectoryController, ControllerManager } from './controllerManager';
+import { verticalArm } from '@/testing/fixtures';
 
-function buildArm() {
-  const box = makeGeometry(GeometryType.BOX, { size: [0.3, 0.3, 0.3] });
-  const links = [0, 1, 2, 3].map((i) => ({ name: `L${i + 1}`, geometry: box, transform: { position: [0, i + 1, 0], quaternion: [0, 0, 0, 1] } }));
-  const joints = [0, 1, 2].map((i) => ({
-    name: `J${i + 1}`, type: 'revolute', axis: [0, 0, 1],
-    limit: { lower: -1.5, upper: 1.5, effort: 5, velocity: 1.2 },
-    origin: { position: [0, 1, 0], quaternion: [0, 0, 0, 1] },
-  }));
-  const { doc, bodyIds } = buildSerialChain(makeDocument({ name: 'Arm' }), { name: 'Arm', links, joints });
-  return { doc, bodyIds };
-}
 
 test('allowed-collision matrix disables a chosen body pair', () => {
-  const { doc, bodyIds } = buildArm();
+  const { doc, bodyIds } = verticalArm();
   const [a, b] = [bodyIds[0], bodyIds[3]];
   // force the two ends to overlap by collapsing the chain (all joints at 0 keeps them apart,
   // so instead we just assert the ACM removes the pair from checks): build with the pair allowed.
@@ -41,7 +29,7 @@ test('allowed-collision matrix disables a chosen body pair', () => {
 });
 
 test('Cartesian planner: tip tracks a straight world-space line', () => {
-  const { doc, bodyIds } = buildArm();
+  const { doc, bodyIds } = verticalArm();
   const tipId = bodyIds[3];
   const start = computeFK(doc).get(tipId)!.position as [number, number, number];
   // move the tip a small amount in +X (reachable for a Z-axis planar arm)

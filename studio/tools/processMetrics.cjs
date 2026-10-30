@@ -23,12 +23,11 @@
  * to one tab, so this is an over-count and the UI says so. The Electron app is the exact path.
  */
 const os = require('os');
-const { spawn } = require('child_process');
+const { streamPowerShell } = require('./psStream.cjs');
 
 const SAMPLE_SECONDS = 2;
 
 let _proc = null;
-let _stdout = '';
 let _pending = null;
 /** Latest parse: Map<pid, {rss, cpuTicks, name}>, and the perf-counter timestamp for it. */
 let _curr = null, _currStamp = 0;
@@ -68,37 +67,21 @@ function ensureProcessWatcher() {
     "    Write-Output ($_.IDProcess.ToString() + ',' + $_.CreatingProcessID + ',' + $_.WorkingSetPrivate + ',' + $_.PercentProcessorTime + ',' + $_.Timestamp_Sys100NS + ',' + $_.Name) };" +
     "  Write-Output 'END';" +
     '  Start-Sleep -Seconds ' + SAMPLE_SECONDS + ' }';
-  // -EncodedCommand: one opaque token, immune to how the argument reaches PowerShell.
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-  try {
-    _proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true });
-  } catch { _proc = null; return; }
-
-  _proc.stdout.on('data', (chunk) => {
-    _stdout += chunk.toString();
-    let nl;
-    while ((nl = _stdout.indexOf('\n')) >= 0) {
-      const line = _stdout.slice(0, nl).trim();
-      _stdout = _stdout.slice(nl + 1);
-      if (line === 'BEGIN') { _pending = []; continue; }
-      if (line === 'END') {
-        if (_pending) {
-          const { table, stamp } = parseBlock(_pending);
-          // Keep the previous sample: CPU is a DELTA of cumulative ticks, so a lone
-          // snapshot carries no rate information at all.
-          _prev = _curr; _prevStamp = _currStamp;
-          _curr = table; _currStamp = stamp;
-        }
-        _pending = null;
-        continue;
+  _proc = streamPowerShell(script, (line) => {
+    if (line === 'BEGIN') { _pending = []; return; }
+    if (line === 'END') {
+      if (_pending) {
+        const { table, stamp } = parseBlock(_pending);
+        // Keep the previous sample: CPU is a DELTA of cumulative ticks, so a lone
+        // snapshot carries no rate information at all.
+        _prev = _curr; _prevStamp = _currStamp;
+        _curr = table; _currStamp = stamp;
       }
-      if (_pending) _pending.push(line);
+      _pending = null;
+      return;
     }
-    if (_stdout.length > 4_000_000) _stdout = '';
-  });
-  const reset = () => { _proc = null; _stdout = ''; _pending = null; _curr = _prev = null; };
-  _proc.on('error', reset);
-  _proc.on('exit', reset);
+    if (_pending) _pending.push(line);
+  }, () => { _proc = null; _pending = null; _curr = _prev = null; });
 }
 
 function stopProcessWatcher() {

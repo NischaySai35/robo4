@@ -20,6 +20,7 @@
  */
 import { type Cell } from './lattice';
 import { type Move } from './moves';
+import { quatMul } from './modulink';
 
 export interface Pose {
   position: [number, number, number];
@@ -38,19 +39,6 @@ function quatFromAxisAngle(axis: Cell, angle: number): [number, number, number, 
   return [axis[0] * s, axis[1] * s, axis[2] * s, Math.cos(h)];
 }
 
-function quatMul(
-  a: [number, number, number, number],
-  b: [number, number, number, number],
-): [number, number, number, number] {
-  const [ax, ay, az, aw] = a;
-  const [bx, by, bz, bw] = b;
-  return [
-    aw * bx + ax * bw + ay * bz - az * by,
-    aw * by - ax * bz + ay * bw + az * bx,
-    aw * bz + ax * by - ay * bx + az * bw,
-    aw * bw - ax * bx - ay * by - az * bz,
-  ];
-}
 
 function rotateAbout(
   p: [number, number, number],

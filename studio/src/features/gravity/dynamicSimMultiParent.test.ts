@@ -13,12 +13,8 @@ import { buildSerialChain } from '@/core/model/builders';
 import { putEntity } from '@/core/model/graph';
 import { makeJoint } from '@/core/model/entities';
 import { DynamicSim } from './dynamicSim';
+import { restFK } from '@/testing/fixtures';
 
-function fkOf(doc: any) {
-  const fk = new Map<string, { position: number[]; quaternion: number[] }>();
-  for (const b of Object.values(doc.bodies) as any[]) fk.set(b.id, { position: b.transform.position, quaternion: b.transform.quaternion });
-  return fk;
-}
 
 test('a body with two incoming joints does not crash MJCF compilation', async () => {
   const box = makeGeometry(GeometryType.BOX, { size: [0.2, 0.2, 0.2] });
@@ -40,7 +36,7 @@ test('a body with two incoming joints does not crash MJCF compilation', async ()
   });
   doc = putEntity(doc, extraJoint);
 
-  const fk = fkOf(doc);
+  const fk = restFK(doc);
   // Must not throw/reject — this is exactly what previously threw mjCError
   // (mjCModel::CheckRepeat) and silently killed gravity sim in the app.
   const sim = await DynamicSim.create(doc, fk, -3.2, () => null, null);

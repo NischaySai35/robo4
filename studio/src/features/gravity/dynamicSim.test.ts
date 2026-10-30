@@ -9,12 +9,8 @@ import assert from 'node:assert/strict';
 import { makeDocument, makeGeometry, GeometryType, JointType } from '@/core/model/index';
 import { buildSerialChain } from '@/core/model/builders';
 import { DynamicSim } from './dynamicSim';
+import { restFK } from '@/testing/fixtures';
 
-function fkOf(doc: any) {
-  const fk = new Map<string, { position: number[]; quaternion: number[] }>();
-  for (const b of Object.values(doc.bodies) as any[]) fk.set(b.id, { position: b.transform.position, quaternion: b.transform.quaternion });
-  return fk;
-}
 
 test('rigid mode: two fixed-jointed bodies stay at a constant relative offset', async () => {
   const box = makeGeometry(GeometryType.BOX, { size: [0.2, 0.2, 0.2] });
@@ -25,7 +21,7 @@ test('rigid mode: two fixed-jointed bodies stay at a constant relative offset', 
   const joints = [{ type: JointType.FIXED, origin: { position: [0.15, 0, 0], quaternion: [0, 0, 0, 1] } }];
   const { doc } = buildSerialChain(makeDocument({ name: 'D' }), { name: 'D', links, joints });
 
-  const sim = await DynamicSim.create(doc, fkOf(doc), -3.2);
+  const sim = await DynamicSim.create(doc, restFK(doc), -3.2);
   assert.ok(sim);
   const ids = Object.keys(doc.bodies);
   const relAt = (poses: Map<string, any>) => {
@@ -51,7 +47,7 @@ test('free mode: a joint swings passively under gravity (no rigid hold)', async 
   const { doc, jointIds } = buildSerialChain(makeDocument({ name: 'D' }), { name: 'D', links, joints });
   (doc.joints[jointIds[0]] as any).meta = { free: true };
 
-  const sim = await DynamicSim.create(doc, fkOf(doc), -3.2);
+  const sim = await DynamicSim.create(doc, restFK(doc), -3.2);
   assert.ok(sim);
   const armId = Object.keys(doc.bodies)[1];
   const before = sim!.step(1 / 60).get(armId)!.position;
@@ -71,7 +67,7 @@ test('motor mode: an end-lock joint spins on command and brakes when idle', asyn
   const joints = [{ type: JointType.CONTINUOUS, axis: [0, 0, 1], origin: { position: [0.15, 0, 0], quaternion: [0, 0, 0, 1] } }];
   const { doc, jointIds } = buildSerialChain(makeDocument({ name: 'D' }), { name: 'D', links, joints });
 
-  const sim = await DynamicSim.create(doc, fkOf(doc), -3.2);
+  const sim = await DynamicSim.create(doc, restFK(doc), -3.2);
   assert.ok(sim);
   const jointId = jointIds[0];
   const driveOn = () => 3.0;

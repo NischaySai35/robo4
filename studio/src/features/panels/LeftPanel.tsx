@@ -1,5 +1,5 @@
 import './LeftPanel.css';
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useEditorStore } from '@/state/editorStore';
@@ -11,26 +11,19 @@ import { setBodyModePreservingPose } from '@/features/rigid/bodyModeAction';
 import { commands } from '@/core/commands/index';
 import {
   makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin, makeComponent, uid,
-  bodiesOfComponent, jointsOfComponent,
+  bodiesOfComponent, jointsOfComponent, componentGroups,
 } from '@/core/model/index';
-import type { Connector } from '@/core/model/index';
 import { jointFramesForBodies } from '@/kinematics/modelFK';
 import { buildDefaultModuleEntities, getDefaultModuleDoc, moduleDocToProject, saveDefaultModule } from '@/core/factory/defaultModule';
 import { bridge } from '@/bridge/cameraBridge';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
 import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
 import GizmoModeButtons, { BODY_GIZMO_MODES, POINT_GIZMO_MODES, type GizmoModeId } from '@/features/common/GizmoModeButtons';
-import { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import I from '@/features/common/Icon';
+import ContextMenu, { ConnectorItems, MenuSep } from '@/features/common/ContextMenu';
+import { beginDrag } from '@/features/common/drag';
 
 const cap = (s: any) => s.charAt(0).toUpperCase() + s.slice(1);
-
-const I = ({ children }: any) => (
-  <svg width="16" height="16" viewBox="0 0 20 20" fill="none"
-    stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
-    {children}
-  </svg>
-);
 
 const PRIMITIVES = [
   { type: GeometryType.BOX,      label: 'Box',      params: { size: [0.8, 0.8, 0.8] } },
@@ -75,7 +68,6 @@ export default function LeftPanel({ style }: any) {
   const hiddenSet = new Set(hiddenBodyIds);
   const bodyMode        = useWorkspaceStore((s) => s.bodyMode);
   const activeBodyId    = useWorkspaceStore((s) => s.activeBodyId);
-  const setActiveBodyId = useWorkspaceStore((s) => s.setActiveBodyId);
   const hoveredBodyId   = useSelectionStore((s) => s.hoveredBodyId);
 
   const isBodySelected = !!(selectedId && doc.bodies[selectedId]);
@@ -274,6 +266,23 @@ export default function LeftPanel({ style }: any) {
   };
 
   const startRename = (id: any, kind: any, name: any) => setEditing({ id, kind, text: name });
+  // Inline rename box (rows + component headers). Stops events so typing/clicking
+  // in it never drags, selects or collapses the row underneath.
+  const renameInput = () => (
+    <input
+      className="px-rename"
+      key={editing.id}
+      ref={attachRename}
+      draggable={false}
+      defaultValue={editing.text}
+      onChange={(e) => { const v = e.target.value; setEditing((prev: any) => (prev ? { ...prev, text: v } : prev)); }}
+      onBlur={commitRename}
+      onMouseDown={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
+    />
+  );
   const commitRename = () => {
     if (!editing) return;
     const name = (renameRef.current?.value ?? editing.text).trim();
@@ -326,40 +335,6 @@ export default function LeftPanel({ style }: any) {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; bodyId: string } | null>(null);
   const closeCtx = useCallback(() => setCtxMenu(null), []);
 
-  // Close on Escape key anywhere
-  useEffect(() => {
-    if (!ctxMenu) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') closeCtx(); };
-    window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
-  }, [ctxMenu, closeCtx]);
-
-  const addConnector = (bodyId: string) => {
-    closeCtx();
-    const body = doc.bodies[bodyId];
-    if (!body) return;
-    const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
-    const con: Connector = { id: uid('con'), name: `Connector ${existing.length + 1}`, position: [0, 0, 0], normal: [0, 0, 1] };
-    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: [...existing, con] } }));
-    select(bodyId, 'body');
-    openPanel('inspector');
-  };
-
-  const deleteConnector = (bodyId: string, conId: string) => {
-    const body = doc.bodies[bodyId];
-    if (!body) return;
-    const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
-    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: existing.filter((c) => c.id !== conId) } }));
-  };
-
-  const smartMenuPos = (x: number, y: number) => {
-    const vw = window.innerWidth, vh = window.innerHeight;
-    return {
-      left: x + 210 > vw - 8 ? Math.max(8, x - 210) : x,
-      top:  y + 300 > vh - 8 ? Math.max(8, y - 300) : y,
-    };
-  };
-
   // ── Row renderer ─────────────────────────────────────────────────────────────
   const renderRow = (
     entity: any, kind: any, ids: any, idx: any, collection: any, extra: any, indented = false,
@@ -407,19 +382,7 @@ export default function LeftPanel({ style }: any) {
         <span className="px-grip">⋮⋮</span>
         <span className={`px-dot px-dot--${kind}`} />
         {isEditing ? (
-          <input
-            className="px-rename"
-            key={editing.id}
-            ref={attachRename}
-            draggable={false}
-            defaultValue={editing.text}
-            onChange={(e) => { const v = e.target.value; setEditing((prev: any) => (prev ? { ...prev, text: v } : prev)); }}
-            onBlur={commitRename}
-            onMouseDown={(e) => e.stopPropagation()}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
-          />
+          renameInput()
         ) : (
           <button
             className="px-name"
@@ -449,8 +412,7 @@ export default function LeftPanel({ style }: any) {
 
   // ── Component tree ───────────────────────────────────────────────────────────
   const renderCompTree = () => {
-    const unassignedBodies = bodies.filter((b) => !b.componentId || !(doc.components ?? {})[b.componentId]);
-    const unassignedJoints = joints.filter((j) => !j.componentId || !(doc.components ?? {})[j.componentId]);
+    const { groups, unassigned: { bodies: unassignedBodies, joints: unassignedJoints } } = componentGroups(doc);
 
     return (
       <>
@@ -458,9 +420,7 @@ export default function LeftPanel({ style }: any) {
           <div className="px-empty">No items — use + to add a body or create a component.</div>
         )}
 
-        {comps.map((comp) => {
-          const compBodies = bodies.filter((b) => b.componentId === comp.id);
-          const compJoints = joints.filter((j) => j.componentId === comp.id);
+        {groups.map(({ comp, bodies: compBodies, joints: compJoints }) => {
           const isCollapsed   = collapsedComps.has(comp.id);
           const isEditingComp = editing?.id === comp.id && editing?.kind === 'component';
           const isDropTarget  = compDropTarget === comp.id;
@@ -498,19 +458,7 @@ export default function LeftPanel({ style }: any) {
               >
                 <span className={`px-comp-chevron${isCollapsed ? '' : ' px-comp-chevron--open'}`}>▶</span>
                 {isEditingComp ? (
-                  <input
-                    className="px-rename"
-                    key={editing.id}
-                    ref={attachRename}
-                    draggable={false}
-                    defaultValue={editing.text}
-                    onChange={(e) => { const v = e.target.value; setEditing((prev: any) => (prev ? { ...prev, text: v } : prev)); }}
-                    onBlur={commitRename}
-                    onMouseDown={(e) => e.stopPropagation()}
-                    onPointerDown={(e) => e.stopPropagation()}
-                    onClick={(e) => e.stopPropagation()}
-                    onKeyDown={(e) => { e.stopPropagation(); if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditing(null); }}
-                  />
+                  renameInput()
                 ) : (
                   <span
                     className="px-comp-name"
@@ -595,29 +543,10 @@ export default function LeftPanel({ style }: any) {
   };
 
   // ── Resizable project explorer ───────────────────────────────────────────────
-  const pxRef = useRef(pxHeight);
-  pxRef.current = pxHeight;
-  const startPxResize = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const startY = e.clientY;
-    const startH = pxRef.current;
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = (ev: MouseEvent) => {
-      const next = Math.max(80, Math.min(700, startH + (ev.clientY - startY)));
-      pxRef.current = next;
-      setPxHeight(next);
-    };
-    const onUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }, [setPxHeight]);
+  const startPxResize = (e: React.MouseEvent) => {
+    const h0 = pxHeight;
+    beginDrag(e, 'row-resize', (_dx, dy) => setPxHeight(Math.max(80, Math.min(700, h0 + dy))));
+  };
 
   return (
     <aside className="left-panel fade-in" style={style}>
@@ -857,43 +786,20 @@ export default function LeftPanel({ style }: any) {
         )}
       </div>
 
-      {/* ── Context menu — rendered via portal so position:fixed works correctly ── */}
-      {ctxMenu && createPortal(
-        (() => {
-          const ctxBody = doc.bodies[ctxMenu.bodyId];
-          const ctxConns: Connector[] = (ctxBody?.meta?.connectors as Connector[] | undefined) ?? [];
-          const pos = smartMenuPos(ctxMenu.x, ctxMenu.y);
-          return (
-            <>
-              <div className="px-ctx-backdrop" onMouseDown={closeCtx} onContextMenu={(e) => { e.preventDefault(); closeCtx(); }} />
-              <div className="px-ctx-menu" style={pos}>
-                <div className="px-ctx-header">{ctxBody?.name ?? '—'}</div>
-                <div className="px-ctx-sep" />
-                {bodyMode === 'rigid' && (
-                  <button onClick={() => { groundBody(activeBodyId === ctxMenu.bodyId ? null : ctxMenu.bodyId); closeCtx(); }}>
-                    {activeBodyId === ctxMenu.bodyId ? '⬛ Unset Active Body' : '⬛ Set as Active Body'}
-                  </button>
-                )}
-                <button onClick={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }}>✎ Select</button>
-                <button onClick={() => { closeCtx(); select(ctxMenu.bodyId, 'body'); openPanel('inspector'); }}>📋 Open Inspector</button>
-                <div className="px-ctx-sep" />
-                {ctxConns.length > 0 && (
-                  <>
-                    <div className="px-ctx-section">Connectors</div>
-                    {ctxConns.map((c) => (
-                      <div key={c.id} className="px-ctx-con-row">
-                        <span className="px-ctx-con-name">◈ {c.name}</span>
-                        <button className="danger" title="Delete connector" onClick={(e) => { e.stopPropagation(); deleteConnector(ctxMenu.bodyId, c.id); }}>✕</button>
-                      </div>
-                    ))}
-                  </>
-                )}
-                <button onClick={() => addConnector(ctxMenu.bodyId)}>+ Add Connector</button>
-              </div>
-            </>
-          );
-        })(),
-        document.body,
+      {/* ── Body right-click menu ── */}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} h={300} title={doc.bodies[ctxMenu.bodyId]?.name ?? '—'} onClose={closeCtx}>
+          {bodyMode === 'rigid' && (
+            <button onClick={() => { groundBody(activeBodyId === ctxMenu.bodyId ? null : ctxMenu.bodyId); closeCtx(); }}>
+              {activeBodyId === ctxMenu.bodyId ? '⬛ Unset Active Body' : '⬛ Set as Active Body'}
+            </button>
+          )}
+          <button onClick={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }}>✎ Select</button>
+          <button onClick={() => { closeCtx(); select(ctxMenu.bodyId, 'body'); openPanel('inspector'); }}>📋 Open Inspector</button>
+          <MenuSep />
+          <ConnectorItems bodyId={ctxMenu.bodyId}
+            onAdded={() => { closeCtx(); select(ctxMenu.bodyId, 'body'); openPanel('inspector'); }} />
+        </ContextMenu>
       )}
     </aside>
   );

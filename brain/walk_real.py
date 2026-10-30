@@ -14,7 +14,7 @@ Usage:
 Fill in: SERVO_ID / SIGN / HOME (in laptop_controller.py), LOCK_DIR, RECEIVERS (measured), FLOOR_TILT (phone level).
 """
 import sys, os, time, math, json, urllib.request, numpy as np
-sys.path.insert(0, r'D:\robo4\brain'); sys.path.insert(0, r'D:\robo4\brain')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import io, contextlib
 with contextlib.redirect_stdout(io.StringIO()):
     import laptop_controller as L

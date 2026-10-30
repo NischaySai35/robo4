@@ -7,7 +7,7 @@
  */
 import type { Document } from '@/core/model/index';
 
-const san = (s: unknown) => String(s ?? 'x').replace(/[^A-Za-z0-9_]/g, '_');
+import { san } from './common';
 
 export function exportIDL(doc: Document, name = 'tetrobot') {
   const joints = Object.values(doc.joints).filter((j) => j.type !== 'fixed');

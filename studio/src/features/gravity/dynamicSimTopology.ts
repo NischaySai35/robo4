@@ -12,6 +12,7 @@
  *              to 0 rad/s when idle).
  */
 import * as THREE from 'three';
+import { mat as matOf, originMat } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
 import { isMotorJoint, isEndBody } from '@/features/motor/endBody';
 
@@ -24,12 +25,6 @@ export function jointMode(doc: any, j: any): JointMode {
   return 'rigid';
 }
 
-const matOf = (t: any) => new THREE.Matrix4().compose(
-  new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
-  new THREE.Quaternion(...(t?.quaternion ?? [0, 0, 0, 1])),
-  new THREE.Vector3(1, 1, 1),
-);
-const originMat = (o: any) => matOf(o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
 
 export interface WheelGeom { axisW: THREE.Vector3; radius: number; halfLen: number; offset: THREE.Vector3 }
 

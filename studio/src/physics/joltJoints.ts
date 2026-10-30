@@ -12,16 +12,12 @@
  * is needed at all: just the world-space pivot and axis, directly).
  */
 import * as THREE from 'three';
+import { mat as matOf, originMat } from '@/kinematics/modelFK';
 import type { JoltModule } from './joltLoader';
+import { worldPointToLocal, worldDirToLocal } from './joltPose';
 
 const IDENT_Q = { x: 0, y: 0, z: 0, w: 1 };
 
-const matOf = (t: any) => new THREE.Matrix4().compose(
-  new THREE.Vector3(...(t?.position ?? [0, 0, 0])),
-  new THREE.Quaternion(...(t?.quaternion ?? [0, 0, 0, 1])),
-  new THREE.Vector3(1, 1, 1),
-);
-const originMat = (o: any) => matOf(o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
 
 export interface JointWorldGeom {
   pivot: THREE.Vector3;
@@ -85,21 +81,15 @@ export interface CreatedJoint {
  * with a position+velocity-capable motor; prismatic gets a slider; anything
  * else (fixed, or an unrecognized type) gets a rigid FixedConstraint (weld).
  */
-/** This body's current world position/rotation as a local anchor helper: converts a WORLD
- *  point into this body's LOCAL (COM-relative) frame. Extracts every primitive immediately
- *  after each Jolt call rather than holding returned wrapper objects across further calls —
- *  verified live that some WASM bindings reuse a scratch buffer for struct-valued returns,
- *  so interleaving calls before reading them back can silently read the wrong body's data. */
-function worldPointToLocal(body: any, world: THREE.Vector3): THREE.Vector3 {
-  const px = body.GetPosition().GetX(), py = body.GetPosition().GetY(), pz = body.GetPosition().GetZ();
-  const rx = body.GetRotation().GetX(), ry = body.GetRotation().GetY(), rz = body.GetRotation().GetZ(), rw = body.GetRotation().GetW();
-  const q = new THREE.Quaternion(rx, ry, rz, rw).invert();
-  return world.clone().sub(new THREE.Vector3(px, py, pz)).applyQuaternion(q);
-}
-
 export function createJoint(
   Jolt: JoltModule, physicsSystem: any,
   joint: any, bodyA: any, bodyB: any, parentWorldMat: THREE.Matrix4,
+  opts: {
+    /** Always apply these [lower, upper] limits (any hinge/slider), instead of the joint's own. */
+    limits?: [number, number];
+    /** Keep Jolt's stock motor instead of the stiff hold-the-pose servo (RL world). */
+    stockMotor?: boolean;
+  } = {},
 ): CreatedJoint {
   const { pivot, axis } = jointWorldGeom(joint, parentWorldMat);
   // LocalToBodyCOM, not WorldSpace: verified live in DynamicSim's identical constraint code
@@ -108,14 +98,12 @@ export function createJoint(
   // anchor ourselves and using LocalToBodyCOM sidesteps that broken conversion entirely.
   const localA = worldPointToLocal(bodyA, pivot);
   const localB = worldPointToLocal(bodyB, pivot);
-  // Axes also need to be in each body's LOCAL frame under LocalToBodyCOM — rotate by the
-  // same inverse rotations (no translation, so no need for the full worldPointToLocal path).
-  const raX = bodyA.GetRotation().GetX(), raY = bodyA.GetRotation().GetY(), raZ = bodyA.GetRotation().GetZ(), raW = bodyA.GetRotation().GetW();
-  const rbX = bodyB.GetRotation().GetX(), rbY = bodyB.GetRotation().GetY(), rbZ = bodyB.GetRotation().GetZ(), rbW = bodyB.GetRotation().GetW();
-  const qAinv = new THREE.Quaternion(raX, raY, raZ, raW).invert();
-  const qBinv = new THREE.Quaternion(rbX, rbY, rbZ, rbW).invert();
-  const axisA = axis.clone().applyQuaternion(qAinv);
-  const axisB = axis.clone().applyQuaternion(qBinv);
+  // Axes also need to be in each body's LOCAL frame under LocalToBodyCOM.
+  const axisA = worldDirToLocal(bodyA, axis);
+  const axisB = worldDirToLocal(bodyB, axis);
+  const lim = joint.limit;
+  const ownLimits = Number.isFinite(lim?.lower) && Number.isFinite(lim?.upper) && lim.upper > lim.lower;
+  const limits = opts.limits ?? (ownLimits ? [lim.lower, lim.upper] : null);
 
   if (joint.type === 'revolute' || joint.type === 'continuous') {
     const hs = new Jolt.HingeConstraintSettings();
@@ -124,11 +112,8 @@ export function createJoint(
     hs.set_mPoint2(new Jolt.RVec3(localB.x, localB.y, localB.z));
     hs.set_mHingeAxis1(new Jolt.Vec3(axisA.x, axisA.y, axisA.z));
     hs.set_mHingeAxis2(new Jolt.Vec3(axisB.x, axisB.y, axisB.z));
-    if (joint.type === 'revolute' && Number.isFinite(joint.limit?.lower) && Number.isFinite(joint.limit?.upper) && joint.limit.upper > joint.limit.lower) {
-      hs.mLimitsMin = joint.limit.lower;
-      hs.mLimitsMax = joint.limit.upper;
-    }
-    hs.set_mMotorSettings(makeMotorSettings(Jolt));
+    if (limits && (joint.type === 'revolute' || opts.limits)) { hs.mLimitsMin = limits[0]; hs.mLimitsMax = limits[1]; }
+    if (!opts.stockMotor) hs.set_mMotorSettings(makeMotorSettings(Jolt));
     const constraint = Jolt.castObject(hs.Create(bodyA, bodyB), Jolt.HingeConstraint);
     physicsSystem.AddConstraint(constraint);
     return { constraint, type: joint.type };
@@ -141,11 +126,8 @@ export function createJoint(
     ss.set_mPoint2(new Jolt.RVec3(localB.x, localB.y, localB.z));
     ss.set_mSliderAxis1(new Jolt.Vec3(axisA.x, axisA.y, axisA.z));
     ss.set_mSliderAxis2(new Jolt.Vec3(axisB.x, axisB.y, axisB.z));
-    if (Number.isFinite(joint.limit?.lower) && Number.isFinite(joint.limit?.upper) && joint.limit.upper > joint.limit.lower) {
-      ss.mLimitsMin = joint.limit.lower;
-      ss.mLimitsMax = joint.limit.upper;
-    }
-    ss.set_mMotorSettings(makeMotorSettings(Jolt));
+    if (limits) { ss.mLimitsMin = limits[0]; ss.mLimitsMax = limits[1]; }
+    if (!opts.stockMotor) ss.set_mMotorSettings(makeMotorSettings(Jolt));
     const constraint = Jolt.castObject(ss.Create(bodyA, bodyB), Jolt.SliderConstraint);
     physicsSystem.AddConstraint(constraint);
     return { constraint, type: 'prismatic' };

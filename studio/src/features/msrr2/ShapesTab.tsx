@@ -12,6 +12,8 @@ import { LIBRARY, TOPOLOGY_GALLERY_N2 } from '@/robotics/msrr2/library';
 import { Section } from '@/features/msrr/MsrrPanel';
 import { MarginChips } from './V2Panel';
 import { VERIFY_URL } from '@/robotics/msrr2/simScene';
+import { manualScene } from '@/robotics/msrr2/manualScenes';
+import { SessionBar, ShapeButtons } from './ManualTab';
 
 export const entryConfig = (e: ShapeEntry): Config => ({
   modules: Array.from({ length: e.nModules }, (_, i) => `M${i + 1}`),
@@ -93,23 +95,55 @@ export function ShapesTab() {
   );
 }
 
+/** recorded transformations (verify_service /transform?name=NAME&seed=SEED -> logs/tf_NAME_SEED.json) */
+const GALLERY = [
+  { name: 'cobra2', seed: 2, live: { n: 2, preset: 'chain' as const, skill: 'cobra' }, title: '2 modules, NO floor connectors: lying chain → cobra (one module stands on the other)', note: 'blind brain: encoders + the MPU-6050 on Spine2 · base curls into a C so it cannot roll, the other rises tip first · room on · robot #2 · 7/8 robots stood, 1 partial (weak B4)' },
+  { name: 'T2', seed: 1, title: '2 modules: standing → T / brace', note: 'one module walks its free end over and docks into the side of the other · room on · robot #1' },
+  { name: 'AB', seed: 2, title: '3 modules: shape A → shape B', note: 'one module unlocks, steps to another floor receiver, docks into a different side receiver · room on · robot #2 · GPU: 61/64 robots (room off)' },
+  { name: 'bridge5', seed: 3, title: '3 modules: standing → T → gate', note: 'one module lifts its foot and docks into a third module, spanning two · room OFF · robot #3 · 5/7 robots' },
+  { name: 'chain_ABC', seed: 1, title: '3 modules: A → B → C (two changes in a row)', note: 'room OFF (27 Oct) · with the room on, the second change fails: W1 is left sideways and cannot lift itself' },
+];
+
 /** G6: shapes searched on the floor-receiver board and BUILT IN REAL PHYSICS (service: /shapes, /build_shape) */
 export function PhysicsShapes() {
   const buildShape = useV2Store((s) => s.buildShape);
+  const watchTransform = useV2Store((s) => s.watchTransform);
+  const manual = useV2Store((s) => s.manual);
+  const { manualStart, manualCmd } = useV2Store.getState();
   const busy = useV2Store((s) => s.physBusy);
+  const [tf, setTf] = useState<any>(null);
   const [list, setList] = useState<any[] | null>(null);
   const [grown, setGrown] = useState<any[]>([]);
   const [err, setErr] = useState('');
   const [results, setResults] = useState<Record<number, any>>({});
   const load = async () => {
     try { const r = await fetch(`${VERIFY_URL}/shapes`); const j = await r.json(); setList(j.shapes); setGrown(j.grown ?? []); setErr(''); }
-    catch { setErr('the physics service is not running (py -3.12 C:\TETROBOT\sim\verify_service.py)'); }
+    catch { setErr('the physics service is not running (py -3.12 C:\\TETROBOT\\sim\\verify_service.py)'); }
   };
   const best = (k: string) => (list ?? []).filter((x) => x.kind === k && x.clear !== false).slice(0, 3);
   return (
     <Section title="Built in physics (G6)" info={<p className="msrr-note">Upright modules on the floor-receiver board, each walker docking its End B into the centre module's spine receivers, only at placements the reach sweep found good. "Build &amp; watch" runs the robot's own docking brain in MuJoCo (magnets, rotors, servos, random errors) and plays it. Takes 1–8 minutes.</p>}>
       {!list && <button className="msrr-btn small" data-testid="phys-shapes-load" onClick={load}>Load shapes</button>}
       {err && <p className="msrr-note bad">{err}</p>}
+      {list && (
+        <div data-testid="phys-transform">
+          <p className="msrr-note"><b>Transformations (watch)</b>: each one is a recorded run in real physics. Every move is the robot's own docking brain
+            against contact, magnets and servos; nothing is animated by hand. "room" = the disturbances are on (table shake, bumps, air, cardboard
+            receiver play, every magnet different; estimates).</p>
+          {GALLERY.map((g) => (
+            <div key={g.name} className="msrr-row-btns" style={{ alignItems: 'center' }}>
+              <button className="msrr-btn small primary" data-testid={`tf-watch-${g.name}`} disabled={busy} onClick={async () => setTf(await watchTransform(g.seed, g.name))}>{busy ? '…' : 'Watch'}</button>
+              {'live' in g && g.live && <button className="msrr-btn small" data-testid={`tf-live-${g.name}`} disabled={busy} title="do it now, live in real physics (same setup, the robot's own skill) - then step back / home / reset below"
+                onClick={async () => { await manualStart(manualScene(g.live.n, g.live.preset), { seed: g.seed, randomize: true, disturb: true, judge: 'off' }); manualCmd({ kind: 'skill', name: g.live.skill }); }}>▶ Live</button>}
+              <span className="msrr-note"><b>{g.title}</b> <span className="dim">· {g.note}</span></span>
+            </div>
+          ))}
+          {manual && <><SessionBar /><ShapeButtons /></>}
+          {tf?.stages && <span className={`msrr-chip ${tf.ok ? 'ok' : 'warn'}`}>{tf.stages.filter((x: any) => x.ok).length}/{tf.stages.length} stages OK</span>}
+          <p className="msrr-note dim">Not possible yet (and why): snake (needs end-to-end docking, 0% so far), cube (needs modules folded into a closed box),
+            flat table top (one upright cannot carry a module from its upper receiver: it bends over), a module left sticking out sideways cannot lift itself.</p>
+        </div>
+      )}
       {list && grown.length > 0 && (
         <div>
           <p className="msrr-note"><b>Grown shapes</b> — built module by module; each new module docks into a free spine receiver of the structure (physics-chosen)</p>

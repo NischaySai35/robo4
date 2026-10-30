@@ -23,7 +23,8 @@
  */
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import floorReceiverUrl from '@/assets/msrr/floor_receiver.stl?url';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { useThemeStore } from '@/state/themeStore';
 import { useMsrrStore, configAtStep } from '@/state/msrrStore';
@@ -33,42 +34,58 @@ import { structureAfter } from '@/robotics/msrr/transform';
 import { buildGeometry, moduleGeometry, moduleBodies, tweenGeometry } from './moduleGeometry';
 import { moduleMeshGeometries, disposeModuleMeshes } from './moduleMeshes';
 import { manualToFitted } from '@/robotics/msrr/manualBuild';
-import { useV2Store } from '@/state/msrrV2Store';
+import { useV2Store, type ManualState } from '@/state/msrrV2Store';
+import { bridge } from '@/bridge/cameraBridge';
+import { SceneManager } from '@/viewport/SceneManager';
+import ViewportStats from '@/features/canvas/ViewportStats';
+import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
+import ViewControls from '@/features/viewport-ui/ViewControls';
+import HomeButton from '@/features/viewport-ui/HomeButton';
+import { UNITS_PER_M } from '@/robotics/msrr/modulink';
+import { toView } from '@/features/msrr2/v2View';
+import { ManualPortMenu } from '@/features/msrr2/ManualTab';
 import { CUBES_PER_METRE } from '@/features/msrr/moduleMeshes';
 
 const CELL = 1; // the sandbox draws in unit lattice space; metres are the mirror's job
 
 export default function MsrrCanvas() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<any>(null);
   const theme = useThemeStore((s) => s.theme);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const v2Mode = useV2Store((s) => s.mode) === 'v2';
 
   // ── scene setup: once ──────────────────────────────────────────────────────
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    // Its OWN viewport built from the SAME parts as the Editor's: the SceneManager engine (renderer, lights, shadows, theme,
+    // render engines, grid, camera + orbit, resize) and, in the JSX, the same gizmo / view controls / Home / stats. Its scene
+    // holds only MSRR robots, in `scene` = a root group in metres (MSRR draws in its own units: 5.5 per metre, floor y -0.5).
+    // The camera bridge (what gizmo, view controls, Home and stats talk to) belongs to whichever viewport is on screen:
+    // save the editor's entries now and give every one of them back on close (30 Oct: not restoring broke the other tabs).
+    const savedBridge = { ...bridge };
+    const sm = new SceneManager(canvas);
+    sm.applyTheme(useThemeStore.getState().theme);
+    const unsubTheme = useThemeStore.subscribe((s) => sm.applyTheme(s.theme));
+    const { renderer, camera, controls } = sm;
+    const scene = new THREE.Group(); scene.name = 'msrr';
+    scene.scale.setScalar(1 / UNITS_PER_M); scene.position.y = 0.5 / UNITS_PER_M;
+    sm.scene.add(scene);
+    camera.position.set(9 / UNITS_PER_M, 8 / UNITS_PER_M, 12 / UNITS_PER_M);
+    controls.target.set(0, 1.5 / UNITS_PER_M, 0); controls.update();
+    bridge.getRendererStats = () => sm.getRendererStats();
+    bridge.getRenderEngine = () => sm._engineMode ?? 'eevee';
+    bridge.setRenderEngine = (e: string) => sm.setRenderEngine(e);
+    bridge.setWireframe = (on: boolean) => { scene.traverse((o: any) => { if (o.material && 'wireframe' in o.material) o.material.wireframe = on; }); };
+    bridge.setConnectorsVisible = (on: boolean) => { stateRef.current && (stateRef.current.portsHidden = !on); };
+    bridge.getConnectorsVisible = () => !stateRef.current?.portsHidden;
+    bridge.getFitBox = () => {
+      scene.updateMatrixWorld(true); const b = new THREE.Box3();
+      for (const c of scene.children) if (c !== grid && c !== ground && c.visible) b.expandByObject(c);   // the robots, not the lattice / pick floor
+      return b.isEmpty() ? null : b;
+    };
 
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio));
-    const scene = new THREE.Scene();
-
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
-    camera.position.set(9, 8, 12);
-
-    const controls = new OrbitControls(camera, canvas);
-    controls.enableDamping = true;
-    controls.target.set(0, 1.5, 0);
-
-    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-    const key1 = new THREE.DirectionalLight(0xffffff, 1.1);
-    key1.position.set(6, 10, 8);
-    scene.add(key1);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.35);
-    fill.position.set(-7, 4, -6);
-    scene.add(fill);
-
-    const grid = new THREE.GridHelper(40, 40);
+    const grid = new THREE.GridHelper(40, 40);   // the cube lattice (Legacy tab only; v2 uses the Studio grid)
     // Lattice cell centres are integers, so the grid LINES must fall on half
     // integers for a cube to sit inside a square rather than straddling four.
     grid.position.set(0.5, -0.5, 0.5);
@@ -169,6 +186,8 @@ export default function MsrrCanvas() {
       // the real try8 parts, coloured like the Editor shows them
       pla: new THREE.MeshStandardMaterial({ color: 0xf1f1ee, roughness: 0.55, metalness: 0.05 }),
       spine: new THREE.MeshStandardMaterial({ color: 0x8a909c, roughness: 0.5, metalness: 0.25 }),
+      endA: new THREE.MeshStandardMaterial({ color: 0x1f3fbf, roughness: 0.5, metalness: 0.1 }),   // End A = dark blue (same as the sim pictures)
+      endB: new THREE.MeshStandardMaterial({ color: 0xff8c0d, roughness: 0.5, metalness: 0.1 }),   // End B = orange
       rod: new THREE.MeshStandardMaterial({ color: 0x9aa3b2, roughness: 0.5, metalness: 0.35 }),
       bigRod: new THREE.MeshStandardMaterial({ color: 0x7f8899, roughness: 0.45, metalness: 0.4 }),
       twist: new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.4, metalness: 0.3 }),
@@ -211,44 +230,28 @@ export default function MsrrCanvas() {
         for (const m of builtMats) m.dispose();
         for (const m of Object.values(partMats)) m.dispose();
         for (const m of Object.values(mats)) (m as any).dispose?.();
-        controls.dispose();
-        renderer.dispose();
+        unsubTheme(); sm.dispose();
+        for (const k of Object.keys(bridge)) if (!(k in savedBridge)) delete (bridge as any)[k];
+        Object.assign(bridge, savedBridge);                         // the editor's viewport owns the controls again
       },
     };
     stateRef.current = st;
 
-    const resize = () => {
-      const parent = canvas.parentElement;
-      if (!parent) return;
-      const w = parent.clientWidth || 1;
-      const h = parent.clientHeight || 1;
-      renderer.setSize(w, h, false);
-      camera.aspect = w / h;
-      camera.updateProjectionMatrix();
-    };
-    const ro = new ResizeObserver(resize);
-    if (canvas.parentElement) ro.observe(canvas.parentElement);
-    resize();
-
-    // ── render loop ──────────────────────────────────────────────────────────
-    let raf = 0;
-    let last = performance.now();
+    // ── render loop (MSRR plays live physics: draw every frame) ───────────────
+    let raf = 0, last = performance.now();
     const loop = () => {
       raf = requestAnimationFrame(loop);
-      const now = performance.now();
-      const dt = Math.min(0.1, (now - last) / 1000);
-      last = now;
+      const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
       useMsrrStore.getState().tick(dt);
       useV2Store.getState().tick(dt);
       syncScene(st);
-      controls.update();
-      renderer.render(scene, camera);
+      grid.visible = useV2Store.getState().mode !== 'v2';
+      sm.render();
     };
     loop();
 
     return () => {
       cancelAnimationFrame(raf);
-      ro.disconnect();
       st.dispose();
       stateRef.current = null;
     };
@@ -258,8 +261,7 @@ export default function MsrrCanvas() {
   useEffect(() => {
     const st = stateRef.current;
     if (!st) return;
-    const dark = theme === 'dark';
-    st.scene.background = new THREE.Color(dark ? 0x14161a : 0xeef0f4);
+    const dark = theme === 'dark';      // background: the shared SceneManager's theme
     st.mats.edge.color.set(dark ? 0xffffff : 0x14161a);
     st.mats.edge.opacity = dark ? 0.22 : 0.35;
   }, [theme]);
@@ -330,7 +332,7 @@ export default function MsrrCanvas() {
 
       const groundHit = st.raycaster.intersectObject(st.ground, false);
       if (!groundHit.length) return null;
-      const p = groundHit[0].point;
+      const p = st.scene.worldToLocal(groundHit[0].point.clone());   // into the MSRR root (its own units)
       const newCell: Cell = [Math.round(p.x), 0, Math.round(p.z)];
       return { cube: newCell, normal: [0, 1, 0], newCell, source: 'ground' };
     };
@@ -373,9 +375,22 @@ export default function MsrrCanvas() {
       return tab === 'build' || tab === 'draw';
     };
 
+    /** MANUAL tab: the connector marker under the pointer (or null) */
+    const pickPort = (ev: PointerEvent | MouseEvent): string | null => {
+      const st = stateRef.current;
+      if (!st?.portGroup || !useV2Store.getState().manual) return null;
+      aimRay(ev);
+      const hit = st.raycaster.intersectObjects(st.portGroup.children, false).find((h: any) => h.object.userData.port);
+      return hit ? hit.object.userData.port : null;
+    };
+
     const onDown = (ev: PointerEvent) => {
       const st = stateRef.current;
       if (!st) return;
+      if (ev.button === 0 && useV2Store.getState().manual) {
+        const id = pickPort(ev);
+        if (id) { useV2Store.getState().manualPick(id); return; }
+      }
       if (ev.button === 2) { st.rightDown = { x: ev.clientX, y: ev.clientY }; return; }
       if (ev.button !== 0 || !editable()) return;
       const f = pickFace(ev);
@@ -389,6 +404,14 @@ export default function MsrrCanvas() {
     const onMove = (ev: PointerEvent) => {
       const st = stateRef.current;
       if (!st) return;
+      const man = useV2Store.getState().manual;
+      if (man) {
+        const id = pickPort(ev);
+        const rect = canvas.getBoundingClientRect(), x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+        if (id && id !== man.hover?.id) useV2Store.getState().manualSet({ hover: { id, x, y } });
+        else if (!id && man.hover && Math.hypot(x - man.hover.x, y - man.hover.y) > 60) useV2Store.getState().manualSet({ hover: null });   // moved away: menu goes
+
+      }
       if (!editable()) { st.hoverCells = []; return; }
       if (st.drag) {
         st.drag.count = dragCount(ev, st.drag.from, st.drag.normal);
@@ -451,6 +474,11 @@ export default function MsrrCanvas() {
   return (
     <div className="msrr-canvas-wrap">
       <canvas ref={canvasRef} className="msrr-canvas" />
+      {/* the same viewport overlays as the Editor's (they talk to this viewport through the bridge while it is open) */}
+      <div className="top-center-cluster"><HomeButton /></div>
+      <div className="top-right-cluster"><NavigationGizmo /><ViewControls /></div>
+      <div className="vp-hud-stack"><ViewportStats /></div>
+      {v2Mode && <ManualPortMenu />}
       {!v2Mode && <div className="msrr-canvas-hint">
         click the ground or a cube face to add one · drag to extrude a run · right-click a cube to delete
       </div>}
@@ -520,6 +548,7 @@ function syncScene(st: any) {
   const cells = v2On ? [] : cellsOf(baseConfig);
   syncV2Overlay(st, v2On ? v2.view.overlay : null);
   syncReceivers(st, v2On ? v2.receivers : null);
+  syncPorts(st, v2On ? v2.manual : null);
 
   // Grow the pool as needed; extras are hidden rather than destroyed.
   while (st.cubePool.length < cells.length) {
@@ -650,9 +679,12 @@ function syncScene(st: any) {
         for (const body of moduleBodies(shownModules[i])) {
           const geo = meshGeos.get(body.name);
           if (!geo) continue;
+          // the two OUTER end connectors in their own colours (the module is symmetric: which end is on the floor?)
           const mat = highlight ? st.mats.moving
             : body.kind === 'rotor' ? tint
-              : body.kind === 'spine' ? st.partMats.spine : st.partMats.pla;
+              : body.name === 'EndA_LockModule' ? st.partMats.endA
+                : body.name === 'EndB_LockModule' ? st.partMats.endB
+                  : body.kind === 'spine' ? st.partMats.spine : st.partMats.pla;
           const mesh = nextMesh(geo, mat);
           mesh.position.set(body.position[0], body.position[1], body.position[2]);
           mesh.quaternion.set(body.quaternion[0], body.quaternion[1], body.quaternion[2], body.quaternion[3]);
@@ -782,6 +814,24 @@ function syncV2Overlay(st: any, ov: import('@/features/msrr2/v2View').V2Overlay 
 
 /** Floor receivers: a disc on the floor at each one (the real part is ~80 mm across, pads 15 mm tall). A receiver that
  *  holds a locked end is drawn solid and labelled, so it is visible WHAT holds the robot up. */
+/** Nischay's real floor receiver (floor_receiver.stl, the same file the MuJoCo scene uses), baked once into viewport units:
+ *  STL: mm, receiver axis = -Y (back face at y = -0.65, pad tops at y = -15.95), centre x -276.44 / z -5.94, pads at 0/90/180/270 deg
+ *  in the X-Z plane, gaps 6.3 mm deep at 45 deg (checked 28 Oct). Viewport: Y up, base on the floor, pads along +X before the yaw. */
+let rxGeo: THREE.BufferGeometry | null = null, rxLoading = false;
+function floorReceiverGeometry(onLoad: () => void): THREE.BufferGeometry | null {
+  if (rxGeo || rxLoading) return rxGeo;
+  rxLoading = true;
+  fetch(floorReceiverUrl).then((r) => r.arrayBuffer()).then((buf) => {
+    const geo = new STLLoader().parse(buf);
+    const k = 0.001 * CUBES_PER_METRE;
+    geo.applyMatrix4(new THREE.Matrix4().makeTranslation(276.44, 0.65, 5.94));          // centre on the axis, back face at 0
+    geo.applyMatrix4(new THREE.Matrix4().makeRotationX(Math.PI));                         // receiver axis -Y -> +Y (up)
+    geo.applyMatrix4(new THREE.Matrix4().makeScale(k, k, k));
+    geo.computeVertexNormals(); rxGeo = geo; onLoad();
+  }).catch(() => { rxLoading = false; });
+  return null;
+}
+
 function syncReceivers(st: any, list: import('@/features/msrr2/physicsView').ReceiverMark[] | null) {
   if (st.rcvSrc === list) return;
   st.rcvSrc = list;
@@ -790,21 +840,56 @@ function syncReceivers(st: any, list: import('@/features/msrr2/physicsView').Rec
   for (const c of [...g.children]) { g.remove(c); (c as any).geometry?.dispose?.(); (c as any).material?.dispose?.(); }
   if (!list) return;
   const R = 0.04 * CUBES_PER_METRE, H = 0.0153 * CUBES_PER_METRE;
+  // labels sit on the floor just outside each receiver, pointing away from the middle of the receivers in use:
+  // a module standing in a receiver hides anything placed above it (the old label sat right behind it)
+  const cx = list.reduce((a, r) => a + r.p[0], 0) / Math.max(1, list.length), cz = list.reduce((a, r) => a + r.p[2], 0) / Math.max(1, list.length);
+  const rx = floorReceiverGeometry(() => { st.rcvSrc = null; });          // the real STL (async): redraw once it has loaded
   for (const r of list) {
-    const mesh = new THREE.Mesh(new THREE.CylinderGeometry(R, R, H, 32), new THREE.MeshStandardMaterial({ color: r.locked ? 0x2f80ed : 0x8a94a6, transparent: !r.locked, opacity: r.locked ? 1 : 0.55 }));
-    mesh.position.set(r.p[0], r.p[1] + H / 2, r.p[2]); g.add(mesh);
+    const mat = new THREE.MeshStandardMaterial({ color: r.locked ? 0x2f80ed : 0x8a94a6, transparent: !r.locked, opacity: r.locked ? 1 : 0.7, metalness: 0.1, roughness: 0.6 });
+    const mesh = rx ? new THREE.Mesh(rx, mat) : new THREE.Mesh(new THREE.CylinderGeometry(R, R, H, 32), mat);
+    if (rx) { mesh.position.set(r.p[0], r.p[1], r.p[2]); mesh.rotation.y = ((r.yawDeg + 45) * Math.PI) / 180; }   // pads at yaw ± 45 (x = a gap)
+    else mesh.position.set(r.p[0], r.p[1] + H / 2, r.p[2]);
+    g.add(mesh);
     if (r.locked) { const ring = new THREE.Mesh(new THREE.TorusGeometry(R * 1.25, R * 0.12, 8, 40), new THREE.MeshBasicMaterial({ color: 0x2ecc71 })); ring.rotation.x = Math.PI / 2; ring.position.set(r.p[0], r.p[1] + H, r.p[2]); g.add(ring); }
-    g.add(textSprite(r.label, [r.p[0], r.p[1] + H + 0.35, r.p[2] + R * 2]));
+    let dx = r.p[0] - cx, dz = r.p[2] - cz; const dn = Math.hypot(dx, dz);
+    if (dn < 1e-6) { dx = 0; dz = 1; } else { dx /= dn; dz /= dn; }
+    const out = R * 2.6;
+    g.add(textSprite(r.label, [r.p[0] + dx * out, r.p[1] + H + 0.12, r.p[2] + dz * out], 0.28));
   }
 }
 
-function textSprite(text: string, p: number[]): THREE.Sprite {
-  const c = document.createElement('canvas'); c.width = 256; c.height = 64;
+/** MANUAL tab: every connector of the live session as a small ball you can hover (menu) and click (connect mode).
+ *  End A dark blue, End B orange, spine receivers grey, floor receivers cyan; locked = green, picked = yellow. */
+function syncPorts(st: any, man: ManualState | null) {
+  const key = man ? man.ports : null;
+  if (!st.portGroup) { st.portGroup = new THREE.Group(); st.scene.add(st.portGroup); st.portGeo = new THREE.SphereGeometry(0.014 * CUBES_PER_METRE, 12, 10); }
+  const g: THREE.Group = st.portGroup;
+  const sig = man ? `${man.pick.join(',')}|${man.hover?.id ?? ''}|${man.mode}` : '';
+  if (st.portSrc === key && st.portSig === sig) return;
+  st.portSrc = key; st.portSig = sig;
+  for (const c of [...g.children]) { g.remove(c); (c as any).material?.dispose?.(); }
+  g.visible = !st.portsHidden;
+  if (!man) return;
+  for (const p of man.ports) {
+    const col = man.pick.includes(p.id) ? 0xffd34d : p.locked ? 0x2ecc71 : p.kind === 'floor' ? 0x22c1d6 : p.kind === 'side' ? 0xa0a8b8 : p.id.endsWith('.A') ? 0x1f3fbf : 0xff8c1a;
+    const mesh = new THREE.Mesh(st.portGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: man.hover?.id === p.id ? 1 : 0.85, depthTest: false }));
+    const v = toView([p.p[0], p.p[1], p.p[2]]); mesh.position.set(v[0], v[1], v[2]); mesh.renderOrder = 12; mesh.userData.port = p.id;
+    if (man.hover?.id === p.id) mesh.scale.setScalar(1.6);
+    g.add(mesh);
+  }
+}
+
+/** a label that always faces the camera and is drawn on top; the canvas is sized to the text so nothing is cut off */
+function textSprite(text: string, p: number[], height = 0.4): THREE.Sprite {
+  const font = 'bold 34px sans-serif';
+  const m = document.createElement('canvas').getContext('2d')!; m.font = font;
+  const w = Math.ceil(m.measureText(text).width) + 24, h = 64;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
   const x = c.getContext('2d')!;
-  x.fillStyle = 'rgba(20,24,32,0.75)'; x.fillRect(0, 0, 256, 64);
-  x.fillStyle = '#ffd34d'; x.font = 'bold 34px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, 128, 34);
+  x.fillStyle = 'rgba(20,24,32,0.75)'; x.fillRect(0, 0, w, h);
+  x.fillStyle = '#ffd34d'; x.font = font; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, w / 2, 34);
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
-  sp.position.set(p[0], p[1], p[2]); sp.scale.set(1.6, 0.4, 1); sp.renderOrder = 11;
+  sp.position.set(p[0], p[1], p[2]); sp.scale.set(height * w / h, height, 1); sp.renderOrder = 11;
   return sp;
 }
 

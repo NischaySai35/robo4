@@ -73,6 +73,40 @@ export const bodiesOfComponent = (doc: Document, componentId: string) =>
 export const jointsOfComponent = (doc: Document, componentId: string) =>
   Object.values(doc.joints).filter(j => j.componentId === componentId);
 
+/** A copy of `doc` with these joint values applied (immutable; transient poses). */
+export function withJointValues<D extends { joints: Record<string, any> }>(doc: D, vals: Record<string, number>): D {
+  const joints: any = { ...doc.joints };
+  for (const [id, v] of Object.entries(vals)) {
+    const j = joints[id];
+    if (j) joints[id] = { ...j, state: { ...j.state, value: v } };
+  }
+  return { ...doc, joints };
+}
+
+/** A body/joint by id, else by name (exact, then substring; case-insensitive). */
+export function findEntity(doc: Document, kind: 'body' | 'joint', key: unknown) {
+  const collection: Record<string, { name: string }> = kind === 'joint' ? doc.joints : doc.bodies;
+  if (typeof key === 'string' && collection[key]) return collection[key] as any;
+  const needle = String(key || '').toLowerCase();
+  if (!needle) return null;
+  return (Object.values(collection).find((e) => e.name.toLowerCase() === needle || e.name.toLowerCase().includes(needle)) ?? null) as any;
+}
+
+/** Bodies + joints grouped per Component (doc order), plus the ones in no (existing) Component. */
+export function componentGroups(doc: Document) {
+  const comps = doc.components ?? {};
+  const bodies = Object.values(doc.bodies), joints = Object.values(doc.joints);
+  const loose = (e: { componentId?: string | null }) => !e.componentId || !comps[e.componentId];
+  return {
+    groups: Object.values(comps).map((comp) => ({
+      comp,
+      bodies: bodies.filter((b) => b.componentId === comp.id),
+      joints: joints.filter((j) => j.componentId === comp.id),
+    })),
+    unassigned: { bodies: bodies.filter(loose), joints: joints.filter(loose) },
+  };
+}
+
 // ── graph algorithms ────────────────────────────────────────────────────────────
 
 /** Connected components of the body graph (over joints). Returns array of Set<bodyId>. */

@@ -16,19 +16,27 @@ export interface PhysRun {
   bodies: [string, string][];
   frame0: number[];
   frames: { t: number; p: number[] }[];
-  events: { step: number; verb: string; label: string; t: number; latched?: boolean; note?: string; end_off_mm?: number[] }[];
+  /** plan runs: one per plan step (step, verb); transformation runs: one per finished stage (label only, 'OK' / 'FAILED' at the end) */
+  events: { step?: number; verb?: string; label: string; t: number; latched?: boolean; note?: string; end_off_mm?: number[] }[];
   fps: number;
   randomized: boolean;
   seed: number;
   finite: boolean;
   /** floor receivers in that world, and which module end is LOCKED in each (Studio v2 coords, metres) */
-  receivers?: { id: string; x: number; z: number; locked: string | null }[];
+  receivers?: { id: string; x: number; z: number; locked: string | null; yawDeg?: number }[];
+  /** when locks change during the run (a module stepping from one floor receiver to another): the list from time t on */
+  receivers_at?: { t: number; receivers: { id: string; x: number; z: number; locked: string | null; yawDeg?: number }[] }[];
 }
 
+/** the floor receivers as they are at time t of a run (index into receivers_at, -1 = the run's single list) */
+export const receiversIndexAt = (run: PhysRun, t: number): number =>
+  (run.receivers_at ?? []).reduce((k, r, i) => (r.t <= t ? i : k), -1);
+
 /** A floor receiver as the viewport draws it: its seat in viewport units, a label, locked or not */
-export interface ReceiverMark { p: Vec3; label: string; locked: boolean }
-export const receiverMarks = (list: { id: string; x: number; z: number; locked: string | null }[] | undefined): ReceiverMark[] =>
-  (list ?? []).map((r) => ({ p: toView([r.x, 0, r.z]) as Vec3, label: r.locked ? `${r.id} · LOCKED ${r.locked}` : r.id, locked: !!r.locked }));
+export interface ReceiverMark { p: Vec3; label: string; locked: boolean; /** anchor yaw: x points at a GAP, pads at yaw ± 45° */ yawDeg: number }
+/** physics runs place every floor receiver at yaw 45 (shape_build / phys_world); older recordings did not send it */
+export const receiverMarks = (list: { id: string; x: number; z: number; locked: string | null; yawDeg?: number }[] | undefined): ReceiverMark[] =>
+  (list ?? []).map((r) => ({ p: toView([r.x, 0, r.z]) as Vec3, label: r.locked ? `${r.id} · LOCKED ${r.locked}` : r.id, locked: !!r.locked, yawDeg: r.yawDeg ?? 45 }));
 
 const qmul = (a: Quat, b: Quat): Quat => [
   a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],

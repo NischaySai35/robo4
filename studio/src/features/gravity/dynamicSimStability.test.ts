@@ -15,12 +15,8 @@ import assert from 'node:assert/strict';
 import { makeDocument, makeGeometry, GeometryType, JointType } from '@/core/model/index';
 import { buildSerialChain } from '@/core/model/builders';
 import { DynamicSim } from './dynamicSim';
+import { restFK } from '@/testing/fixtures';
 
-function fkOf(doc: any) {
-  const fk = new Map<string, { position: number[]; quaternion: number[] }>();
-  for (const b of Object.values(doc.bodies) as any[]) fk.set(b.id, { position: b.transform.position, quaternion: b.transform.quaternion });
-  return fk;
-}
 
 test('deeply overlapping non-adjacent bodies (nested by design) do not blow the sim to NaN', async () => {
   // Three separate branches off a root, where two SIBLING branches' tip
@@ -40,7 +36,7 @@ test('deeply overlapping non-adjacent bodies (nested by design) do not blow the 
   ];
   const { doc } = buildSerialChain(makeDocument({ name: 'D' }), { name: 'D', links, joints });
 
-  const sim = await DynamicSim.create(doc, fkOf(doc), -3.2, () => null, null);
+  const sim = await DynamicSim.create(doc, restFK(doc), -3.2, () => null, null);
   assert.ok(sim);
   for (let i = 0; i < 120; i++) {
     const poses = sim!.step(1 / 60);
@@ -55,7 +51,7 @@ test('a single instability occurrence self-heals via reset instead of propagatin
   const box = makeGeometry(GeometryType.BOX, { size: [0.2, 0.2, 0.2] });
   const links = [{ name: 'Root', geometry: box, transform: { position: [0, 5, 0], quaternion: [0, 0, 0, 1] } }];
   const { doc } = buildSerialChain(makeDocument({ name: 'D' }), { name: 'D', links, joints: [] });
-  const sim = await DynamicSim.create(doc, fkOf(doc), -3.2, () => null, null);
+  const sim = await DynamicSim.create(doc, restFK(doc), -3.2, () => null, null);
   assert.ok(sim);
 
   const [rb] = (sim as any)._clusterBody.values();
@@ -71,7 +67,7 @@ test('once frozen, step() short-circuits to a stable no-op read instead of stepp
   const box = makeGeometry(GeometryType.BOX, { size: [0.2, 0.2, 0.2] });
   const links = [{ name: 'Root', geometry: box, transform: { position: [0, 5, 0], quaternion: [0, 0, 0, 1] } }];
   const { doc } = buildSerialChain(makeDocument({ name: 'D' }), { name: 'D', links, joints: [] });
-  const sim = await DynamicSim.create(doc, fkOf(doc), -3.2, () => null, null);
+  const sim = await DynamicSim.create(doc, restFK(doc), -3.2, () => null, null);
   assert.ok(sim);
 
   // Directly force the frozen state (the natural double-instability trigger
@@ -100,7 +96,7 @@ test('isSettled(): false while a dropped body is still falling, true once it com
   ];
   const { doc } = buildSerialChain(makeDocument({ name: 'Drop' }), { name: 'Drop', links, joints: [] });
 
-  const sim = await DynamicSim.create(doc, fkOf(doc), GROUND_Y, () => null, null);
+  const sim = await DynamicSim.create(doc, restFK(doc), GROUND_Y, () => null, null);
   assert.ok(sim);
 
   sim!.step(1 / 60);
@@ -145,7 +141,7 @@ test('a module chain with driven end-locks settles under gravity and stays still
   joints.push({ type: JointType.REVOLUTE, axis: [1, 0, 0], origin: { position: [0.09, 0, 0], quaternion: [0, 0, 0, 1] } });
 
   const { doc } = buildSerialChain(makeDocument({ name: 'Chain' }), { name: 'Chain', links, joints });
-  const sim = await DynamicSim.create(doc, fkOf(doc), GROUND_Y, () => null, null);
+  const sim = await DynamicSim.create(doc, restFK(doc), GROUND_Y, () => null, null);
   assert.ok(sim);
 
   let settled = false;

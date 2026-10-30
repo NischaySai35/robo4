@@ -1,13 +1,4 @@
-.in-panel {
-  display: flex;
-  flex-direction: column;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  overflow: hidden;
-  font-family: var(--font-ui);
-  max-height: 46vh;
-}
+/* .in-panel card base: styles/index.css (shared with the other list panel) */
 
 .in-head {
   display: flex;
@@ -17,13 +8,6 @@
   border-bottom: 1px solid var(--border);
 }
 .in-head:empty { display: none; }
-.in-titletxt {
-  font-family: var(--font-mono);
-  font-size: 12.5px;
-  font-weight: 700;
-  letter-spacing: 2px;
-  color: var(--text-dim);
-}
 .in-gizmo { display: flex; gap: 4px; }
 .in-gz {
   width: 24px; height: 24px;
@@ -162,22 +146,6 @@
 }
 .in-ops button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
 .in-ops button.in-ops-active { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
-
-.in-ops-sub { display: flex; gap: 6px; margin-top: 2px; }
-.in-ops-sub button {
-  flex: 1 1 0;
-  padding: 5px 4px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-card);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.in-ops-sub button:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
 
 .in-ops-array { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
 .in-ops-array-row {

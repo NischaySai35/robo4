@@ -32,7 +32,8 @@ export function mat(t: any) {
   );
 }
 
-const originMat = (o: any) => mat(o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
+/** A joint origin (may be absent → identity) as a matrix. */
+export const originMat = (o: any) => mat(o ?? { position: [0, 0, 0], quaternion: [0, 0, 0, 1] });
 
 const _dofAxis = new THREE.Vector3();
 

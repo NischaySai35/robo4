@@ -15,6 +15,7 @@ import { chainJoints } from '@/kinematics/modelIK';
 import { weightedReward, type Task, type RewardWeights } from './task';
 import { CollisionModel } from '@/robotics/collision';
 import type { Document } from '@/core/model/index';
+import { withJointValues } from '@/core/model/index';
 
 export const REACH_DEFAULT_WEIGHTS: RewardWeights = { progress: 10, success: 5, control: -0.01, alive: -0.01, collision: -0.5 };
 
@@ -79,9 +80,7 @@ export class ModelReachTask implements Task {
   tipDistance() { return this.distance(); }
 
   private tip(): [number, number, number] {
-    const joints: any = { ...this.doc.joints };
-    this.chain.forEach((j, i) => { joints[j.id] = { ...j, state: { ...j.state, value: this.values[i] } }; });
-    const p = computeFK({ ...this.doc, joints }).get(this.tipId)?.position ?? [0, 0, 0];
+    const p = computeFK(withJointValues(this.doc, Object.fromEntries(this.chain.map((j, i) => [j.id, this.values[i]])))).get(this.tipId)?.position ?? [0, 0, 0];
     return [p[0], p[1], p[2]];
   }
 

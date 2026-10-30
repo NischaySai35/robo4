@@ -6,29 +6,14 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeDocument, makeGeometry, GeometryType } from '@/core/model/index';
-import { buildSerialChain } from '@/core/model/builders';
 import { BoxWorld, extraContactTorques } from './BoxWorld';
+import { horizontalArm, restFK } from '@/testing/fixtures';
 
-function buildArm() {
-  const box = makeGeometry(GeometryType.BOX, { size: [0.4, 0.2, 0.2] });
-  const links = [0, 1].map((i) => ({
-    name: `L${i + 1}`, geometry: box,
-    transform: { position: [i * 0.5, 1, 0], quaternion: [0, 0, 0, 1] },
-  }));
-  const joints = [{ name: 'J1', type: 'revolute', axis: [0, 0, 1], origin: { position: [0.5, 0, 0], quaternion: [0, 0, 0, 1] } }];
-  return buildSerialChain(makeDocument({ name: 'Arm' }), { name: 'Arm', links, joints }).doc;
-}
 
-function fkOf(doc: any) {
-  const fk = new Map<string, { position: number[]; quaternion: number[] }>();
-  for (const b of Object.values(doc.bodies) as any[]) fk.set(b.id, { position: b.transform.position, quaternion: b.transform.quaternion });
-  return fk;
-}
 
 test('robot bodies stay static (do not move) while boxes fall', async () => {
-  const doc = buildArm();
-  const fk = fkOf(doc);
+  const doc = horizontalArm({ limit: null });
+  const fk = restFK(doc);
   const world = await BoxWorld.create(doc, fk, -3.2);
   const rb = [...world._robotBodies.values()][0];
   const p0 = rb.GetPosition();
@@ -41,8 +26,8 @@ test('robot bodies stay static (do not move) while boxes fall', async () => {
 });
 
 test('spawnBox falls and removeBox parks it out of the pool', async () => {
-  const doc = buildArm();
-  const world = await BoxWorld.create(doc, fkOf(doc), -50);
+  const doc = horizontalArm({ limit: null });
+  const world = await BoxWorld.create(doc, restFK(doc), -50);
   const h = world.spawnBox([0, 10, 0], [0.1, 0.1, 0.1], 500);
   assert.notEqual(h, -1);
   const before = world.boxPoses().get(h)!.pos[1];
@@ -55,8 +40,8 @@ test('spawnBox falls and removeBox parks it out of the pool', async () => {
 });
 
 test('updateRobotPose moves a static body to its new pose', async () => {
-  const doc = buildArm();
-  const fk = fkOf(doc);
+  const doc = horizontalArm({ limit: null });
+  const fk = restFK(doc);
   const world = await BoxWorld.create(doc, fk, -3.2);
   const bodyId = Object.keys(doc.bodies)[0];
   const rb = world._robotBodies.get(bodyId);
@@ -69,8 +54,8 @@ test('updateRobotPose moves a static body to its new pose', async () => {
 });
 
 test('a hard impact registers an impulsive torque on the nearby joint chain', async () => {
-  const doc = buildArm();
-  const fk = fkOf(doc);
+  const doc = horizontalArm({ limit: null });
+  const fk = restFK(doc);
   const world = await BoxWorld.create(doc, fk, -3.2);
   extraContactTorques.clear();
   // Drop a heavy box directly onto the second link from just above it.

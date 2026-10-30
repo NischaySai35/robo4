@@ -15,6 +15,7 @@
 import * as THREE from 'three';
 import { computeFK, buildChildJointMap } from './modelFK';
 import type { Document } from '@/core/model/index';
+import { withJointValues } from '@/core/model/index';
 
 const MOVABLE = new Set(['revolute', 'continuous', 'prismatic']);
 
@@ -91,11 +92,7 @@ export function chainJoints(doc: any, tipId: any, rigidRootId?: string | null) {
 
 /** FK tip pose (position + orientation) for a candidate set of joint values. */
 function tipPose(doc: Document, tipId: string, values: Record<string, number>) {
-  const joints: Record<string, unknown> = {};
-  for (const [id, j] of Object.entries(doc.joints)) {
-    joints[id] = id in values ? { ...j, state: { ...j.state, value: values[id] } } : j;
-  }
-  const fk = computeFK({ ...doc, joints });
+  const fk = computeFK(withJointValues(doc, values));
   const t = fk.get(tipId);
   return {
     pos: new THREE.Vector3(...(t ? t.position : [0, 0, 0])),
@@ -121,7 +118,7 @@ function rotVec(q: THREE.Quaternion): THREE.Vector3 {
  * elimination with partial pivoting. Returns null if singular. Used for the DLS
  * normal equations (J Jᵀ + λ²I)·y = e at both m=3 (position) and m=6 (full pose).
  */
-function solveLinear(A: number[][], b: number[]): number[] | null {
+export function solveLinear(A: number[][], b: number[]): number[] | null {
   const m = b.length;
   const M = A.map((row, i) => [...row, b[i]]); // augmented
   for (let col = 0; col < m; col++) {

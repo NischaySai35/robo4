@@ -230,6 +230,14 @@ export interface Document {
   meta: Meta;
 }
 
+/** The connectors stored on a body (body.meta.connectors), [] when none. */
+export const bodyConnectors = (body: { meta?: Meta } | null | undefined): Connector[] =>
+  ((body?.meta as any)?.connectors as Connector[] | undefined) ?? [];
+
+/** A fresh connector at the body origin, facing +Z, numbered after `existing`. */
+export const newConnector = (existing: Connector[]): Connector =>
+  ({ id: uid('con'), name: `Connector ${existing.length + 1}`, position: [0, 0, 0], normal: [0, 0, 1] });
+
 // ── id generation ────────────────────────────────────────────────────────────
 
 let _counter = 0;

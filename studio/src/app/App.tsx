@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import './App.css';
 import LeftPanel from '@/features/panels/LeftPanel';
 import AnimLeftPanel from '@/features/panels/AnimLeftPanel';
@@ -9,6 +9,7 @@ import HomeButton from '@/features/viewport-ui/HomeButton';
 import IkIndicator from '@/features/viewport-ui/IkIndicator';
 import ServoController from '@/features/servo/ServoController';
 import SimTransmitPanel from '@/features/connection/SimTransmitPanel';
+import { beginDrag } from '@/features/common/drag';
 import ConnectionWindow from '@/features/connection/ConnectionWindow';
 import IntroOverlay from '@/features/intro/IntroOverlay';
 import StartupProjects from '@/features/startup/StartupProjects';
@@ -152,7 +153,7 @@ function selectAllBodies() {
 if (typeof window !== 'undefined') window.tetrobotModel = useModelStore;
 
 // Top-level workspace pages. The 3D scene is shared across editor/analysis/training/
-// animation; msrr runs its own lattice sandbox viewport and motor is the hardware page.
+// animation; msrr has its own viewport built from the same components; motor is the hardware page.
 const tabIcon = (d: string) => (
   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
     {d.split('|').map((p, i) => <path key={i} d={p} />)}
@@ -477,32 +478,10 @@ export default function App() {
     document.title = `TETROBOT — ${docName ?? 'untitled'}`;
   }, [docName]);
 
-  const panelWidthRef = useRef(panelWidth);
-  panelWidthRef.current = panelWidth;
-
-  const startPanelResize = useCallback((e: any) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const startX   = e.clientX;
-    const startW   = panelWidthRef.current;
-    const maxW     = Math.floor(window.innerWidth / 2);
-    document.body.style.cursor     = 'col-resize';
-    document.body.style.userSelect = 'none';
-
-    const onMove = (ev: any) => {
-      const next = Math.max(MIN_PANEL_W, Math.min(maxW, startW + (ev.clientX - startX)));
-      panelWidthRef.current = next;
-      setPanelWidth(next);
-    };
-    const onUp = () => {
-      document.body.style.cursor     = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup',   onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup',   onUp);
-  }, []);
+  const startPanelResize = (e: React.MouseEvent) => {
+    const w0 = panelWidth, maxW = Math.floor(window.innerWidth / 2);
+    beginDrag(e, 'col-resize', (dx) => setPanelWidth(Math.max(MIN_PANEL_W, Math.min(maxW, w0 + dx))));
+  };
 
   const toggleConn = useCallback(() => setConnOpen(v => !v), []);
 
@@ -647,10 +626,8 @@ export default function App() {
       <AppHeader page={page} setPage={setPage} />
 
       <main className="app-main">
-        {/* Shared 3D workspace — Editor / Analysis / Training / Animation. Always
-            mounted (keeps the Three scene alive); hidden on the Motor and MSRR pages.
-            Kept mounted on MSRR specifically so the lattice mirror can keep driving
-            real modules in this scene while you watch the sandbox. */}
+        {/* Shared 3D workspace — Editor / Analysis / Training / Animation. Always mounted (keeps the Three scene
+            alive); hidden on the Motor, MSRR and ESP-TTL pages (MSRR has its own viewport from the same components). */}
         <div
           className="app-root"
           style={page === 'motor' || page === 'msrr' || page === 'esptt' ? {
@@ -699,15 +676,15 @@ export default function App() {
           {page === 'animation' && <ResizablePanel storageKey="tetrobot:panel:animation" defaultW={480}><Timeline /></ResizablePanel>}
         </div>
 
-        {/* MSRR Experiments — its own lattice viewport + experiment panel. Mounted
-            only while active: the sandbox owns a second WebGL context, and there is
-            no reason to hold one open on every other page. */}
+        {/* MSRR Experiments: its OWN viewport, built from the same viewport components (SceneManager engine, gizmo,
+            view controls, Home, stats) with its own scene: only MSRR robots. Mounted only while active. */}
         {page === 'msrr' && (
           <div className="app-msrr-wrap">
             <div className="msrr-main"><MsrrCanvas /></div>
             <ResizablePanel storageKey="tetrobot:panel:msrr" defaultW={430}><MsrrPanel /></ResizablePanel>
           </div>
         )}
+
 
         {/* ESP-TTL — full-width console for one board. Mounted only while active so its
             telemetry poll stops the moment you leave: the ESP serves one client at a time. */}

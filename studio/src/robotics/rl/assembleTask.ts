@@ -27,6 +27,7 @@
 import * as THREE from 'three';
 import { weightedReward, type Task, type RewardWeights } from './task';
 import type { Document, Connector } from '@/core/model/index';
+import { bodyConnectors } from '@/core/model/index';
 import { listConnectors } from '@/assembly/connectorSnap';
 
 export const ASSEMBLE_DEFAULT_WEIGHTS: RewardWeights = {
@@ -84,7 +85,7 @@ export class AssembleTask implements Task {
         const bq = new THREE.Quaternion(...b.transform.quaternion);
         const bp = new THREE.Vector3(...b.transform.position).sub(pivot);
         this.bodyLocal.set(b.id, { pos: bp, quat: bq, module: mi });
-        const conns: Connector[] = (b.meta?.connectors as Connector[] | undefined) ?? [];
+        const conns: Connector[] = bodyConnectors(b);
         for (const c of conns) {
           out.push({
             bodyId: b.id, connectorId: c.id,

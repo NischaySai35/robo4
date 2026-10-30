@@ -1,5 +1,7 @@
 import { commands } from '@/core/commands/index';
 import type { Document, RGBA } from '@/core/model/index';
+import { findEntity } from '@/core/model/index';
+import { num, clamp, vec3, colorFromHex } from '@/shared/coerce';
 import {
   GeometryType,
   JointType,
@@ -10,16 +12,6 @@ import {
   makeMaterial,
 } from '@/core/model/index';
 
-const clamp = (v: any, min: any, max: any) => Math.max(min, Math.min(max, v));
-const num = (v: any, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
-const vec3 = (v: any, fallback: any) => Array.isArray(v) && v.length >= 3
-  ? [num(v[0], fallback[0]), num(v[1], fallback[1]), num(v[2], fallback[2])]
-  : fallback;
-const colorFromHex = (hex: string): RGBA | null => {
-  if (typeof hex !== 'string' || !/^#[0-9a-f]{6}$/i.test(hex)) return null;
-  const n = parseInt(hex.slice(1), 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1];
-};
 const rad = (value: any, unit: any) => unit === 'deg' ? num(value) * Math.PI / 180 : num(value);
 
 export function summarizeDocument(doc: Document) {
@@ -60,26 +52,11 @@ export function makeSystemPrompt(doc: Document) {
   ].join('\n');
 }
 
-function findBody(doc: Document, action: any) {
-  if (action.bodyId && doc.bodies[action.bodyId]) return doc.bodies[action.bodyId];
-  const name = String(action.bodyName || action.name || '').toLowerCase();
-  if (!name) return null;
-  return Object.values(doc.bodies).find((b) => b.name.toLowerCase() === name || b.name.toLowerCase().includes(name)) ?? null;
-}
-
-function findJoint(doc: Document, action: any) {
-  if (action.jointId && doc.joints[action.jointId]) return doc.joints[action.jointId];
-  const name = String(action.jointName || action.name || '').toLowerCase();
-  if (!name) return null;
-  return Object.values(doc.joints).find((j) => j.name.toLowerCase() === name || j.name.toLowerCase().includes(name)) ?? null;
-}
-
-function entityByName(doc: Document, kind: any, name: any) {
-  const collection = kind === 'joint' ? doc.joints : doc.bodies;
-  const needle = String(name || '').toLowerCase();
-  if (!needle) return null;
-  return Object.values(collection).find((e) => e.name.toLowerCase() === needle || e.name.toLowerCase().includes(needle)) ?? null;
-}
+// An action names its target by id (bodyId/jointId) or by name (bodyName/jointName/name).
+const findBody = (doc: Document, action: any) =>
+  findEntity(doc, 'body', doc.bodies[action.bodyId] ? action.bodyId : (action.bodyName || action.name));
+const findJoint = (doc: Document, action: any) =>
+  findEntity(doc, 'joint', doc.joints[action.jointId] ? action.jointId : (action.jointName || action.name));
 
 export function sanitizePlan(plan: any, doc: Document) {
   const safe: any[] = [];
@@ -132,7 +109,7 @@ export function sanitizePlan(plan: any, doc: Document) {
       const kind = action.kind === 'joint' ? 'joint' : 'body';
       const entity = action.id
         ? (kind === 'joint' ? doc.joints[action.id] : doc.bodies[action.id])
-        : entityByName(doc, kind, action.name);
+        : findEntity(doc, kind, action.name);
       if (entity) safe.push({ type: action.type, kind, id: entity.id });
     } else if (action.type === 'home_all' || action.type === 'fit_view') {
       safe.push({ type: action.type });
@@ -181,7 +158,7 @@ export function localPlan(input: any, doc: Document) {
     const joints = Object.values(doc.joints);
     const joint = /^\d+$/.test(key)
       ? joints[parseInt(key, 10) - 1]
-      : entityByName(doc, 'joint', key);
+      : findEntity(doc, 'joint', key);
     if (joint) {
       return {
         reply: `I can set ${joint.name} to ${value} ${unit}.`,
@@ -194,7 +171,7 @@ export function localPlan(input: any, doc: Document) {
   if (/\b(delete|remove)\b/.test(lower)) {
     const kind = lower.includes('joint') ? 'joint' : 'body';
     const name = text.replace(/delete|remove|body|joint/gi, '').trim();
-    const entity = entityByName(doc, kind, name);
+    const entity = findEntity(doc, kind, name);
     if (entity) {
       return {
         reply: `I can delete ${entity.name}.`,
@@ -207,7 +184,7 @@ export function localPlan(input: any, doc: Document) {
   if (/\b(select|focus)\b/.test(lower)) {
     const kind = lower.includes('joint') ? 'joint' : 'body';
     const name = text.replace(/select|focus|body|joint/gi, '').trim();
-    const entity = entityByName(doc, kind, name);
+    const entity = findEntity(doc, kind, name);
     if (entity) {
       return {
         reply: `I can select ${entity.name}.`,
@@ -220,7 +197,7 @@ export function localPlan(input: any, doc: Document) {
   const colorMatch = lower.match(/(?:color|paint)\s+(.+?)\s+(#[0-9a-f]{6}|red|green|blue|yellow|white|black|gray)/i);
   if (colorMatch) {
     const colors = { red: '#cc3322', green: '#22aa66', blue: '#2277cc', yellow: '#e0a200', white: '#eeeeee', black: '#111111', gray: '#777777' };
-    const body = entityByName(doc, 'body', colorMatch[1]);
+    const body = findEntity(doc, 'body', colorMatch[1]);
     const color = colors[colorMatch[2] as keyof typeof colors] || colorMatch[2];
     if (body) {
       return {

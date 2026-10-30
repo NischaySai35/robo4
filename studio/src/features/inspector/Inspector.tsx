@@ -11,7 +11,7 @@ import type { Document, Connector } from '@/core/model/index';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { commands } from '@/core/commands/index';
-import { JointType, GeometryType, makeMaterial, makeJointProfile, getJointActuator, uid, bodiesOfComponent, jointsOfComponent } from '@/core/model/index';
+import { JointType, GeometryType, makeMaterial, makeJointProfile, getJointActuator, bodiesOfComponent, bodyConnectors, newConnector, jointsOfComponent } from '@/core/model/index';
 import { MOTOR_DB, MOTOR_IDS } from '@/kinematics/motorDatabase';
 import { quatArrToEulerDeg, eulerDegToQuatArr } from '@/shared/rotation';
 import { duplicate, mirror, array } from '@/features/ops/bodyOps';
@@ -202,19 +202,11 @@ function DriverSection({ body, up }: { body: any; up: (patch: any) => void }) {
 // ── Connectors Section ─────────────────────────────────────────────────────────
 function ConnectorsSection({ body, up }: { body: any; up: (patch: any) => void }) {
   const meta = body.meta ?? {};
-  const connectors: Connector[] = (meta.connectors as Connector[] | undefined) ?? [];
+  const connectors = bodyConnectors(body);
 
   const setConnectors = (next: Connector[]) => up({ meta: { ...meta, connectors: next } });
 
-  const addConnector = () => {
-    const c: Connector = {
-      id: uid('con'),
-      name: `Connector ${connectors.length + 1}`,
-      position: [0, 0, 0],
-      normal: [0, 0, 1],
-    };
-    setConnectors([...connectors, c]);
-  };
+  const addConnector = () => setConnectors([...connectors, newConnector(connectors)]);
 
   const updateConnector = (idx: number, patch: Partial<Connector>) => {
     setConnectors(connectors.map((c, i) => i === idx ? { ...c, ...patch } : c));

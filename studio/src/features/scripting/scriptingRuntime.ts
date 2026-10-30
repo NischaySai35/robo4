@@ -7,24 +7,12 @@ import {
   makeMaterial,
 } from '@/core/model/index';
 import { buildSerialArmEntities } from '@/features/ai/aiActions';
-import type { Document, RGBA } from '@/core/model/index';
+import type { Document } from '@/core/model/index';
+import { findEntity } from '@/core/model/index';
+import { num, vec3, colorFromHex } from '@/shared/coerce';
 
-const num = (v: any, fallback = 0) => Number.isFinite(Number(v)) ? Number(v) : fallback;
-const vec3 = (v: any, fallback: any) => Array.isArray(v) && v.length >= 3
-  ? [num(v[0], fallback[0]), num(v[1], fallback[1]), num(v[2], fallback[2])]
-  : fallback;
-const hexToColor = (hex: string): RGBA => {
-  if (typeof hex !== 'string' || !/^#[0-9a-f]{6}$/i.test(hex)) return [0.1, 0.42, 0.78, 1];
-  const n = parseInt(hex.slice(1), 16);
-  return [((n >> 16) & 255) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255, 1];
-};
-
-function findEntity(doc: Document, kind: any, key: any) {
-  const collection = kind === 'joint' ? doc.joints : doc.bodies;
-  if (collection[key]) return collection[key];
-  const needle = String(key || '').toLowerCase();
-  return Object.values(collection).find((e) => e.name.toLowerCase() === needle || e.name.toLowerCase().includes(needle)) ?? null;
-}
+// Script colours fall back to the default blue when not a valid '#rrggbb'.
+const hexToColor = (hex: string) => colorFromHex(hex) ?? [0.1, 0.42, 0.78, 1];
 
 function primitive(type: any, opts: any = {}, doc: Document) {
   const shape = type === GeometryType.CYLINDER || type === GeometryType.SPHERE ? type : GeometryType.BOX;

@@ -32,7 +32,7 @@
 import {
   type ModuleAngles, type ConnectorEnd, type Vec3, type Quat, type Pose,
   connectorPoses, baseQuatFor, composePoses, sampleCenterline,
-  SIDE_ENDS, BEND_LIMIT, TWIST_LIMIT, JOINT_NAMES, ROD_ORDER, rotateVec, IDENTITY, isSideEnd,
+  SIDE_ENDS, BEND_LIMIT, TWIST_LIMIT, JOINT_NAMES, ROD_ORDER, rotateVec, IDENTITY, isSideEnd, quatMul,
 } from './modulink';
 import { MODULINK_CUBE_SIZE } from './occupancy';
 import { type LatticePose } from './chainMoves';
@@ -116,10 +116,6 @@ function quatFromTo(from: Vec3, to: Vec3): Quat {
   return [q[0] / n, q[1] / n, q[2] / n, q[3] / n];
 }
 
-const quatMul = (a: Quat, b: Quat): Quat => composePoses(
-  { position: [0, 0, 0], quaternion: a },
-  { position: [0, 0, 0], quaternion: b },
-).quaternion;
 
 /** A quarter-turn roll about a connector's own axis (`axis`, a unit vector) — what a lock allows. */
 const rollQuat = (steps: 0 | 1 | 2 | 3, axis: Vec3 = [0, 0, 1]): Quat => {

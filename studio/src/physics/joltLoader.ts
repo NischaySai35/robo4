@@ -1,6 +1,6 @@
 /**
- * joltLoader — the SINGLE load point for the Jolt Physics WASM module,
- * mirroring physicsEngine.ts's old role for Rapier. Jolt is maximal-
+ * joltLoader — the SINGLE load point for the Jolt Physics WASM module.
+ * Jolt is maximal-
  * coordinate: every body is independently free, joints are just
  * constraints between bodies — so unlike MuJoCo there is no compiled
  * "model" to rebuild when topology changes. Each sim creates its own

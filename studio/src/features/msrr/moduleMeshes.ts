@@ -14,6 +14,7 @@
  */
 import * as THREE from 'three';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { UNITS_PER_M } from '@/robotics/msrr/modulink';
 import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
 import { restBodies, STUDIO_TO_MODEL_QUAT } from '@/robotics/msrr/restLayout';
@@ -45,13 +46,24 @@ export function moduleMeshGeometries(): Map<string, THREE.BufferGeometry> {
 
   cache = new Map();
   for (const b of restBodies()) {
-    const geo = loader.parse(base64ToArrayBuffer(b.stl));
+    let geo = loader.parse(base64ToArrayBuffer(b.stl));
+    if (b.name === 'Spine2_B3B4') geo = withImuBoard(geo);
     geo.applyMatrix4(bake);
     geo.computeVertexNormals();
     geo.computeBoundingSphere();
     cache.set(b.name, geo);
   }
   return cache;
+}
+
+/** The MPU-6050 board (GY-521, 21 x 16 x 3 mm) Nischay mounts on Spine2's S2B-side frame bar: body-local Studio frame, mm.
+ *  Same spot as the simulation (phys_world IMU_POS): mid-spine, 24 mm toward S2B, on the bar's outer face. */
+export const IMU_BOARD = { size: [21, 16, 3] as const, centre: [0, 24, -19] as const };
+function withImuBoard(spine: THREE.BufferGeometry): THREE.BufferGeometry {
+  const box = new THREE.BoxGeometry(...IMU_BOARD.size).toNonIndexed();
+  box.deleteAttribute('uv'); box.translate(...IMU_BOARD.centre);
+  for (const k of Object.keys(spine.attributes)) if (!box.getAttribute(k)) spine.deleteAttribute(k);
+  return mergeGeometries([spine, box]) ?? spine;
 }
 
 /** Release the shared geometries (the viewport calls this on unmount). */

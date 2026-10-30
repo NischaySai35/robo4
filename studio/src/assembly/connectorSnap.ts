@@ -18,9 +18,10 @@
  */
 import * as THREE from 'three';
 import type { Document, Connector, Joint } from '@/core/model/index';
-import { makeJoint, JointType, uid } from '@/core/model/index';
+import { makeJoint, JointType, uid, bodyConnectors } from '@/core/model/index';
 import { jointFramesForBodies, mat, computeFK, jointDOFMatrix, resolveRoot } from '@/kinematics/modelFK';
 import { chainJoints, lmSolveGeneric, quatRotVec } from '@/kinematics/modelIK';
+import { withJointValues } from '@/core/model/index';
 
 export interface ConnectorRef { bodyId: string; connectorId: string; componentId: string | null }
 export interface ConnectorWorld { position: THREE.Vector3; normal: THREE.Vector3; roll: THREE.Vector3; symmetry: number }
@@ -71,7 +72,7 @@ const DEFAULT_NORMAL_DOT_MAX = -0.85; // connectors must face ~opposite (< ~148�
 export function getConnectorWorld(doc: Document, bodyId: string, connectorId: string, fk?: FKMap): ConnectorWorld | null {
   const body = doc.bodies[bodyId];
   if (!body) return null;
-  const conns: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
+  const conns: Connector[] = bodyConnectors(body);
   const con = conns.find((c) => c.id === connectorId);
   if (!con) return null;
   const M = bodyWorldMatrix(doc, bodyId, fk);
@@ -126,7 +127,7 @@ export function keyedMateRotation(
 export function listConnectors(doc: Document): ConnectorRef[] {
   const out: ConnectorRef[] = [];
   for (const body of Object.values(doc.bodies)) {
-    const conns: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
+    const conns: Connector[] = bodyConnectors(body);
     for (const c of conns) out.push({ bodyId: body.id, connectorId: c.id, componentId: body.componentId });
   }
   return out;
@@ -268,14 +269,6 @@ export function bodiesConnected(doc: Document, aId: string, bId: string): boolea
   return false;
 }
 
-/** Immutably set joint values on a doc (for probing an IK solution's result). */
-function withJointVals(doc: Document, values: Record<string, number>): Document {
-  const joints: any = { ...doc.joints };
-  for (const [id, v] of Object.entries(values)) {
-    const j = joints[id]; if (j) joints[id] = { ...j, state: { ...j.state, value: v } };
-  }
-  return { ...doc, joints } as Document;
-}
 
 export interface MateBend { jointValues: Record<string, number>; standoffValues: Record<string, number>; joint: Joint; residual: number; startGap: number; chainLen: number }
 
@@ -336,7 +329,7 @@ export function computeMateBend(
   // error between the two connectors. `offset` puts the mover this far along the seat normal
   // (0 = flush, +STANDOFF = the pulled-back approach pose). Driving this to 0 seats them.
   const mateError = (vals: Record<string, number>, offset: number): number[] => {
-    const w = withJointVals(doc, vals);
+    const w = withJointValues(doc, vals);
     const fk = computeFK(w) as FKMap;
     const ws = connWorld(w, seatRef, fk), wm = connWorld(w, moveRef, fk);
     if (!ws || !wm) return [1, 1, 1, 1, 1, 1];
@@ -353,7 +346,7 @@ export function computeMateBend(
   // on-screen SPREAD score shows, so minimising it here == the number on screen dropping.
   const allBodyIds = Object.keys(doc.bodies).filter((id) => doc.bodies[id]);
   const spreadPotential = (vals: Record<string, number>): number => {
-    const w = withJointVals(doc, vals);
+    const w = withJointValues(doc, vals);
     const fk = computeFK(w) as FKMap;
     const pts = allBodyIds.map((id) => new THREE.Vector3().setFromMatrixPosition(bodyWorldMatrix(w, id, fk)));
     let U = 0;
@@ -375,7 +368,7 @@ export function computeMateBend(
     spread: spreadPotential, spreadGain: 2.0, spreadIters: 140, // stronger, longer spread relaxation
   });
   for (const [id, v] of Object.entries(seated)) values[id] = v as number;
-  work = withJointVals(doc, values);
+  work = withJointValues(doc, values);
   const residual = Math.hypot(...mateError(values, SEAT_INSET).slice(0, 3)); // position gap only
 
   // Standoff pose for the approach→insert animation: same alignment but the mover pulled
@@ -452,7 +445,7 @@ export function computeUnlockBend(
   // Same relative mate residual as the lock, but the position target sits `offset` OUT along
   // the seat normal (away from the seat face) so the faces stay square while opening a gap.
   const err = (vals: Record<string, number>, offset: number): number[] => {
-    const w = withJointVals(work0, vals);
+    const w = withJointValues(work0, vals);
     const fk = computeFK(w) as FKMap;
     const ws = getConnectorWorld(w, seatRef.bodyId, seatRef.connectorId, fk);
     const wm = getConnectorWorld(w, moveRef.bodyId, moveRef.connectorId, fk);
@@ -578,10 +571,10 @@ function worstLoopGap(doc: Document, redundant: any[], fk: FKMap): number {
  * consistent and safe if FK later reroots and starts using this edge.
  */
 function reconcileRedundantAngles(doc: Document, values: Record<string, number>, redundant: any[]): void {
-  const fk = computeFK(withJointVals(doc, values)) as FKMap;
+  const fk = computeFK(withJointValues(doc, values)) as FKMap;
   for (const j of redundant) {
     if (j.type !== 'revolute' && j.type !== 'continuous') continue;
-    const w = withJointVals(doc, values);
+    const w = withJointValues(doc, values);
     const frameP = bodyWorldMatrix(w, j.parentBodyId, fk).clone().multiply(mat(j.origin));
     const frameC = bodyWorldMatrix(w, j.childBodyId, fk).clone().multiply(mat(j.childRest).invert());
     const rel = frameP.clone().invert().multiply(frameC);
@@ -715,14 +708,14 @@ export function solveDragWithLoops(
   // for a revolute, full orientation for a lock). This is what holds Joint 6 (a revolute loop edge)
   // together — the old version only enforced lock joints and ignored it.
   const loopError = (vals: Record<string, number>): number[] => {
-    const w = withJointVals(doc, vals);
+    const w = withJointValues(doc, vals);
     const fk = computeFK(w) as FKMap;
     const out: number[] = [];
     for (const j of redundant) out.push(...jointLoopResidual(w, j, fk));
     return out;
   };
   const worstGap = (vals: Record<string, number>): number => {
-    const w = withJointVals(doc, vals);
+    const w = withJointValues(doc, vals);
     return worstLoopGap(w, redundant, computeFK(w) as FKMap);
   };
 
@@ -733,7 +726,7 @@ export function solveDragWithLoops(
   const init = { ...values };
   const REG = 0.04; // rad⁻² weight on staying put vs the m² tip term — tune for drag "stiffness"
   const tipPotential = (vals: Record<string, number>): number => {
-    const w = withJointVals(doc, vals);
+    const w = withJointValues(doc, vals);
     const fk = computeFK(w) as FKMap;
     const tp = new THREE.Vector3().setFromMatrixPosition(bodyWorldMatrix(w, tipId, fk));
     let u = tp.distanceToSquared(tgt);
@@ -783,7 +776,7 @@ export function solveHome(doc: Document): { values: Record<string, number>; ok: 
   if (redundant.length === 0 || movable.length === 0) return { values, ok: true }; // no loops → plain home
 
   const errorFn = (vals: Record<string, number>): number[] => {
-    const w = withJointVals(doc, vals);
+    const w = withJointValues(doc, vals);
     const f = computeFK(w) as FKMap;
     const out: number[] = [];
     for (const j of redundant) out.push(...jointLoopResidual(w, j, f));
@@ -792,7 +785,7 @@ export function solveHome(doc: Document): { values: Record<string, number>; ok: 
   // Project all-zeros onto the closed-loop manifold, staying as near rest as the locks allow.
   const solved = lmSolveGeneric(movable, values, errorFn, { iterations: 80, tol: 1e-4, maxStep: 0.3 });
   reconcileRedundantAngles(doc, solved, redundant);
-  const gap = worstLoopGap(withJointVals(doc, solved), redundant, computeFK(withJointVals(doc, solved)) as FKMap);
+  const gap = worstLoopGap(withJointValues(doc, solved), redundant, computeFK(withJointValues(doc, solved)) as FKMap);
   return { values: solved, ok: gap < 0.005 }; // < 5 mm residual → the module can rest closed
 }
 
@@ -813,7 +806,7 @@ export function stabilizeLoops(doc: Document, opts: { iterations?: number } = {}
     movable.forEach((j: any) => { values[j.id] = j.state?.value ?? 0; });
 
     const errorFn = (vals: Record<string, number>): number[] => {
-      const w = withJointVals(doc, vals);
+      const w = withJointValues(doc, vals);
       const f = computeFK(w) as FKMap;
       const out: number[] = [];
       for (const j of redundant) out.push(...jointLoopResidual(w, j, f));
@@ -833,7 +826,7 @@ export function stabilizeLoops(doc: Document, opts: { iterations?: number } = {}
     // threshold above, subsequent frames skip the solve entirely.
     const solved = lmSolveGeneric(movable, values, errorFn, { iterations: opts.iterations ?? 40, tol: 1e-4, maxStep: 0.3 });
     reconcileRedundantAngles(doc, solved, redundant); // keep redundant hinge angles self-consistent
-    return withJointVals(doc, solved);
+    return withJointValues(doc, solved);
   } catch {
     return doc; // never let stabilization break a normal edit
   }

@@ -7,6 +7,7 @@
  *   Plan    target ranking and the verb plan from the current robot to a target
  *   Ask     words -> capability tags (LLM) -> targets
  *   Run     execute a plan (DRY_RUN) with replanning
+ *   Manual  drive the robot by hand in live real physics (joints, lock / unlock, connect two connectors)
  */
 import { useState } from 'react';
 import { useV2Store, PRESETS, type V2Tab } from '@/state/msrrV2Store';
@@ -21,6 +22,8 @@ import { ShapesTab } from './ShapesTab';
 import { PlanTab } from './PlanTab';
 import { AskTab } from './AskTab';
 import { RunTab } from './RunTab';
+import { ManualTab } from './ManualTab';
+import type { PhysRun } from './physicsView';
 
 const TABS: { id: V2Tab; label: string }[] = [
   { id: 'robot', label: 'Robot' },
@@ -28,6 +31,7 @@ const TABS: { id: V2Tab; label: string }[] = [
   { id: 'plan', label: 'Plan' },
   { id: 'ask', label: 'Ask' },
   { id: 'run', label: 'Run' },
+  { id: 'manual', label: 'Manual' },
 ];
 
 export default function V2Panel() {
@@ -47,6 +51,7 @@ export default function V2Panel() {
         {tab === 'plan' && <PlanTab />}
         {tab === 'ask' && <AskTab />}
         {tab === 'run' && <RunTab />}
+        {tab === 'manual' && <ManualTab />}
       </div>
       <V2Log />
     </>
@@ -279,6 +284,15 @@ up to ${r.max}°: ${r.why.max}`}>
  * receivers, magnets, ST3215 servos, PLA flex, randomized errors). Nothing is judged by rules here:
  * what you see is what gravity does. "with plan" executes the loaded plan's steps the way the robot would.
  */
+/** what the run is doing at time t: a plan step (step, verb), or for a transformation the stage under way / last finished */
+function caption(ev: PhysRun['events'], t: number): string {
+  const now = ev.filter((e) => e.t <= t).slice(-1)[0];
+  if (now?.verb) return ` · step ${(now.step ?? 0) + 1}: ${now.verb}${now.latched === false ? ' — did not seat, no lock' : ''}`;
+  const next = ev.find((e) => e.t > t);
+  if (next) return ` · now: ${next.label.replace(/ (OK|FAILED)$/, '')}${now ? `  (done: ${now.label})` : ''}`;
+  return now ? ` · ${now.label}` : '';
+}
+
 function GravityBar() {
   const physics = useV2Store((s) => s.physics);
   const busy = useV2Store((s) => s.physBusy);
@@ -291,18 +305,21 @@ function GravityBar() {
   const gravity = useV2Store((s) => s.gravity);
   const off = useV2Store((s) => s.gravityOff);
   const ev = physics?.pp.run.events ?? [];
-  const now = physics ? ev.filter((e) => e.t <= physics.t).slice(-1)[0] : undefined;
   return (
     <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }} data-testid="gravity-bar">
       <button className={`msrr-btn ${physics ? 'danger' : 'primary'}`} data-testid="gravity" disabled={busy}
-        onClick={() => (physics ? off() : gravity(false))}>{busy ? 'Simulating…' : physics ? '■ Gravity off' : '⬇ Gravity'}</button>
-      {plan?.ok && !physics && <button className="msrr-btn" data-testid="gravity-plan" disabled={busy} onClick={() => gravity(true)}>⬇ Gravity + plan</button>}
+        onClick={() => (physics ? off() : gravity(false))}>{busy ? 'Simulating…' : physics ? '■ Stop real physics' : '▶ Real physics (gravity)'}</button>
+      {plan?.ok && !physics && <button className="msrr-btn" data-testid="gravity-plan" disabled={busy} onClick={() => gravity(true)} title="run the loaded plan in MuJoCo the way the robot would: the real docking brain does every dock (stand-off, align, straight in, lock)">▶ Real physics: run this plan</button>}
       {physics && <button className="msrr-btn small ghost" onClick={() => useV2Store.setState({ physics: { ...physics, t: 0, playing: true } })}>replay</button>}
       <label className="msrr-note" title="every robot slightly different: PLA flex, backlash, servo strength, masses, friction, magnets, floor tilt (the GPU runs' ranges)">
         <input type="checkbox" checked={random} onChange={(e) => setRandom(e.target.checked)} /> random robot
       </label>
       {random && <input className="msrr-select" type="number" style={{ width: 56 }} value={seed} onChange={(e) => setSeed(Number(e.target.value))} title="which random robot" />}
-      {physics && <span className="msrr-note dim">t {physics.t.toFixed(1)} / {(physics.pp.run.frames.at(-1)?.t ?? 0).toFixed(1)} s{now ? ` · step ${now.step + 1}: ${now.verb}${now.latched === false ? ' — did not seat, no lock' : ''}` : ''}</span>}
+      {physics && <span className="msrr-note dim" data-testid="phys-caption">{physics.live
+        // live: one clock (physics keeps running until you stop it); warn only if the picture falls behind the physics
+        ? <>● live · {physics.t.toFixed(0)} s{(physics.pp.run.frames.at(-1)?.t ?? 0) - physics.t > 1.5 ? ' · picture behind the physics' : ''}</>
+        // a recording: where the playback is / how long it is
+        : <>t {physics.t.toFixed(1)} / {(physics.pp.run.frames.at(-1)?.t ?? 0).toFixed(1)} s</>}{caption(ev, physics.t)}</span>}
       {err && <span className="msrr-note bad">{err}</span>}
     </div>
   );

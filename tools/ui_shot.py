@@ -14,7 +14,7 @@ async def main(out, steps):
         logs = []
         pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}') if m.type in ('error', 'warning') else None)
         pg.on('pageerror', lambda e: logs.append(f'PAGEERROR: {e} :: {getattr(e, "stack", "")[:600]}'))
-        await pg.goto('http://localhost:5173/', wait_until='networkidle')
+        await pg.goto('http://localhost:5173/', wait_until='load', timeout=120000); await pg.wait_for_timeout(4000)
         await pg.wait_for_timeout(800)
         if await pg.locator('.sp-backdrop').count():
             await pg.screenshot(path=out.replace('.png', '_startup.png'))

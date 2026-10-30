@@ -1,6 +1,7 @@
 import './AnimLeftPanel.css';
 import { useState, useRef, useCallback, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import ContextMenu, { ConnectorItems, MenuSep, MenuSection } from '@/features/common/ContextMenu';
+import { beginDrag, usePersistedSize } from '@/features/common/drag';
 import * as THREE from 'three';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
@@ -10,26 +11,15 @@ import { useWorkspaceStore } from '@/state/workspaceStore';
 import { groundBody } from '@/features/rigid/groundBody';
 import { setBodyModePreservingPose } from '@/features/rigid/bodyModeAction';
 import { commands } from '@/core/commands/index';
-import { uid } from '@/core/model/index';
-import type { Connector, AssemblyMate } from '@/core/model/index';
+import { uid, bodyConnectors, componentGroups } from '@/core/model/index';
+import type { AssemblyMate } from '@/core/model/index';
 import { findBestSnapCandidate, computeSnapPatches, getConnectorWorld, bodiesConnected, computeMateBend, computeUnlockBend } from '@/assembly/connectorSnap';
 import { mateBridge } from '@/bridge/mateBridge';
 import { connectorHighlight } from '@/bridge/connectorHighlight';
 import { computeFK } from '@/kinematics/modelFK';
 import { bridge } from '@/bridge/cameraBridge';
-import { withJointValues } from '@/control/motionRuntime';
+import { withJointValues } from '@/core/model/index';
 import { useAutoGround } from '@/features/rigid/useAutoGround';
-
-// ── Global Rotate helper ──────────────────────────────────────────────────────
-function rotateVec3AroundAxis(v: THREE.Vector3, axis: 'x' | 'y' | 'z', angleDeg: number) {
-  const rad = (angleDeg * Math.PI) / 180;
-  const q = new THREE.Quaternion();
-  const axVec = axis === 'x' ? new THREE.Vector3(1, 0, 0)
-              : axis === 'y' ? new THREE.Vector3(0, 1, 0)
-                             : new THREE.Vector3(0, 0, 1);
-  q.setFromAxisAngle(axVec, rad);
-  return v.clone().applyQuaternion(q);
-}
 
 // ── Connector face auto-label ───────────────────────────────────────────────────
 // Name each connector by the world/local axis its normal points along (+X … −Z),
@@ -74,8 +64,7 @@ function ConnectorPicker({ value, bodies, onPick, onHover }: {
   }, [open]);
   const items: ConnItem[] = [];
   for (const b of bodies) {
-    const conns: Connector[] = (b.meta?.connectors as Connector[] | undefined) ?? [];
-    conns.forEach((c, i) => items.push({
+    bodyConnectors(b).forEach((c, i) => items.push({
       bodyId: b.id, connectorId: c.id, body: b.name,
       face: faceLabel(c.normal), name: c.name ?? `Connector ${i + 1}`,
     }));
@@ -320,28 +309,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
     setSnapStatus(jointIds.length > 1 ? `Unlocked (${jointIds.length} locks removed).` : 'Unlocked.');
   };
 
-  const addConnector = (bodyId: string) => {
-    const body = doc.bodies[bodyId];
-    if (!body) return;
-    const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
-    const con: Connector = { id: uid('con'), name: `Connector ${existing.length + 1}`, position: [0, 0, 0], normal: [0, 0, 1] };
-    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: [...existing, con] } }));
-    select(bodyId, 'body');
-    closeCtx();
-  };
-
-  const deleteConnector = (bodyId: string, conId: string) => {
-    const body = doc.bodies[bodyId];
-    if (!body) return;
-    const existing: Connector[] = (body.meta?.connectors as Connector[] | undefined) ?? [];
-    dispatch(commands.updateBody(bodyId, { meta: { ...body.meta, connectors: existing.filter((c) => c.id !== conId) } }));
-  };
-
-  const smartMenuPos = (x: number, y: number) => {
-    const vw = window.innerWidth, vh = window.innerHeight;
-    return { left: x + 210 > vw - 8 ? Math.max(8, x - 210) : x, top: y + 320 > vh - 8 ? Math.max(8, y - 320) : y };
-  };
-
   // ── Global Rotate apply ───────────────────────────────────────────────────
   const applyGlobalRotate = (axis: 'x' | 'y' | 'z') => {
     const deg = parseFloat(globalRotateAngle);
@@ -466,8 +433,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   };
 
   const renderCompTree = () => {
-    const unassignedBodies = bodies.filter((b) => !b.componentId || !(doc.components ?? {})[b.componentId]);
-    const unassignedJoints = joints.filter((j) => !j.componentId || !(doc.components ?? {})[j.componentId]);
+    const { groups, unassigned: { bodies: unassignedBodies, joints: unassignedJoints } } = componentGroups(doc);
 
     return (
       <>
@@ -475,9 +441,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
           <div className="alp-empty">No bodies yet — add some in the Editor page.</div>
         )}
 
-        {comps.map((comp) => {
-          const compBodies = bodies.filter((b) => b.componentId === comp.id);
-          const compJoints = joints.filter((j) => j.componentId === comp.id);
+        {groups.map(({ comp, bodies: compBodies, joints: compJoints }) => {
           const isCollapsed   = collapsedComps.has(comp.id);
           const isSelected    = selectedCompId === comp.id;
 
@@ -538,31 +502,11 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   };
 
   // ── Resizable height ──────────────────────────────────────────────────────
-  const [pxHeight, setPxHeight] = useState(() => {
-    const v = parseInt(localStorage.getItem('tetrobot:alp:height') || '', 10);
-    return Number.isFinite(v) ? Math.max(80, v) : 360;
-  });
-  const pxRef = useRef(pxHeight);
-  pxRef.current = pxHeight;
-  const startResize = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const startY = e.clientY, startH = pxRef.current;
-    document.body.style.cursor = 'row-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = (ev: MouseEvent) => {
-      const next = Math.max(80, Math.min(700, startH + (ev.clientY - startY)));
-      pxRef.current = next; setPxHeight(next);
-      localStorage.setItem('tetrobot:alp:height', String(next));
-    };
-    const onUp = () => {
-      document.body.style.cursor = ''; document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }, []);
+  const [pxHeight, setPxHeight] = usePersistedSize('tetrobot:alp:height', 360, 80, 700);
+  const startResize = (e: React.MouseEvent) => {
+    const h0 = pxHeight;
+    beginDrag(e, 'row-resize', (_dx, dy) => setPxHeight(h0 + dy));
+  };
 
   // ── Assembly Mate: snap math ───────────────────────────────────────────────
   // Move componentB (or a lone body) so its connector seats onto A's, in live FK
@@ -659,7 +603,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
     if (!slot) return '—';
     const b = doc.bodies[slot.bodyId];
     if (!b) return '?';
-    const con = ((b.meta?.connectors as Connector[] | undefined) ?? []).find((c) => c.id === slot.connectorId);
+    const con = bodyConnectors(b).find((c) => c.id === slot.connectorId);
     return `${b.name} › ${con?.name ?? '?'}`;
   };
 
@@ -893,69 +837,40 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
         </div>
       </div>
 
-      {/* ── Context menu (portal so it's never clipped) ── */}
-      {ctxMenu && createPortal(
-        (() => {
-          const ctxBody = doc.bodies[ctxMenu.bodyId];
-          const ctxConns: Connector[] = (ctxBody?.meta?.connectors as Connector[] | undefined) ?? [];
-          const pos = smartMenuPos(ctxMenu.x, ctxMenu.y);
-          return (
-            <>
-              <div className="px-ctx-backdrop" onMouseDown={closeCtx} onContextMenu={(e) => { e.preventDefault(); closeCtx(); }} />
-              <div className="px-ctx-menu" style={pos}>
-                <div className="px-ctx-header">{ctxBody?.name ?? '—'}</div>
-                <div className="px-ctx-sep" />
-                <button onClick={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }}>✎ Select</button>
-                {Object.values(doc.joints)
-                  .filter((j: any) => isSnapJoint(j) && (j.parentBodyId === ctxMenu.bodyId || j.childBodyId === ctxMenu.bodyId))
-                  .map((j: any) => (
-                    <button key={j.id} onClick={() => { unlockSnapJoint(j.id); closeCtx(); }}>⇋ Unlock “{j.name}”</button>
-                  ))}
-                <div className="px-ctx-sep" />
-                <div className="px-ctx-section">Connectors</div>
-                {ctxConns.map((c) => (
-                  <div key={c.id} className="px-ctx-con-row">
-                    <span className="px-ctx-con-name">◈ {c.name}</span>
-                    <button title="Set as Mate A" onClick={(e) => { e.stopPropagation(); setMateSlotA({ bodyId: ctxMenu.bodyId, connectorId: c.id }); closeCtx(); }}>A</button>
-                    <button title="Set as Mate B" onClick={(e) => { e.stopPropagation(); setMateSlotB({ bodyId: ctxMenu.bodyId, connectorId: c.id }); closeCtx(); }}>B</button>
-                    <button className="danger" title="Delete connector" onClick={(e) => { e.stopPropagation(); deleteConnector(ctxMenu.bodyId, c.id); }}>✕</button>
-                  </div>
-                ))}
-                <button onClick={() => addConnector(ctxMenu.bodyId)}>+ Add Connector</button>
-              </div>
-            </>
-          );
-        })(),
-        document.body,
+      {/* ── Body right-click menu ── */}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y} title={doc.bodies[ctxMenu.bodyId]?.name ?? '—'} onClose={closeCtx}>
+          <button onClick={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }}>✎ Select</button>
+          {Object.values(doc.joints)
+            .filter((j: any) => isSnapJoint(j) && (j.parentBodyId === ctxMenu.bodyId || j.childBodyId === ctxMenu.bodyId))
+            .map((j: any) => (
+              <button key={j.id} onClick={() => { unlockSnapJoint(j.id); closeCtx(); }}>⇋ Unlock “{j.name}”</button>
+            ))}
+          <MenuSep />
+          <ConnectorItems bodyId={ctxMenu.bodyId} showEmpty
+            onMate={(slot, conId) => { (slot === 'A' ? setMateSlotA : setMateSlotB)({ bodyId: ctxMenu.bodyId, connectorId: conId }); closeCtx(); }}
+            onAdded={() => { select(ctxMenu.bodyId, 'body'); closeCtx(); }} />
+        </ContextMenu>
       )}
 
       {/* Joint row right-click menu */}
-      {jointCtx && createPortal(
-        (() => {
-          const j = doc.joints[jointCtx.jointId];
-          const pos = smartMenuPos(jointCtx.x, jointCtx.y);
-          const close = () => { setJointCtx(null); connectorHighlight.set([]); };
-          return (
-            <>
-              <div className="px-ctx-backdrop" onMouseDown={close} onContextMenu={(e) => { e.preventDefault(); close(); }} />
-              <div className="px-ctx-menu" style={pos}>
-                <div className="px-ctx-header">{j?.name ?? '—'}</div>
-                <div className="px-ctx-sep" />
-                <button onClick={() => { select(jointCtx.jointId, 'joint'); close(); }}>✎ Select</button>
-                {isSnapJoint(j) && <button onClick={() => { unlockSnapJoint(jointCtx.jointId); close(); }}>⇋ Unlock (detach)</button>}
-                {/* Animatable connect/disconnect: key this joint's attach state at the playhead. */}
-                <div className="px-ctx-sep" />
-                <div className="px-ctx-section">Animate connection</div>
-                <button onClick={() => { useAnimationStore.getState().addConnectionKey(jointCtx.jointId, true); close(); }}>◆ Key CONNECTED here</button>
-                <button onClick={() => { useAnimationStore.getState().addConnectionKey(jointCtx.jointId, false); close(); }}>◆ Key DISCONNECTED here</button>
-                <div className="px-ctx-sep" />
-                <button className="danger" onClick={() => { dispatch(commands.removeJoint(jointCtx.jointId)); close(); }}>✕ Delete joint</button>
-              </div>
-            </>
-          );
-        })(),
-        document.body,
-      )}
+      {jointCtx && (() => {
+        const j = doc.joints[jointCtx.jointId];
+        const close = () => { setJointCtx(null); connectorHighlight.set([]); };
+        return (
+          <ContextMenu x={jointCtx.x} y={jointCtx.y} title={j?.name ?? '—'} onClose={close}>
+            <button onClick={() => { select(jointCtx.jointId, 'joint'); close(); }}>✎ Select</button>
+            {isSnapJoint(j) && <button onClick={() => { unlockSnapJoint(jointCtx.jointId); close(); }}>⇋ Unlock (detach)</button>}
+            {/* Animatable connect/disconnect: key this joint's attach state at the playhead. */}
+            <MenuSep />
+            <MenuSection>Animate connection</MenuSection>
+            <button onClick={() => { useAnimationStore.getState().addConnectionKey(jointCtx.jointId, true); close(); }}>◆ Key CONNECTED here</button>
+            <button onClick={() => { useAnimationStore.getState().addConnectionKey(jointCtx.jointId, false); close(); }}>◆ Key DISCONNECTED here</button>
+            <MenuSep />
+            <button className="danger" onClick={() => { dispatch(commands.removeJoint(jointCtx.jointId)); close(); }}>✕ Delete joint</button>
+          </ContextMenu>
+        );
+      })()}
     </aside>
   );
 }

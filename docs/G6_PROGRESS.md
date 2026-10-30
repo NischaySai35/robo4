@@ -250,7 +250,7 @@ The checker computes the real pose, the real CoG, and how hard each bracket is u
 
 Results that depend on the unmeasured rows (sag amounts, the exact servo %) are estimates until those are checked on the real robot.
 
-### 26 Oct: FIRST SHAPE CHANGE (transformation) IN REAL PHYSICS: `C:\TETROBOT\sim	ransform.py`
+### 26 Oct: FIRST SHAPE CHANGE (transformation) IN REAL PHYSICS: `C:\TETROBOT\sim\transform.py`
 Shape A = `shapes_v1[2]` (root R at spot 15 yaw 225; W1 spot 29 → R.S1B; W2 spot 8 → R.S2A). Shape B: W2 moves to spot 1 and docks into R.S1A.
 Steps, all done by the robot's own brain against contact + magnets (MAG_SCALE 0.204):
 1. W2 unlocks R.S2A, peels out (`peel_after_dock`) → **stands up straight** (all 7 joints 0, 3 s)
@@ -262,5 +262,330 @@ Two fixes found by physics on the way (not rules):
 - the 5 cm stand-off in front of R.S1A needs B2/B3 past their stops on weaker random robots (4/8 failed, gaps 1.1–9 mm). 2.5 cm: 7/7.
 Also measured: a lone module walks floor→floor 0.14 / 0.28 / 0.30 m steps **10/10** (`_steplen_par.py`), so short steps are fine.
 **Result (`_transform_par.py`):** seeds 1–8: 7/8 (robot 5 failed BUILDING shape A: W2's dock from 0.14 m, known-fragile placement); seeds 9–16: 7/8 (robot 12: final dock 8.6 mm off after 2 attempts). **Total 14/16 end-to-end; transformation stage 14/15.** Typical wall time 150–230 s per robot (CPU).
-Recording for the Studio: `C:\TETROBOT\logs	ransform_run_1.json` (25 fps, receivers + stage events). **Not yet wired into the Studio.**
+Recording for the Studio: `C:\TETROBOT\logs\transform_run_1.json` (25 fps, receivers + stage events). Shown in the Studio since 27 Oct (see below).
 Note: floor-receiver bodies consume random draws in `PhysWorld._randomize`, so adding a receiver changes which random robot a seed gives.
+
+### 27 Oct: GPU shape-change runner, planner, Studio (stopped mid-run by Nischay; resume here)
+- **`gpu_world.py`**: phys_world's rules batched in MuJoCo Warp (welds only once seated, per robot via `eq_data`; welded connector contacts off via per-robot `geom_margin`; magnets, ST3215 servos, randomization). One 60 ms frame = one CUDA graph.
+- **Measured speed (RTX 5050 laptop, full-detail 3-module world: 1,941 geoms, 126 DOF):** idle ~20 robot-s/s at 512 robots; mid-dock with noslip 3 = **1.3 robot-s/s**, noslip 0 = **13.2** (all earlier GPU runs used noslip 0, so it is the GPU default). Whole run average **15.6 robot-s/s**. That is about the same as the 16-thread CPU. **"Thousands of robots in 2 minutes" is not possible with this model on this GPU** (a shape change is ~100–150 s of robot time per robot).
+- **`gpu_transform.py`** (brains in CPU workers, greenlets) + **`tf_plan.py`** (planner: shape A → B as undock / floor steps / dock with 5 → 2.5 cm stand-off fallback / 3 s gravity hold; `chain()` for A→B→C; one `execute()` for CPU and GPU) + `tf_run.py` (CPU, one robot, recording).
+- **GPU result, W2 S8→S1 (`gpu_transform_g128.log`, 128 robots, 18 min cap):** 25 finished, **20/25 end-to-end**; 99 were still on the last dock at the cap, so this sample is biased toward fast robots. Stages: build A 23/25, unlock 22/23, floor step 20/22, final dock 20/20, hold 20/20. **An unbiased rerun (64 robots, 22 min, `TAG=g64`) was stopped before finishing: rerun it.**
+- Floor step now gets 2 attempts, like every other dock (after a 1-attempt miss on robot 1, 8.7 mm).
+- **CPU, planner:** W2_S8toS1 robot 1 OK; **chain A→B→C robot 1 OK** (W2 S8→S1 into R.S1A, then W1 S29→S22 back into R.S1B; each shape held, 0.1 mm). Recorded: `logs\tf_chain_ABC_1.json`.
+- **Studio:** Shapes → Built in physics → **Transform: watch** (checked in the browser, screenshots: plays all 5 stages, captions "now: …", floor-receiver locks change when the foot steps). **Chain A→B→C: watch** button added; its endpoint (`/transform?name=chain_ABC&seed=1`) and screenshot are **not yet checked**. Receiver labels: sized to the text, placed on the floor outside each module (readable now). Studio tests 364/364.
+- Next: rerun g64 for an unbiased number; GPU chain_ABC; check the chain in the browser; then items 4–6.
+
+### 28 Oct: shape change 61/64 on the GPU; first BRIDGE in real physics
+**New rule (Nischay):** nothing I run may take more than 120 s. Longer runs = commands for Nischay to run and watch.
+- **GPU shape change W2 S8→S1, fair sample (`gpu_transform_g64b.log`, 64 random robots, all 64 finished): 61/64 end to end (95.3%).**
+  - Stages: build A 62/64, unlock 62/62, floor step 61/62, final dock **61/61**, hold 61/61.
+  - The fix that got there: spine stand-off **2.5 cm on both tries**. My "5 cm first, then 2.5 cm" plan gave a final dock of only **20/58** (`g64`): at 5 cm the arm stops ~78 mm short, and the retry lands pads on pads at ~9 mm. That matches the 26 Oct CPU finding.
+  - Physics differences: GPU noslip 0 vs CPU noslip 3; CPU on transform.py was 14/16.
+- **Chain A→B→C checked in the browser** (Studio: Chain A→B→C: watch): captions and floor-receiver locks follow the run.
+- **Bridge lift fixed (item 4).** Two brain bugs, both in walk.py's peel/pull, that only show when the base sits in another module's SIDEWAYS spine receiver:
+  1. **Frozen frame.** The pull fixed its targets in the base's frame once. The root bends when the hanging module's weight comes onto it, so the brain aimed 24 mm off: it estimated 25 mm out while the truth was 1.2 mm (`_bridge_trace.py`, `DEBUG_PULL=1`). Fix: `BASE_FOLLOW` re-expresses the targets from the base's current pose every frame (in the peel/pull, and in docks whose base is not a floor receiver). For floor bases nothing changes (the transform is the identity).
+  2. **Timed pull.** The pull stopped after a fixed time even when the arm hadn't arrived. Fix: `PULL_CONVERGE` counts the hold only once the brain's own estimate is within 3 mm of the target.
+  - Result: lift out 1.2 mm → 18.6 / 23 / 26 mm (robots 1–3); W1 then hangs from the root, still for 3 s, servos 57–60%.
+  - **Walking must be re-checked with these on (GPU, run by Nischay; command in the chat).** Switch both off with `PULL_CONVERGE=0 BASE_FOLLOW=0`.
+- **FIRST BRIDGE (`bridge_search.py`, `bridge_test.py`).** R upright at S15; W1 docks into R.S1B, lifts its foot, hangs from R and docks its End A into the spine receiver S1B of a second upright module U at S31.
+  - **5/7 random robots** built and held the bridge (robots 1, 3, 4, 6, 7). Robots 2 and 5 failed the bridge dock and ended 300–400 mm away. Holds: 0.1–0.4 mm; servo peak 67–76% (**over the 70% budget on 3 of 5**).
+  - The other 5 candidate placements failed: W1 runs into U's body (the brain has no obstacle avoidance).
+  - Watched in the Studio (Bridge: watch, robot 3). **Honest look:** W1 ends up curled at mid-height between the two columns. It is a closed loop, not yet a flat top. Next: aim for the top receivers with a straighter W1.
+- Process fix: `peel_after_dock` reads walk.py's source once per process (an edit during a run had leaked into running robots: 1 exception in g64).
+
+### 28 Oct (later): LOOKING at runs; realistic room disturbances; high bridge = root buckles
+- **`snap.py`**: renders the physics world from 3 cameras (oblique, low side, top) into one PNG, one colour per module (R red, W1 green, W2 yellow, X1 blue). Taken every 10 s of sim time, at every stage, and 150 ms after every bump. GPU runs too: `SNAP=dir` in `gpu_transform.py` copies robots 0 and 1 into a CPU world every 200 frames and renders them (`GPUWorld.to_cpu`).
+- **High bridge (W1 from R's UPPER receiver S2A, 478 mm) → the root bends over.** The log only said "bridge dock failed"; the pictures show R (red) bending at its own joints (an inverted L by t=32 s, flat by t=60 s), dragging W1 down. Estimated load ~11 N × 0.3–0.4 m ≈ 3.5–4.5 N·m vs ~2.7 N·m usable servo torque. **A module cannot be hung from a single upright's upper receiver.** The low bridge (S1B) held, at 57–76% servo. Flat tops need two supports during the transfer (idea: U bends over and docks its top End B into W1's spine while W1 still stands on the floor, then W1 lifts its foot).
+- **`bridge_search.py`** now compiles one world and moves U around: 95 s instead of > 2 min.
+- **`disturb.py`: the real room (ALL ESTIMATES; `DISTURB=0` = off), in phys_world (CPU) and gpu_world (GPU, inside the CUDA graph):**
+  - floor shake: Ornstein-Uhlenbeck, ~8 Hz, RMS 0.15 m/s² sideways / 0.10 m/s² vertical, ×0.3–2 per robot;
+  - bumps: ~1 per 30 s, 1.5 m/s² ×0.5–2, 40 ms;
+  - air drafts: wind σ 0.4 m/s, τ 3 s, quadratic drag on every link;
+  - every magnet different: ±10% per side;
+  - servo deadband: 0.1°; lost command packets: 1%;
+  - **floor receivers now have their cardboard play** (tilt ±1.5° at 175 N·m/rad ×0.5–1.5, lift 0.5 mm; from train_v2.xml). Before this, phys_world's receivers were perfectly rigid.
+- **Shape A with disturbances on (CPU): 7/7 random robots built (14/14 docks).** Hold movement 0.5–2.3 mm (0.2–0.4 mm without), servo peaks 46–52%, 0–3 bumps of up to 2.9 m/s² per run.
+- **GPU with disturbances on:** first dock **31/32** (1 still going at the 1.4-min cap, 0 failed); 32 idle robot-s/s at 256 robots. Pictures of GPU robots match the CPU.
+- All earlier numbers were measured WITHOUT these disturbances; the 95% shape change etc. must be re-measured with them (long run → command for Nischay).
+
+### 28 Oct (evening): run in PIECES, a watchdog, and what the pictures caught
+**Rule now: max 150 s per run, as short as possible.**
+- **Checkpoints** (`PhysWorld.save/load`, exact state incl. welds, servo setpoints, disturbance + RNG state). `ckpt_build.py PAIR SEED OUT.pkl` builds shape A once (62 s wall), with every lock the plan will need. `tf_piece.py CKPT FIRST LAST OUT` runs only moves FIRST..LAST: load 1 s; a move 20–50 s.
+- **`watchdog.py`** (on during every piece; pictures each time):
+  - JAMMED: told to turn, doesn't turn, nothing travels → stop;
+  - IDLE: nothing commanded, nothing moving for 8 s in an active stage → stop;
+  - STUCK: joint > 10° off target, not moving, servo at its force limit → reported.
+  - First version raised a false JAMMED on a lock rotor turning in place (fixed: real joint angles count).
+- **chain A→B→C, robot 1, disturbances ON, in pieces:** build A ✔ → W2 undock ✔ → W2 step S8→S1 ✔ → W2 dock R.S1A (2.5 cm) ✔ → hold ✔ (shape B, 0.2 mm) → W1 undock ✔ → **W1 step S29→S22: stopped by the watchdog (IDLE)**.
+- **What the pictures showed (the logs said "OK"):**
+  1. "Stand up straight" after a peel does NOT always happen. After its floor step, W2 stayed folded (B2 −79°, B3 −68°, both servos at their force limit 88/92%). The next dock still worked from there.
+  2. After unlocking from R's lower receiver, W1 stays sticking out **sideways** from its foot (B2 77° off, servo at its limit). It cannot lift itself, so in the floor step the brain waits forever for an arm that can't follow (watchdog IDLE after 8 s; without it: a 90 s timeout).
+- **Lesson:** a module left lying sideways is too heavy for its own foot servos (estimate: 1.13 kg × 9.81 × ~0.2 m ≈ 2.2 N·m vs 2.0–2.7 N·m usable). Without the floor play and disturbances the same chain passed on 27 Oct, so the realism exposed it. **Next:** after a peel, lower the free end first (gravity helps) and stay compact inchworm-style; never "stand up" from sideways. And the brain must notice it cannot follow (lag persists with servos saturated) and choose another path instead of waiting.
+- **Follow-up (checkpoint `chainABC_1_after4.pkl`, every try ≤ 50 s):** after the undock, W1 is an upside-down L (B2 86°). Its End B rests on the bottom edge of R's receiver S1B (contact −0.03 mm), servos at 70–89%.
+  - "Lower the end first" → JAMMED (pushes down into the receiver edge).
+  - "Slide 6 cm out along the receiver axis first" → IDLE: the brain waits for an arm that can't move.
+  - **Conclusion:** a module whose foot is 0.42 m from the module it was docked into is too heavy for its own servos once it lets go (this robot: force limits 76–92% of nominal; cardboard play adds sag).
+  - Ideas to test next:
+    (a) the planner avoids undocking a module that will be left sideways: estimate the foot-servo torque from the pose and ask physics;
+    (b) swing off sideways with the base twist T1, which costs no torque against gravity, then let it settle low;
+    (c) the brain must notice "servos saturated + arm not following" and change plan instead of waiting (the watchdog shows where).
+
+### 28 Oct (night): real meshes in pictures; magnets & connector angles checked; Transformations gallery
+- **"Only 4 magnets on the side connector?" (Nischay's screenshot).** The physics has all 8 (4 on pad tops at 15.3 mm, 4 on gap floors at 6.3 mm, alternating N/S, as in the handoff/CAD). The snapshot drew the module bodies as the coarse collision boxes, and the 4 pad-top magnets sat inside the box. Fixed: pictures now use **the real CAD meshes** (`VISUAL_MESH=1`, visual only: no mass, no collision).
+  - Placement is copied from the original CAD scene's compiled model; body frames identical, 0.0 mm / 0.0°.
+  - Close-up `logs\snaps\closeup_R_S1B.png`: all 8 magnets visible on the real receiver ring; the docked end seated flush.
+- **Connector geometry** (`v2_connector_check.py`, re-run): every end and side port 0.00 mm from its pad tip / gap floor, normals exact, side port x 45° from a pad (= at a gap), end port x at a pad. This is the try8 CAD export; if the Fusion design changed since, re-export.
+- **Fidelity note:** the module-body collision boxes are much fatter than the real open-frame parts, so module-to-module bumps are detected early (conservative; possibly why some bridge placements "hit" U). Upgrade candidate: convex pieces of the real parts.
+- **Pieces, recorded + stitched** (`ckpt_build.py`/`tf_piece.py` with `REC=25`, `stitch.py`): one continuous 98 s run of shape A → B, robot 2, **room disturbances ON**, all 5 stages OK (pieces of 50 / 84 / 25 s wall).
+- **Brain:** `FOLLOW_CHECK` (walk.py) stops a move after 2 s of "arm > 6° from command and not moving" (the stuck step now fails in 16 s instead of 2 × 90 s). Normal steps/docks unaffected (re-run OK). A failed stand-up now RELAXES (holds where it is) instead of straining at the force limit.
+- **Studio → Shapes → Transformations (watch):**
+  - 2 modules: standing → T/brace (room on, robot 1);
+  - 3 modules: A → B (room on, robot 2);
+  - 3 modules: standing → T → gate (room off, robot 3; with the room on, robot 3's gate dock did not finish within the 140 s cap: W1 droops, R leans);
+  - 3 modules: A → B → C (room off, 27 Oct; with the room on the second change fails: W1 left sideways).
+  - Plus a "not possible yet, and why" line (snake, cube, flat top, sideways module).
+
+### 28 Oct (late): out-of-the-box ideas; COOPERATIVE support works
+Ideas written down before testing:
+- **Flat top:** (1) share the load BEFORE letting go: a second column docks its top end into the bridging module's spine while that module still stands on its foot; (2) build the bridge low, then lift it with both columns together; (3) tripod: keep the bridging module's foot as a third leg.
+- **Snake:** (4) a chain of end→side docks (the dock type that works, 19/19) instead of end↔end; (5) a stiff end↔end target (receiving end resting on the floor, or both ends moving toward each other).
+- **Sideways module:** (6) a helper module holds it before it lets go; (7) unlock into a pose where gravity helps.
+
+**Idea 1 tested (`coop.py`, robot 1, room ON, real meshes, pieces 75 s + 33 s):**
+- build R + W1 (into R.S1B, foot on the floor) + X1 bending over and docking its End B into W1's spine S2B: **2/2 locked** (0.01 mm), hold 0.7 mm;
+- W1 releases its floor foot and peels: foot up **11.8 mm** (the brain's own "clear" test wants > 12 mm, so it reports not-out);
+- **the structure holds with W1's foot off the floor** (2.8 mm in 3 s). Max servo: R 30%, X1 58%, W1 81%.
+
+So two columns carry the module that one column alone could not (R bent over under a single-column cantilever).
+
+**Next:** (a) lift the foot higher (PEEL / LIFT for a closed loop: only the joints between W1's spine and its End A are free); (b) idea 4, a chain where each module's top end docks into the next module's spine (snake-like / caterpillar); (c) the GPU rate for the cooperative build.
+
+### 28 Oct (night 2): Plan-tab preview fixed from Nischay's video
+Nischay watched the Plan tab (kinematic preview, not physics) and found:
+1. **Too fast:** pose moves played at 4× (`durationS / 4`) even at "Speed 1.0x". Now real time.
+2. **Docks/undocks jumped** (`t < 0.5 ? before : expected`), and the bend before a dock went straight into the connector. Now `approach.ts` solves the docking module's joints so its end sits on the connector axis at 40/30/20/10/5/0 mm (Studio kinematics, damped least squares).
+   - Dock: stand off 4 cm (31 mm of air above the 9 mm pads) turned 45° → turn in place → pause → straight in → lock.
+   - Undock: unlock + pause → straight out 4 cm, and the next bend starts from there.
+   - Bug found by the new test: the docking module is the one whose port is an END (`a` may be the end).
+   - Test `approach.test.ts`: every demo-plan dock stands off 40 mm on the axis and stays < 3 mm from it all the way in.
+3. **Constant speed:** each phase now uses a minimum-jerk S-curve (speed and acceleration start/end at 0); the straight-in is spread by distance. (Physics runs already had the ST3215 trapezoid, 6.1 rad/s², 45 rpm, plus inertia and gravity.)
+4. "Where is real physics?" → buttons renamed "▶ Real physics (gravity)" / "▶ Real physics: run this plan"; the garbled `C:TETROBOTsim□erify_service.py` message fixed (`\v` was a control character).
+5. **Real floor receivers** in the Studio: `floor_receiver.stl` (90 mm, pads 15.3 mm, gaps 6.3 mm at 45°, checked), yaw per receiver (pads at yaw ± 45°).
+Checked in the browser (screenshots 4–25 s): stand-off with a gap at 7 s, going straight in at 14 s, foot straight up out of F0 at 25 s.
+
+### 28 Oct (night 3): "it's all hardcoded?" — the Plan tab was a sketch; real-physics plan runs debugged with pictures
+- **Honest correction:** the Plan tab's Play was always a kinematic SKETCH (no gravity, no magnets, rotor not drawn turning). Now labelled in red, the button reads "Play sketch (no physics)". Real physics: "▶ Real physics: run this plan" (MuJoCo + the docking brain), "▶ Real physics (gravity)", and Shapes → Transformations → Watch. Proof picture from a physics state: lock rotor at 45.0° (locked) vs 0° (`logs\snaps\rotor_proof.png`).
+- **Plan undocks in physics** now use the robot's own peel + straight pull-out (`run_plan` called release + bend before).
+- **The T demo plan in REAL physics, robot 1: the dock FAILS.** Debugged in ≤ 115 s pieces with pictures and measurements:
+  1. Brain stuck after a retry (phase 0, no camera check, 42 s idle) → NEW: no progress for 21 s → give up the attempt (walk.py).
+  2. Target receiver motion measured: only 2.8 mm (not a soft target). Magnets OFF: same drift (not the magnets).
+  3. Off-axis error while going in: 1.2 mm at the stand-off → 4.6 mm at 15 mm → 6.3 mm at 10 mm → the pads hit the rim at 10 mm out and the end slides to 11 mm.
+  4. NEW camera checks DURING the go-in (laptop_controller `MID_CHECK`, at 21 and 14 mm out) measure 2.2 / 5.3 mm off and correct, **but the arm does not respond**.
+  5. **Root cause:** M1's B2 and B3 at 88°, 2° from their stops (servos only 2–31% loaded): no joint travel left to correct. The planner chose a dock pose at the joint limits (its own "joint margin 1.8°" chip).
+  - **Fix in the planner:** pre-dock poses keep ≥ 15° of room (`DOCK_BEND_DEG` = 75°, `optimisePose bendLimitDeg`). The re-plan explores other docks (e.g. M2.S2B) but takes > 110 s → run "Plan" in the Studio (web worker), then "▶ Real physics: run this plan".
+  - Also: TARGET_FOLLOW (re-aim at a target receiver on another module every frame) keeps the camera's twist correction.
+- All brain changes are behind switches: `TARGET_FOLLOW`, `FOLLOW_CHECK` (also stops "no progress"), `MID_CHECK`, `PULL_CONVERGE`, `BASE_FOLLOW`. **Not yet re-measured on the GPU for walking** (long run → command for Nischay).
+
+### 29 Oct: cooperative dock fix, chat in the Ask tab, the third-person camera (state at end of day)
+- **T demo plan in real physics**: the failure was joints at their stops (M1 B2/B3 88°); with bends ≤ 75° (`DOCK_BEND_DEG`) docking into M2.S2B worked for robot 1 (0.23 mm, lock 44.96°, 27 s); 5 robots: **2/5**. Still too slow (>20 s) and the go-in error regrows to 3–5 mm after the mid checks.
+- **Nischay's "good dock" rule:** locked + no bump + ~≤ 20 s robot time. Report every dock against it.
+- **Watchdog COLLISION check** (module-to-module contact > 3 N, estimate): Nischay saw W2 hit R while lifting in the A→B recording. A replay with today's brain behaved differently (W2 jammed in its step); not yet located.
+- **Ask tab is a chat**: full history to qwen3.5:9b, a plain-words `reply`, robot context, Send/Stop/Retry/New conversation; history in localStorage. **Not yet checked in the browser** (my test script clicked a disabled button).
+- **End A = dark blue, End B = orange** in the Studio and in sim pictures.
+- **Learned estimate correction ("glasses")**: data collector `sag_data.py` fixed after pictures showed (a) poses resting on the floor and (b) impossible receiver angles. Clean data: brain estimate error median 11.8 mm, 90% 25 mm. Too few poses (20) → not trained. Better: sample poses near real dock poses.
+- **Camera (`camera.py`)**: third-person, fixed in the room. ArUco DICT_4X4_100, 18 mm tags ON the CAD housing (`marker_mounts.py`: ray-cast to the outer ring, squared to the module axis), 2 beside each floor receiver.
+  - One camera: sideways < 1 px, but depth 40–180 mm wrong (single small tag).
+  - **Two cameras** (`StereoRig`, 1920×1440, ~0.9 m apart): **0.84 mm median, 0.92 mm worst**; only ~4 tags seen by both.
+  - 12 mm tags: unreadable at 1.5 m.
+  - OpenCV upgraded to **5.0.0**.
+  - **Camera = optional add-on** (Nischay): transformations must work without it; it can be switched on mid-transformation; the camera may shake.
+
+### 29 Oct (session 2): the camera wired into the brain as an OPTIONAL add-on (TODO 1)
+**`cam_judge.py` (CameraJudge)**: the brain's judge from the two PICTURES only. Physics truth renders the images and grades the answers; the judge never uses it.
+- **Optional, switchable.** Off, or too little in view → `None`, and the brain runs exactly its encoders-only path (`walk.py` sets `C.judge` every frame from `judge_on()`). `on_at`/`off_at`/`.enabled` switch it at any moment; it takes effect at the next check.
+- **How it measures.** Every corner of an end's tags, in both cameras, goes into one rigid-body fit (least squares on pixels). A tag that doesn't fit the others is dropped and the rest refitted.
+- **Spine receiver as target.** It has no tags of its own: its module's nearest seen end (≤ 3 links) + that module's encoders on the nominal model.
+- **Shaking/knocked camera.** Before each look each camera re-measures its own pose from the board tags (`ThirdPersonCamera.relocalize`). Board tags now sit on the BOARD (world), not on the receiver bodies, which tilt with the cardboard play and spoiled it.
+- Pictures from the camera view at every look: `logs\snaps\camdock_*_NN_stage.png` (both cameras + a zoom on the connector; orange = end tip, blue = seat + axis).
+
+What the measurements forced (all measured at the S2B hover/seat, robot 1):
+1. **Pixel centre bug:** `K` had cx = W/2 (pixel edges); OpenCV uses pixel centres → a steady 0.5 px offset. Fixed (W/2 − 0.5). Triangulated tag centres are now 0.17–0.25 mm.
+2. **One small tag gives position, not tilt.** 0.2 mm in position, but its tilt only to 3–6°. Times the ~46 mm lever to the pad tip, that is 4–7 mm at the tip (tip off 6.8 mm, twist off 5.4°).
+3. **The model cannot supply the tilt either.** The real module sags: flex/backlash joints of up to 3° each. M1's top end is 12° / 72 mm off its nominal kinematics in this pose, so a model "prior" made it worse. Kept only as a weak 10° prior.
+4. **Not enough tags visible.** 4 tags per end, and at 1920×1440 / 1.4 m tags facing more than ~50° away are not detected. Hardware options added: `TAGS_PER_END=8` (6 fit on the real CAD housing, at 0/45/90/180/270/315°) and `FLOOR_TAG_MM=35` (bigger paper tags on the board).
+
+End tip vs receiver error (S2B checkpoint, 6 tags/end, 35 mm board tags):
+
+| camera | 1920×1440 | 3840×2880 |
+|---|---|---|
+| still | 4.6 mm | **0.83 mm** (twist 0.09°) |
+| shaking 2 mm | 8.5 mm | 2.1 mm |
+| knocked, re-measured | 4.3 mm | 1.9 mm |
+| knocked, NOT re-measured | 18 mm | 19.5 mm |
+
+- **Decision: 4K-class cameras** (used `CAM_RES=3840x2160`, a real 16:9 4K webcam) at **1.0 m** (`CAM_DIST`). At 1.4 m the docking end was in one camera only; at 0.8 m the target end left the picture.
+- **Found a cheat in the brain** (all earlier numbers had it). Without any camera it read the TRUE pose of its base receiver (cardboard tilt included) and of a target receiver on another module, every frame. New `phys_dock.ModelBelief`, switched by `BELIEF=model`: floor receivers from the board map; another module's receiver from that module's floor-locked end + its encoders on the nominal model. The camera judge uses the same code. The default is still the old behaviour.
+- **`PUSH_DEEPER`** (controller, default on, only with a judge): the camera sees the end lined up (< 1.5 mm sideways) but short of the seat → go in deeper by the measured shortfall instead of backing off to the same depth. A looser version (accept 4.5 mm sideways when < 8 mm out) made robot 5 fail; reverted.
+
+**S2B dock (`roomy_dock_S2B.json`, M1.B → M2.S2B), robots 1–5, pieces from `plan_ckpt.py` checkpoints, `cam_dock.py`:**
+| brain sees… | encoders only | old truth judge (cheat) | camera |
+|---|---|---|---|
+| truth belief (old) | 0/5 locked (4–12 mm sideways, twist always +5…+8°) | 2/5 (35.7, 45.2 s) | 1/5 (16.3 s) |
+| `BELIEF=model` (honest) | **0/5** | 1/5 (42.7 s) | **1/5 (robot 5: 23.7 s, no bump)** |
+- Good docks (locked + no bump + ≤ 20 s): **0/5 in every mode.** Robot 5 with the camera is the closest (23.7 s, clean).
+- **Robot 3, camera tests:** switched on mid-way (at 8 s): takes over at the next check, no lock. Knocked at 5 s: re-measured itself (median error 1.1 mm) → **locked** (33.6 s). Shaking: error median 1.6 mm, no lock.
+- **Failures are mostly NOT the camera:**
+  - (a) bumps during the swing: M1's lower spine scrapes M2 (3.3 N), robots 1, 3, 4 in every mode;
+  - (b) after a correction the arm never settles at the new hover point (robots 2, 5 with the truth judge: "no progress 21 s");
+  - (c) the end stops 7–9 mm short, lined up within 0.3 mm. With the honest belief the camera reads 2–4 mm sideways there (its target pose via M2's top end + 3 links of model is biased by that module's sag), so `PUSH_DEEPER` does not fire;
+  - (d) robot 4 crashed in its bend move (4 s, before the dock).
+- Tried: 2 tags on each spine-receiver ring (`RX_TAGS=1`, ray-cast to the real CAD, at 135°/315°). The one facing the cameras is ~57° off and partly behind the docking end: not detected. Off by default.
+- **Run-to-run:** with the same code a run repeats exactly (robot 5: 23.7 s twice); any change to the code or noise stream changes individual robots. 5 robots is a weak sample → `cam_dock_batch.py` (command for Nischay).
+- Also: W2's End A hits R's T1 housing (4.6 N) in the A→B dock R.S1A (`tf_piece.py AB_p1_2.pkl 2 2`): probably the W2→R bump Nischay saw (TODO 3).
+- Refactors (one source each): `PhysWorld.rx_frame`, `phys_dock.end_rel` (also used by gpu_transform / gpu_multi_dock instead of their copies), `ModelBelief`; `run_plan(ckpt_before=…)` + `plan_ckpt.py`. A→B dock piece re-run after the refactor: OK.
+
+## FLOOR CHAINS (new direction, 29 Oct, Nischay): no floor connectors, mostly blind
+**Setup:** 2 modules end to end (1.36 m, 2.26 kg) or 3 (2.03 m, 3.39 kg), lying on the bare floor; no floor receivers. Make amazing shapes from there with floor pushing, skidding, retries, whole-body force/position and balance. **At most ONE external camera, at an unknown angle, often absent → master blind first, then blind + 1 camera.** The stereo/4K camera work and the S2B TODO below are parked for later.
+
+**First measurements (`floor_chain.py`, `floor_moves.py`, robot 1, room disturbances on, ~5–10 s wall per piece):**
+- **At rest:** the chain rests on its bulky end housings and a few ring parts, not along its length. Servos at 8–16% just lying.
+- **Lying straight, every bend axis is vertical:** B4 ±60° swings the end sideways, it lifts nothing (End B stays at 37–39 mm), and the whole chain slides ~5 cm.
+- **A twist joint on the floor rolls whichever side is easier.** M2 T2 = 90° rolled M1 instead, and the chain rolled back to the "bends sideways" lie by itself.
+- **First a wide C on the floor (sideways bends), then twist + bend → it lifts:** M2's End B up to 216 mm. By accident (the body rolled under the move) M1's End A rose like a cobra head to 344 mm. Pictures: `logs\snaps\moves_fm_probe3_004.png` / `_008.png`.
+- **Torque (estimate):** lifting a whole module as a stiff rod needs ~3.8 N·m vs ~2.7 usable. Lifting only an end segment is fine (servo 20–50% seen).
+
+**The physics this exposes:**
+1. The chain's ROLL about its own long axis is a free, cheap motion. It decides whether a bend lifts or swings, and it changes by itself under load.
+2. Footprint first: a curved/planar footprint stops the roll; then twists choose which part lifts.
+3. Weight limits: only short levers can be lifted; whole modules must be stood up by folding, levering on the floor, or rolling, never by brute force.
+
+**Plan (each step = short pieces with pictures, physics decides, many random robots once it works):**
+- **F1 Know the body:** a map of which pose families are statically stable and what each costs in servo torque. Which roll states are stable for a straight / C / S / L chain; how friction (0.3–0.8 randomized) changes slipping.
+- **F2 Primitive skills (each its own piece, measured on many robots):**
+  - roll by a chosen angle (twist waves along the chain);
+  - lock the footprint (C/S on the floor);
+  - cobra: raise one end vertical;
+  - fold: bring two parts together;
+  - lever: push off the floor to tip a part up;
+  - inch / crawl: move on the floor (inchworm, rolling, lateral undulation).
+  Each skill reports success, time and slip.
+- **F3 First shapes from the 2-chain:**
+  - cobra / periscope (one module upright on the other as a base);
+  - arch / bridge standing on its two ends;
+  - LOOP (End A docks into End B, no receivers: the floor and the body itself are the support; `loop_2m` in the Studio library);
+  - L-stand (`l_stand_2m`);
+  - tripod (`tripod_2m`: unlock, then the end goes into the spine).
+- **F4 3-chain:** triangle (close the loop) → stand it up as a wheel and ROLL; tall column; 3-legged stand; split into pieces and re-join as a T / Y.
+- **F5 Blind brain:** know the body's pose without a floor map. Joint encoders + servo load (ST3215 reports load) + "which parts touch the floor" from statics → floating-base estimate; roll from gravity torques on the servos. Retry when a skill slips. Planner = sequence of skills, each proven in physics on many random robots.
+- **F6 + one camera:** a single camera at an unknown angle locates itself from the tags on the modules (no floor tags) and corrects the blind estimate. Optional: the shape must work without it.
+- **F7 Studio:** watch every shape change (gallery), plan from the chat ("become a bridge").
+
+**IMU (Nischay, 29 Oct: an MPU-6050 on each module).** Mounted on Spine2 (B3–B4), on the S2B-side frame bar beside the window (his blue plate).
+- **Sim:** `phys_world` `IMU_POS` (−24, 80, −19) mm in Spine2's frame; a 16 × 21 × 3 mm board; MuJoCo accelerometer + gyro; switch `IMU=1` (default on).
+- **Studio:** `moduleMeshes.ts` `IMU_BOARD`, merged into the Spine2 mesh. Studio tests 360/360. Close-up: `logs\snaps\imu_board_closeup.png`.
+- **`imu.py`:** the MPU-6050 as the brain gets it. All of these are datasheet ESTIMATES:
+  - ±2 g / ±250 °/s, 16 bit;
+  - noise 2.7 mg / 0.033 °/s;
+  - leftover offsets after calibration 5 mg / 0.3 °/s;
+  - mounting error 1.5°.
+  A complementary filter gives "up"; with the encoders on the nominal model, "up" in every body.
+- **What it knows (`imu_check.py`, measured on lying, curled and raised poses):**
+  - every end correctly called up / lying / down, "up" within 0.9–4.9° of the truth;
+  - each module's roll within 1–2° (e.g. truth 144.6° vs brain 142.7°);
+  - heading: NO (gyro drift 2.4–5° per 10 s, no magnetometer); position on the floor: NO.
+
+**Cobra, the first shape from a lying chain (2 modules, blind).** In `floor_skills.py`, the Brain uses only encoders + IMU + the nominal model; truth is used only to score. What physics taught on the way:
+1. A straight lying chain's bends all swing sideways or all lift, depending on its roll, and the roll changes by itself. The end-to-end lock leaves the two modules ~45° apart in roll.
+2. Brute force can't lift a module (3.8 N·m needed vs ~2.7). **Tip first:** stand the tip up, then roll the pivot back joint by joint in 10 coordinated steps. The upright part stays vertical and its lever stays ≤ one spine (servos 20–66%).
+3. **The base rolls over under the rising module** (a lying module is a line support). Fix: turn the base's junction twist until its bends are vertical, then curl it into a **C** on the floor. Ten variants compared in physics: C with a 15° lean back is best (base roll change ~2°); the Z I tried first fell.
+- **Brain decisions from sensing:**
+  - lift sign per joint = (axis × lever)·up from the IMU, 0 if the axis is vertical;
+  - twist angle to make the base's bends vertical;
+  - encoder check that the footprint really formed (else curl the other way);
+  - the rise stops and holds the last good step if the pivot can't follow (encoder lag > 15°) or the base tips (IMU roll > 12°).
+- **Result, robots 2–9 (room on):** **7/8 stood fully** (tip 572–582 mm, 7–17° from vertical, ~28 s robot time). Robot 7: its M1 B4 servo is too weak at the last pivot; the brain noticed and held a partial pose (294 mm).
+- **Studio:** Shapes → Transformations → "lying chain → cobra" (`tf_cobra2_2.json`, robot 2). Checked in the browser: it plays, with the brain's decisions as captions.
+
+**3 modules, "two heads" (M2 curls into a C, M1 and M3 both stand): NOT yet.**
+- Robot 1: M3 stands (585 mm), M1 does not.
+- The C never forms: curling the middle module drags the two 0.68 m arms sideways against floor friction, and M2's B4 / B1 stall at the force limit (watchdog STUCK/JAMMED, picture `skill_sk_2h_nb1_1_-60_003.png`).
+- Tried: footprint first; a gentler ±45° C; a big C with M3 curling along; no B1. All blocked.
+- **Next ideas:** the arms make their own feet first, or move along with the curl so nothing slides far; or a different base (M1 + M2 as the base, then M3 rises on it).
+
+### 30 Oct: MANUAL tab in the Studio (Planner v2 → Manual): drive it by hand in live real physics
+- **Backend `C:\TETROBOT\sim\manual.py`** (verify_service `/manual/start|step|cmd`):
+  - a live session on its own thread, paced to real time;
+  - it declares every possible lock up front; random robot and room disturbances on by default.
+- **Commands:**
+  - joints (servo targets);
+  - lock: the rotors turn (end↔end both, end↔side only the end's); it becomes a weld only if really seated (gap < 0.8 mm, side < 1.5 mm, rotor > 40°), else the rotors go back;
+  - unlock;
+  - connect A+B: choose who docks (the end whose module holds on with its other end); pre-shape the whole locked group (least squares on the nominal model); then the robot's own docking brain.
+- **Studio:**
+  - `ManualTab.tsx`: module count 1–4; starts = lying chain / all lying / all standing / standing + lying free / standing + chain / library shapes;
+  - joint sliders with command, actual and load;
+  - lock list; Move / Lock / Connect modes; log;
+  - `manualScenes.ts` (the setups, from the normal assembler); connector balls in the viewport (`MsrrCanvas.syncPorts`); hover menu `ManualPortMenu` (Lock with…, Unlock, Connect from here).
+  - Camera and real-robot sync switches are shown but not active yet.
+  - Checked in the browser (2-chain live), HTTP-tested: joints move at servo speed; a lock refused when not seated.
+- **Connect, what physics showed:**
+  - **Loop (2-chain, click both outer ends):**
+    - The open-loop pre-shape is held back up to 20° by floor friction. Fixed with feedback: re-plan from the encoders + push each command past its shortfall (servo droop). Result: 1 mm from the stand-off (model).
+    - The lying docker's hanging-arm sag estimate is wrong on the floor → `dock(sag=False)`. No swing to a fresh IK start.
+    - A base that is an END↔END lock now takes its frame from the locked end itself.
+    - **Still NOT locking:** blind it thinks it's seated while really 52 mm short. With the truth judge the estimate is 37 mm off, and the floppy lying ring slides when pushed.
+    - Next: the IMU on Spine2 (2 joints from the docking end) to correct the estimate; push slower; both ends meet halfway.
+  - **Standing M1 + lying M2, click M1.B + an M2 spine receiver:** NOT locking. The planned end pose is fine but the path goes through the floor (M1 stuck 27° short, bent away). Next: a collision-free bend path (real shapes), not just the end pose.
+- **The physics service now starts with the Studio:** `studio/tools/vite-plugin-physics.cjs` (DEV only).
+  - Starts `verify_service.py` with `npm run dev`; restarts it if it crashes; stops it with the dev server.
+  - `PHYSICS_SERVICE=0` = off; leaves a service that was started by hand alone.
+  - Checked: Vite restarted on the config change and the service came up (port 8771).
+- **"Become a shape" buttons (Manual tab):** the robot's OWN skills, live in real physics (`manual.py` `skill` → `floor_skills.py`, blind brain).
+  - Buttons: Cobra, Two heads, Ring (= connect M1.A + last B), Straighten.
+  - Each is enabled only when the setup fits, otherwise it says what it needs.
+  - Checked via HTTP (cobra DONE, robot 2: 582 mm, 7.3°, 28 s live) and in the browser (M1 rising live).
+- **Session controls, ONE shared component in both tabs** (`ManualTab.tsx` `SessionBar` + `ShapeButtons`, shown in Manual and in Shapes → Transformations):
+  - ⟲ Step back: the session records servo commands + locks; it plays the last action BACKWARDS in real physics, opening/closing locks again.
+  - ⌂ Home: the whole session backwards. ⟳ Reset: the same start, instantly. Also ❚❚ Pause / ▶ Resume and Save / Restore state.
+  - Gallery entries the robot can do live get "▶ Live": the same setup in a live session + the same skill.
+  - Checked: cobra then Step back → all joints back within 1° of straight (16 s, physics); Live cobra from the Shapes tab in the browser.
+- **Ring clicked while in the cobra → M2's end went INTO M1's End A (Nischay's screenshot).** Three causes:
+  1. **Sim model gap:** connector geoms (contype 4 / conaffinity 6) collide only with connectors; housing boxes (1/3) only with boxes. So a connector passes through another module's housing. The proper fix is collision shapes from the real CAD (changes every earlier result): its own step.
+  2. The ring pre-shape assumed a flat chain and planned through the standing module.
+  3. The blind brain was ~100 mm off and has no obstacle avoidance.
+  - Fixed now: Ring goes Home first (session played backwards) when the chain isn't flat; the pre-shape keeps different modules' bodies ≥ 8 cm apart.
+  - Re-test (same robot): home → pre-shape 7 mm from the stand-off → a clean ring, no overlap. The blind dock still ends 13.5 mm short / 13.4 mm sideways: NOT locked yet.
+- **UI:**
+  - Every result and step of a live session now also goes into the bottom log.
+  - The shared SessionBar shows "⏳ working: … — last step", in red on NOT / ERROR / failed.
+  - The live view shows the newest physics frame (no buffer, so no "picture behind").
+- **Ring, blind final dock (30 Oct): why it cannot lock yet, measured.**
+  - **Touch judge** (`phys_dock.TouchJudge`, the Manual tab's blind default): feel the hole with the encoders (commanded vs measured depth).
+    - On the rim → follow the chamfer's sideways push, else a spiral search (up to 10 tries, 108 s).
+    - Reached the depth → probe 5 mm deeper: stops = on the floor = seated; free = it missed.
+    - Robot 1: follow-the-push brought the shortfall from 10.7 to 5.5 mm. But the probe was stopped by the SIDE of M1's End A housing (truth 40 mm off) → false "seated", no lock (the weld correctly refused).
+  - **Root cause (DOCK_DEBUG trace):** the blind estimate of the tip is **23–46 mm off** during the whole dock. The sag estimate on/off makes no difference.
+  - The lying docker's PLA flex / gear-play joints are deflected **0.8–1.4°** by floor friction (M2: T1 twist flex −1.4°, B1 flex −0.9°, T3 play −0.8°) → 15–25 mm at a 0.6 m reach. Invisible to encoders, and in the floor plane, so the IMU's gravity can't see it either.
+  - Conclusion: closing a lying ring blind needs the one-camera judge (the truth judge did correct it), or "touch calibration": deliberately touch the target housing from two sides to locate it. Next.
+- **Connect, standing → lying side receiver:**
+  - Bending + twisting at once put the end on the floor (T1 stuck 26°). Fixed: straighten + twist in the air first, then bend.
+  - B2 then saturates holding the arm out: added a holding-torque cost (static inverse dynamics, < 60%) to the pre-shape.
+  - Still 52–66 mm short and T1 stalls in the final dock: NOT locking yet.
+- **Cosmos-reason2 as a live judge (measured):** 37 s to load, then **~2.3 s per new picture** (8 GB GPU), so not 1 Hz; every 2–3 s is possible. It called a fallen (flat) cobra "all modules standing upright": a slow second opinion only, never the judge.
+
+**Not done yet (honest):** loop / closing the chain, arch, crawl / locomotion, 3-chain shapes, one-camera add-on, chat → shape. G6 is still far from done (roughly 35–40% now: the floor-chain work is new and real, but it is one shape on 2 modules).
+
+## TODO (next session, in order)
+0. **Floor chains plan above (F1 → F7) comes first.** The list below is parked.
+1. ~~Camera as an optional add-on~~ **done as a measuring judge** (above). Open:
+   - the target pose near the seat (2–4 mm bias via the module chain); idea: measure the docking end RELATIVE to the target module's end over many looks and learn the chain offset at the hover;
+   - a third camera for coverage (fewer looks with only one camera seeing the end);
+   - bigger sample (`cam_dock_batch.py`);
+   - decide whether `BELIEF=model` becomes the default (it is the honest one).
+2. Make docks fast (≤ 20 s): settle faster at the stand-off (2b above); fewer corrections; faster go-in where it is safe. Plus: the swing bump (M1 spine vs M2) needs an approach path that keeps the arm clear.
+3. Find the W2→R collision in A→B with the collision watchdog; fix that motion (first lead: W2 End A vs R's T1 housing, 4.6 N, in the R.S1A dock).
+4. Check the Ask chat in the browser (2-turn conversation with qwen).
+5. Designer v1 (blocks + module count) + connect it to the chat.
+6. Long runs for Nischay (GPU): walking re-check with the new brain switches (PULL_CONVERGE, BASE_FOLLOW, TARGET_FOLLOW, FOLLOW_CHECK, MID_CHECK) on vs off; shape change on 64 robots with disturbances. CPU, ~10 min: the S2B dock on 16 robots, encoders / camera / truth, honest belief:
+   `cd C:\TETROBOT\sim` then `set MARKERS=1& set TAGS_PER_END=8& set FLOOR_TAG_MM=35& set CAM_RES=3840x2160& set BELIEF=model& py -3.12 cam_dock_batch.py C:\TETROBOT\logs\roomy_dock_S2B.json 1 M1.B F:F0 M2.S2B 16 off,cam,truth 8`
+7. Later: "glasses" network (data around real dock poses), residual RL docking skill, a third camera if coverage is poor.

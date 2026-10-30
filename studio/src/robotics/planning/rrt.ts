@@ -5,6 +5,8 @@
  * (self-collision + world). Returns a collision-free joint-space path, shortcut-
  * smoothed, or null. Generic over any DOF count.
  */
+import { dist } from './rrtstar';
+
 export interface RRTOptions {
   bounds: [number, number][];               // per-joint [lower, upper]
   collisionFree: (q: number[]) => boolean;  // true if config q is valid
@@ -14,7 +16,6 @@ export interface RRTOptions {
   tol?: number;                             // distance to consider goal reached
 }
 
-const dist = (a: number[], b: number[]) => Math.hypot(...a.map((v, i) => v - b[i]));
 
 function steer(from: number[], to: number[], step: number): number[] {
   const d = dist(from, to);

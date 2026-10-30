@@ -1,8 +1,8 @@
 """Watch TETROBOT walk over 4 floor connectors (inchworm flips) in MuJoCo. Each walk = a new random robot.
 Usage: python watch_walk.py [SLOW]    e.g. python watch_walk.py 1"""
-import sys, time, math, numpy as np, mujoco, mujoco.viewer
+import os, sys, time, math, numpy as np, mujoco, mujoco.viewer
 mujoco.set_mju_user_warning(lambda m: None)
-sys.path.insert(0, r'D:\\robo4\\brain')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from walk import Walker
 from walk_env import WalkEnv
 SLOW = float(sys.argv[1]) if len(sys.argv) > 1 else 1.0

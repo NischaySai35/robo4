@@ -38,7 +38,7 @@ import { CMATrainer } from '@/robotics/rl/cmaTrainer';
 import { BCTrainer, BCNet, makeReachDemo, makeNavDemo, type Demo } from '@/robotics/rl/bcTrainer';
 import { LinearPolicy, MLPPolicy, policyFromSpec, type Policy } from '@/robotics/rl/policy';
 import { putSkill, getSkill } from '@/robotics/rl/policyStore';
-import { withJointValues } from '@/control/motionRuntime';
+import { withJointValues } from '@/core/model/index';
 import type { Task } from '@/robotics/rl/task';
 import { ObsNormalizer, NormalizedObsTask } from '@/robotics/rl/obsNormalizer';
 import { CurriculumScheduler, REACH_CURRICULUM, NAV_CURRICULUM, LOCO_CURRICULUM, POSE_CURRICULUM, ASSEMBLE_CURRICULUM } from '@/robotics/rl/curriculum';
@@ -727,9 +727,7 @@ export default function TrainingPanel() {
     // Compute target joint values using IK approximation via FK end state
     // Simple approach: use current FK tip and target position to compute joint targets
     const tipFn = (vals: number[]): [number, number, number] => {
-      const joints: any = { ...doc.joints };
-      chain.forEach((j: any, i: number) => { joints[j.id] = { ...j, state: { ...j.state, value: vals[i] } }; });
-      const p = computeFK({ ...doc, joints }).get(tipId)?.position ?? [0, 0, 0];
+      const p = computeFK(withJointValues(doc, Object.fromEntries(chain.map((j: any, i: number) => [j.id, vals[i]])))).get(tipId)?.position ?? [0, 0, 0];
       return [p[0], p[1], p[2]];
     };
     // For IK-like target: move all joints to their midpoint toward limits as a rough "reach" pose

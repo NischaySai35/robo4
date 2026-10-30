@@ -15,6 +15,8 @@ export interface Intent {
   constraints: { max_modules?: number; keep_anchored?: boolean };
   preferences: { prefer: 'reliable' | 'fast' | 'tall' | 'low' | null };
   clarifying_question: string | null;
+  /** a short plain-words answer to the person: what was understood, what the robot can/can't do, or a question back */
+  reply?: string;
 }
 
 /** Default local model for the intent layer (Ollama tag). */
@@ -23,11 +25,16 @@ export const INTENT_MODEL = 'qwen3.5:9b';
 const BOOL_TAGS: readonly CapabilityTag[] = ['moves_on_floor', 'stands_upright', 'has_free_end', 'encloses'];
 
 export const INTENT_SYSTEM_PROMPT = `You translate a request for a shape-changing modular robot into capability tags.
+You are in a CONVERSATION with the robot's builder: earlier turns are context, the newest message may answer your question.
 Reply with ONE JSON object and nothing else:
-{"required_tags": {<tag>: {"min"?: number, "max"?: number} | {"is": true|false}},
+{"reply": string,
+ "required_tags": {<tag>: {"min"?: number, "max"?: number} | {"is": true|false}},
  "constraints": {"max_modules"?: number, "keep_anchored"?: boolean},
  "preferences": {"prefer": "reliable" | "fast" | "tall" | "low" | null},
  "clarifying_question": string | null}
+"reply" = 1-3 plain sentences to the person: what you understood in their words, and honestly what is not possible yet
+(end-to-end docking between two modules is 0% in physics so far; snake, cube and flat table tops are not built yet).
+required_tags must describe the WHOLE goal so far (merge the earlier turns), not only the newest message.
 Tags (yes/no tags use "is"; all others are numbers and use "min"/"max"):
 - moves_on_floor (yes/no): the shape can travel along the floor (crawl, walk, roll).
 - max_speed_mm_s: travel speed.
@@ -70,8 +77,9 @@ export const INTENT_SCHEMA = {
     constraints: { type: 'object', properties: { max_modules: { type: 'integer' }, keep_anchored: { type: 'boolean' } }, additionalProperties: false },
     preferences: { type: 'object', properties: { prefer: { enum: ['reliable', 'fast', 'tall', 'low', null] } }, required: ['prefer'] },
     clarifying_question: { type: ['string', 'null'] },
+    reply: { type: 'string' },
   },
-  required: ['required_tags', 'constraints', 'preferences', 'clarifying_question'],
+  required: ['reply', 'required_tags', 'constraints', 'preferences', 'clarifying_question'],
 };
 
 /** Validate untrusted JSON (from an LLM) into an Intent. Unknown tags and bad values are dropped and reported. */
@@ -111,6 +119,7 @@ export function validateIntent(raw: unknown): { intent: Intent | null; problems:
       },
       preferences: { prefer },
       clarifying_question: q,
+      reply: typeof o.reply === 'string' && o.reply.trim() ? o.reply.trim().slice(0, 800) : undefined,
     },
     problems,
   };
@@ -176,4 +185,19 @@ export function rankShapes(entries: ShapeEntry[], intent: Intent, nModules: numb
     out.push({ entry: e, fit, unmet, score: fit * 2 + margin * 0.5 + pref + sim });
   }
   return out.sort((a, b) => b.score - a.score).slice(0, 3);
+}
+
+/** one turn of the Ask conversation */
+export interface ChatTurn { role: 'user' | 'assistant'; content: string; intent?: Intent; source?: string; problems?: string[]; t: number }
+
+/** the model's view of the robot right now (so it can talk about THIS robot, not a generic one) */
+export function robotContext(nModules: number, locks: string[]): string {
+  return `Robot now: ${nModules} module(s). Locks: ${locks.length ? locks.join(', ') : 'none'}. ` +
+    'Ports: each module has End A and End B (lockable connectors) and 4 side receivers S1A, S1B, S2A, S2B; floor receivers F0.. are on the floor.';
+}
+
+/** the whole conversation as chat messages for the model (assistant turns are its earlier JSON replies) */
+export function chatMessages(history: ChatTurn[], context: string): { role: 'system' | 'user' | 'assistant'; content: string }[] {
+  return [{ role: 'system', content: `${INTENT_SYSTEM_PROMPT}\n${context}` },
+    ...history.map((h) => ({ role: h.role, content: h.role === 'assistant' && h.intent ? JSON.stringify(h.intent) : h.content }))];
 }

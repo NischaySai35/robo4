@@ -1,6 +1,6 @@
 /**
- * joltShapes — body geometry -> Jolt Shape, same mapping colliderFactory.ts
- * (Rapier) and mjcfGen.ts/rigidGeomXml.ts (MuJoCo) did for their engines.
+ * joltShapes — body geometry -> Jolt Shape (the only collider builder; the old
+ * Rapier and MuJoCo builders were removed).
  *
  * makeJoltShapeSettings returns raw ShapeSettings (needed by compound-shape
  * builders like RigidTumbleSim, whose CompoundShapeSettings.AddShape takes
@@ -23,8 +23,8 @@ function radiallyUniform(sx: number, sy: number): boolean {
 
 // Visual meshes (BodyRenderer) build Y-aligned primitives then rotateX(pi/2),
 // so a body's cylinder/capsule/cone runs along its local Z axis — same
-// convention colliderFactory.ts documents for Rapier. Jolt's cylinder/capsule
-// are Y-aligned like Rapier's, so the same +90 deg X rotation applies.
+// convention. Jolt's cylinder/capsule are Y-aligned, so a +90 deg X rotation
+// maps them onto Z.
 const ROT_Z_ALIGNED = { x: Math.SQRT1_2, y: 0, z: 0, w: Math.SQRT1_2 };
 
 export interface JoltShapeOpts {
@@ -80,8 +80,7 @@ function maybeOffset(Jolt: JoltModule, inner: any, pos: THREE.Vector3, quat: { x
 
 /**
  * Build the ShapeSettings for a body's collision geometry. Returns null only
- * if geometry is missing. Mirrors colliderFactory.makeColliderDesc's contract
- * (including the "non-uniform radial scale falls back to a box, honestly"
+ * if geometry is missing (including the "non-uniform radial scale falls back to a box, honestly"
  * behavior).
  */
 export function makeJoltShapeSettings(Jolt: JoltModule, body: any, opts: JoltShapeOpts = {}): any | null {
@@ -170,7 +169,7 @@ export function makeJoltShapeSettings(Jolt: JoltModule, body: any, opts: JoltSha
       return cuboidFallback();
     }
 
-    default: // torus: bbox approximation, same as colliderFactory
+    default: // torus: bbox approximation
       return cuboidFallback();
   }
 }

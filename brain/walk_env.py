@@ -6,6 +6,7 @@ import math, collections, json, numpy as np, mujoco
 mujoco.set_mju_user_warning(lambda m: None)
 from tetro_env2 import ACT, ACC_RAD, W0_12V, KT, MAG_F0, MAG_D0, MAG_CUT, RX_GAP, RX_TOP
 from build_walk import R2q
+MAG_PULL_IN = __import__('os').environ.get('MAG_PULL_IN', '1') == '1'   # magnets always pull the end IN (old sign(ax) flipped when touching faces overlapped: pushed it OUT with full force). GPU A/B 26 Oct, 256 robots: old 81/82 first docks, new 103/103; seated gap 0.11 -> 0.00 mm. MAG_PULL_IN=0 = old behaviour.
 WALK_XML = r'D:\\robo4\\brain\\walk_train.xml'
 SUB = 60
 class WalkEnv:
@@ -108,7 +109,7 @@ class WalkEnv:
                 # Opposite poles attract (pad over gap = correct 45 deg dock); same poles repel (pad over pad = misaligned).
                 pol = np.where(np.arange(8) % 2 == 0, 1.0, -1.0)
                 f = f * np.where(pol * pol[j] < 0, 1.0, -1.0)
-                Fv = (z[None, :] * np.sign(ax)[:, None]) * f[:, None] + lat / 0.004 * 0.5 * f[:, None]
+                Fv = (z[None, :] * (-np.ones_like(ax) if MAG_PULL_IN else np.sign(ax))[:, None]) * f[:, None] + lat / 0.004 * 0.5 * f[:, None]
                 b = self.end[e]['body']; c = d.xipos[b]
                 d.xfrc_applied[b, :3] += Fv.sum(0); d.xfrc_applied[b, 3:] += np.cross(Bm - c, Fv).sum(0)
                 self.mag_force[e] += float(f.sum())          # net: attraction positive, repulsion negative

@@ -64,6 +64,7 @@
  * `WheelContactSolver` is the thin layer that reads/writes Jolt bodies.
  */
 import * as THREE from 'three';
+import { joltPose } from '@/physics/joltPose';
 
 const GRAVITY = 9.81;
 
@@ -342,8 +343,7 @@ export class WheelContactSolver {
       // Extract every primitive IMMEDIATELY after its Jolt call and never hold a returned
       // wrapper across another Jolt call — this binding reuses scratch buffers for
       // struct-valued returns, a hazard dynamicSim.ts documents having hit for real.
-      const px = rb.GetPosition().GetX(), py = rb.GetPosition().GetY(), pz = rb.GetPosition().GetZ();
-      const qx = rb.GetRotation().GetX(), qy = rb.GetRotation().GetY(), qz = rb.GetRotation().GetZ(), qw = rb.GetRotation().GetW();
+      const { position: [px, py, pz], quaternion: [qx, qy, qz, qw] } = joltPose(rb);
       const cx = rb.GetCenterOfMassPosition().GetX(), cy = rb.GetCenterOfMassPosition().GetY(), cz = rb.GetCenterOfMassPosition().GetZ();
       const lvx = rb.GetLinearVelocity().GetX(), lvy = rb.GetLinearVelocity().GetY(), lvz = rb.GetLinearVelocity().GetZ();
       const avx = rb.GetAngularVelocity().GetX(), avy = rb.GetAngularVelocity().GetY(), avz = rb.GetAngularVelocity().GetZ();

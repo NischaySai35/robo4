@@ -8,7 +8,9 @@
  */
 import type { Document } from '@/core/model/index';
 
-const san = (s: unknown) => String(s ?? 'j').replace(/[^A-Za-z0-9_]/g, '_');
+import { san as sanName } from '@/core/serialization/exporters/common';
+
+const san = (s: unknown) => sanName(s, 'j');
 const RAD2DEG = 180 / Math.PI;
 
 /**

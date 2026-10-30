@@ -7,9 +7,8 @@
  * joints → <joint>. Node-testable (no three needed; pure string assembly).
  */
 import type { Document } from '@/core/model/index';
+import { san, n, limitRange, jointTree } from './common';
 
-const san = (s: any) => String(s ?? 'x').replace(/[^A-Za-z0-9_]/g, '_');
-const n = (v: any) => (Math.abs(v) < 1e-9 ? '0' : (+v).toFixed(6));
 const v3 = (p: any) => `${n((p ?? [0, 0, 0])[0])} ${n((p ?? [0, 0, 0])[1])} ${n((p ?? [0, 0, 0])[2])}`;
 const quat = (q: any) => { const a = q ?? [0, 0, 0, 1]; return `${n(a[3])} ${n(a[0])} ${n(a[1])} ${n(a[2])}`; }; // MuJoCo is w x y z
 
@@ -29,25 +28,14 @@ function jointXML(j: any) {
   if (j.type === 'fixed') return '';
   const type = j.type === 'prismatic' ? 'slide' : 'hinge';
   const ax = j.axis ?? [0, 0, 1];
-  const lim = j.limit ?? {};
   const ranged = (j.type === 'revolute' || j.type === 'prismatic')
-    ? ` limited="true" range="${n(lim.lower ?? -3.14)} ${n(lim.upper ?? 3.14)}"` : '';
+    ? ` limited="true" range="${limitRange(j).map(n).join(' ')}"` : '';
   const o = j.origin ?? {};
   return `<joint name="${san(j.name)}" type="${type}" pos="${v3(o.position)}" axis="${n(ax[0])} ${n(ax[1])} ${n(ax[2])}"${ranged}/>`;
 }
 
 export function exportMJCF(doc: Document, name = 'tetrobot') {
-  const allJoints = Object.values(doc.joints);
-  const childParent = new Map<string, any>();      // childId -> joint
-  const children = new Map<string, string[]>();     // parentId -> [childId]
-  for (const j of allJoints) {
-    const pid = (j as any).parentBodyId, cid = (j as any).childBodyId;
-    if (!pid || !cid || !doc.bodies[pid] || !doc.bodies[cid] || childParent.has(cid)) continue;
-    childParent.set(cid, j);
-    if (!children.has(pid)) children.set(pid, []);
-    children.get(pid)!.push(cid);
-  }
-  const roots = Object.values(doc.bodies).filter((b) => !childParent.has(b.id));
+  const { childParent, children, roots } = jointTree(doc);
 
   const seen = new Set<string>();
   const bodyXML = (id: string, depth: number): string => {

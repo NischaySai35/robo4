@@ -34,6 +34,8 @@ export interface OptimiseOptions {
   frozen?: string[];
   /** prefer poses close to `start` (penalty per degree moved, summed over joints, ÷ 180) */
   stayNear?: number;
+  /** tighter bend limit (deg from straight) for this search, e.g. a pre-dock pose that must leave the docking brain room to correct */
+  bendLimitDeg?: number;
   /** stop early once a feasible pose meeting every requirement is found */
   firstFeasible?: boolean;
   /** keep the root's world orientation from `start` (free-standing robots must not teleport) */
@@ -116,7 +118,7 @@ export function optimisePose(topology: Edge[], modules: string[], spec: TagSpec,
   const anchored = topology.some((e) => isFloorRef(e.a));
   const frozen = new Set(opts.frozen ?? []);
   const nJ = modules.length * 7;
-  const lim = (i: number) => (isBend(JOINTS[i % 7]) ? PLAN_BEND_DEG : 180);
+  const lim = (i: number) => (isBend(JOINTS[i % 7]) ? Math.min(PLAN_BEND_DEG, opts.bendLimitDeg ?? PLAN_BEND_DEG) : 180);
   const needLoad = spec.holds_load_kg !== undefined;
 
   const decode = (g: Genome): Config => {

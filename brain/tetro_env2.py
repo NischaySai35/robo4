@@ -9,6 +9,7 @@ Base End A sits in the floor lock through a springy mount (tilt 0.5-1 deg + lift
 import math, collections
 TW_MARGIN = os.environ.get('TW_MARGIN', '1') == '1'   # IK keeps twist joints within +-150 deg when it can (added 25 Oct)
 import numpy as np, mujoco, gymnasium as gym
+MAG_PULL_IN = __import__('os').environ.get('MAG_PULL_IN', '1') == '1'   # magnets always pull the end IN (old sign(ax) flipped when touching faces overlapped: pushed it OUT with full force). GPU A/B 26 Oct, 256 robots: old 81/82 first docks, new 103/103; seated gap 0.11 -> 0.00 mm. MAG_PULL_IN=0 = old behaviour.
 XML = r'D:\robo4\brain\train_v2.xml'
 ACT = ['J_T1_twist', 'J_B1_bend', 'J_B2_bend', 'J_T2_twist', 'J_B3_bend', 'J_B4_bend', 'J_T3_twist']
 DT_CTRL, SUB = 0.06, 60          # firmware FAST_MS = 60
@@ -18,6 +19,9 @@ ACC_RAD = 40 * 100 * 2 * math.pi / 4096     # firmware POS_ACC_DEFAULT=40 (unit 
 W0_12V = 2 * math.pi * 45 / 60               # ST3215 no-load 0.222 s/60 deg (45 rpm) at 12 V
 KT = 11 * 0.0981                              # 11 kg.cm/A torque constant -> N.m/A; no-load 0.2 A
 MAG_F0, MAG_D0, MAG_CUT = 4.6, 0.0015, 0.020   # N per magnet pair at contact (0.47 kgf), decay length, cutoff
+# MAG_SCALE: 4.6 N/pair was a catalogue guess, never measured (8 pairs -> 37 N per connector). Nischay, 26 Oct, pulling two real
+# connectors apart by hand: ~700-800 g total (~7.5 N) -> scale 7.5 / 36.8 = 0.204. Default 0.204 since the re-measured runs passed (26 Oct).
+MAG_F0 = MAG_F0 * float(__import__('os').environ.get('MAG_SCALE', '0.204'))   # default = measured (walking 89/89, end->spine 11/11, undock 8/8 with it)
 def quat_from_R(R):
     q = np.zeros(4); mujoco.mju_mat2Quat(q, np.ascontiguousarray(R).reshape(9)); return q
 def rot(axis, ang):
@@ -187,7 +191,7 @@ class TetroDockEnv(gym.Env):
         sep = np.maximum(-ax, 0.0) + self.mag_gap                     # face-to-face separation (B is above, so ax<0)
         f = self.magk * MAG_F0 / (1 + sep / MAG_D0) ** 3 * np.exp(-(ln / 0.006) ** 2)   # 8 mm discs: little loss for small side offset
         f = np.where((sep < MAG_CUT) & (ln < 0.012), f, 0.0)
-        F = (z[None, :] * np.sign(ax)[:, None]) * f[:, None] + lat / 0.004 * 0.5 * f[:, None]   # pull toward the facing magnet + side-centring
+        F = (z[None, :] * (-np.ones_like(ax) if MAG_PULL_IN else np.sign(ax))[:, None]) * f[:, None] + lat / 0.004 * 0.5 * f[:, None]   # pull toward the facing magnet + side-centring
         c = d.xipos[self.eb]; Ft = F.sum(0); Tt = np.cross(B - c, F).sum(0)
         d.xfrc_applied[self.eb, :3] += Ft; d.xfrc_applied[self.eb, 3:] += Tt
         self.mag_force = float(f.sum())

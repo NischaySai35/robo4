@@ -8,9 +8,9 @@ Steps: 1) which servo ID is which joint (wiggle + you type the name)
        4) lock direction: fins turn 20 deg -> toward LOCKED (under the pads)? y/n
 Saves deploy/robot_config.json (laptop_controller.py and walk_real.py load it automatically).
 """
-import sys, json, time, math, urllib.request
+import os, sys, json, time, math, urllib.request
 CFG = r'D:\robo4\brain\robot_config.json'
-sys.path.insert(0, r'D:\robo4\brain'); sys.path.insert(0, r'D:\robo4\brain')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import io, contextlib
 with contextlib.redirect_stdout(io.StringIO()):
     import laptop_controller as L

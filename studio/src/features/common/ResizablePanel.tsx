@@ -3,7 +3,7 @@
  * resized on every page (Analysis / Training / Animation / Motor), the same way the
  * Editor's left panel + dock resize. Width persists per `storageKey`.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { beginDrag, usePersistedSize } from './drag';
 import './ResizablePanel.css';
 
 export default function ResizablePanel({
@@ -11,36 +11,12 @@ export default function ResizablePanel({
 }: {
   storageKey: string; defaultW?: number; min?: number; max?: number; children: React.ReactNode;
 }) {
-  const [width, setWidth] = useState(() => {
-    const v = parseInt(localStorage.getItem(storageKey) || '', 10);
-    return Number.isFinite(v) ? Math.min(max, Math.max(min, v)) : defaultW;
-  });
-  const wRef = useRef(width);
-  wRef.current = width;
-  useEffect(() => { localStorage.setItem(storageKey, String(width)); }, [storageKey, width]);
-
-  const startResize = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    const startX = e.clientX;
-    const startW = wRef.current;
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    const onMove = (ev: MouseEvent) => {
-      // panel is on the right → dragging the handle LEFT (negative dx) widens it.
-      const next = Math.min(max, Math.max(min, startW + (startX - ev.clientX)));
-      wRef.current = next;
-      setWidth(next);
-    };
-    const onUp = () => {
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-      document.removeEventListener('mousemove', onMove);
-      document.removeEventListener('mouseup', onUp);
-    };
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  }, [min, max]);
+  const [width, setWidth] = usePersistedSize(storageKey, defaultW, min, max);
+  // panel is on the right → dragging the handle LEFT (negative dx) widens it.
+  const startResize = (e: React.MouseEvent) => {
+    const w0 = width;
+    beginDrag(e, 'col-resize', (dx) => setWidth(w0 - dx));
+  };
 
   return (
     <div className="rsz-panel" style={{ width }}>

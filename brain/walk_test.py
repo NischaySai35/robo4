@@ -1,9 +1,8 @@
 
-import sys, math, numpy as np, time
-sys.path.insert(0, r'D:\\robo4\\brain')
+import os, sys, math, numpy as np, time
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from walk import Walker
 from walk_env import WalkEnv
-import os
 log=open(r'D:\\robo4\\brain\\logs\\walk_test_%s.log' % os.environ['TAG'],'w')
 def P(*a):
     s=' '.join(str(x) for x in a); print(s, flush=True); log.write(s+'\n'); log.flush()

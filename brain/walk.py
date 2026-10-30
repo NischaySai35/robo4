@@ -11,6 +11,8 @@ from tetro_env2 import RX_TOP, RX_GAP
 F = np.diag([-1.0, -1.0, 1.0]); LIFT = 0.025
 SWING_ROTATE = __import__('os').environ.get('SWING_ROTATE', '1') == '1'   # swing by turning the base twist, keep the curled shape (no standing up)
 LOCK_RETRIES = int(__import__('os').environ.get('LOCK_RETRIES', '3'))   # lock-stall recovery attempts (0 = off, old behaviour)
+PULL_CONVERGE = __import__('os').environ.get('PULL_CONVERGE', '1') == '1'   # pull-out holds only once the estimate reached the target (0 = old, timed)
+BASE_FOLLOW = __import__('os').environ.get('BASE_FOLLOW', '1') == '1'       # peel/pull targets follow a MOVING base (spine receiver); floor bases: no change
 def H(R, p): M = np.eye(4); M[:3, :3] = R; M[:3, 3] = p; return M
 _d = mujoco.MjData(L.NOM.m); mujoco.mj_kinematics(L.NOM.m, _d)
 T_NOMA = H(_d.xmat[L.NOM.m.body('EndA_LockModule').id].reshape(3, 3).copy(), _d.site('A_padtip').xpos.copy())   # ideal A tip frame in controller coords
@@ -55,6 +57,13 @@ class Walker:
     def _run(self, C, lock_fn, done_fn, max_frames, tag):
         e = self.e
         for t in range(max_frames):
+            if getattr(C, 'follow_base', False) and BASE_FOLLOW:
+                # the base sits in ANOTHER MODULE's receiver, which moves as loads shift: keep the target fixed in the world
+                # (controller coords ride on the base). Set only by docks whose base is not a floor receiver; walking: never.
+                Mn = self.M(); D = Mn @ np.linalg.inv(C._M); R_, t_ = D[:3, :3], D[:3, 3]
+                C.hover = R_ @ C.hover + t_; C.seat = R_ @ C.seat + t_; C.z = R_ @ C.z; C.Ro = R_ @ C.Ro; C.shift = R_ @ C.shift
+                if hasattr(C, 'zt'): C.zt = R_ @ C.zt
+                C._M = Mn; L.NOM.m.opt.gravity[:] = Mn[:3, :3] @ self.g
             buf = io.StringIO()
             with contextlib.redirect_stdout(buf):
                 cn, lk = C.step(self.nq(e.measured()))
@@ -167,6 +176,15 @@ class Walker:
         axis = np.cross(z0, dirn); axis /= np.linalg.norm(axis)
         def rotv(v, ang):
             k = axis; return v * math.cos(ang) + np.cross(k, v) * math.sin(ang) + k * (k @ v) * (1 - math.cos(ang))
+        # BASE_FOLLOW: the peel/pull targets are fixed in the WORLD (the old receiver), but controller coords ride on the base.
+        # A floor base never moves (D = identity, nothing changes). A base in another module's SPINE receiver moves when this
+        # module's weight comes onto it (the root bends): with a frozen frame the pull aimed 24 mm off and the end stayed in
+        # (bridge test 28 Oct: estimate 25 mm out, truth 1.2 mm). Re-express the targets from the base's current pose each frame.
+        M0inv = np.linalg.inv(M)
+        def follow(C):
+            if not BASE_FOLLOW: return
+            D = self.M() @ M0inv; R_, t_ = D[:3, :3], D[:3, 3]
+            C.seat = R_ @ C.seat + t_; C.z = R_ @ C.z; C.Ro = R_ @ C.Ro
         peel = [0.0]; PEEL_MAX = math.radians(float(__import__('os').environ.get('PEEL_DEG', '6')))   # tested 25 Oct, flush magnets: 2 deg 0/3, 3 deg 1/3, 4 deg 3/3, 6 deg 2/2, 12 deg ok -> 6 (margin). 0 = straight (needs magnets 1 mm deeper)
         def locks2p(lk):
             unl[0] = max(0.0, unl[0] - 5.0)
@@ -175,6 +193,7 @@ class Walker:
         def done_peel(C, lk):
             peel[0] = min(PEEL_MAX, peel[0] + math.radians(1.0))   # 1 deg per frame; +angle lifts the centre (rim toward base stays down)
             C.seat = pivot + rotv(seat0 - pivot, peel[0]); C.z = rotv(z0, peel[0]); C.Ro = np.stack([rotv(Ro0[:, i], peel[0]) for i in range(3)], 1)
+            follow(C)
             if peel[0] >= PEEL_MAX: cnt[0] += 1
             return cnt[0] > 8
         unl = [45.0]
@@ -191,7 +210,18 @@ class Walker:
             hold = float(__import__('os').environ.get('PEEL_HOLD_MM', '12')) / 1000     # keep the tilt until this high (magnets fully released), then level out
             tilt = PEEL_MAX * min(1.0, max(0.0, (LIFT - up[0]) / (LIFT - hold)))
             C.seat = pivot + rotv(seat0 - pivot, tilt) + up[0] * z0; C.z = rotv(z0, tilt); C.Ro = np.stack([rotv(Ro0[:, i], tilt) for i in range(3)], 1)
-            if up[0] >= LIFT: hold2[0] += 1
+            follow(C)
+            # PULL_CONVERGE: count the hold only once the robot's OWN estimate of the end has reached the lifted target (3 mm),
+            # not after a fixed time (bridge test 28 Oct: with a sideways base the arm was still on its way when time ran out).
+            near = True
+            if PULL_CONVERGE:
+                pm, _ = C.pose(self.nq(e.measured())); near = np.linalg.norm(C.seat + C.appr * C.z + C.shift - pm) < 0.003
+                if __import__('os').environ.get('DEBUG_PULL'):
+                    Minv = np.linalg.inv(C._M); gw_ = (Minv @ np.r_[C.seat + C.appr * C.z + C.shift, 1.0])[:3]; pw_ = (Minv @ np.r_[pm, 1.0])[:3]
+                    o = e.rx[old_rx]; print('PULL up %.1f | est->goal %.1f mm | goal above old seat %.1f mm, est above %.1f mm | shift %s off %s' % (
+                        up[0] * 1000, 1000 * np.linalg.norm(C.seat + C.appr * C.z + C.shift - pm), (gw_ - o['seat']) @ o['z'] * 1000, (pw_ - o['seat']) @ o['z'] * 1000,
+                        np.round(C.shift * 1000, 1), np.round(np.degrees(C.off), 1)), file=__import__('sys').stderr)
+            if up[0] >= LIFT and near: hold2[0] += 1
             return hold2[0] >= 20
         if not self._run(C, locks2, done2, 200, 'pull End %s out of rx%d' % (old_base, old_rx)): return False
         self.freed = True; self.left_rx = old_rx

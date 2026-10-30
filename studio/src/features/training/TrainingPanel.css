@@ -199,8 +199,3 @@
 .enh-gold { background: #f59e0b22 !important; color: #f59e0b !important; }
 
 /* ── Cloud tab badges ────────────────────────────────────────────────────────── */
-.tr-badge-planned {
-  font-size: 9px; padding: 1px 5px; border-radius: 10px; font-weight: 700;
-  background: #f59e0b22; color: #f59e0b; border: 1px solid #f59e0b44;
-  letter-spacing: 0.05em; text-transform: uppercase;
-}

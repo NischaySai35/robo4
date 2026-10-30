@@ -80,6 +80,9 @@ export function poseMoveSeconds(a: Config, b: Config): number {
  * or resting on it docks at that rate. A receiver held up only by another module is the
  * "air docking" case (30-39%).
  */
+/** bends of a pre-dock pose stay this far from straight at most (15 deg of room before the 90 deg stops) */
+export const DOCK_BEND_DEG = CONFIG.limits.bendDeg - 15;
+
 export function dockKind(cfg: Config, e: Edge): { p: number; s: number; kind: string } {
   if (isFloorRef(e.a)) return { p: V.dock_floor.successP, s: V.dock_floor.durationS, kind: 'floor dock' };
   const a = e.a as { module: ModuleId; port: PortId };
@@ -258,10 +261,12 @@ export function planTo(current: Config, target: ShapeEntry, opts: PlanOptions = 
       // First only the docking module moves (everyone else holds still); then, if that
       // cannot close, the receiving modules may bend too (cooperative docking).
       const mover = isFloorRef(nl.a) ? nl.b.module : (nl.a as { module: ModuleId }).module;
-      let pre = optimisePose(loopTopo, active, {}, { start: node.cfg, keepBase: true, frozen: active.filter((m) => m !== mover), stayNear: 0.05, restarts: 4 * effort, iterations: 120, seed: (opts.seed ?? 1) + expansions, firstFeasible: true });
+      // PRE-DOCK POSES KEEP ROOM TO CORRECT: bends <= DOCK_BEND_DEG (28 Oct, physics: the T plan's dock pose had M1 B2/B3 at 88 deg,
+      // 2 deg from the stops; the arm could not follow the camera's corrections, drifted 6-11 mm off the axis and hit the rim)
+      let pre = optimisePose(loopTopo, active, {}, { start: node.cfg, keepBase: true, frozen: active.filter((m) => m !== mover), stayNear: 0.05, restarts: 4 * effort, iterations: 120, seed: (opts.seed ?? 1) + expansions, firstFeasible: true, bendLimitDeg: DOCK_BEND_DEG });
       let coop = false;
       if (!pre.feasible) {
-        pre = optimisePose(loopTopo, active, {}, { start: node.cfg, keepBase: true, stayNear: 0.05, restarts: 3 * effort, iterations: 120, seed: (opts.seed ?? 1) + expansions + 50, firstFeasible: true });
+        pre = optimisePose(loopTopo, active, {}, { start: node.cfg, keepBase: true, stayNear: 0.05, restarts: 3 * effort, iterations: 120, seed: (opts.seed ?? 1) + expansions + 50, firstFeasible: true, bendLimitDeg: DOCK_BEND_DEG });
         coop = true;
       }
       const nlName = isFloorRef(nl.a) ? `${nl.b.module}.${nl.b.port}→floor ${nl.a.floor}` : `${(nl.a as { module: string; port: string }).module}.${(nl.a as { module: string; port: string }).port}→${nl.b.module}.${nl.b.port}`;

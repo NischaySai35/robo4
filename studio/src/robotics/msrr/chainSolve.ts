@@ -43,6 +43,7 @@ import {
   IDENTITY, endPose, forwardOf, BEND_LIMIT, MODULE_CHAIN_LENGTH,
 } from './modulink';
 import { MODULINK_CUBE_SIZE } from './occupancy';
+import { solveLinear } from '@/kinematics/modelIK';
 import {
   type LatticePose,
   MAX_SNAP_ERROR, MIN_AXIS_ALIGNMENT, PHYSICAL_TOLERANCE_SCALE,
@@ -267,25 +268,6 @@ function dampedSolve(
 
 const normOf = (r: readonly number[]) => Math.hypot(...r);
 
-/** Gaussian elimination with partial pivoting for a small dense square system. */
-function solveLinear(A: number[][], b: number[]): number[] | null {
-  const n = b.length;
-  const M = A.map((row, i) => [...row, b[i]]);
-  for (let col = 0; col < n; col++) {
-    let piv = col;
-    for (let row = col + 1; row < n; row++) {
-      if (Math.abs(M[row][col]) > Math.abs(M[piv][col])) piv = row;
-    }
-    if (Math.abs(M[piv][col]) < 1e-12) return null; // singular
-    [M[col], M[piv]] = [M[piv], M[col]];
-    for (let row = 0; row < n; row++) {
-      if (row === col) continue;
-      const f = M[row][col] / M[col][col];
-      for (let c = col; c <= n; c++) M[row][c] -= f * M[col][c];
-    }
-  }
-  return M.map((row, i) => row[n] / M[i][i]);
-}
 
 interface BestBends { angles: ModuleAngles; snapError: number; bendCost: number }
 

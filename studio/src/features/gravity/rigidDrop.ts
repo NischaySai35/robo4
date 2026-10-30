@@ -8,6 +8,8 @@
  * sagging) — there simply are no joints in this sim, by design.
  */
 import * as THREE from 'three';
+import { joltPose } from '@/physics/joltPose';
+import { mat } from '@/kinematics/modelFK';
 import { createJoltWorld, JOLT_LAYER_NON_MOVING, JOLT_LAYER_MOVING, type JoltWorld } from '@/physics/joltLoader';
 import { makeJoltShapeSettings } from '@/physics/joltShapes';
 import type { Document } from '@/core/model/index';
@@ -98,14 +100,7 @@ export class RigidTumbleSim {
     if (Math.hypot(lvx, lvy, lvz) < 0.03 && Math.hypot(avx, avy, avz) < 0.06) this._settledFor += dt;
     else this._settledFor = 0;
 
-    const tx = this.body.GetPosition().GetX(), ty = this.body.GetPosition().GetY(), tz = this.body.GetPosition().GetZ();
-    const rx = this.body.GetRotation().GetX(), ry = this.body.GetRotation().GetY(), rz = this.body.GetRotation().GetZ(), rw = this.body.GetRotation().GetW();
-    const finalM = new THREE.Matrix4().compose(
-      new THREE.Vector3(tx, ty, tz),
-      new THREE.Quaternion(rx, ry, rz, rw),
-      new THREE.Vector3(1, 1, 1),
-    );
-    return finalM.multiply(this.startInv);
+    return mat(joltPose(this.body)).multiply(this.startInv);
   }
 
   /** True once the body has been at rest for a moment. */

@@ -132,8 +132,11 @@ export function PlanTab() {
                 <span className="msrr-chip">steps <b>{plan.steps.length}</b></span>
                 <span className="msrr-chip">time <b>{plan.totalS.toFixed(0)} s</b></span>
               </div>
+              <p className="msrr-note bad" data-testid="sketch-warning"><b>SKETCH, not physics:</b> this player only slides between the planner's poses
+                (no gravity, no magnets, no wobble, lock rotor not drawn turning). To see it really happen, use <b>▶ Real physics: run this plan</b> at the top:
+                MuJoCo + the robot's own docking brain (stand-off, align, straight in, rotor turns 45°, straight out).</p>
               <div className="msrr-row-btns">
-                <button className="msrr-btn primary" data-testid="plan-play" onClick={playing ? pause : play}>{playing ? 'Pause' : playStep >= plan.steps.length ? 'Replay' : 'Play'}</button>
+                <button className="msrr-btn" data-testid="plan-play" onClick={playing ? pause : play}>{playing ? 'Pause sketch' : playStep >= plan.steps.length ? 'Replay sketch' : 'Play sketch (no physics)'}</button>
                 <button className="msrr-btn" onClick={() => seek(playStep - 1)}>◀</button>
                 <button className="msrr-btn" onClick={() => seek(playStep + 1)}>▶</button>
                 <button className="msrr-btn ghost" onClick={() => seek(0)}>Rewind</button>
@@ -150,7 +153,14 @@ export function PlanTab() {
               </ol>
             </>
           ) : (
-            <ul className="msrr-notes">{plan.why.slice(-6).map((w, i) => <li key={i} className="msrr-note">{w}</li>)}</ul>
+            <>
+              <ul className="msrr-notes">{plan.why.slice(-6).map((w, i) => <li key={i} className="msrr-note">{w}</li>)}</ul>
+              {!config.edges.some((e) => e.locked && 'floor' in e.a) && (
+                <p className="msrr-note">This planner only knows the floor-receiver board (bend / dock / peel with a module held by a receiver). From a chain
+                  lying on the floor it has no moves yet: lifting a module needs the floor skills (tip first, base curled into a C), which run in{' '}
+                  <a style={{ cursor: 'pointer' }} onClick={() => useV2Store.getState().setTab('manual')}><b>Manual → Become a shape</b></a> and Shapes → ▶ Live.</p>
+              )}
+            </>
           )}
         </Section>
       )}

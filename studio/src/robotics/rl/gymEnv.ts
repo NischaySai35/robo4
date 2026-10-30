@@ -11,6 +11,7 @@
 import { computeFK } from '@/kinematics/modelFK';
 import { chainJoints } from '@/kinematics/modelIK';
 import type { Document } from '@/core/model/index';
+import { withJointValues } from '@/core/model/index';
 
 export interface StepResult { obs: number[]; reward: number; done: boolean; info: { dist: number; step: number }; }
 
@@ -42,10 +43,7 @@ export class ReachEnv {
   jointIds() { return this.chain.map((j) => j.id); }
 
   private tip(): [number, number, number] {
-    const joints: any = {};
-    for (const [id, j] of Object.entries(this.doc.joints)) joints[id] = j;
-    this.chain.forEach((j, i) => { joints[j.id] = { ...j, state: { ...j.state, value: this.values[i] } }; });
-    const fk = computeFK({ ...this.doc, joints });
+    const fk = computeFK(withJointValues(this.doc, Object.fromEntries(this.chain.map((j, i) => [j.id, this.values[i]]))));
     const p = fk.get(this.tipId)?.position ?? [0, 0, 0];
     return [p[0], p[1], p[2]];
   }

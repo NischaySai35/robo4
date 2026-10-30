@@ -4,26 +4,14 @@
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeDocument, makeGeometry, GeometryType } from '@/core/model/index';
-import { buildSerialChain } from '@/core/model/builders';
 import { ModelReachTask } from '@/robotics/rl/modelTask';
 import { MLPPolicy } from '@/robotics/rl/policy';
 import { VectorESTrainer, makeRng } from '@/robotics/rl/vectorTrainer';
+import { verticalArm } from '@/testing/fixtures';
 
-function buildArm() {
-  const box = makeGeometry(GeometryType.BOX, { size: [0.3, 0.3, 0.3] });
-  const links = [0, 1, 2, 3].map((i) => ({ name: `L${i + 1}`, geometry: box, transform: { position: [0, i + 1, 0], quaternion: [0, 0, 0, 1] } }));
-  const joints = [0, 1, 2].map((i) => ({
-    name: `J${i + 1}`, type: 'revolute', axis: [0, 0, 1],
-    limit: { lower: -1.5, upper: 1.5, effort: 5, velocity: 1.2 },
-    origin: { position: [0, 1, 0], quaternion: [0, 0, 0, 1] },
-  }));
-  const { doc, bodyIds } = buildSerialChain(makeDocument({ name: 'Arm' }), { name: 'Arm', links, joints });
-  return { doc, tipId: bodyIds[3] };
-}
 
 test('ModelReachTask exposes the right obs/action spaces for a real arm', () => {
-  const { doc, tipId } = buildArm();
+  const { doc, tipId } = verticalArm();
   const task = new ModelReachTask(doc, tipId);
   assert.equal(task.actionDim, 3);       // 3 revolute joints
   assert.equal(task.obsDim, 6);          // 3 joints + 3 (target-tip)
@@ -32,7 +20,7 @@ test('ModelReachTask exposes the right obs/action spaces for a real arm', () => 
 });
 
 test('training a real arm produces finite, improving returns', () => {
-  const { doc, tipId } = buildArm();
+  const { doc, tipId } = verticalArm();
   const probe = new ModelReachTask(doc, tipId);
   // Seed BOTH the policy init and the trainer so the whole run is reproducible — the
   // eval return is otherwise noisy (randomized target per generation) and the test flaky.

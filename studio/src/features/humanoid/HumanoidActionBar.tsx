@@ -20,6 +20,7 @@ import { buildGrid, type Grid } from '@/robotics/nav/occupancyGrid';
 import { obstacleFootprints, worldBounds } from '@/robotics/nav/worldModel';
 import { computeFK } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
+import { withJointValues } from '@/core/model/index';
 
 const PI = Math.PI;
 const smooth = (x: number) => x * x * (3 - 2 * x);
@@ -100,11 +101,7 @@ const BUTTONS = [
 ];
 
 function applyPose(doc: Document, idVals: Record<string, number>, rootId: string | null, rootPos: number[] | null, rootQuat?: number[] | null): Document {
-  const joints: any = { ...doc.joints };
-  for (const [id, v] of Object.entries(idVals)) {
-    const j = joints[id];
-    if (j) joints[id] = { ...j, state: { ...j.state, value: v } };
-  }
+  const { joints } = withJointValues(doc, idVals);
   let bodies = doc.bodies;
   if (rootId && (rootPos || rootQuat) && doc.bodies[rootId]) {
     const b = doc.bodies[rootId];

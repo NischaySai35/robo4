@@ -9,7 +9,7 @@
  * model.
  */
 import * as THREE from 'three';
-import { GeometryType } from '@/core/model/index';
+import { GeometryType, bodyConnectors } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
 import { getAssetObject } from '@/viewport/renderers/AssetCache';
 import { stressColor } from '@/kinematics/analysis';
@@ -408,7 +408,7 @@ export class BodyRenderer {
     const old = container.children.filter((c: any) => c.userData?.isConnector);
     for (const o of old) { container.remove(o); this._disposeObject(o); }
 
-    const connectors: any[] = (body.meta?.connectors as any[] | undefined) ?? [];
+    const connectors: any[] = bodyConnectors(body);
     if (connectors.length === 0) return;
 
     const CON_PX = 7; // fixed screen size (radius in pixels)

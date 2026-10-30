@@ -14,12 +14,11 @@
  * started lazily, whose latest value callers read from a cache. Nothing here ever blocks
  * the caller — a performance readout must never be the reason a frame is late.
  */
-const { spawn } = require('child_process');
+const { streamPowerShell } = require('./psStream.cjs');
 
 const SAMPLE_SECONDS = 4;
 
 let _proc = null;
-let _stdout = '';
 /** Latest sample as raw "instance=value" pairs, or null when unknown/not yet sampled. */
 let _latestPairs = null;
 
@@ -71,29 +70,12 @@ function ensureGpuWatcher() {
     ' $s = $_.CounterSamples | Where-Object { $_.CookedValue -gt 0 }' +
     " | ForEach-Object { $_.InstanceName + '=' + [math]::Round($_.CookedValue,2) };" +
     " Write-Output ('SAMPLE ' + ($s -join '|')) }";
-  // -EncodedCommand (base64 UTF-16LE) rather than -Command: one opaque token, immune to
-  // quoting differences in how the argument reaches PowerShell.
-  const encoded = Buffer.from(script, 'utf16le').toString('base64');
-
-  try {
-    _proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { windowsHide: true });
-  } catch { _proc = null; return; }
-
-  _proc.stdout.on('data', (chunk) => {
-    _stdout += chunk.toString();
-    let nl;
-    while ((nl = _stdout.indexOf('\n')) >= 0) {
-      const line = _stdout.slice(0, nl).trim();
-      _stdout = _stdout.slice(nl + 1);
-      if (line.startsWith('SAMPLE ')) _latestPairs = line.slice(7).split('|').filter(Boolean);
-    }
-    if (_stdout.length > 1_000_000) _stdout = ''; // a pathological unterminated line
-  });
   // Counters can be localised, disabled, or blocked by policy. Every failure path resets to
   // null ("unknown"), which the UI renders as a dash rather than as 0%.
-  const reset = () => { _latestPairs = null; _proc = null; _stdout = ''; };
-  _proc.on('error', reset);
-  _proc.on('exit', reset);
+  _proc = streamPowerShell(script,
+    (line) => { if (line.startsWith('SAMPLE ')) _latestPairs = line.slice(7).split('|').filter(Boolean); },
+    () => { _latestPairs = null; _proc = null; },
+    1_000_000);
 }
 
 function stopGpuWatcher() {

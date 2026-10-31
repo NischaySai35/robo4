@@ -26,7 +26,10 @@
    "fit": 1,
    "home": 1,
    "vsepr": 1,
-   "log": []
+   "log": [
+    "warning: env.wasm.numThreads is set to 16, but this will not work unless you enable crossOriginIsolated mode. See https://web.dev/cross-origin-isolation-guide/ for more info.",
+    "warning: WebAssembly multi-threading is not supported in the current environment. Falling back to single-threading."
+   ]
   },
   "animation": {
    "canvases": 1,
@@ -34,10 +37,7 @@
    "fit": 1,
    "home": 1,
    "vsepr": 1,
-   "log": [
-    "warning: env.wasm.numThreads is set to 16, but this will not work unless you enable crossOriginIsolated mode. See https://web.dev/cross-origin-isolation-guide/ for more info.",
-    "warning: WebAssembly multi-threading is not supported in the current environment. Falling back to single-threading."
-   ]
+   "log": []
   },
   "esptt": {
    "canvases": 0,
@@ -45,12 +45,7 @@
    "fit": 0,
    "home": 0,
    "vsepr": 0,
-   "log": [
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
-   ]
+   "log": []
   },
   "motor": {
    "canvases": 0,
@@ -58,20 +53,18 @@
    "fit": 0,
    "home": 0,
    "vsepr": 0,
-   "log": [
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
-   ]
+   "log": []
   },
   "msrr_robot": {
    "canvases": 1,
    "stats": 1,
    "fit": 1,
    "home": 1,
-   "vsepr": 0,
+   "vsepr": 1,
    "log": [
     "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
-    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures"
+    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
    ]
   },
   "msrr_shapes": {
@@ -79,7 +72,7 @@
    "stats": 1,
    "fit": 1,
    "home": 1,
-   "vsepr": 0,
+   "vsepr": 1,
    "log": []
   },
   "msrr_plan": {
@@ -87,7 +80,7 @@
    "stats": 1,
    "fit": 1,
    "home": 1,
-   "vsepr": 0,
+   "vsepr": 1,
    "log": []
   },
   "msrr_ask": {
@@ -95,7 +88,7 @@
    "stats": 1,
    "fit": 1,
    "home": 1,
-   "vsepr": 0,
+   "vsepr": 1,
    "log": []
   },
   "msrr_run": {
@@ -103,7 +96,7 @@
    "stats": 1,
    "fit": 1,
    "home": 1,
-   "vsepr": 0,
+   "vsepr": 1,
    "log": []
   },
   "msrr_manual": {
@@ -111,20 +104,16 @@
    "stats": 1,
    "fit": 1,
    "home": 1,
-   "vsepr": 0,
-   "log": [
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
-   ]
+   "vsepr": 1,
+   "log": []
   }
  },
  "failures": [],
- "startup": [
-  "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
- ],
+ "startup": [],
  "bodies": 10,
  "roundtrip": {
   "before": {
-   "uuid": "1deb14b2-9912-44e8-8e44-18eee4be4270",
+   "uuid": "2ae5099b-4010-4a7a-a687-f34481ec302a",
    "pos": [
     0.1978,
     0.6751,
@@ -132,7 +121,7 @@
    ]
   },
   "insideMsrr": {
-   "uuid": "856b76cf-2142-401d-9276-0d0dab93ec00",
+   "uuid": "f1b3e9cc-9425-470c-bab5-5a4532bbd4e3",
    "pos": [
     1.6364,
     1.4545,
@@ -140,7 +129,7 @@
    ]
   },
   "after": {
-   "uuid": "1deb14b2-9912-44e8-8e44-18eee4be4270",
+   "uuid": "2ae5099b-4010-4a7a-a687-f34481ec302a",
    "pos": [
     0.1976,
     0.6751,
@@ -148,7 +137,7 @@
    ]
   },
   "afterFit": {
-   "uuid": "1deb14b2-9912-44e8-8e44-18eee4be4270",
+   "uuid": "2ae5099b-4010-4a7a-a687-f34481ec302a",
    "pos": [
     0.3341,
     0.6329,
@@ -166,6 +155,7 @@
   },
   "undoWorks": true,
   "log": [
+   "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"

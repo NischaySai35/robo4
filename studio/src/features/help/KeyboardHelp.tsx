@@ -1,67 +1,47 @@
 import { useEffect } from 'react';
 import './KeyboardHelp.css';
+import { listOperators } from '@/core/ops/registry';
+import { KEYMAP } from '@/features/ops/appOps';
+import { bindingText } from '@/core/ops/keymap';
 
-const SECTIONS = [
+const MOUSE = [
   {
     title: 'Viewport',
     rows: [
       ['RMB + drag', 'Orbit camera'],
       ['Scroll', 'Zoom in / out'],
       ['MMB + drag', 'Pan camera'],
-      ['F', 'Fit selection in view'],
     ],
   },
   {
-    title: 'Selection',
+    title: 'Selection (mouse)',
     rows: [
       ['Click', 'Select body / joint'],
       ['Ctrl+Click', 'Add to selection'],
       ['Shift+Click', 'Range select'],
-      ['A', 'Select all'],
       ['Double-click', 'Select + open inspector'],
     ],
   },
   {
-    title: 'Transform',
+    title: 'Axis move',
     rows: [
-      ['M', 'Move (translate)'],
-      ['R', 'Rotate'],
-      ['S', 'Scale'],
-      ['X / Y / Z', 'Constrain axis'],
-      ['0–9', 'Type exact value (modal)'],
-      ['Esc', 'Cancel modal / deselect'],
-    ],
-  },
-  {
-    title: 'Build',
-    rows: [
-      ['Del / X', 'Delete selected'],
-      ['Ctrl+D', 'Duplicate in place'],
-      ['Ctrl+Z', 'Undo'],
-      ['Ctrl+Shift+Z', 'Redo'],
-    ],
-  },
-  {
-    title: 'Edit Mode',
-    rows: [
-      ['Tab', 'Toggle Edit Mode'],
-      ['E', 'Extrude selection'],
-      ['B', 'Box select'],
-      ['J', 'Join edge loop'],
-      ['L', 'Loop select'],
-      ['Ctrl+R', 'Loop cut'],
-    ],
-  },
-  {
-    title: 'App',
-    rows: [
-      ['Ctrl+K', 'Command palette'],
-      ['Ctrl+S', 'Save project'],
-      ['?', 'This help dialog'],
-      ['Esc', 'Close dialog'],
+      ['0-9', 'Type exact value'],
+      ['Enter', 'Apply the typed value'],
     ],
   },
 ];
+
+/** Keys come from the one table, so this list can't disagree with what the keys really do. */
+function keySections() {
+  const groups = new Map<string, string[][]>();
+  for (const op of listOperators()) {
+    const keys = KEYMAP.filter((b) => b.op === op.id).map((b) => b.label ?? bindingText(b));
+    if (!keys.length) continue;
+    if (!groups.has(op.group)) groups.set(op.group, []);
+    groups.get(op.group)!.push([keys.join(' / '), op.label]);
+  }
+  return [...groups].map(([title, rows]) => ({ title, rows }));
+}
 
 export default function KeyboardHelp({ onClose }: { onClose: () => void }) {
   useEffect(() => {
@@ -80,7 +60,7 @@ export default function KeyboardHelp({ onClose }: { onClose: () => void }) {
           <button className="kh-close" onClick={onClose}>✕</button>
         </div>
         <div className="kh-grid">
-          {SECTIONS.map((sec) => (
+          {[...MOUSE, ...keySections()].map((sec) => (
             <div key={sec.title} className="kh-section">
               <div className="kh-section-title">{sec.title}</div>
               {sec.rows.map(([key, label]) => (

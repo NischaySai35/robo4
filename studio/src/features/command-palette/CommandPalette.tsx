@@ -3,7 +3,8 @@ import './CommandPalette.css';
 import { bridge } from '@/bridge/cameraBridge';
 import { useThemeStore } from '@/state/themeStore';
 import { scheduleFrame } from '@/runtime/frameScheduler';
-import { resetLayout } from '@/features/shell/layouts';
+import { listOperators, canRun, runOperator } from '@/core/ops/registry';
+import { shortcutsFor } from '@/features/ops/appOps';
 
 /**
  * Phase 14 — Command palette. A single keyboard-driven launcher (Ctrl/Cmd+K or
@@ -21,19 +22,11 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
   const toggleTheme = useThemeStore(s => s.toggleTheme);
 
   interface Cmd { id: string; title: string; hint: string; keys: string; run: () => void; when?: boolean; danger?: boolean }
-  const commands = useMemo<Cmd[]>(() => [
-    { id: 'editor',     title: 'Go to Editor',           hint: 'View',    keys: '',          run: () => setPage('editor'),            when: page !== 'editor' },
-    { id: 'analysis',   title: 'Go to Analysis',         hint: 'View',    keys: '',          run: () => setPage('analysis'),          when: page !== 'analysis' },
-    { id: 'training',   title: 'Go to Training',         hint: 'View',    keys: '',          run: () => setPage('training'),          when: page !== 'training' },
-    { id: 'animation',  title: 'Go to Animation',        hint: 'View',    keys: '',          run: () => setPage('animation'),         when: page !== 'animation' },
-    { id: 'motor',      title: 'Go to Motor Control',    hint: 'View',    keys: '',          run: () => setPage('motor'),             when: page !== 'motor' },
-    { id: 'fit',        title: 'Fit view to scene',      hint: 'View',    keys: 'F',         run: () => bridge.fitCamera?.() },
-    { id: 'undo',       title: 'Undo',                   hint: 'Edit',    keys: 'Ctrl+Z',    run: () => (bridge as { undo?: () => void }).undo?.() },
-    { id: 'redo',       title: 'Redo',                   hint: 'Edit',    keys: 'Ctrl+Y',    run: () => (bridge as { redo?: () => void }).redo?.() },
-    { id: 'layout',     title: 'Reset layout of this page', hint: 'View',    keys: '',          run: () => resetLayout(page) },
-    { id: 'theme',      title: theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', hint: 'View', keys: '', run: () => toggleTheme() },
-    { id: 'conn',       title: 'Toggle connection window', hint: 'Hardware', keys: '',        run: () => onToggleConn?.() },
-  ].filter(c => c.when !== false), [page, setPage, theme, toggleTheme, onToggleConn]);
+  // Generated from the operators, so the palette can't drift from the shortcuts and the menus.
+  const commands = useMemo<Cmd[]>(() => listOperators()
+    .filter((o) => !o.hidden && canRun(o.id))
+    .map((o) => ({ id: o.id, title: o.label, hint: o.group, keys: shortcutsFor(o.id)[0] ?? '', run: () => { const r = runOperator(o.id); if (!r.ok) console.error(r.error); } })),
+  [open, page]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();

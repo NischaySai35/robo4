@@ -11,8 +11,7 @@ import type { LibraryEntry } from '@/core/serialization/projectLibrary';
 import { importMesh, importURDF } from '@/features/import/importMesh';
 import { checkForUpdates, getAppVersion } from '@/features/update/checkForUpdates';
 import { exportRobot } from '@/features/export/exportRobot';
-import { resetLayout } from '@/features/shell/layouts';
-import { usePageStore } from '@/state/pageStore';
+import { runOperator } from '@/core/ops/registry';
 
 const SEP = { sep: true };
 
@@ -169,12 +168,12 @@ export default function MenuBar({ onToggleConn, onHelpOpen, onOpenProjects }: an
       ] },
     ],
     Edit: [
-      { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !canUndo, onClick: () => bridge.undo?.() },
-      { label: 'Redo', shortcut: 'Ctrl+Y', disabled: !canRedo, onClick: () => bridge.redo?.() },
+      { label: 'Undo', shortcut: 'Ctrl+Z', disabled: !canUndo, onClick: () => runOperator('edit.undo') },
+      { label: 'Redo', shortcut: 'Ctrl+Y', disabled: !canRedo, onClick: () => runOperator('edit.redo') },
     ],
     View: [
-      { label: 'Reset Layout', onClick: () => resetLayout(usePageStore.getState().page) },
-      { label: 'Fit View', shortcut: 'F', onClick: () => bridge.fitCamera?.() },
+      { label: 'Reset Layout', onClick: () => runOperator('view.resetLayout') },
+      { label: 'Fit View', shortcut: 'F', onClick: () => runOperator('view.fit') },
       SEP,
       { label: 'Properties (Edit panel)', onClick: () => openPanel('inspector') },
       { label: 'AI Copilot',              onClick: () => openPanel('copilot') },

@@ -1,6 +1,7 @@
 import './ConnectionWindow.css';
 import { useState, useRef, useEffect } from 'react';
 import { beginDrag } from '@/features/common/drag';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 /** Floating, draggable, corner-resizable window (header drag, ✕ close). */
 export default function ConnectionWindow({ isOpen, onClose, title = 'SIM → ESP', children }: any) {
@@ -13,7 +14,7 @@ export default function ConnectionWindow({ isOpen, onClose, title = 'SIM → ESP
   // CSS open/close animation
   useEffect(() => {
     if (isOpen) {
-      requestAnimationFrame(() => setVisible(true));
+      scheduleFrame(() => setVisible(true));
     } else {
       setVisible(false);
     }

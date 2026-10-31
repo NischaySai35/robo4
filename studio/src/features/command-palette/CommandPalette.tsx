@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import './CommandPalette.css';
 import { bridge } from '@/bridge/cameraBridge';
 import { useThemeStore } from '@/state/themeStore';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 /**
  * Phase 14 — Command palette. A single keyboard-driven launcher (Ctrl/Cmd+K or
@@ -45,7 +46,7 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
       setQuery('');
       setActive(0);
       // Focus after the element mounts.
-      requestAnimationFrame(() => inputRef.current?.focus());
+      scheduleFrame(() => inputRef.current?.focus());
     }
   }, [open]);
 
@@ -64,7 +65,7 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
     if (!cmd) return;
     onClose();
     // Defer so the palette unmounts before the action fires (e.g. focus changes).
-    requestAnimationFrame(() => cmd.run());
+    scheduleFrame(() => cmd.run());
   };
 
   const onKeyDown = (e: any) => {

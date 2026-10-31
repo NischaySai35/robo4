@@ -9,6 +9,7 @@ import './ViewportStats.css';
 import { useEffect, useRef, useState } from 'react';
 import { bridge } from '@/bridge/cameraBridge';
 import { useSystemMetrics, formatRam } from '@/viewport/useSystemMetrics';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 type Stats = {
   fps: number;
@@ -34,7 +35,7 @@ export default function ViewportStats() {
     let fpsAcc = 0, fpsSamples = 0;
 
     const tick = () => {
-      rafId = requestAnimationFrame(tick);
+      rafId = scheduleFrame(tick);
       fpsSamples++;
       const now = performance.now();
       fpsAcc += now - lastTime.current;
@@ -55,8 +56,8 @@ export default function ViewportStats() {
       }
     };
 
-    rafId = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(rafId);
+    rafId = scheduleFrame(tick);
+    return () => cancelFrame(rafId);
   }, []);
 
   const fmtTris = (n: number) =>

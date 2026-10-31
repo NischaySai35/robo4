@@ -10,6 +10,7 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import type { CSSProperties } from 'react';
 import * as THREE from 'three';
 import { bridge } from '@/bridge/cameraBridge';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 const SIZE   = 112;
 const CENTER = SIZE / 2;
@@ -73,10 +74,10 @@ export default function NavigationGizmo() {
           setProjected(result);
         }
       }
-      rafRef.current = requestAnimationFrame(update);
+      rafRef.current = scheduleFrame(update);
     };
-    rafRef.current = requestAnimationFrame(update);
-    return () => { if (rafRef.current != null) cancelAnimationFrame(rafRef.current); };
+    rafRef.current = scheduleFrame(update);
+    return () => { if (rafRef.current != null) cancelFrame(rafRef.current); };
   }, []);
 
   // Snap to an axis view, pivoting around the CURRENT orbit target (so a prior

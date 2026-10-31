@@ -13,6 +13,7 @@ import { newProject, openFromLibrary, saveCurrentToLibrary, dedupeLibrary } from
 import { buildRobotArmProject } from '@/core/factory/robotArm';
 import { buildHumanoidProject } from '@/core/factory/humanoid';
 import { buildSingleModuleDemoProject } from '@/core/factory/singleModuleDemo';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 // Built-in starter projects (grows as more samples are added).
 const PREDEFINED: { key: string; name: string; build: () => unknown }[] = [
@@ -29,8 +30,8 @@ export default function StartupProjects({ onClose }: { onClose: () => void }) {
 
   // grab a thumbnail of the already-loaded scene once the renderer has a frame
   useEffect(() => {
-    const id = requestAnimationFrame(() => setCurrentThumb(bridge.captureThumbnail?.(256) ?? ''));
-    return () => cancelAnimationFrame(id);
+    const id = scheduleFrame(() => setCurrentThumb(bridge.captureThumbnail?.(256) ?? ''));
+    return () => cancelFrame(id);
   }, []);
 
   const refresh = () => listProjects().then(setProjects);

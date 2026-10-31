@@ -13,6 +13,7 @@
  */
 import { bus, type Envelope } from './messageBus';
 import { clock } from './clock';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 export interface Bag {
   version: 1;
@@ -127,16 +128,16 @@ export class Player {
       clock.advance(dt);
       this._emitUntil(clock.now());
       if (this.progress >= 1) { this.pause(); }
-      else this._raf = requestAnimationFrame(tick);
+      else this._raf = scheduleFrame(tick);
     };
-    this._raf = requestAnimationFrame(tick);
+    this._raf = scheduleFrame(tick);
     this._emit();
   }
 
   pause(): void {
     this._playing = false;
     clock.setPaused(true);
-    if (this._raf != null) { cancelAnimationFrame(this._raf); this._raf = null; }
+    if (this._raf != null) { cancelFrame(this._raf); this._raf = null; }
     this._emit();
   }
 

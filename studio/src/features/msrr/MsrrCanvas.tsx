@@ -47,6 +47,7 @@ import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
 import { toView } from '@/features/msrr2/v2View';
 import { ManualPortMenu } from '@/features/msrr2/ManualTab';
 import { CUBES_PER_METRE } from '@/features/msrr/moduleMeshes';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 const CELL = 1; // the sandbox draws in unit lattice space; metres are the mirror's job
 
@@ -67,7 +68,7 @@ export default function MsrrCanvas() {
     const sm = new SceneManager(canvas, 'msrr');
     const vp = sm.viewport;
     sm.applyTheme(useThemeStore.getState().theme);
-    const unsubTheme = useThemeStore.subscribe((s) => sm.applyTheme(s.theme));
+    const unsubTheme = useThemeStore.subscribe((s) => { sm.applyTheme(s.theme); sm.requestRender(3); });
     const { renderer, camera, controls } = sm;
     const scene = new THREE.Group(); scene.name = 'msrr';
     scene.scale.setScalar(1 / UNITS_PER_M); scene.position.y = 0.5 / UNITS_PER_M;
@@ -77,8 +78,8 @@ export default function MsrrCanvas() {
     vp.getRendererStats = () => sm.getRendererStats();
     vp.getRenderEngine = () => sm._engineMode ?? 'eevee';
     vp.setRenderEngine = (e: string) => sm.setRenderEngine(e);
-    vp.setWireframe = (on: boolean) => { scene.traverse((o: any) => { if (o.material && 'wireframe' in o.material) o.material.wireframe = on; }); };
-    vp.setConnectorsVisible = (on: boolean) => { stateRef.current && (stateRef.current.portsHidden = !on); };
+    vp.setWireframe = (on: boolean) => { scene.traverse((o: any) => { if (o.material && 'wireframe' in o.material) o.material.wireframe = on; }); sm.requestRender(2); };
+    vp.setConnectorsVisible = (on: boolean) => { stateRef.current && (stateRef.current.portsHidden = !on); sm.requestRender(2); };
     vp.getConnectorsVisible = () => !stateRef.current?.portsHidden;
     vp.getFitBox = () => {
       scene.updateMatrixWorld(true); const b = new THREE.Box3();
@@ -240,21 +241,29 @@ export default function MsrrCanvas() {
     };
     stateRef.current = st;
 
-    // ── render loop (MSRR plays live physics: draw every frame) ───────────────
+    // Any change in the MSRR stores can change the drawing, and live physics changes them every frame, so
+    // physics still draws every frame while idle draws nothing (31 Oct: this used to draw every frame always).
+    const redraw = () => sm.requestRender(2);
+    const unsubMsrr = useMsrrStore.subscribe(redraw), unsubV2 = useV2Store.subscribe(redraw);
+
+    // ── render loop ───────────────────────────────────────────────────────────
     let raf = 0, last = performance.now();
     const loop = () => {
-      raf = requestAnimationFrame(loop);
+      raf = scheduleFrame(loop);
       const now = performance.now(), dt = Math.min(0.1, (now - last) / 1000); last = now;
       useMsrrStore.getState().tick(dt);
       useV2Store.getState().tick(dt);
+      const before = st.partSig;
       syncScene(st);
+      if (st.partSig !== before) sm.requestRender(2);
       grid.visible = useV2Store.getState().mode !== 'v2';
-      sm.render();
+      if (sm.shouldRender()) sm.render();
     };
     loop();
 
     return () => {
-      cancelAnimationFrame(raf);
+      cancelFrame(raf);
+      unsubMsrr(); unsubV2();
       st.dispose();
       stateRef.current = null;
     };

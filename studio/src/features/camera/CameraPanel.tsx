@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { bridge } from '@/bridge/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
 import NumberField from '@/features/ui/NumberField';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 type State = {
   fov: number; focalLength: number; near: number; far: number;
@@ -145,7 +146,7 @@ export default function CameraPanel() {
     }
     setBusy(true); setNote('Rendering…');
     applyRes();
-    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => scheduleFrame(r));
     const mime = imgFmt === 'jpg' ? 'image/jpeg' : 'image/png';
     const url = bridge.captureImage?.(mime, 0.95);
     resetRes();

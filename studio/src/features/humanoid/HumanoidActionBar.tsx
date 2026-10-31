@@ -21,6 +21,7 @@ import { obstacleFootprints, worldBounds } from '@/robotics/nav/worldModel';
 import { computeFK } from '@/kinematics/modelFK';
 import type { Document } from '@/core/model/index';
 import { withJointValues } from '@/core/model/index';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 const PI = Math.PI;
 const smooth = (x: number) => x * x * (3 - 2 * x);
@@ -156,10 +157,10 @@ export default function HumanoidActionBar() {
         ? [rest[0] + (root.dx ?? 0), rest[1] + (root.dy ?? 0), rest[2] + (root.dz ?? 0)]
         : null;
       useModelStore.getState().applyTransient((d) => applyPose(d, idVals, rootId, rootPos));
-      raf = requestAnimationFrame(loop);
+      raf = scheduleFrame(loop);
     };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+    raf = scheduleFrame(loop);
+    return () => cancelFrame(raf);
   }, [active, roleIndex, allMovable, rootId]);
 
   // ── Autonomous navigation: steer the gait along the planned A* path ──────────
@@ -248,10 +249,10 @@ export default function HumanoidActionBar() {
       for (const [k, val] of Object.entries(pose)) { const id = roleIndex[k]; if (id) idVals[id] = val; }
       const bob = 0.012 * Math.cos(4 * PI * ((t / 1.1) % 1)) - 0.006;
       useModelStore.getState().applyTransient((d) => applyPose(d, idVals, rootId, [rx, restY + bob, rz], yawQuat(ryaw)));
-      raf = requestAnimationFrame(loop);
+      raf = scheduleFrame(loop);
     };
-    raf = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(raf);
+    raf = scheduleFrame(loop);
+    return () => cancelFrame(raf);
   }, [navigating, isHumanoid, rootId, roleIndex, allMovable]);
 
   if (!isHumanoid) return null;

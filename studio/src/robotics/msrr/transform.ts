@@ -71,6 +71,7 @@ import {
   fitModules, connectorsOf, rotationTo, inverseRotationTo, realConnectorPosOf,
 } from './fitModules';
 import { type ConnectorEnd, weldTypeIsLegal, SIDE_ENDS } from './modulink';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 const negCell = (c: Cell): Cell => [-c[0], -c[1], -c[2]];
 const addCell = (a: Cell, b: Cell): Cell => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -536,7 +537,7 @@ export interface SearchProgress {
  *  fired just before this actually reach the screen instead of queuing up
  *  behind a still-blocking synchronous search. */
 const yieldToUI = (): Promise<void> => new Promise((resolve) => {
-  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => resolve());
+  if (typeof requestAnimationFrame === 'function') scheduleFrame(() => resolve());
   else setTimeout(resolve, 0);
 });
 

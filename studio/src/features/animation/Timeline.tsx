@@ -46,6 +46,7 @@ import { useModelStore } from '@/state/modelStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { bridge } from '@/bridge/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 // ── Clip Groups Panel ──────────────────────────────────────────────────────────
 function GroupsPanel({ clips, groups, playingGroupId }: {
@@ -426,7 +427,7 @@ function RenderTab() {
   const exportStill = async () => {
     setBusy(true); setProgress('Rendering…');
     applyRes();
-    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise((r) => scheduleFrame(r));
     const mime = stillFmt === 'jpeg' ? 'image/jpeg' : 'image/png';
     const url  = bridge.captureImage?.(mime, 0.95);
     resetRes();
@@ -450,7 +451,7 @@ function RenderTab() {
 
     setBusy(true); abortRef.current = false; setProgress('Preparing…');
     applyRes();
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await new Promise((r) => scheduleFrame(() => scheduleFrame(r)));
 
     const stream = bridge.captureStream?.(renderFps);
     if (!stream) { resetRes(); setProgress('captureStream unavailable — reload.'); setBusy(false); return; }
@@ -508,7 +509,7 @@ function RenderTab() {
     for (let i = 0; i <= totalFrames && !abortRef.current; i++) {
       const t = startTime + (i / renderFps);
       anim.setPlayhead(t);
-      await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+      await new Promise((r) => scheduleFrame(() => scheduleFrame(r)));
       const url = bridge.captureImage?.('image/png', 1.0);
       if (url) {
         const a = document.createElement('a');

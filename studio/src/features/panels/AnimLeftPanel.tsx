@@ -20,6 +20,7 @@ import { computeFK } from '@/kinematics/modelFK';
 import { bridge } from '@/bridge/cameraBridge';
 import { withJointValues } from '@/core/model/index';
 import { useAutoGround } from '@/features/rigid/useAutoGround';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 // ── Connector face auto-label ───────────────────────────────────────────────────
 // Name each connector by the world/local axis its normal points along (+X … −Z),
@@ -187,7 +188,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
    *  approach→align (to the standoff pose) then insert (to the seated pose), mirroring
    *  Auto-Snap. Transient updates each frame so it plays live without spamming undo. */
   const animateBend = (segments: { vals: Record<string, number>; ms: number }[], commit: () => void) => {
-    if (bendRafRef.current != null) cancelAnimationFrame(bendRafRef.current);
+    if (bendRafRef.current != null) cancelFrame(bendRafRef.current);
     if (segments.length === 0) { commit(); return; }
     const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2); // easeInOutCubic
     const d0 = useModelStore.getState().doc;
@@ -204,14 +205,14 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
       const vals: Record<string, number> = {};
       for (const id of allIds) vals[id] = fromVals[id] + ((s.vals[id] ?? fromVals[id]) - fromVals[id]) * k;
       useModelStore.getState().applyTransient((d) => withJointValues(d, vals));
-      if (p < 1) { bendRafRef.current = requestAnimationFrame(step); return; }
+      if (p < 1) { bendRafRef.current = scheduleFrame(step); return; }
       // Segment done → advance (its end pose becomes the next segment's start).
       fromVals = { ...vals };
       seg++;
-      if (seg < segments.length) { t0 = performance.now(); bendRafRef.current = requestAnimationFrame(step); }
+      if (seg < segments.length) { t0 = performance.now(); bendRafRef.current = scheduleFrame(step); }
       else { bendRafRef.current = null; commit(); }
     };
-    bendRafRef.current = requestAnimationFrame(step);
+    bendRafRef.current = scheduleFrame(step);
   };
 
   const playMate = (patches: [string, any][], axisNormal: THREE.Vector3, partnerId: string, commit: () => void) => {

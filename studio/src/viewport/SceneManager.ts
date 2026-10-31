@@ -13,6 +13,7 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { CyclesTracer } from '@/viewport/cyclesTracer';
 import { createViewport, releaseViewport, setActiveViewport, type ViewportHandle, type ViewportKind } from '@/bridge/cameraBridge';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 export class SceneManager {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -349,7 +350,7 @@ export class SceneManager {
       this.controls.update();
     };
 
-    requestAnimationFrame(() => this._onResize());
+    scheduleFrame(() => this._onResize());
   }
 
   _buildGround() {
@@ -664,9 +665,9 @@ export class SceneManager {
       this.camera.position.lerpVectors(startPos, endPos, ease);
       this.controls.target.lerpVectors(startTarget, endTarget, ease);
       this.controls.update();
-      if (t < 1) requestAnimationFrame(tick);
+      if (t < 1) scheduleFrame(tick);
     };
-    requestAnimationFrame(tick);
+    scheduleFrame(tick);
   }
 
   /**
@@ -760,6 +761,8 @@ export class SceneManager {
   requestRender(n = 2) { this._renderReq = Math.max(this._renderReq ?? 0, n); }
   /** True if a draw is owed this frame (consumes one). Idle → false → GPU rests. */
   shouldRender(): boolean {
+    // A hidden canvas keeps its queued requests, so it draws as soon as its page is shown again.
+    if (this.canvas.getClientRects().length === 0) return false;
     if ((this._renderReq ?? 0) > 0) { this._renderReq--; return true; }
     return !!this._pathTracer; // Cycles keeps accumulating between input events
   }

@@ -45,6 +45,7 @@ import { mateBridge, type MateAnimRequest } from '@/bridge/mateBridge';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { jointLoads, centerOfMass, bodyStressField } from '@/kinematics/analysis';
 import { withJointValues } from '@/core/model/index';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 // PhysicsSim (and the heavy Rapier WASM it pulls in) is loaded lazily on first
 // Play, so it stays out of the initial bundle and the app starts up fast.
 
@@ -1104,7 +1105,7 @@ export class ModelEditor {
     for (const id of Object.keys(targets)) { const b = doc.bodies[id]; if (b) starts[id] = { ...b.transform }; }
     const lerp = (a: number, b: number, u: number) => a + (b - a) * u;
     const t0 = performance.now(); const DUR = 800;
-    if (this._gravRaf) cancelAnimationFrame(this._gravRaf);
+    if (this._gravRaf) cancelFrame(this._gravRaf);
     const qA = new THREE.Quaternion(), qB = new THREE.Quaternion(), qO = new THREE.Quaternion();
     const step = () => {
       const u = Math.min(1, (performance.now() - t0) / DUR);
@@ -1126,14 +1127,14 @@ export class ModelEditor {
         for (const [id, v] of Object.entries(vals)) { const b = jb[id]; if (b) jb[id] = { ...b, transform: { ...b.transform, ...(v as any) } }; }
         return { ...d, bodies: jb };
       });
-      if (u < 1) { this._gravRaf = requestAnimationFrame(step); }
+      if (u < 1) { this._gravRaf = scheduleFrame(step); }
       else {
         this._gravRaf = null;
         const patches: [string, any][] = Object.entries(targets).map(([id, v]) => [id, { transform: v }]);
         if (patches.length) useModelStore.getState().dispatch(commands.updateBodies(patches));
       }
     };
-    this._gravRaf = requestAnimationFrame(step);
+    this._gravRaf = scheduleFrame(step);
   }
 
   /**

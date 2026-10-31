@@ -43,6 +43,7 @@ import type { Task } from '@/robotics/rl/task';
 import { ObsNormalizer, NormalizedObsTask } from '@/robotics/rl/obsNormalizer';
 import { CurriculumScheduler, REACH_CURRICULUM, NAV_CURRICULUM, LOCO_CURRICULUM, POSE_CURRICULUM, ASSEMBLE_CURRICULUM } from '@/robotics/rl/curriculum';
 import { TopologyAwareTask, TOPO_OBS_DIM } from '@/robotics/rl/topologyEncoder';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -245,8 +246,8 @@ export default function TrainingPanel() {
   // (rather than an empty gap). Runs after the tab's DOM has mounted.
   useEffect(() => {
     if (tab !== 'train') return;
-    const id = requestAnimationFrame(() => { ensurePlot(); plotRef.current?.setData(curveRef.current as any); });
-    return () => cancelAnimationFrame(id);
+    const id = scheduleFrame(() => { ensurePlot(); plotRef.current?.setData(curveRef.current as any); });
+    return () => cancelFrame(id);
   }, [tab]);
 
   // ── Task factory ─────────────────────────────────────────────────────────────
@@ -460,7 +461,7 @@ export default function TrainingPanel() {
 
   function stopAll() {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
-    if (rafRef.current) { cancelAnimationFrame(rafRef.current); rafRef.current = null; }
+    if (rafRef.current) { cancelFrame(rafRef.current); rafRef.current = null; }
   }
 
   function _notReadyMsg(): string {
@@ -527,9 +528,9 @@ export default function TrainingPanel() {
       const dist = (base as ModelReachTask).tipDistance?.() ?? 0;
       if (out.done && dist < 0.06) { setLog(`Reached · ${(dist * 100).toFixed(1)} cm from target.`); return; }
       if (step > (fixedTarget ? 600 : 250)) { setLog(`Closest it got: ${(dist * 100).toFixed(1)} cm from target.`); return; }
-      rafRef.current = requestAnimationFrame(tick);
+      rafRef.current = scheduleFrame(tick);
     };
-    rafRef.current = requestAnimationFrame(tick);
+    rafRef.current = scheduleFrame(tick);
   }
 
   function watchLoco(policy: Policy) {
@@ -552,9 +553,9 @@ export default function TrainingPanel() {
         });
         step++;
         if (out.done || step > 400) { setLog(`Walked to x=${out.info?.x?.toFixed(2)} m`); locoTask.dispose(); return; }
-        rafRef.current = requestAnimationFrame(tick);
+        rafRef.current = scheduleFrame(tick);
       };
-      rafRef.current = requestAnimationFrame(tick);
+      rafRef.current = scheduleFrame(tick);
     });
   }
 
@@ -595,9 +596,9 @@ export default function TrainingPanel() {
       });
       step++;
       if (out.done || step > 400) { setLog(`Arrived at dist ${out.info?.dist?.toFixed(3)} m in ${step} steps.`); return; }
-      rafRef.current = requestAnimationFrame(tick);
+      rafRef.current = scheduleFrame(tick);
     };
-    rafRef.current = requestAnimationFrame(tick);
+    rafRef.current = scheduleFrame(tick);
   }
 
   // ── Diagnostics: per-term reward breakdown ──────────────────────────────────────
@@ -708,9 +709,9 @@ export default function TrainingPanel() {
       ids.forEach((id, i) => { vals[id] = base.currentValues()[i]; });
       useModelStore.getState().applyTransient((d) => withJointValues(d, vals));
       if (++frame % 12 === 0) setLog(`Tracking · tip ${base.tipDistance().toFixed(3)} m away`);
-      rafRef.current = requestAnimationFrame(tick);
+      rafRef.current = scheduleFrame(tick);
     };
-    rafRef.current = requestAnimationFrame(tick);
+    rafRef.current = scheduleFrame(tick);
   }
   function stopRun() { useTrainingStore.getState().setRunning(false); stopAll(); }
 

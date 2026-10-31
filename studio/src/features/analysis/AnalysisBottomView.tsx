@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { bridge } from '@/bridge/cameraBridge';
 import { useModelStore } from '@/state/modelStore';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 const DEFAULT_COL = '#b3b8c2';
 const _zeroV = new THREE.Vector3();
@@ -107,7 +108,7 @@ export default function AnalysisBottomView() {
     let lastRender = 0;
     const FRAME_MS = 1000 / 30; // ceiling only — actual draws are gated by `dirty`
     const tick = (now: number) => {
-      raf = requestAnimationFrame(tick);
+      raf = scheduleFrame(tick);
       const scene = bridge.scene as THREE.Scene | undefined;
       const main  = bridge.camera as THREE.PerspectiveCamera | undefined;
       if (!scene || !main) return;
@@ -152,10 +153,10 @@ export default function AnalysisBottomView() {
       renderer.render(scene, cam);
       for (const [m, orig] of swaps) m.material = orig;
     };
-    raf = requestAnimationFrame(tick);
+    raf = scheduleFrame(tick);
 
     return () => {
-      cancelAnimationFrame(raf);
+      cancelFrame(raf);
       unsubModel();
       ro.disconnect();
       controls.dispose();

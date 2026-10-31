@@ -9,6 +9,7 @@ import { commands } from '@/core/commands/index';
 import type { Document } from '@/core/model/index';
 import { stopAllSpins } from '@/features/motor/spinEngine';
 import { solveHome } from '@/assembly/connectorSnap';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 const DURATION = 500;
 
@@ -59,7 +60,7 @@ export default function HomeButton() {
         return next;
       });
       if (t < 1) {
-        requestAnimationFrame(tick);
+        scheduleFrame(tick);
       } else {
         // Commit a single undoable step at the end so Ctrl+Z restores the pre-home pose.
         const map: Record<string, number> = {};
@@ -67,7 +68,7 @@ export default function HomeButton() {
         dispatch(commands.setJointValues(map));
       }
     };
-    requestAnimationFrame(tick);
+    scheduleFrame(tick);
   };
 
   return (

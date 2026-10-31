@@ -19,7 +19,7 @@ COUNT = """(() => { const c = window.__c = { draws: 0, raf: 0 };
 
 
 async def idle(pg, name, seconds=4):
-    await pg.wait_for_timeout(2500)  # let tweens and damping finish
+    await pg.wait_for_timeout(5000)  # the click's 90-frame redraw burst must finish: 2.5 s was too short on software rendering
     a = await pg.evaluate('({...window.__c})'); await pg.wait_for_timeout(seconds * 1000); b = await pg.evaluate('({...window.__c})')
     print(f'{name:<12} draw calls/s {(b["draws"] - a["draws"]) / seconds:9.1f}   rAF requests/s {(b["raf"] - a["raf"]) / seconds:7.1f}', flush=True)
 

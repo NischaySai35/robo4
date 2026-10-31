@@ -45,6 +45,7 @@ import { scan2D } from '@/robotics/sensors/lidar';
 import { computeFK } from '@/kinematics/modelFK';
 import { robotBaseXZ } from '@/robotics/nav/worldModel';
 import { toggleSpin, stopAllSpins } from '@/features/motor/spinEngine';
+import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
 
 export default function SimCanvas() {
   const canvasRef = useRef<any>(null);
@@ -309,7 +310,7 @@ export default function SimCanvas() {
     let raf: any = null;
     const prof = createFrameProfiler(); // opt-in (?profile or localStorage.robo_profile=1); no-op otherwise
     const loop = () => {
-      raf = requestAnimationFrame(loop);
+      raf = scheduleFrame(loop);
       prof.frameStart();
       const active = modelEditor.tick();   // physics step / animation preview when active
       prof.mark('tick');
@@ -317,7 +318,7 @@ export default function SimCanvas() {
       if (sceneMgr.shouldRender()) { sceneMgr.render(); prof.mark('render'); }
       prof.frameEnd();
     };
-    raf = requestAnimationFrame(loop);
+    raf = scheduleFrame(loop);
 
     // ── Load a project (model + animation) ──────────────────────────────────────
     vp.loadScene = (project, opts: any = {}) => {
@@ -510,7 +511,7 @@ export default function SimCanvas() {
     const stopEspPoll = startEspPoll();
 
     return () => {
-      cancelAnimationFrame(raf);
+      cancelFrame(raf);
       prof.dispose();
       stopEspPoll();
       clearTimeout(saveTimer);

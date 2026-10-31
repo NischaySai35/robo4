@@ -25,6 +25,7 @@ import {
   emitSpinChange as emit, setSpin, deleteSpin, hasSpin, clearSpins, noSpins,
   spinningIds, eachSpin, type Dir,
 } from '@/core/motor/spinState';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 // Re-exported so existing importers of spinEngine are unaffected by the split.
 export { DEFAULT_SPIN_RPM, getSpin, getActiveSpins };
@@ -57,11 +58,11 @@ function tick(now: number) {
       return next;
     });
   }
-  rafId = noSpins() ? null : requestAnimationFrame(tick);
+  rafId = noSpins() ? null : scheduleFrame(tick);
 }
 
 function ensureLoop() {
-  if (rafId == null && !noSpins()) { lastT = 0; rafId = requestAnimationFrame(tick); }
+  if (rafId == null && !noSpins()) { lastT = 0; rafId = scheduleFrame(tick); }
 }
 
 /** Commit the joint's current transient value as one undoable step so it persists. */

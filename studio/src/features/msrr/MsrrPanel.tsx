@@ -53,6 +53,7 @@ import { type ReachSummary, reachSummary } from '@/robotics/msrr/chainMoves';
 import { describeTransformMove, mobilityReport } from '@/robotics/msrr/transform';
 import { startMirror, stopMirror, materializeCurrent } from './bridgeActions';
 import { decodeShape, downloadShape, pickShapeFile } from './shapeFile';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 type Tab = 'build' | 'text' | 'draw' | 'compose' | 'transform' | 'bridge';
 
@@ -1283,7 +1284,7 @@ function ReachTableSection() {
 
   const compute = () => {
     setBusy(true);
-    requestAnimationFrame(() => {
+    scheduleFrame(() => {
       const t0 = performance.now();
       const s = reachSummary();
       setSummary(s);

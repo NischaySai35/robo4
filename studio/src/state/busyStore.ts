@@ -13,6 +13,7 @@
  * main thread, but the result is silently discarded.
  */
 import { create } from 'zustand';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 let _seq = 0;
 
@@ -52,7 +53,7 @@ export const useBusyStore = create<BusyState>((set, get) => ({
     set({ _signal: sig });
     const id = get().begin(label);
     try {
-      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      await new Promise<void>((r) => scheduleFrame(() => r()));
       return await fn(sig);
     } finally {
       get().end(id);

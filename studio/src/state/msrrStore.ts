@@ -35,6 +35,7 @@ import { type PlaybackState, type PlaybackOptions, DEFAULT_PLAYBACK, advance } f
 import { type FitResult, fitModules } from '@/robotics/msrr/fitModules';
 import { type ManualBuild, emptyManual } from '@/robotics/msrr/manualBuild';
 import { type TransformResult, type SearchProgress, planTransform, mobilityReport } from '@/robotics/msrr/transform';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 export type MsrrTab = 'build' | 'text' | 'draw' | 'compose' | 'transform' | 'bridge';
 
@@ -251,7 +252,7 @@ export const useMsrrStore = create<MsrrState>((set, get) => {
       set({ building: true });
       // Yielded to the next frame so the "building" state paints before the fit
       // blocks the thread (the reach table is built on first use).
-      requestAnimationFrame(() => {
+      scheduleFrame(() => {
         const result = fitModules(cells);
         set({
           built: result,
@@ -469,7 +470,7 @@ export const useMsrrStore = create<MsrrState>((set, get) => {
       set({ planning: true });
       // Synchronous, but yielded to the next frame so the UI can paint the
       // "planning…" state before a long search blocks the thread.
-      requestAnimationFrame(() => {
+      scheduleFrame(() => {
         const result = planReconfiguration(config, target, options);
         set({
           plan: result,

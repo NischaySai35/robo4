@@ -24,6 +24,7 @@ import { timeParameterize, blendCorners, type TimedTrajectory } from '@/robotics
 import { planCartesian } from '@/robotics/planning/cartesian';
 import { physicsBridge } from '@/bridge/physicsBridge';
 import type { Document } from '@/core/model/index';
+import { scheduleFrame } from '@/runtime/frameScheduler';
 
 export type Planner = 'rrt' | 'rrtstar' | 'prm' | 'cartesian';
 
@@ -169,9 +170,9 @@ export function initMotionRuntime(): void {
           const p = traj.duration > 0 ? Math.min(1, t / traj.duration) : 1;
           ctx.report({ phase: 'executing', progress: p });
           if (t >= traj.duration) { resolve(); return; }
-          requestAnimationFrame(tick);
+          scheduleFrame(tick);
         };
-        requestAnimationFrame(tick);
+        scheduleFrame(tick);
       });
 
       let cost = 0;

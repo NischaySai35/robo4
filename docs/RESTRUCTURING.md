@@ -30,7 +30,7 @@ physics and robot-model changes. Background documents it builds on:
 | GOS G2 Transport | **Started:** interface, local, Zenoh across processes. Budget checked only for Python to Python |
 | GOS G3 Basics | **Started:** `gos.App`, topics, locks, services, parameters, lifecycle, MCAP record and play, `gos run`, `graph`, `sim`, `topic echo`. Services work across processes; parameters and actions in one process. Transform graph not done |
 | GOS G4 GraphIK | **Stages A and B done:** `robot.ik` holds rings; on 30 goals mink reached 30, Studio IK 28, mink 5x faster (`gos-g0-baseline.md`). GraphIK in the Rust core: 30/30, about 0 mm, 0.6 ms, holds rings, usable from the Studio and Python. Studio drag IK not switched to it yet |
-| GOS G5 Studio as client | **Started:** `gos.studio.StudioLink`, GOS panel, commands by name, live joints. Animation-only window and `gos view` not done |
+| GOS G5 Studio as client | **Started:** `gos.studio.StudioLink`, GOS panel, commands by name, live joints. View-only mode: `gos.studio.view()` opens the installed app as just a 3D view and drives it (`tools/test_gos_view.py` on the packaged app) |
 | GOS G6 Real robot | Not started; needs the robot and your approval to move motors |
 | GOS G7 Packaging | Not started; bundling physics waits for §7 |
 | GOS G8 ROS 2 bridge, G9 Full parity | Not started; G8 needs a ROS 2 install |

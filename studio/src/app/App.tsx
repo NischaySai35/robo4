@@ -6,7 +6,7 @@ import IntroOverlay from '@/features/intro/IntroOverlay';
 import StartupProjects from '@/features/startup/StartupProjects';
 import MenuBar from '@/features/menu/MenuBar';
 import { handleKey, setUiActions } from '@/features/ops/appOps';
-import { connectFromAddressBar } from '@/features/gos/gosLink';
+import { connectFromAddressBar, VIEW_ONLY } from '@/features/gos/gosLink';
 import DockWorkspaces from '@/features/shell/DockWorkspaces';
 import LoadingBar from '@/features/common/LoadingBar';
 import CommandPalette from '@/features/command-palette/CommandPalette';
@@ -319,7 +319,7 @@ export default function App() {
   const page    = usePageStore(s => s.page);
   const setPage = usePageStore(s => s.setPage);
   const [connOpen,   setConnOpen]   = useState(false);
-  const [showIntro,  setShowIntro]  = useState(true);
+  const [showIntro,  setShowIntro]  = useState(!VIEW_ONLY);
   const [showPicker, setShowPicker] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -370,6 +370,12 @@ export default function App() {
   }, []);
 
   useEffect(() => { setUiActions({ togglePalette: () => setPaletteOpen(v => !v), toggleHelp: () => setHelpOpen(v => !v), toggleConn }); }, [toggleConn]);
+
+  if (VIEW_ONLY) return (
+    <div className="app-shell">
+      <main className="app-main"><DockWorkspaces connOpen={false} onConnToggle={toggleConn} onHelpOpen={() => {}} viewOnly /></main>
+    </div>
+  );
 
   return (
     <div className="app-shell">

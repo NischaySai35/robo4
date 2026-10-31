@@ -59,7 +59,7 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | B10 | Testing tools | partial | `tsx --test` | Testing helpers for users' nodes | G9 | `user_node_test` |
 | B11 | Debugging, tracing, backtraces | missing | | Tracing, then Studio panels | G9 | `trace_run` |
 | B12 | Introspection, examine traffic, publish from YAML | missing | Node-graph data in `messageBus.ts` | CLI first | G3, G9 | `cli_smoke` |
-| B13 | Visualization (RViz, `rqt`) | partial | A script can drive the Studio view live (`tools/test_studio_link.py`). `gos view` not done. | Client mode, `gos view` | G5 | `view_from_python` |
+| B13 | Visualization (RViz, `rqt`) | partial | A script opens the app as a 3D view only and drives it live (`tools/test_gos_view.py`, packaged app). No plots or rqt-style panels yet. | Client mode, `gos view` | G5 | `view_from_python` |
 | B14 | Package documentation | missing | | GOS docs tooling | G9 | `docs_build` |
 | B15 | Recording (`rosbag`) | native | `app.record` and `app.play` to MCAP, tested. Converter for old `.nischaybag` not done. | MCAP | G3 | `record_play` |
 | B16 | Robot description (URDF, SDF) | partial | MJCF export keeps loops and loads with meshes, checked in MuJoCo. URDF and SDF still lose loops, with a warning for URDF. | Import, SDF warnings | G1 | `tools/test_mjcf.py` |

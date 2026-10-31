@@ -118,7 +118,12 @@ function createWindow() {
     mainWindow.loadURL(DEV_URL);
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
+    // `gos view` and scripts start the app with --view, --gos=ws://127.0.0.1:PORT and --token=...
+    const arg = (k) => { const a = process.argv.find((x) => x.startsWith(`--${k}=`)); return a ? a.slice(k.length + 3) : null; };
+    const query = {};
+    if (process.argv.includes('--view')) query.view = '1';
+    if (arg('gos')) { query.gos = arg('gos'); query.token = arg('token') ?? ''; }
+    mainWindow.loadFile(path.join(__dirname, '..', 'dist', 'index.html'), { query });
   }
 
   mainWindow.on('closed', () => { mainWindow = null; });

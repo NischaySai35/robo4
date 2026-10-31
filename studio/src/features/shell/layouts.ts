@@ -39,7 +39,11 @@ function buildDefault(api: DockviewApi, page: Page) {
 }
 
 /** Restore the saved layout, or build the default when there is none or it no longer loads. */
-export function attachLayout(api: DockviewApi, page: Page) {
+export function attachLayout(api: DockviewApi, page: Page, viewOnly = false) {
+  if (viewOnly) { // just the viewport, not saved, so the full app keeps its own layout
+    api.addPanel({ id: 'viewport', component: 'viewport', title: 'View', renderer: 'always', params: { page } });
+    return { dispose() {} };
+  }
   apis.set(page, api);
   let restored = false;
   try {

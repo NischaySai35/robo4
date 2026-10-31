@@ -80,10 +80,13 @@ module.exports = {
     },
     {
       name: 'no-dev-deps-in-src',
-      comment: 'Shipping code must not import a devDependency — it will not exist at runtime.',
+      // Vite bundles every package src imports, so runtime libraries are devDependencies on purpose:
+      // that keeps electron-builder from shipping them a second time (app.asar 320 MB to 116 MB, 31 Oct).
+      // What must never reach shipping code is the build tooling itself.
+      comment: 'Shipping code must not import build tools: they are not in the bundle.',
       severity: 'error',
       from: { path: '^src/', pathNot: '(\\.test\\.tsx?|\\.d\\.ts)$' },
-      to: { dependencyTypes: ['npm-dev'] },
+      to: { dependencyTypes: ['npm-dev'], path: 'node_modules/(vite|@vitejs|electron|electron-builder|typescript|tsx|dependency-cruiser|concurrently|wait-on|png-to-ico|@tailwindcss|@types)/' },
     },
   ],
   options: {

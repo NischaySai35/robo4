@@ -81,6 +81,9 @@ export function disconnectGos() {
 
 defineOperator({ id: 'gos.disconnect', label: 'Disconnect from GOS', group: 'GOS', poll: () => useGosStore.getState().status === 'on', exec: disconnectGos });
 
+/** ?view: only the 3D view, no menus or panels. Set by `gos view` or the app's --view switch. */
+export const VIEW_ONLY = typeof location !== 'undefined' && new URLSearchParams(location.search).has('view');
+
 /** Opening the Studio with ?gos=ws://...&token=... connects straight away. */
 export function connectFromAddressBar() {
   const q = new URLSearchParams(location.search);

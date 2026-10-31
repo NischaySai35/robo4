@@ -72,19 +72,19 @@ const COMPONENTS: Record<string, React.FC<IDockviewPanelProps<any>>> = {
 // Every panel is essential today and there is no list to reopen one from, so a tab can be moved but not closed.
 const Tab = (props: IDockviewPanelHeaderProps) => <DockviewDefaultTab {...props} hideClose />;
 
-function Workspace({ page }: { page: Page }) {
+function Workspace({ page, viewOnly }: { page: Page; viewOnly?: boolean }) {
   const theme = useThemeStore((s) => s.theme);
   return (
     <DockviewReact
       components={COMPONENTS}
       defaultTabComponent={Tab}
       theme={theme === 'dark' ? themeDark : themeLight}
-      onReady={(e) => { attachLayout(e.api, page); }}
+      onReady={(e) => { attachLayout(e.api, page, viewOnly); }}
     />
   );
 }
 
-export default function DockWorkspaces({ connOpen, onConnToggle, onHelpOpen }: { connOpen: boolean; onConnToggle: () => void; onHelpOpen: () => void }) {
+export default function DockWorkspaces({ connOpen, onConnToggle, onHelpOpen, viewOnly }: { connOpen: boolean; onConnToggle: () => void; onHelpOpen: () => void; viewOnly?: boolean }) {
   const page = usePageStore((s) => s.page);
   // Built the first time a page is visited. Motor from the start, since its panels must stay mounted.
   const [seen, setSeen] = useState<Set<Page>>(() => new Set<Page>(['motor', page]));
@@ -107,8 +107,8 @@ export default function DockWorkspaces({ connOpen, onConnToggle, onHelpOpen }: {
       )}
       {pages.map((p) => (
         <div key={p} className="dock-workspace" style={p === page ? undefined : { display: 'none' }}>
-          <div className="dock-workspace-main"><Workspace page={p} /></div>
-          {p === 'editor' && <RightDock />}
+          <div className="dock-workspace-main"><Workspace page={p} viewOnly={viewOnly} /></div>
+          {p === 'editor' && !viewOnly && <RightDock />}
         </div>
       ))}
     </>

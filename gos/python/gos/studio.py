@@ -101,3 +101,35 @@ class StudioLink:
 
     def close(self):
         self._server.shutdown()
+        p = getattr(self, 'process', None)
+        if p and p.poll() is None: p.terminate()
+
+
+APP_NAMES = ['TETROBOT-Demo-NischaySai.exe', 'TETROBOT-Demo-NischaySai']
+
+
+def find_app():
+    """The installed TETROBOT app: TETROBOT_APP if set, else the usual install folder."""
+    import os, sys
+    if os.environ.get('TETROBOT_APP'): return os.environ['TETROBOT_APP']
+    roots = [os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Programs', 'TETROBOT-Demo-NischaySai'), '/Applications/TETROBOT-Demo-NischaySai.app/Contents/MacOS', '/opt/TETROBOT-Demo-NischaySai']
+    for r in roots:
+        for n in APP_NAMES:
+            if os.path.isfile(os.path.join(r, n)): return os.path.join(r, n)
+    return None
+
+
+def view(port=8772, app=None, timeout=60):
+    """Open TETROBOT as a 3D view only and connect it. Returns the link: link.show(doc), link.joints(names, q)."""
+    import os, subprocess
+    link = StudioLink(port=port)
+    exe = app or find_app()
+    if not exe:
+        link.close()
+        raise GosError('TETROBOT app not found. Install it, or set TETROBOT_APP to its .exe path.')
+    env = {k: v for k, v in os.environ.items() if k != 'ELECTRON_RUN_AS_NODE'}  # set inside VS Code terminals; it stops Electron opening a window
+    link.process = subprocess.Popen([exe, '--view', f'--gos={link.url}', f'--token={link.token}'], env=env)
+    try:
+        return link.wait(timeout)
+    except GosError:
+        link.process.kill(); link.close(); raise

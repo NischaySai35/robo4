@@ -114,6 +114,12 @@ async def roundtrip(pg, logs, out, report):
     return r
 
 
+# The mouse drag lands a little differently each run, so the viewport in these shots moves even between two
+# runs of one build (1.9% and 5.3%, measured 31 Oct). Only the panels around it are compared.
+CAMERA_MOVED = {'editor.png', 'roundtrip_editor_after.png'}
+VIEWPORT_BOX = (250, 80, 1254, 970)
+
+
 def compare(base, new, limit=0.02):
     """Share of pixels that moved by more than 16/255. The HUD numbers always differ, so the limit is not zero."""
     from PIL import Image, ImageChops
@@ -123,7 +129,9 @@ def compare(base, new, limit=0.02):
         if not os.path.exists(os.path.join(new, f)): print('MISSING', f); bad += 1; continue
         a, b = (Image.open(os.path.join(d, f)).convert('L') for d in (base, new))
         if a.size != b.size: print('SIZE', f, a.size, b.size); bad += 1; continue
-        hist = ImageChops.difference(a, b).histogram()
+        diff = ImageChops.difference(a, b)
+        if f in CAMERA_MOVED: diff.paste(0, VIEWPORT_BOX)
+        hist = diff.histogram()
         share = sum(hist[17:]) / (a.width * a.height)
         print(f'{share * 100:6.2f}%  {"DIFF" if share > limit else "ok"}  {f}')
         bad += share > limit

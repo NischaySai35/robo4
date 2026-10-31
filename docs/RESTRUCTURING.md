@@ -27,11 +27,11 @@ physics and robot-model changes. Background documents it builds on:
 
 | Area | Options | Default if no choice |
 |---|---|---|
-| Icons | Lucide · Phosphor | Lucide (pairs with shadcn/ui) |
+| Icons | Lucide · Phosphor | **Lucide, installed in P1** |
 | Charts / live telemetry | uPlot · Apache ECharts | uPlot (fast time series for servo load, IMU, current) |
 | Motion | Motion · none (CSS only) | CSS only; Motion only if a panel transition needs it |
-| shadcn primitive layer | Base UI · Radix | Whatever `shadcn init` defaults to at install time; verify then |
-| React version | stay 18.3 · upgrade to 19 | Check shadcn/ui + Dockview requirements at install time, decide then |
+| shadcn primitive layer | Base UI · Radix | **Base UI** (`base-nova`, the default in shadcn 4.23), installed in P1 |
+| React version | stay 18.3 · upgrade to 19 | **Already 19.3** (done in the single-stack upgrade) |
 | **Physics** | to be added by Nischay | (current recommendation in §7) |
 | **New module model** (mechanical locks, new CAD) | to be added by Nischay | — |
 | Other changes | to be added by Nischay | — |
@@ -63,6 +63,7 @@ physics and robot-model changes. Background documents it builds on:
 - Header bar: app menu, workspace tabs, global status (ESP32 connection, servo count, theme).
 
 ### 4.3 Components
+- P1 setup: `src/styles/tokens.css`, with no Tailwind reset, a `tw:` class prefix, and tokens only under `data-ui="a"`, so nothing changes until a piece is migrated. `shadcn add` under these settings wrote a broken `from "cn"` import, added an unrelated npm package named `cn`, and skipped `@base-ui/react`: check each added component.
 - shadcn/ui for buttons, menus, context menus, dialogs, tabs, tooltips, selects, toggles, sliders, toasts, command palette (`cmdk`).
 - Tweakpane for property panes (joint angles and limits, servo parameters, render settings, physics and disturbance settings, IK options): one helper that binds a Tweakpane pane to document properties through operators (so every tweak is undoable).
 - Existing shared pieces are migrated, not duplicated: `features/common` (ContextMenu, ResizablePanel, LoadingBar, Icon), `features/viewport-ui` (NavigationGizmo, ViewControls, HomeButton), `ViewportStats`, `SpreadHud` (VSEPR score, keep), MSRR `SessionBar` / `ShapeButtons` / `ManualPortMenu`.

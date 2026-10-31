@@ -28,7 +28,7 @@ The script loads the default module, screenshots every page, then does the round
 | 2 | Pages draw while idle: no page reaches 0 draw calls/s, and ESP-TTL and Motor still draw with no visible canvas. | `docs/design/gos-g0-baseline.md` | P3 |
 | 3 | The app polls `http://mod1.local/api/telemetry` from startup on every page, so the console fills with `NAME_NOT_RESOLVED` when no robot is on. | Request log, `report.json` | Poll only when a connection is wanted (P4) |
 | 4 | `texImage3D: FLIP_Y ... isn't allowed` on opening MSRR. | `report.json` | Check with the renderer work (P9) |
-| 5 | `index.html` loads Rajdhani and Share Tech Mono from Google, but `--font-ui` and `--font-mono` are Times New Roman, so they are unused, and the installed app needs the network for nothing. | `index.css:37`, `document.fonts.check` is false | P1 |
+| 5 | ~~Rajdhani and Share Tech Mono came from Google, so some panels looked different with no network.~~ **Fixed in P1:** self-hosted. | Build has 13 `woff2` files and no Google link | Done |
 | 6 | `npm test` takes over 120 s here: `transform.test.ts` was still running at 105 s. The other 51 files pass (337 tests). | Timed per file | Split the slow file |
 
 Not automated yet: everything in the "By hand" column. The screenshots use software rendering, so they check layout and content, not GPU behaviour or real frame rates.

@@ -35,9 +35,14 @@ src/
     servo/         ServoController
     viewport-ui/   NavigationGizmo  ViewControls  JointCard
     intro/         IntroOverlay
+  components/ui/           # shadcn/ui components (we own them), Base UI underneath
+  lib/utils.ts             # cn(): Tailwind class joining
   styles/
     index.css              # global resets + CSS variables (themes)
+    tokens.css             # direction A tokens + Tailwind v4 (tw: prefix, no reset, opt in with data-ui="a")
 ```
+
+Parts of this tree are out of date (files are `.ts`/`.tsx`, and `robotics/`, `runtime/`, `physics/` and others exist). `docs/MODULES.md` has the current map.
 
 ## Rules
 - **Core is sacred.** Backends (viewport, physics, exporters, hardware) *read* the

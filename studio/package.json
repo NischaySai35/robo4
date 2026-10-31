@@ -18,6 +18,7 @@
     "release": "vite build && electron-builder --publish always",
     "dist": "vite build && electron-builder --dir",
     "icons": "node scripts/make-icons.cjs",
+    "postinstall": "node scripts/fix-pathtracer.cjs",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "depcruise": "depcruise --config .dependency-cruiser.cjs \"src/**/*.ts\" \"src/**/*.tsx\" --ignore-known",
     "depcruise:all": "depcruise --config .dependency-cruiser.cjs \"src/**/*.ts\" \"src/**/*.tsx\" --no-ignore-known --output-type err-long",
@@ -32,7 +33,7 @@
     "onnxruntime-web": "^1.31.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "three": "^0.187.0",
+    "three": "0.186.1",
     "three-gpu-pathtracer": "^0.0.27",
     "three-mesh-bvh": "^0.9.17",
     "uplot": "^1.6.32",
@@ -139,7 +140,6 @@
   },
   "allowScripts": {
     "sharp@0.35.5": true,
-    "electron@45.1.0": true,
     "esbuild@0.28.2": true,
     "onnxruntime-node@1.31.1": true,
     "protobufjs@7.6.6": true

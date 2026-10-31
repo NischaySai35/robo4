@@ -11,7 +11,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
-import { WebGLPathTracer } from 'three-gpu-pathtracer';
+import { CyclesTracer } from '@/viewport/cyclesTracer';
 import { bridge } from '@/bridge/cameraBridge';
 
 export class SceneManager {
@@ -299,6 +299,7 @@ export class SceneManager {
     // Capture the current frame as a data URL (used by the Render → Export
     // button). Force a fresh composite first so the read-back is never blank.
     bridge.captureImage = (mime = 'image/png', quality = 0.92) => {
+      if (this._pathTracer) return this._pathTracer.capture(mime, quality);
       this.renderer.render(this.scene, this.camera);
       return this.renderer.domElement.toDataURL(mime, quality);
     };
@@ -472,7 +473,7 @@ export class SceneManager {
     this.composer.addPass(new OutputPass());
 
     this._engineMode    = 'eevee';
-    this._pathTracer    = null as WebGLPathTracer | null;
+    this._pathTracer    = null as CyclesTracer | null;
     this._computeDevice = 'gpu';
     this._maxSamples    = 32;
   }
@@ -484,7 +485,7 @@ export class SceneManager {
   //          and blurs them → soft penumbra. UnrealBloom on bright pixels. ACES
   //          tone curve. No global illumination. Same algorithm as Blender Eevee.
   //
-  // CYCLES — GPU path tracer via WebGLPathTracer (three-gpu-pathtracer). On first
+  // CYCLES — GPU path tracer via CyclesTracer (three-gpu-pathtracer on WebGPU). On first
   //          call, builds a BVH (Bounding Volume Hierarchy) over all scene triangles.
   //          Then each frame fires `_samplesPerFrame` sample passes: per pixel, a ray
   //          is cast into the scene, bounces N times (8 for GPU / 2 for CPU), and
@@ -551,43 +552,43 @@ export class SceneManager {
   }
 
   _initPathTracer() {
-    if (!this._pathTracer) {
-      this._pathTracer = new WebGLPathTracer(this.renderer);
-      // Show path traced output immediately — no delay, no min-sample ramp.
-      this._pathTracer.renderDelay    = 0;
-      this._pathTracer.minSamples     = 1;
-      this._pathTracer.fadeDuration   = 0;
-      this._pathTracer.rasterizeScene = false; // never fall back to Eevee on move
-      // 1×1 tiles: each renderSample() completes one FULL sample in one frame.
-      // Default 3×3=9 tiles means 9 frames per sample → visible lag on first drag frame.
-      // At 1×1 the first sample appears the very next frame after a camera reset.
-      (this._pathTracer as any)._pathTracer.tiles.set(1, 1);
+    if (this._pathTracer || this._pathTracerLoading) { this.markPathTracerDirty(); return; }
+    if (!CyclesTracer.supported) {
+      console.warn('Cycles needs WebGPU, which this browser does not provide. Showing the normal view.');
+      return;
     }
-    this._pathTracer.bounces = this._computeDevice === 'gpu' ? 5 : 2;
-    // Hide ShaderMaterial objects (grid) — path tracer can't handle custom shaders.
-    const gridWasVisible = this.grid?.visible ?? true;
-    if (this.grid) this.grid.visible = false;
-    this._pathTracer.setScene(this.scene, this.camera);
-    if (this.grid) this.grid.visible = gridWasVisible;
+    const tracer = new CyclesTracer(this.canvas);
+    this._pathTracerLoading = tracer;
+    const r = this.renderer;
+    tracer.init(r.getPixelRatio(), r.toneMapping, r.toneMappingExposure).then(() => {
+      // Switched away while it was loading.
+      if (this._pathTracerLoading !== tracer) { tracer.dispose(); return; }
+      this._pathTracerLoading = null;
+      tracer.setBounces(this._computeDevice === 'gpu' ? 5 : 2);
+      tracer.setMaxSamples(this._maxSamples ?? 16);
+      tracer.setScene(this.scene, this.camera);
+      this._pathTracer = tracer;
+    }).catch((e: any) => {
+      console.warn('Cycles could not start. Showing the normal view.', e);
+      if (this._pathTracerLoading === tracer) this._pathTracerLoading = null;
+      tracer.dispose();
+    });
   }
 
   _teardownPathTracer() {
+    this._pathTracerLoading = null;
     this._pathTracer?.dispose();
     this._pathTracer = null;
   }
 
   setComputeDevice(device: 'cpu' | 'gpu') {
     this._computeDevice = device;
-    if (this._pathTracer) {
-      this._pathTracer.bounces = device === 'gpu' ? 5 : 2;
-      this._pathTracer.reset();
-    }
+    this._pathTracer?.setBounces(device === 'gpu' ? 5 : 2);
   }
 
   setMaxSamples(n: number) {
     this._maxSamples = Math.max(1, Math.min(1024, Math.round(n)));
-    // If path tracer was paused at old limit, unpause so it can run to new limit.
-    if (this._pathTracer) this._pathTracer.pausePathTracing = false;
+    this._pathTracer?.setMaxSamples(this._maxSamples);
   }
 
   getMaxSamples(): number {
@@ -599,12 +600,7 @@ export class SceneManager {
   }
 
   markPathTracerDirty() {
-    if (this._pathTracer && this._engineMode === 'cycles') {
-      const gridWasVisible = this.grid?.visible ?? true;
-      if (this.grid) this.grid.visible = false;
-      this._pathTracer.setScene(this.scene, this.camera);
-      if (this.grid) this.grid.visible = gridWasVisible;
-    }
+    if (this._pathTracer && this._engineMode === 'cycles') this._pathTracer.setScene(this.scene, this.camera);
   }
 
   getRendererStats() {
@@ -637,6 +633,7 @@ export class SceneManager {
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
+    this._pathTracer?.setSize(w, h);
     this.requestRender(3);
   }
 
@@ -756,7 +753,7 @@ export class SceneManager {
   /** True if a draw is owed this frame (consumes one). Idle → false → GPU rests. */
   shouldRender(): boolean {
     if ((this._renderReq ?? 0) > 0) { this._renderReq--; return true; }
-    return false;
+    return !!this._pathTracer; // Cycles keeps accumulating between input events
   }
 
   render() {
@@ -764,10 +761,7 @@ export class SceneManager {
     this._updateGround();
 
     if (this._engineMode === 'cycles' && this._pathTracer) {
-      // Pause once we hit the user's sample limit (unpause when limit changes).
-      this._pathTracer.pausePathTracing =
-        Math.floor(this._pathTracer.samples) >= (this._maxSamples ?? 16);
-      this._pathTracer.renderSample();
+      this._pathTracer.renderSample(); // stops by itself at the sample limit
     } else {
       // Render directly to screen. The EffectComposer's ping-pong render targets
       // force LinearSRGBColorSpace output on first material compilation, which
@@ -840,7 +834,7 @@ export class SceneManager {
     if (this._onOrbitUp) window.removeEventListener('pointerup', this._onOrbitUp);
     this._pivotDot?.geometry?.dispose?.();
     this._pivotDot?.material?.dispose?.();
-    this._pathTracer?.dispose();
+    this._teardownPathTracer();
     this.renderer.dispose();
     this.composer.dispose();
   }

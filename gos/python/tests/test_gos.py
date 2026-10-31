@@ -184,7 +184,7 @@ def test_record_then_play_gives_the_same_messages(tmp_path):
         app.load_document(CHAIN)
         first = []
         app.topic('/joints').subscribe(first.append)
-        rec = app.record(path)
+        rec = app.record(path, topics=('/joints',))
         app.run(seconds=0.1)
         assert rec.close() == 5
     with gos.App() as app:

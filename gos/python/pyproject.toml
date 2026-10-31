@@ -14,6 +14,7 @@ dependencies = ["mujoco>=3.17", "numpy"]
 ik = ["mink", "daqp"]
 network = ["eclipse-zenoh"]
 studio = ["websockets"]
+record = ["mcap"]
 
 [project.scripts]
 gos = "gos.__main__:main"

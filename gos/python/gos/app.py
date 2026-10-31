@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 from . import _core
 from .transport import open_transport
+from .runtime import Node, Parameters, Recorder, Services, play
 
 
 class GosError(RuntimeError):
@@ -63,13 +64,16 @@ class App:
         random.seed(seed)
         self.bus = open_transport(transport, **transport_options)
         self.model = self.data = self.robot = self.spec = None
-        self.params, self._locks, self._dir, self._doc = {}, {}, None, None
+        self._locks, self._dir, self._doc = {}, None, None
+        self.params, self.services, self.nodes, self._recorders = Parameters(self.bus), Services(), {}, []
         self.time_steps = 0
 
     def __enter__(self): return self
     def __exit__(self, *_): self.close()
 
     def close(self):
+        for r in self._recorders: r.close()
+        self._recorders = []
         self.bus.close()
         if self._dir: shutil.rmtree(self._dir, ignore_errors=True); self._dir = None
         self.model = self.data = self.spec = None
@@ -222,6 +226,17 @@ class App:
         return float(abs(d.efc_pos[:d.nefc][rows]).max()) if rows.any() else 0.0
 
     def topic(self, name): return _Topic(self.bus, name)
+
+    def node(self, name):
+        return self.nodes.setdefault(name, Node(self.bus, name))
+
+    def record(self, path, topics=('/joints', '/graph/events')):
+        """Record to an MCAP file until .close() or the end of the app."""
+        r = Recorder(self.bus, path, topics)
+        self._recorders.append(r)
+        return r
+
+    def play(self, path): return play(path, self.bus)
 
     # ── inverse kinematics, as a plugin ──────────────────────────────────────
     def _ik(self, body, position, steps, keep_closed, tolerance):

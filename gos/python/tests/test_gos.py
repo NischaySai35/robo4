@@ -146,3 +146,49 @@ def test_two_processes_exchange_a_topic_over_zenoh(tmp_path):
             app.topic('/robot/ping').publish({'n': 7}); time.sleep(.05)
     out = p.communicate(timeout=20)[0]
     assert 'GOT 7' in out
+
+
+def test_services_say_what_exists():
+    with gos.App() as app:
+        app.services.advertise('/add', lambda r: r['a'] + r['b'])
+        assert app.services.call('/add', {'a': 2, 'b': 3}) == 5
+        with pytest.raises(LookupError, match='/add'): app.services.call('/nope')
+        with pytest.raises(ValueError): app.services.advertise('/add', print)
+
+
+def test_parameters_check_types_and_announce_changes():
+    with gos.App() as app:
+        seen = []
+        app.topic('/parameter_events').subscribe(seen.append)
+        app.params.declare('gain', 1.0)
+        app.params.set('gain', 2)
+        assert app.params.get('gain') == 2 and seen == [{'name': 'gain', 'value': 2}]
+        with pytest.raises(TypeError): app.params.set('gain', 'high')
+        with pytest.raises(KeyError, match='Declare'): app.params.get('other')
+
+
+def test_lifecycle_follows_the_ros_states():
+    with gos.App() as app:
+        n = app.node('driver')
+        assert n.state == 'unconfigured'
+        with pytest.raises(ValueError, match='configure'): n.transition('activate')
+        assert n.transition('configure') == 'inactive' and n.transition('activate') == 'active'
+        assert n.transition('deactivate') == 'inactive' and n.transition('shutdown') == 'finalized'
+        with pytest.raises(ValueError): n.transition('configure')
+
+
+def test_record_then_play_gives_the_same_messages(tmp_path):
+    pytest.importorskip('mcap')
+    path = str(tmp_path / 'run.mcap')
+    with gos.App() as app:
+        app.load_document(CHAIN)
+        first = []
+        app.topic('/joints').subscribe(first.append)
+        rec = app.record(path)
+        app.run(seconds=0.1)
+        assert rec.close() == 5
+    with gos.App() as app:
+        again = []
+        app.topic('/joints').subscribe(again.append)
+        assert app.play(path) == 5
+        assert again == first

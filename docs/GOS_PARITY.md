@@ -22,14 +22,14 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | A2 | Multiple middleware implementations, chosen at runtime | partial | `gos.App(transport=...)`: local and Zenoh | More backends, shared memory | G2 | `transport_swap` |
 | A3 | Common core library wrapped per language | native | Rust core with one C interface: Python through ctypes, Studio through WebAssembly | Node and C++ bindings later | G1 | `tools/test_mjcf.py`, `gos/python/tests` |
 | A4 | Publish/subscribe over topics | partial | `runtime/messageBus.ts`; Python to Python over Zenoh passes (`test_two_processes_exchange_a_topic_over_zenoh`). Not yet Studio to Python. | Same API over transport | G2 | `pubsub_python_studio` |
-| A5 | Clients and services | partial | `runtime/services.ts` | Same | G3 | `service_cross_process` |
-| A6 | Set and retrieve parameters | partial | `runtime/params.ts` | Same, per node | G3 | `param_cross_process` |
+| A5 | Clients and services | partial | `runtime/services.ts`; `app.services` in one process, not yet across processes | Same | G3 | `service_cross_process` |
+| A6 | Set and retrieve parameters | partial | `runtime/params.ts`; `app.params` with type checks and events, one process | Same, per node | G3 | `param_cross_process` |
 | A7 | ROS 1 to ROS 2 bridge | missing | | Reached through ROS 2's own bridge plus G8 | G8 | `ros1_via_bridge` |
 | A8 | QoS for non-ideal networks | partial | Latching only | Reliable/best effort, keep-last, deadline, lifespan, liveliness | G2 | `qos_matrix` |
 | A9 | Inter- and intra-process with the same API | partial | In-process only | In-process and network behind one call | G2 | `same_api_both` |
 | A10 | Composition of node components | missing | | Load nodes into one process | G3, G9 | `compose_at_runtime` |
 | A11 | Multiple executors, callback groups | missing | | Executor design | G9 | `executor_groups` |
-| A12 | Managed lifecycle nodes | missing | | Same 4 states | G3 | `lifecycle_states` |
+| A12 | Managed lifecycle nodes | native | `app.node(name)` with the ROS states, tested | Same 4 states | G3 | `lifecycle_states` |
 | A13 | DDS-Security support | missing | | Token first, then encryption and permissions | G9 | `security_rejects_stranger` |
 | A14 | Extensible command-line tools | partial | `gos run`, `graph show`, `sim`, `topic echo` | Plugins, more commands | G3 | `test_cli_runs_a_script_with_no_window` |
 | A15 | Launch system | missing | | Graph file of nodes, wiring and scene | G3 | `launch_graph_file` |
@@ -59,9 +59,9 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | B10 | Testing tools | partial | `tsx --test` | Testing helpers for users' nodes | G9 | `user_node_test` |
 | B11 | Debugging, tracing, backtraces | missing | | Tracing, then Studio panels | G9 | `trace_run` |
 | B12 | Introspection, examine traffic, publish from YAML | missing | Node-graph data in `messageBus.ts` | CLI first | G3, G9 | `cli_smoke` |
-| B13 | Visualization (RViz, `rqt`) | partial | Studio animation view inside the window | Client mode, `gos view` | G5 | `view_from_python` |
+| B13 | Visualization (RViz, `rqt`) | partial | A script can drive the Studio view live (`tools/test_studio_link.py`). `gos view` not done. | Client mode, `gos view` | G5 | `view_from_python` |
 | B14 | Package documentation | missing | | GOS docs tooling | G9 | `docs_build` |
-| B15 | Recording (`rosbag`) | partial | `runtime/recorder.ts`, `.nischaybag` | MCAP | G3 | `record_play` |
+| B15 | Recording (`rosbag`) | native | `app.record` and `app.play` to MCAP, tested. Converter for old `.nischaybag` not done. | MCAP | G3 | `record_play` |
 | B16 | Robot description (URDF, SDF) | partial | MJCF export keeps loops and loads with meshes, checked in MuJoCo. URDF and SDF still lose loops, with a warning for URDF. | Import, SDF warnings | G1 | `tools/test_mjcf.py` |
 | B17 | Sim time | partial | `runtime/clock.ts` | Over transport | G3 | `sim_clock_cross_process` |
 | B18 | `ros2_control` | missing | Direct ESP32 calls | Hardware interface | G6 | `same_script_sim_real` |

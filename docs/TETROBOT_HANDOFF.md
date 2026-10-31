@@ -245,7 +245,7 @@ Launch pattern for a visible run: Start-Process powershell -ArgumentList '-NoExi
 | Item | Version / state | Notes |
 |---|---|---|
 | Laptop | HP Omen, Windows 11, Ryzen 7, 24 GB RAM, RTX 5050 Laptop 8 GB (sm_120) | RAM got tight (1.6 GB free) when a 128-robot GPU run and other apps were open — run big jobs one at a time. |
-| Python | 3.12 (system), no venv | Also C:\Python314 exists; don't use it for sim. |
+| Python | 3.12 (system), no venv | The only Python: Isaac Sim requires exactly 3.12. LeRobot runs in D:\lerobot\.venv312. |
 | mujoco | **3.17.0** | Upgraded 25 Oct. Same physics as 3.12 on the smoke test; ~20% faster. |
 | warp-lang | **1.18.0** | CUDA toolkit 13.4 / driver 13.4. |
 | mujoco-warp | **3.17.0** | Kernels cached in AppData\Local\NVIDIA\warp\Cache\1.18.0 (first run compiles ~2 min). |

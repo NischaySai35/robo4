@@ -14,6 +14,7 @@ import AutonomyPanel from '@/features/autonomy/AutonomyPanel';
 import HardwarePanel from '@/features/hardware/HardwarePanel';
 import RuntimePanel from '@/features/runtime/RuntimePanel';
 import TrainingPanel from '@/features/training/TrainingPanel';
+import GosPanel from '@/features/gos/GosPanel';
 import BaseIcon, { CloseIcon } from '@/features/common/Icon';
 import { beginDrag, usePersistedSize } from '@/features/common/drag';
 
@@ -27,6 +28,10 @@ import { beginDrag, usePersistedSize } from '@/features/common/drag';
 const Icon = ({ children }: any) => <BaseIcon size={18}>{children}</BaseIcon>;
 
 const PANELS = [
+  {
+    id: 'gos', title: 'GOS (scripts)', Component: GosPanel,
+    icon: <Icon><path d="M4 6l4 4-4 4M10 15h6" /></Icon>,
+  },
   {
     id: 'inspector', title: 'Properties', Component: Inspector,
     icon: <Icon><path d="M3 4h14v12H3zM3 8h14M8 8v8" /></Icon>,

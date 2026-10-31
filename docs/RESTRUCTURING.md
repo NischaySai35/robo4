@@ -29,7 +29,7 @@ physics and robot-model changes. Background documents it builds on:
 | GOS G2 Transport | **Started:** interface, local, Zenoh across processes. Budget checked only for Python to Python |
 | GOS G3 Basics | **Started:** `gos.App`, topics, locks, `gos run`, `graph`, `sim`, `topic echo`. Services, actions, parameters, lifecycle, transform graph and MCAP not yet over GOS |
 | GOS G4 GraphIK | **Started:** `robot.ik` on mink holds rings. Comparison table and reaching hard goals not done |
-| GOS G5 Studio as client | Not started; the operators it needs exist |
+| GOS G5 Studio as client | **Started:** `gos.studio.StudioLink`, GOS panel, commands by name, live joints. Animation-only window and `gos view` not done |
 | GOS G6 Real robot | Not started; needs the robot and your approval to move motors |
 | GOS G7 Packaging | Not started; bundling physics waits for §7 |
 | GOS G8 ROS 2 bridge, G9 Full parity | Not started; G8 needs a ROS 2 install |

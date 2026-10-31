@@ -62,7 +62,7 @@ jobs:
         run: python gos/build.py
 
       - name: Python packages
-        run: pip install mujoco numpy pytest mink daqp eclipse-zenoh
+        run: pip install mujoco numpy pytest mink daqp eclipse-zenoh websockets
 
       - name: GOS tests
         run: python -m pytest gos/python/tests -q

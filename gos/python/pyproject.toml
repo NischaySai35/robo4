@@ -13,6 +13,7 @@ dependencies = ["mujoco>=3.17", "numpy"]
 [project.optional-dependencies]
 ik = ["mink", "daqp"]
 network = ["eclipse-zenoh"]
+studio = ["websockets"]
 
 [project.scripts]
 gos = "gos.__main__:main"

@@ -6,6 +6,7 @@ import IntroOverlay from '@/features/intro/IntroOverlay';
 import StartupProjects from '@/features/startup/StartupProjects';
 import MenuBar from '@/features/menu/MenuBar';
 import { handleKey, setUiActions } from '@/features/ops/appOps';
+import { connectFromAddressBar } from '@/features/gos/gosLink';
 import DockWorkspaces from '@/features/shell/DockWorkspaces';
 import LoadingBar from '@/features/common/LoadingBar';
 import CommandPalette from '@/features/command-palette/CommandPalette';
@@ -335,6 +336,8 @@ export default function App() {
 
   // Spoken feedback: module connect/drop, low battery, and (via ttlTry) every ESP-TTL button.
   useEffect(() => { initVoiceAnnouncer(); }, []);
+
+  useEffect(() => { connectFromAddressBar(); }, []);
 
   // Quietly check for app updates a few seconds after launch (desktop only; only
   // prompts if a newer version is actually available).

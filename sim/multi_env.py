@@ -13,7 +13,7 @@ SUB = 60
 END_PAD = RX_TOP - RX_GAP   # end pad tips stand 9.0 mm proud of its gap floors (CAD: same as receiver pads 15.3 - 6.3)
 class MultiEnv:
     def __init__(self, seed=0, randomize=True, xml=MULTI_XML, nmod=2):
-        self.m = mujoco.MjModel.from_xml_path(xml); self.d = mujoco.MjData(self.m); m = self.m
+        self.m = __import__('phys_world').load_model(xml); self.d = mujoco.MjData(self.m); m = self.m
         self.rng = np.random.default_rng(seed); self.randomize = randomize; self.nmod = nmod
         self.P = [''] + ['m%d_' % i for i in range(1, nmod)]
         self.mods = []

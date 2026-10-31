@@ -41,3 +41,17 @@ export function toSimPlan(start: Config, plan: Plan) {
 }
 
 export const VERIFY_URL = 'http://127.0.0.1:8771';
+
+let ensuring: Promise<void> | null = null;
+/** Ask the dev server to start or refresh the physics service (vite-plugin-physics.cjs). No dev server: nothing to do. */
+function ensurePhysics(): Promise<void> {
+  ensuring ??= fetch('/__physics/ensure', { method: 'POST' }).then(() => undefined, () => undefined).finally(() => { ensuring = null; });
+  return ensuring;
+}
+
+/** Every call to the physics service goes through here, so no button needs the service started by hand. Live polling
+ * skips the check; if the service has gone, the call starts it and retries once. */
+export async function physicsFetch(path: string, init?: RequestInit): Promise<Response> {
+  if (!/^\/(manual|session)\/(step|cmd)/.test(path)) await ensurePhysics();
+  try { return await fetch(VERIFY_URL + path, init); } catch { await ensurePhysics(); return fetch(VERIFY_URL + path, init); }
+}

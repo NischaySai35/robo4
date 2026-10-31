@@ -12,7 +12,7 @@ WALK_XML = tpath('sim//walk_train.xml')
 SUB = 60
 class WalkEnv:
     def __init__(self, seed=0, randomize=True, xml=WALK_XML):
-        self.m = mujoco.MjModel.from_xml_path(xml); self.d = mujoco.MjData(self.m); m = self.m
+        self.m = __import__('phys_world').load_model(xml); self.d = mujoco.MjData(self.m); m = self.m
         self.rng = np.random.default_rng(seed); self.randomize = randomize
         self.act_id = [m.actuator('m_' + n[2:]).id for n in ACT]
         self.lock_act = {'A': m.actuator('m_L1_lock').id, 'B': m.actuator('m_L2_lock').id}

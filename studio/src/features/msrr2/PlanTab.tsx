@@ -13,7 +13,7 @@ import type { Plan } from '@/robotics/msrr2/planner';
 import type { ShapeEntry, Config } from '@/robotics/msrr2/model';
 import { Section, Row } from '@/features/msrr/panelParts';
 import { MarginChips } from './MarginChips';
-import { toSimPlan, VERIFY_URL } from '@/robotics/msrr2/simScene';
+import { toSimPlan, physicsFetch } from '@/robotics/msrr2/simScene';
 
 export function PlanTab() {
   const config = useV2Store((s) => s.config);
@@ -68,12 +68,12 @@ export function PlanTab() {
     if (!plan?.ok) return;
     setRehearsing(true); setRehearsal(null);
     try {
-      const res = await fetch(`${VERIFY_URL}/rehearse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...toSimPlan(config, plan), n_robots: nRobots, seed: 1 }) });
+      const res = await physicsFetch(`/rehearse`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...toSimPlan(config, plan), n_robots: nRobots, seed: 1 }) });
       const j = await res.json();
       setRehearsal(j);
       pushLog(j.error ? `rehearsal error: ${j.error}` : `MuJoCo rehearsal: ${j.complete}/${j.n_robots} robots finished the plan (${(j.physics_success * 100).toFixed(1)}%), expected with docking ${(j.expected_success * 100).toFixed(1)}%, ${j.seconds} s`);
     } catch {
-      setRehearsal({ error: `the verify service is not running — start it with:  py -3.12 C:\TETROBOT\sim\verify_service.py` });
+      setRehearsal({ error: `the physics service could not start (see data/logs/verify_service_console.log)` });
     }
     setRehearsing(false);
   };

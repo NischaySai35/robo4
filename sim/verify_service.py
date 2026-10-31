@@ -26,6 +26,7 @@ import numpy as np
 import mujoco
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+STARTED = __import__('time').time()   # the Studio restarts this service when sim code is newer (studio/tools/vite-plugin-physics.cjs)
 TEMPLATE = os.path.join(HERE, 'train_v2.xml')
 CAL = json.load(open(os.path.join(HERE, 'v2_calib_fit.json')))
 R_BM = np.array(CAL['R']); T_BM = np.array(CAL['t']); SIGNS = np.array(CAL['signs'], float)
@@ -583,7 +584,7 @@ class H(BaseHTTPRequestHandler):
             if os.path.exists(gp): r['measured'] = json.load(open(gp))
             return self._send(200, r)
         if self.path.startswith('/health'):
-            return self._send(200, {'ok': True, 'mujoco': mujoco.__version__, 'calibration_mm': CAL['worst_mm']})
+            return self._send(200, {'ok': True, 'mujoco': mujoco.__version__, 'calibration_mm': CAL['worst_mm'], 'sim': HERE, 'pid': os.getpid(), 'started': STARTED})
         self._send(404, {'ok': False})
 
     def do_POST(self):

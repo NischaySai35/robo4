@@ -10,7 +10,7 @@
   py -3.12 floor_skills.py CKPT SKILL ARGS... OUT.pkl      e.g.  floor_skills.py fc_chain2_1.pkl cobra M1 M2 out.pkl"""
 from paths import tpath
 import sys, os, math, json, time, numpy as np, mujoco; sys.path.insert(0, tpath('sim')); sys.path.insert(0, tpath('deploy'))
-from phys_world import PhysWorld
+from phys_world import PhysWorld, CAD_COLLIDE
 from imu import MPU6050, Tilt
 from floor_chain import servo_load
 
@@ -130,7 +130,7 @@ def rise(B, lifter, order, s, base, roll0, log):
             if lag > math.radians(15):                                            # the pivot servo cannot follow (encoder far behind): too weak here
                 B.step(int(1.0 / DT)); lag = abs(B.q(lifter)[JN.index(b)] - B.cmd[lifter][JN.index(b)])
             dr = abs(((B.roll(base) - roll0) + 180) % 360 - 180)
-            if lag > math.radians(15) or dr > 12:
+            if lag > math.radians(15) or dr > float(os.environ.get('TIP_LIMIT', '40' if CAD_COLLIDE else '12')):
                 why = ('cannot follow (%.0f deg behind)' % math.degrees(lag)) if lag > math.radians(15) else ('base tipping (%.0f deg)' % dr)
                 log(f'  {lifter}.{b}: {why} at {k}/10 -> back to the last step that held, stay there')
                 B.move(lifter, {b: s[b] * UP90 * (k - 1) / 10, a: s[a] * UP90 * (1 - (k - 1) / 10)}, 1.0); return f'{a}->{b} {k - 1}/10'
@@ -150,7 +150,8 @@ def score(w, lifter, free_end):
 
 
 def _foot():
-    return {k: math.radians(float(v)) for k, v in (x.split(':') for x in os.environ.get('FOOT', 'B1:-60,B2:-60,B3:-60,B4:-60').split(','))}
+    dflt = 'B1:-40,B2:-40,B3:-40,B4:-40' if CAD_COLLIDE else 'B1:-60,B2:-60,B3:-60,B4:-60'   # real CAD shapes: the tight C tips (31 Oct: 0/8 vs 8/8)
+    return {k: math.radians(float(v)) for k, v in (x.split(':') for x in os.environ.get('FOOT', dflt).split(','))}
 
 
 def _roll_change(B, mid, roll0):
@@ -161,15 +162,36 @@ def cobra(B, lifter, base, free_end='A', junction_twist='T1', log=print):
     """the lifter (free end `free_end`) stands up on the base (physics chose: base curled into a C, lean back 15 deg)"""
     w = B.w; t0 = float(w.d.time); B.step(10)
     log(f'start: {lifter} bends vertical {B.bend_vertical(lifter):.2f}, {base} {B.bend_vertical(base):.2f} | rolls (IMU) {lifter} {B.roll(lifter):.0f} deg, {base} {B.roll(base):.0f} deg')
+    # 31 Oct: with collision from the real CAD parts the chain can settle rolled (seen: lifter 44 deg, bends 0.69 vertical),
+    # so its bends would swing along the floor instead of lifting. Then lay the base's footprint FIRST (a curled base can't
+    # roll), and only then roll the lifter: turning the lifter's junction twist while the base is free rolled the base
+    # instead (physics, robot 2: bends vertical 0.69 -> 1.00).
+    base_first = os.environ.get('BASE_FIRST', '0') == '1' or B.bend_vertical(lifter) > 0.3
+    if base_first:
+        bv = B.align(base, junction_twist, 'vertical'); footprint(B, base, _foot(), log)
+        if B.bend_vertical(lifter) > 0.3: B.align(lifter, 'T3' if free_end == 'A' else 'T1', 'horizontal')
     order, s = lift_signs(B, lifter, free_end, log)
     if 0 in s.values(): return dict(ok=False, why=f'{lifter} lies with its bends sideways: roll it first', seconds=round(float(w.d.time) - t0, 1))
     B.move(lifter, {order[0]: s[order[0]] * UP90}, 3.0)                           # 1 the tip stands up (short lever)
-    bv = B.align(base, junction_twist, 'vertical')                                # 2 base bends sideways
-    footprint(B, base, _foot(), log)                                              # 3 a wide footprint: the base can't roll
+    if not base_first:
+        bv = B.align(base, junction_twist, 'vertical')                            # 2 base bends sideways
+        footprint(B, base, _foot(), log)                                          # 3 a wide footprint: the base can't roll
     roll0 = B.roll(base); log(f'  base footprint laid (bends vertical {bv:.2f}), base roll {roll0:.0f} deg')
     partial = rise(B, lifter, order, s, base, roll0, log)                          # 4 rise, tip first
     lean_back(B, lifter, order, s); B.step(int(4 / DT))                           # 5 lean back, hold 4 s
     return dict(score(w, lifter, free_end), partial=partial, base_roll_change=_roll_change(B, base, roll0), servo=servo_load(w), seconds=round(float(w.d.time) - t0, 1))
+
+
+def cobra_auto(B, a='M1', b='M2', log=print):
+    """2-chain a.B-b.A: the brain picks the roles from how the chain lies (encoders + IMU). 31 Oct: on the real CAD shapes
+    a lying module's twist can't roll it (servo at its force limit against floor friction), so use the roll it already has:
+    flat bends lift, sideways bends curl into the base's footprint."""
+    va, vb = B.bend_vertical(a), B.bend_vertical(b)
+    # 31 Oct, real CAD shapes: b lifting 8/8 robots, a lifting 1/4 (cause not found yet), so b lifts
+    want = os.environ.get('LIFTER', b if CAD_COLLIDE else '')                                               # experiments: force the lifter
+    lifter, base, free_end, twist = (a, b, 'A', 'T1') if (want == a if want else va <= vb) else (b, a, 'B', 'T3')
+    log(f'roles from the lie: bends vertical {a} {va:.2f}, {b} {vb:.2f} -> {lifter} lifts, {base} is the base')
+    return dict(cobra(B, lifter, base, free_end, twist, log), lifter=lifter)
 
 
 def twohead(B, log=print):
@@ -207,7 +229,7 @@ if __name__ == '__main__':
     fps = int(os.environ.get('REC', '0'))
     if fps: w.rec = {'dt': 1.0 / fps, 'last': -1.0, 'frames': []}; frame0 = w.body_poses()
     B = Brain(w, seed, log=lg)
-    res = cobra(B, *args, log=lg) if skill == 'cobra' else twohead(B, log=lg)
+    res = cobra_auto(B, *args, log=lg) if skill == 'cobra' else twohead(B, log=lg)
     if fps:                                                    # watchable in the Studio: Shapes -> Transformations (verify_service /transform)
         run = dict(bodies=w.view_names, frame0=frame0, frames=w.rec['frames'], events=ev, fps=fps, randomized=True, receivers=[], seed=seed)
         name = os.environ.get('REC_NAME', skill); w.rec = None

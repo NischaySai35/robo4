@@ -575,6 +575,30 @@ End tip vs receiver error (S2B checkpoint, 6 tags/end, 35 mm board tags):
 
 **Not done yet (honest):** loop / closing the chain, arch, crawl / locomotion, 3-chain shapes, one-camera add-on, chat → shape. G6 is still far from done (roughly 35–40% now: the floor-chain work is new and real, but it is one shape on 2 modules).
 
+### 31 Oct: module bodies collide as the real CAD parts (default on)
+- **Why:** each body was 2 coarse boxes and connectors never touched bodies, so an end could pass through a housing.
+- **What:** `sim/build_cad_colliders.py` fills each STL with 4 mm voxels, merged into 713 boxes per module and trimmed to the surface. Connector zones keep their exact geometry. `CAD_COLLIDE=0` = old boxes.
+- **Bug found:** the new boxes had the default friction 1.0 (PLA connectors 0.35), so lying modules could not roll themselves. Now 0.35. The old boxes also had 1.0.
+- **Cobra, robots 2-9, room on:** old boxes 5/6; real shapes with the old skill 0/8; now **8/8** (578 mm typical). Changes: `cobra_auto`, wider base C (40 deg, not 60), base curls first when the lifter lies rolled, tipping stop 40 deg. **Open: M1 as lifter only 1/4, cause not found; M2 always lifts for now.**
+- **A->B, robots 1-2, room on, CPU:** 2/2 built and changed. New COLLISION flags on the build (up to 6.1 N, R vs W1's End B), hidden before.
+- **GPU, 64 robots, one idle-ish shape:** old 12.1 robot-s/s; 4 mm 6.6; 8 mm 10.6, but 8 mm cobra only 5/8, so 4 mm stays. Buffers raised to NJMAX 6000 / NCONMAX 1500 (4 mm overflowed 2400).
+- **Not re-measured:** `gpu_walk.py` / `gpu_multi_dock.py` use multi_env, not PhysWorld, so they still have the old boxes. No GPU shape-change run on real shapes yet. Small samples.
+
+### 31 Oct: Manual Connect on real shapes, first measurements (robots 1-4, room on, blind)
+- **M1.B -> M2.S2B, standing2:** robot 2 LOCKED (0.01 mm, 15 s); robots 1 and 3 stop ~7 mm short, ~1 mm sideways; robot 4 not finished in 112 s. The touch probe wrongly says "seated" on 1 and 3; the lock correctly refuses.
+- **M1.B -> M2.S1A, standing2, robot 1:** axis stays 70 deg off from this placement; no progress, not locked. Connect should say so early.
+- **Why they stop (physics truth, robots 1, 3):** NOT pads on pads as first thought. Twist is right (45.4-46.2 deg, locked robots 44.9-45.0). Pad EDGES catch near the pad tops (`pad_lip_s5` vs `pad_lip_s0`, z ~14 mm, 4-6 N), about 1 mm sideways; opposite pads caught in opposite turning directions = sideways offset, not twist.
+- **Tried and rejected:** twist while pressing (dragged robot 1 15 mm sideways, false "blocked", encoder depth read a 33 mm "drop"; code removed). `JIGGLE` 1.5 mm circle while pressing (off): still locks only robots 2, 5.
+- **Seen in the Studio (Manual tab, real page, screenshots `data/logs/snaps/ui_*`; the dock command was sent through the store, not by clicking the 3D connector):** cobra DONE, 575 mm, picture agrees. Dock robot 1 not locked, 6.68 mm. **Dock robot 2 NOT locked (9.85 mm, 10.64 mm sideways) although the same robot locked in the terminal runs**: the result depends on timing and disturbances, so "robot N locks" means nothing and rates need many runs. A locked dock has not been seen on screen yet.
+- **Front-end faults found by looking:** camera does not follow in a live session (standing module off-screen until FIT); Cobra note was out of date (fixed).
+
+### 31 Oct: Connect checks reach first; tested placement in the Manual tab
+- **Judge on vs off, M1.B -> M2.S2B from the 'all standing' start (robots 1-4):** both 1/4. Old boxes give the same numbers to the last digit, so real shapes are not the cause.
+- **Same dock type from the proven placement (shapes_v1[2], W1.B -> R.S1B), brain only:** judge on **6/6**, blind 2/6. Where it starts decides.
+- **`phys_dock.dock_check`:** the brain's own maths (hover IK < 2 mm, twists < 150 deg, swing + seat touch no other module). Flags S2B from 'all standing' (7 mm short, 157 deg); passes both proven docks. From 'all standing' every side dock is at the edge (150-157 deg, 2-7 mm), and which one passes changes per robot.
+- **Connect (`manual.py`):** standing modules now run the check first (not possible -> says why and which receivers would work, at once), then the docking brain alone. The pre-shape is skipped for them: it bent B3 to its 88 deg stop and swung End B into M2's other receiver at 5.4 s, shoving M2 over.
+- **New Manual start "2 standing at a tested placement"** (the proven placement, PhysWorld round trip 0.0 mm). Connect M1.B -> M2.S1B: judge on **4/4** (0.01-0.05 mm, 15-18 s); blind **0/3** (right depth, 80-97 mm sideways: the touch search wanders). **Seen in the Studio:** robot 1 LOCKED, 0.01 mm, 19 s (screenshots `ui_tested_r1_*`, side view shows End B in M2's lower receiver).
+
 ## TODO (next session, in order)
 0. **Floor chains plan above (F1 → F7) comes first.** The list below is parked.
 1. ~~Camera as an optional add-on~~ **done as a measuring judge** (above). Open:

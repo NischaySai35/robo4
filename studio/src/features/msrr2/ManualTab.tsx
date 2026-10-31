@@ -29,7 +29,7 @@ export function ManualTab() {
   const [mod, setMod] = useState('M1');
   const last = useRef(0);
   const st = man?.state as any;
-  const starts = [...MANUAL_PRESETS.filter((p) => n > 1 || (p.id !== 'chain' && p.id !== 'stand_chain' && p.id !== 'stand_lying')), ...libraryStarts(n)];
+  const starts = [...MANUAL_PRESETS.filter((p) => (p.id !== 'stand_tested' || n === 2) && (n > 1 || (p.id !== 'chain' && p.id !== 'stand_chain' && p.id !== 'stand_lying'))), ...libraryStarts(n)];
   const start = () => manualStart(manualScene(n, preset), { seed, randomize, disturb, judge });
   const sendJoint = (j: string, v: number) => {
     const now = performance.now(); if (now - last.current < 80) return; last.current = now;      // the servos follow; don't flood the service
@@ -130,7 +130,7 @@ export function SessionBar() {
 
 /** become a shape: the robot's OWN skills run live in real physics (manual.py `skill` -> floor_skills.py, blind brain) */
 const SHAPES: { name: string; label: string; needs: (locks: string[], n: number) => string | null; note: string }[] = [
-  { name: 'cobra', label: 'Cobra', note: 'M1 stands up on M2 (base curls into a C, tip first) · 7/8 random robots in tests',
+  { name: 'cobra', label: 'Cobra', note: 'M2 stands up on M1 (base curls into a wide C, tip first) · 8/8 random robots on the real part shapes',
     needs: (l, n) => (n < 2 || !l.includes('M1.B|M2.A') ? 'needs M1.B locked to M2.A' : l.some((k) => k.startsWith('F:')) ? 'needs the chain lying (no floor connector)' : null) },
   { name: 'twohead', label: 'Two heads', note: 'M2 curls, M1 and M3 both stand up · NOT working yet (the middle cannot curl while dragging two arms)',
     needs: (l, n) => (n < 3 || !l.includes('M1.B|M2.A') || !l.includes('M2.B|M3.A') ? 'needs 3 modules end to end' : null) },

@@ -28,7 +28,7 @@ class GPUWalkPhys:
         self.T = T
         self.mm = mm = mjw.put_model(m)
         # njmax 800 overflowed during docking (mujoco-warp 3.17 warned "nefc overflow" = dropped contact rows) -> 2400 rows, 400 contacts per world
-        self.d = mjw.put_data(m, e.d, nworld=N, nconmax=int(os.environ.get('NCONMAX', '400')), njmax=int(os.environ.get('NJMAX', '2400')), naccdmax=N * 64)
+        self.d = mjw.put_data(m, e.d, nworld=N, nconmax=int(os.environ.get('NCONMAX', '800')), njmax=int(os.environ.get('NJMAX', '4800')), naccdmax=N * 64)
         mm.opt.warn_overflow = 0xFFF & ~int(mjw.OverflowType.EPA_HORIZON)   # keep the warnings that mean wrong physics; EPA horizon (fixed 24) only costs a little contact precision
         # per-world (randomised) model parameters
         U = lambda *s, lo=0.0, hi=1.0: lo + (hi - lo) * torch.rand(s, device=dev, generator=g)

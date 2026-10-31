@@ -13,7 +13,7 @@ import { type Intent, type ChatTurn, INTENT_MODEL, INTENT_SCHEMA, keywordIntent,
 import { type Config, type ShapeEntry, isFloorRef } from '@/robotics/msrr2/model';
 import { Section } from '@/features/msrr/panelParts';
 import { MarginChips } from './MarginChips';
-import { VERIFY_URL } from '@/robotics/msrr2/simScene';
+import { physicsFetch } from '@/robotics/msrr2/simScene';
 import { tagShortfall } from '@/robotics/msrr2/optimise';
 
 const EXAMPLES = ['stand as tall as you can', 'make a bridge over a 25 cm gap', 'make a seat that can hold 200 g', 'lie low and flat'];
@@ -87,7 +87,7 @@ export function AskTab() {
   useEffect(() => {
     if (!intent) { setRanked([]); setReal([]); return; }
     setRanked(rankShapes(LIBRARY, intent, nActive));
-    fetch(`${VERIFY_URL}/shapes`).then((r) => r.json()).then((j) => setReal(rankRealShapes(j.grown ?? [], intent))).catch(() => setReal([]));
+    physicsFetch(`/shapes`).then((r) => r.json()).then((j) => setReal(rankRealShapes(j.grown ?? [], intent))).catch(() => setReal([]));
   }, [intent, nActive]);
 
   /** ask the model with the WHOLE conversation; its reply (and the merged goal) becomes the next assistant turn */

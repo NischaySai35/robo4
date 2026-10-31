@@ -37,7 +37,7 @@ class GPUWorld:
         if os.environ.get('BROADPHASE'): mm.opt.broadphase = int(os.environ['BROADPHASE'])
         if os.environ.get('BP_FILTER'): mm.opt.broadphase_filter = int(os.environ['BP_FILTER'])
         d0 = mujoco.MjData(m); d0.qpos[:] = pw.d.qpos; d0.ctrl[:] = pw.d.ctrl; mujoco.mj_kinematics(m, d0)   # pose only: contacts are found on the GPU
-        self.d = mjw.put_data(m, d0, nworld=N, nconmax=int(os.environ.get('NCONMAX', '1000')), njmax=int(os.environ.get('NJMAX', '2400')))
+        self.d = mjw.put_data(m, d0, nworld=N, nconmax=int(os.environ.get('NCONMAX', '1500')), njmax=int(os.environ.get('NJMAX', '6000')))
         mm.opt.warn_overflow = 0xFFF & ~int(mjw.OverflowType.EPA_HORIZON)
         # ---- per-world model fields (randomization + per-world welds / contact switches)
         P = {}

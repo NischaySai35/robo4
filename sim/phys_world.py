@@ -62,6 +62,34 @@ def _place_visual_meshes(m):
         if '_vis_' in n and n.split('_vis_')[1] in ref: m.geom_pos[g], m.geom_quat[g] = ref[n.split('_vis_')[1]]
 
 
+CAD_COLLIDE = os.environ.get('CAD_COLLIDE', '1') == '1'   # default on since 31 Oct (cobra 8/8, A->B 2/2); 0 = the old coarse boxes
+
+
+def _add_cad_colliders(spec, ids):
+    """31 Oct: replace each module body's 2 coarse collision boxes with boxes filling the real CAD part
+    (build_cad_colliders.py -> cad_collision.json), and let them collide with connectors too (bit 4), so an end can no
+    longer pass through another module's housing. Connector zones are left out of the boxes: the exact pads, pockets,
+    lips and receivers there are unchanged."""
+    cad = json.load(open(os.path.join(HERE, 'cad_collision.json')))['parts']
+    bodies = [(b, p) for b in spec.bodies for p in cad if b.name == p or b.name.endswith('_' + p)]   # any prefix: M1_, m1_, none
+    for body, part in bodies:
+            boxes = cad[part]; mid = body.name[:-len(part)].rstrip('_') or 'mod'
+            for g in body.geoms:
+                if g.contype == 1: g.contype = 0; g.conaffinity = 0; g.group = 4   # old coarse box: kept for its look only
+            for k, (cx, cy, cz, hx, hy, hz) in enumerate(boxes):
+                g = body.add_geom(); g.name = f'{mid}_cad_{part}_{k}'; g.type = mujoco.mjtGeom.mjGEOM_BOX
+                g.pos = [cx, cy, cz]; g.size = [hx, hy, hz]; g.mass = 0
+                g.friction = [0.35, 0.005, 0.0001]                                # same PLA as the connector geoms (the default 1.0 gripped the floor 2.5x too hard)
+                g.contype = 1; g.conaffinity = 7; g.group = 3; g.rgba = [0.6, 0.6, 0.6, 0.35]
+
+
+def load_model(xml):
+    """An XML scene compiled with the same collision as PhysWorld (CAD_COLLIDE): multi_env / walk_env and so the GPU runners
+    (gpu_walk, gpu_multi_dock) use it, so every sim path collides the same way (31 Oct)."""
+    if not CAD_COLLIDE: return mujoco.MjModel.from_xml_path(xml)
+    spec = mujoco.MjSpec.from_file(xml); _add_cad_colliders(spec, None); return spec.compile()
+
+
 def lock_key(lk):
     a, b = lk['a'], lk['b']
     return (('F:' + a['floor']) if 'floor' in a else f"{a['module']}.{a['port']}") + f"|{b['module']}.{b['port']}"
@@ -148,6 +176,7 @@ class PhysWorld:
                 st = sb.add_site(); st.name = f'{mid}_imu'; st.pos = list(IMU_POS)            # sensor axes = Spine2 body axes (mounting error: imu.py)
                 for typ, nm in ((mujoco.mjtSensor.mjSENS_ACCELEROMETER, 'acc'), (mujoco.mjtSensor.mjSENS_GYRO, 'gyro')):
                     sn = spec.add_sensor(); sn.type = typ; sn.objtype = mujoco.mjtObj.mjOBJ_SITE; sn.objname = st.name; sn.name = f'{mid}_imu_{nm}'
+        if CAD_COLLIDE: _add_cad_colliders(spec, self.ids)                        # module bodies collide as the real CAD parts
         vis = os.environ.get('VISUAL_MESH') == '1'
         if vis: _add_visual_meshes(spec, self.ids)                                  # your real part meshes, for pictures only
         self.m = spec.compile(); self.d = mujoco.MjData(self.m); m = self.m

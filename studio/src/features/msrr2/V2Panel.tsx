@@ -15,7 +15,7 @@ import {
   type Edge, type PortId, type ModulePose, JOINTS, PORTS, PLAN_BEND_DEG, CONFIG, isBend,
 } from '@/robotics/msrr2/model';
 import { edgeProblem } from '@/robotics/msrr2/rules';
-import { toSimScene, VERIFY_URL } from '@/robotics/msrr2/simScene';
+import { toSimScene, physicsFetch } from '@/robotics/msrr2/simScene';
 import { jointTolerance, type JointRange } from '@/robotics/msrr2/tolerance';
 import { Section, Row } from '@/features/msrr/panelParts';
 import { MarginChips } from './MarginChips';
@@ -85,9 +85,9 @@ function RobotTab() {
   const simCheck = async () => {
     setSimBusy(true); setSimRes(null);
     try {
-      const r = await fetch(`${VERIFY_URL}/check_static`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: toSimScene(config) }) });
+      const r = await physicsFetch(`/check_static`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: toSimScene(config) }) });
       setSimRes(await r.json());
-    } catch { setSimRes({ error: 'the verify service is not running — start it with:  py -3.12 C:\TETROBOT\sim\verify_service.py' }); }
+    } catch { setSimRes({ error: 'the physics service could not start (see data/logs/verify_service_console.log)' }); }
     setSimBusy(false);
   };
   const selected = config.modules.includes(sel) ? sel : config.modules[0];

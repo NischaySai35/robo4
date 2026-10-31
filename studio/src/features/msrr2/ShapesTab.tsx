@@ -11,7 +11,7 @@ import { type ShapeEntry, type Config, type CapabilityTag } from '@/robotics/msr
 import { LIBRARY, TOPOLOGY_GALLERY_N2 } from '@/robotics/msrr2/library';
 import { Section } from '@/features/msrr/panelParts';
 import { MarginChips } from './MarginChips';
-import { VERIFY_URL } from '@/robotics/msrr2/simScene';
+import { physicsFetch } from '@/robotics/msrr2/simScene';
 import { manualScene } from '@/robotics/msrr2/manualScenes';
 import { SessionBar, ShapeButtons } from './ManualTab';
 
@@ -117,8 +117,8 @@ export function PhysicsShapes() {
   const [err, setErr] = useState('');
   const [results, setResults] = useState<Record<number, any>>({});
   const load = async () => {
-    try { const r = await fetch(`${VERIFY_URL}/shapes`); const j = await r.json(); setList(j.shapes); setGrown(j.grown ?? []); setErr(''); }
-    catch { setErr('the physics service is not running (py -3.12 C:\\TETROBOT\\sim\\verify_service.py)'); }
+    try { const r = await physicsFetch(`/shapes`); const j = await r.json(); setList(j.shapes); setGrown(j.grown ?? []); setErr(''); }
+    catch { setErr('the physics service could not start (see data/logs/verify_service_console.log)'); }
   };
   const best = (k: string) => (list ?? []).filter((x) => x.kind === k && x.clear !== false).slice(0, 3);
   return (

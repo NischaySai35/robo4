@@ -300,7 +300,7 @@ class Manual:
             elif bent: self.log('ring: the chain is not lying flat and there is nothing to play back - Reset first'); return
             return self.connect('M1.A', f'M{n}.B')
         B = FS.Brain(w, self.seed, log=self.log)
-        r = FS.cobra(B, 'M1', 'M2', log=self.log) if name == 'cobra' else FS.twohead(B, log=self.log)
+        r = FS.cobra_auto(B, 'M1', 'M2', log=self.log) if name == 'cobra' else FS.twohead(B, log=self.log)
         self.log(f"{name}: {'DONE' if r.get('ok') else 'NOT reached'} (scored by physics truth) {json.dumps({k: v for k, v in r.items() if k not in ('servo',)})[:220]}")
 
     def lock(self, a, b, settle=2.5):
@@ -326,18 +326,33 @@ class Manual:
         from phys_dock import PhysDockEnv, dock
         w = self.w; L = canon(a, b); key = lock_key(L)
         cands = [L['b']] + ([L['a']] if 'module' in L['a'] and L['a']['port'] in ('A', 'B') else [])
-        base = None
+        from phys_dock import dock_check
+        bases = []
         for e in cands:                                               # the docking end's module must hold on with its OTHER end
             other = 'A' if e['port'] == 'B' else 'B'
             for x in self.cur:
-                for me, oth in ((x['b'], x['a']), (x['a'], x['b'])):
-                    if me.get('module') == e['module'] and me.get('port') == other: base = (e, other, ref_name(oth)); break
-                if base: break
-            if base: break
+                hit = [ref_name(oth) for me, oth in ((x['b'], x['a']), (x['a'], x['b'])) if me.get('module') == e['module'] and me.get('port') == other]
+                if hit: bases.append((e, other, hit[0])); break
+        # end<->end: either end can dock. 31 Oct: a placement where only M1 reaches was tried with M2 docking (155 mm short).
+        # Take the first end whose dock the brain's check passes from where its module stands.
+        ok_b = [x for x in bases if x[2].startswith('F:') and dock_check(PhysDockEnv(w, x[0]['module'], randomize=False), x[1], x[2],
+                ref_name(L['a'] if x[0] is L['b'] else L['b']))['ok']]
+        base = (ok_b or bases or [None])[0]
         if not base: return self.log(f'connect {a} + {b}: neither end can dock - its module must hold on with its other end (floor receiver or another module)')
         e, base_end, base_rx = base; target = ref_name(L['a'] if e is L['b'] else L['b'])
         dm, de = e['module'], e['port']; self.log(f'connect: {dm}.{de} docks into {target} (its base: End {base_end} in {base_rx})')
-        for attempt in range(7):                                      # move, measure (encoders), re-plan from where friction left it, move again
+        standing = base_rx.startswith('F:')                           # its base is a floor receiver: the docking brain's own case
+        if standing:
+            # 31 Oct: the same dock locked 6/6 from a proven placement (brain only), 1/4 from here. The brain's maths says first
+            # whether this dock can work from where the module stands; the pre-shape is skipped: on M1.B -> M2.S1B it bent B3 to
+            # its 88 deg stop and swung End B into M2's other receiver (5.4 s), shoving M2 over. The brain swings by itself.
+            chk = dock_check(PhysDockEnv(w, dm, randomize=False), base_end, base_rx, target)
+            if not chk['ok']:
+                alt = [f"{target.split('.')[0]}.{p}" for p in ('S1A', 'S1B', 'S2A', 'S2B') if not target.endswith(p)
+                       and dock_check(PhysDockEnv(w, dm, randomize=False), base_end, base_rx, f"{target.split('.')[0]}.{p}")['ok']]
+                return self.log(f"connect {dm}.{de} -> {target}: NOT possible from here: {chk['why']}" + (f" - try {', '.join(alt)}" if alt else ' - no other receiver of that module works from here either'))
+            self.log(f"  check: reachable from here (twist {chk['twist_deg']} deg) -> the docking brain swings and docks")
+        for attempt in range(0 if standing else 7):                   # lying: move, measure (encoders), re-plan from where friction left it, move again
             qs, err, now = preshape(w, self.cur, dm, de, target, log=self.log)
             if now < 12 or attempt == 6: break
             t0 = {mid: w.tgt[w.ids.index(mid) * 9:w.ids.index(mid) * 9 + 7].copy() for mid in qs}
@@ -368,7 +383,7 @@ class Manual:
         judge = {'off': 'touch', 'truth': True}.get(self.judge, 'touch')   # blind = feel the hole + spiral search
         lying = not any('floor' in x['a'] for x in self.cur if x['b']['module'] in group_of(w, self.cur, dm))   # nothing of its group stands in a floor receiver
         if lying: self.log('  the docking module lies on the floor: brain estimate without hanging-arm sag')
-        bl = []; ok, info = dock(env, base_end, base_rx, target, judge=judge, log=bl.append, sag=not lying, hover_far=0.0 if lying else None)
+        bl = []; ok, info = dock(env, base_end, base_rx, target, judge=judge, log=bl.append, max_frames=1800, sag=not lying, hover_far=0.0 if lying else None)
         info['log'] = bl + list(info.get('log', []))
         Lk = canon(f'{dm}.{de}', target)
         if ok: w.engage(Lk); self.cur.append(Lk); w.set_locks(self.cur)

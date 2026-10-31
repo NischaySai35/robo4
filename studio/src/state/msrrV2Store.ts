@@ -7,7 +7,7 @@
 import { create } from 'zustand';
 import { type PhysPrepared, type PhysRun, type ReceiverMark, preparePhys, prepareRaw, haveOffsets, physFrame, physDuration, receiverMarks, receiversIndexAt } from '@/features/msrr2/physicsView';
 import { CONFIG, isFloorRef } from '@/robotics/msrr2/model';
-import { toSimScene, toSimPlan, VERIFY_URL } from '@/robotics/msrr2/simScene';
+import { toSimScene, toSimPlan, physicsFetch } from '@/robotics/msrr2/simScene';
 import { type Config, type Edge, type ModulePose, STRAIGHT, cloneConfig } from '@/robotics/msrr2/model';
 import { assemble } from '@/robotics/msrr2/assemble';
 import { type DockMotion, dockMotion, undockMotion, minJerk } from '@/robotics/msrr2/approach';
@@ -153,7 +153,7 @@ interface V2State {
 /** each part's mesh offset, learned once from a module the Studio can draw itself (needed to draw runs of physics-built shapes) */
 async function ensureOffsets(standing: Config) {
   if (haveOffsets()) return;
-  const ref = await fetch(`${VERIFY_URL}/simulate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: toSimScene(standing), seconds: 0.5, randomize: false }) });
+  const ref = await physicsFetch(`/simulate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: toSimScene(standing), seconds: 0.5, randomize: false }) });
   preparePhys(await ref.json() as PhysRun, assemblyToFitted(assemble(standing)));
 }
 
@@ -294,11 +294,11 @@ export const useV2Store = create<V2State>((set, get) => ({
   physics: null, physBusy: false, physErr: '', physRandom: true, physSeed: 1,
   manual: null,
   manualStart: async (scene, opts) => {
-    const old = get().manual; if (old) fetch(`${VERIFY_URL}/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: old.id, cmd: { kind: 'close' } }) }).catch(() => {});
+    const old = get().manual; if (old) physicsFetch(`/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: old.id, cmd: { kind: 'close' } }) }).catch(() => {});
     set({ physBusy: true, physErr: '', playing: false });
     try {
       await ensureOffsets(PRESETS.find((p) => p.id === 'standing')!.config);
-      const st = await (await fetch(`${VERIFY_URL}/manual/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene, ...opts }) })).json();
+      const st = await (await physicsFetch(`/manual/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene, ...opts }) })).json();
       if (st.error) throw new Error(st.error);
       const run = { ...st, frames: [], events: [], randomized: opts.randomize, seed: opts.seed, finite: true } as PhysRun;
       const pp = prepareRaw(run, assemblyToFitted(assemble(PRESETS.find((p) => p.id === 'standing')!.config))[0]);
@@ -306,13 +306,13 @@ export const useV2Store = create<V2State>((set, get) => ({
             manual: { id: st.id, ports: st.ports, state: st.state, mode: 'move', pick: [], hover: null, err: '', start: { scene, opts } } });
       get().pushLog(`manual session: ${scene.modules.length} module(s), real physics (${opts.randomize ? `random robot #${opts.seed}` : 'nominal robot'}${opts.disturb ? ', room disturbances on' : ''})`);
     } catch (e) {
-      set({ physBusy: false, physErr: `the physics service is not running — start it with: py -3.12 C:\\TETROBOT\\sim\\verify_service.py (${(e as Error).message})` });
+      set({ physBusy: false, physErr: `the physics service could not start (see data/logs/verify_service_console.log) (${(e as Error).message})` });
     }
   },
   manualCmd: async (cmd) => {
     const m = get().manual; if (!m) return null;
     try {
-      const r = await (await fetch(`${VERIFY_URL}/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, cmd }) })).json();
+      const r = await (await physicsFetch(`/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, cmd }) })).json();
       if (/no such manual session/.test(r.error ?? '') && cmd.kind !== 'close') {          // the service restarted: same start again, then this command
         get().pushLog('the physics service restarted and lost the session - starting the same setup again'); await get().manualStart(m.start.scene, m.start.opts);
         return get().manual ? get().manualCmd(cmd) : null;
@@ -323,7 +323,7 @@ export const useV2Store = create<V2State>((set, get) => ({
   },
   manualStop: () => {
     const m = get().manual;
-    if (m) fetch(`${VERIFY_URL}/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, cmd: { kind: 'close' } }) }).catch(() => {});
+    if (m) physicsFetch(`/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, cmd: { kind: 'close' } }) }).catch(() => {});
     set({ manual: null, physics: null }); get().show(get().config);
   },
   manualSet: (patch) => { const m = get().manual; if (m) set({ manual: { ...m, ...patch } }); },
@@ -345,7 +345,7 @@ export const useV2Store = create<V2State>((set, get) => ({
     try {
       if (!plan) {
         // LIVE gravity: a physics session that keeps running until "Gravity off" (no fixed clip)
-        const st = await (await fetch(`${VERIFY_URL}/session/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: toSimScene(s.config), randomize: s.physRandom, seed: s.physSeed }) })).json();
+        const st = await (await physicsFetch(`/session/start`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scene: toSimScene(s.config), randomize: s.physRandom, seed: s.physSeed }) })).json();
         if (st.error) throw new Error(st.error);
         const run = { ...st, frames: [], events: [], randomized: s.physRandom, seed: s.physSeed, finite: true } as PhysRun;
         const pp = preparePhys(run, assemblyToFitted(assemble(s.config)));
@@ -354,14 +354,14 @@ export const useV2Store = create<V2State>((set, get) => ({
         return;
       }
       const body = { ...toSimPlan(s.config, plan), seconds: 2 };
-      const res = await fetch(`${VERIFY_URL}/simulate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, randomize: s.physRandom, seed: s.physSeed }) });
+      const res = await physicsFetch(`/simulate`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...body, randomize: s.physRandom, seed: s.physSeed }) });
       const run = await res.json() as PhysRun & { error?: string };
       if (run.error) throw new Error(run.error);
       const pp = preparePhys(run, assemblyToFitted(assemble(s.config)));
       set({ physics: { pp, t: 0, playing: true, withPlan: !!plan }, physBusy: false, receivers: receiverMarks(run.receivers) });
       get().pushLog(`gravity ON (MuJoCo${s.physRandom ? `, randomized robot #${s.physSeed}` : ', nominal robot'}): ${run.frames.length} frames, ${physDuration(pp).toFixed(1)} s${plan ? `, ${run.events.filter((e) => e.latched === false).length} dock(s) did not latch` : ''}`);
     } catch (e) {
-      set({ physBusy: false, physErr: `the physics service is not running — start it with: py -3.12 C:\\TETROBOT\\sim\\verify_service.py (${(e as Error).message})` });
+      set({ physBusy: false, physErr: `the physics service could not start (see data/logs/verify_service_console.log) (${(e as Error).message})` });
     }
   },
   gravityOff: () => { set({ physics: null }); get().show(get().config); },   // a live session just stops being stepped
@@ -371,7 +371,7 @@ export const useV2Store = create<V2State>((set, get) => ({
     try {
       const standing = PRESETS.find((p) => p.id === 'standing')!.config;
       await ensureOffsets(standing);
-      const res = await fetch(`${VERIFY_URL}/build_shape`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(typeof index === 'number' ? { index } : { shape: index }), seed: s.physSeed, randomize: s.physRandom }) });
+      const res = await physicsFetch(`/build_shape`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...(typeof index === 'number' ? { index } : { shape: index }), seed: s.physSeed, randomize: s.physRandom }) });
       const out = await res.json();
       if (out.error) throw new Error(out.error);
       const pp = prepareRaw(out.run as PhysRun, assemblyToFitted(assemble(standing))[0]);
@@ -388,7 +388,7 @@ export const useV2Store = create<V2State>((set, get) => ({
     try {
       const standing = PRESETS.find((p) => p.id === 'standing')!.config;
       await ensureOffsets(standing);
-      const res = await fetch(`${VERIFY_URL}/transform?seed=${seed}${name ? `&name=${name}` : ''}`);
+      const res = await physicsFetch(`/transform?seed=${seed}${name ? `&name=${name}` : ''}`);
       const out = await res.json();
       if (out.error) throw new Error(out.error);
       const run = out.run as PhysRun;
@@ -414,8 +414,8 @@ useV2Store.setState((st) => ({ tickers: [...st.tickers, (dt: number) => {
     const have = ph.pp.run.frames.length ? ph.pp.run.frames[ph.pp.run.frames.length - 1].t : 0;
     if (!ph.live.fetching && have - ph.t < 0.8) {
       const live = ph.live; live.fetching = true;
-      const url = live.manual ? `${VERIFY_URL}/manual/step` : `${VERIFY_URL}/session/step`;
-      fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(live.manual ? { id: live.id, wait: 0.3 } : { id: live.id, seconds: 1.0 }) })
+      const url = live.manual ? '/manual/step' : '/session/step';
+      physicsFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(live.manual ? { id: live.id, wait: 0.3 } : { id: live.id, seconds: 1.0 }) })
         .then((r) => r.json()).then((j) => {
           if (j.frames?.length && ph.pp.run.frames.length && j.frames[0].t < ph.pp.run.frames[ph.pp.run.frames.length - 1].t - 0.05) {
             ph.pp.run.frames.length = 0; const cur = useV2Store.getState().physics; if (cur) useV2Store.setState({ physics: { ...cur, t: j.frames[0].t } });   // a restored state: time went back

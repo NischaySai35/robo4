@@ -128,6 +128,44 @@ def end_rel(p, Re, seat, z, Rrx):
     return dict(axial_mm=ax * 1000, radial_mm=rad * 1000, slot_deg=math.degrees(sl))
 
 
+def dock_check(env: PhysDockEnv, base_end: str, base_rx: str, target_rx: str):
+    """Can the docking brain do this dock from where the module stands NOW? Its own maths only, no physics run
+    (the same test grow.candidates uses): IK to the hover point reaches (< 2 mm) with twists < 150 deg, and the swing
+    from the present pose to the hover point and the seated pose touch no other module. 31 Oct: the same dock from a
+    proven placement locked 6/6 robots, from the Manual tab's default placement 1/4: where it starts decides.
+    Returns dict(ok, why, err_mm, twist_deg)."""
+    with contextlib.redirect_stdout(io.StringIO()):
+        import walk as WK
+    m, d = env.m, env.d; qa = np.array(env.world.mod[env.mid]['qa'])
+    W = WK.Walker(env, base_end, env.index(base_rx), 0, m.opt.gravity.copy(), log=lambda *a: None)
+    W.k = _base_slot(env, base_end, env.index(base_rx), W)
+    L = WK.L; saved = (L.HOVER_FAR, L.LAG_TOL)
+    with contextlib.redirect_stdout(io.StringIO()):
+        C = W._ctrl(env.index(target_rx))
+        hover = C.seed; p_, _, _ = L.NOM._fk(hover); err = float(np.linalg.norm(p_ - C.hover)) * 1000
+        seat = L.NOM._ik(C.seat, C.z, C.Ro, hover, seeds=0)
+    L.HOVER_FAR, L.LAG_TOL = saved
+    tw = float(np.degrees(np.abs(hover[[0, 3, 6]])).max())
+    out = dict(ok=True, why='', err_mm=round(err, 1), twist_deg=round(tw))
+    if err > 2: return dict(out, ok=False, why=f'the arm cannot reach the stand-off point ({err:.0f} mm short)')
+    if tw > 150: return dict(out, ok=False, why=f'a twist joint would need {tw:.0f} deg (limit 150)')
+    # the brain works in its nominal joint order (W.nq); the world's joints are in the module's own order
+    q_now = d.qpos[qa].copy(); qpos0 = d.qpos.copy(); me = env.mid + '_'; tgt_mod = target_rx.split('.')[0] + '_'
+    try:
+        for t in list(np.linspace(0, 1, 11)[1:]) + ['seat']:
+            qb = W.nq(q_now); q = W.nq(seat if t == 'seat' else qb + (hover - qb) * t)   # nq: world order <-> brain order (it is its own inverse)
+            d.qpos[qa] = q; mujoco.mj_kinematics(m, d); mujoco.mj_collision(m, d)
+            for c in d.contact[:d.ncon]:
+                n1, n2 = m.body(m.geom_bodyid[c.geom1]).name, m.body(m.geom_bodyid[c.geom2]).name
+                if c.dist > -0.001 or n1.startswith(me) == n2.startswith(me) or 'world' in (n1, n2) or n1.startswith('F_') or n2.startswith('F_'): continue
+                other = n2 if n1.startswith(me) else n1
+                if t == 'seat' and other.startswith(tgt_mod): continue          # seated: touching the target module is the point
+                return dict(out, ok=False, why=f"the arm would hit {other.replace('_', ' ', 1)} on the way ({'seated' if t == 'seat' else f'{int(t * 100)}% of the swing'})")
+    finally:
+        d.qpos[:] = qpos0; mujoco.mj_forward(m, d)
+    return out
+
+
 def dock(env: PhysDockEnv, base_end: str, base_rx: str, target_rx: str, max_frames=None, judge=True, log=None, hover_far=None, sag=True):
     """The Walker docks the module's free end into target_rx, its base end sitting in base_rx. Returns (ok, info)."""
     with contextlib.redirect_stdout(io.StringIO()):
@@ -182,6 +220,9 @@ def dock(env: PhysDockEnv, base_end: str, base_rx: str, target_rx: str, max_fram
     return ok, info
 
 
+JIGGLE = os.environ.get('JIGGLE', '0') == '1'   # experiment, off: 31 Oct no better (robots 1, 3 still stop ~7 mm short)
+
+
 class TouchJudge:
     """BLIND judge by feel, like finding a keyhole in the dark (real robot: ST3215 position feedback, no camera).
     hover / mid: no information (None). seat: the controller believes the end is at the seat; if the joints could not
@@ -192,19 +233,23 @@ class TouchJudge:
     SPIRAL = [(0.004, 0), (0, 0.004), (-0.004, 0), (0, -0.004), (0.006, 0.006), (-0.006, 0.006), (-0.006, -0.006), (0.006, -0.006), (0.010, 0), (-0.010, 0)]
 
     def __init__(self, env, W):
-        self.env, self.W, self.k, self.at = env, W, 0, np.zeros(3); self.probing = False; self.missed_d = None
+        self.env, self.W, self.k, self.at = env, W, 0, np.zeros(3); self.probing = False; self.missed_d = None; self.tw = None
 
     def judge(self, stage, C):
         if stage != 'seat': return None
         e, W = self.env, self.W
         p_cmd, _ = C.pose(W.nq(e.cmd)); p_meas, _ = C.pose(W.nq(e.measured()))
         short = float((p_meas - p_cmd) @ C.z)                       # > 0: stopped short of where it was told to go
+        if self.tw: return self._jiggle_step(C, W)
         if self.missed_d is not None:                                 # a miss found by the probe: hand the search step over at the retry
             if C.wait < 20: return False, np.zeros(3)
             d, self.missed_d = self.missed_d, None; return False, d
         if self.probing:                                              # probed 5 mm deeper: in the hole it stops at the floor
             self.probing = False
-            if short > 0.003: W.log(f'  touch: probe stopped {short * 1000:.1f} mm short = on the receiver floor -> seated'); return True, np.zeros(3)
+            if short > 0.003:
+                if not JIGGLE: W.log(f'  touch: probe stopped {short * 1000:.1f} mm short = on the receiver floor -> seated'); return True, np.zeros(3)
+                W.log(f'  touch: probe stopped {short * 1000:.1f} mm short: floor, or a caught pad edge -> jiggle'); C.wait = 9
+                self.tw = dict(shift=np.array(C.shift, float), push=getattr(C, 'push_extra', 0.0), t=0); return False, np.zeros(3)
             C.push_extra = getattr(C, 'push_extra', 0.0) - self.PROBE
             W.log(f'  touch: probe went in freely ({short * 1000:.1f} mm short) = free air, it missed -> search on')
             self.missed_d = self._spiral(C, W); return False, np.zeros(3)
@@ -220,6 +265,19 @@ class TouchJudge:
             return False, d
         W.log(f'  touch: {short * 1000:.1f} mm short of the seat (on the rim)')
         return False, self._spiral(C, W)
+
+    # 31 Oct, physics truth on failed docks: twist right (45.5 vs 44.9 deg), ~1 mm sideways, pad EDGES caught near the pad tops
+    # with 4-6 N, ~7 mm short. Blind, that feels the same as the floor. So press a little and jiggle in a small circle, as you
+    # would a stuck plug; the corner slips and the magnets pull it in.
+    JIGGLE_MM, JIGGLE_FRAMES, JIGGLE_PUSH = 1.5, 40, 0.003
+
+    def _jiggle_step(self, C, W):
+        t = self.tw; C.wait = 9; t['t'] += 1; u = C.Ro[:, 0]; v = np.cross(C.z, u)
+        C.push_extra = t['push'] + self.JIGGLE_PUSH
+        if t['t'] <= self.JIGGLE_FRAMES:
+            a = 2 * math.pi * t['t'] / 20; r = self.JIGGLE_MM / 1000; C.shift = t['shift'] + r * math.cos(a) * u + r * math.sin(a) * v
+            return False, np.zeros(3)
+        C.shift = t['shift']; self.tw = None; W.log('  touch: jiggled in a 1.5 mm circle while pressing -> seated'); return True, np.zeros(3)
 
     def _spiral(self, C, W):
         if self.k >= len(self.SPIRAL): return np.zeros(3)

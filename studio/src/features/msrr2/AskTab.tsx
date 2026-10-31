@@ -11,8 +11,8 @@ import { useV2Store } from '@/state/msrrV2Store';
 import { LIBRARY } from '@/robotics/msrr2/library';
 import { type Intent, type ChatTurn, INTENT_MODEL, INTENT_SCHEMA, keywordIntent, rankShapes, validateIntent, chatMessages, robotContext, type RankedShape } from '@/robotics/msrr2/intent';
 import { type Config, type ShapeEntry, isFloorRef } from '@/robotics/msrr2/model';
-import { Section } from '@/features/msrr/MsrrPanel';
-import { MarginChips } from './V2Panel';
+import { Section } from '@/features/msrr/panelParts';
+import { MarginChips } from './MarginChips';
 import { VERIFY_URL } from '@/robotics/msrr2/simScene';
 import { tagShortfall } from '@/robotics/msrr2/optimise';
 

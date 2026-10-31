@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useV2Store } from '@/state/msrrV2Store';
 import { manualScene, MANUAL_PRESETS, libraryStarts, type ManualPreset } from '@/robotics/msrr2/manualScenes';
-import { Section, Row } from '@/features/msrr/MsrrPanel';
+import { Section, Row } from '@/features/msrr/panelParts';
 
 const JN = ['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3'];
 const LIMIT = (j: string) => (j.startsWith('T') ? 176 : 88);

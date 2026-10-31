@@ -11,8 +11,8 @@ import { LIBRARY } from '@/robotics/msrr2/library';
 import { DEMO_PLANS } from '@/robotics/msrr2/library/demoPlans';
 import type { Plan } from '@/robotics/msrr2/planner';
 import type { ShapeEntry, Config } from '@/robotics/msrr2/model';
-import { Section, Row } from '@/features/msrr/MsrrPanel';
-import { MarginChips } from './V2Panel';
+import { Section, Row } from '@/features/msrr/panelParts';
+import { MarginChips } from './MarginChips';
 import { toSimPlan, VERIFY_URL } from '@/robotics/msrr2/simScene';
 
 export function PlanTab() {

@@ -19,9 +19,9 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | # | ROS 2 feature | Status | What exists | Plan | Phase | Test |
 |---|---|---|---|---|---|---|
 | A1 | Discovery, transport, serialization over DDS | missing | | Zenoh discovery; DDS through the bridge | G2, G8 | `discovery_two_processes` |
-| A2 | Multiple middleware implementations, chosen at runtime | missing | | Transport interface, set by config | G2 | `transport_swap` |
-| A3 | Common core library wrapped per language | missing | | `libgos` C API | G1 | `bindings_same_result` |
-| A4 | Publish/subscribe over topics | partial | `runtime/messageBus.ts` | Same API over transport | G2 | `pubsub_python_studio` |
+| A2 | Multiple middleware implementations, chosen at runtime | partial | `gos.App(transport=...)`: local and Zenoh | More backends, shared memory | G2 | `transport_swap` |
+| A3 | Common core library wrapped per language | native | Rust core with one C interface: Python through ctypes, Studio through WebAssembly | Node and C++ bindings later | G1 | `tools/test_mjcf.py`, `gos/python/tests` |
+| A4 | Publish/subscribe over topics | partial | `runtime/messageBus.ts`; Python to Python over Zenoh passes (`test_two_processes_exchange_a_topic_over_zenoh`). Not yet Studio to Python. | Same API over transport | G2 | `pubsub_python_studio` |
 | A5 | Clients and services | partial | `runtime/services.ts` | Same | G3 | `service_cross_process` |
 | A6 | Set and retrieve parameters | partial | `runtime/params.ts` | Same, per node | G3 | `param_cross_process` |
 | A7 | ROS 1 to ROS 2 bridge | missing | | Reached through ROS 2's own bridge plus G8 | G8 | `ros1_via_bridge` |
@@ -31,7 +31,7 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | A11 | Multiple executors, callback groups | missing | | Executor design | G9 | `executor_groups` |
 | A12 | Managed lifecycle nodes | missing | | Same 4 states | G3 | `lifecycle_states` |
 | A13 | DDS-Security support | missing | | Token first, then encryption and permissions | G9 | `security_rejects_stranger` |
-| A14 | Extensible command-line tools | missing | | `gos` CLI with plugins | G3 | `cli_smoke` |
+| A14 | Extensible command-line tools | partial | `gos run`, `graph show`, `sim`, `topic echo` | Plugins, more commands | G3 | `test_cli_runs_a_script_with_no_window` |
 | A15 | Launch system | missing | | Graph file of nodes, wiring and scene | G3 | `launch_graph_file` |
 | A16 | Namespaces for nodes and topics | missing | | Native | G3 | `namespace_isolation` |
 | A17 | Static remapping of names | missing | | Native | G9 | `remap_names` |
@@ -62,14 +62,14 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | B13 | Visualization (RViz, `rqt`) | partial | Studio animation view inside the window | Client mode, `gos view` | G5 | `view_from_python` |
 | B14 | Package documentation | missing | | GOS docs tooling | G9 | `docs_build` |
 | B15 | Recording (`rosbag`) | partial | `runtime/recorder.ts`, `.nischaybag` | MCAP | G3 | `record_play` |
-| B16 | Robot description (URDF, SDF) | partial | Exporters; MJCF **loses loops and won't load meshes** | Fix export, import, warnings | G1 | `ring_survives_export` |
+| B16 | Robot description (URDF, SDF) | partial | MJCF export keeps loops and loads with meshes, checked in MuJoCo. URDF and SDF still lose loops, with a warning for URDF. | Import, SDF warnings | G1 | `tools/test_mjcf.py` |
 | B17 | Sim time | partial | `runtime/clock.ts` | Over transport | G3 | `sim_clock_cross_process` |
 | B18 | `ros2_control` | missing | Direct ESP32 calls | Hardware interface | G6 | `same_script_sim_real` |
 | B19 | MoveIt-style planning | partial | `robotics/msrr2`, `robotics/planning` | GraphIK, collision, planner | G4, G5 | `plan_closed_chain` |
 | B20 | Nav2, perception, community packages | partial | `robotics/nav` | Bridge first | G8 | `stock_node_talks` |
 | B21 | Fleet, multi-machine | missing | | Network transport | G2, G9 | `two_machines` |
 
-**Count at start:** 16 partial and 29 missing, 0 native, 0 bridge (45 rows). The goal is no missing rows.
+**Count at 31 Oct evening:** see the rows. Native only where a test passes outside the Studio. The goal is no missing rows.
 
 ## Beyond ROS
 

@@ -49,3 +49,10 @@ Parts of this tree are out of date (files are `.ts`/`.tsx`, and `robotics/`, `ru
   model and emit **commands**; they never mutate it directly. Uniform undo/redo.
 - **GUI-first.** Every capability is a control before any script API.
 - `@/` alias everywhere for cross-directory imports; co-located `./` only.
+
+## Outside the Studio
+
+- `gos/core`: the Rust graph core, the one implementation of the robot graph and MJCF export. `py -3.12 gos/build.py` rebuilds it for Python and the Studio (`studio/src/core/gos`).
+- `gos/python`: the `gos` package and command.
+- `sim/`: the MuJoCo physics service and tools. Generated data stays under `TETROBOT_DATA`, see `sim/paths.py`.
+- `core/ops` plus `features/ops/appOps.ts`: operators and the one shortcut table. `features/shell`: the Dockview workspaces. `runtime/frameScheduler.ts`: the only caller of `requestAnimationFrame`.

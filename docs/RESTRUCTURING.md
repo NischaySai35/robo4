@@ -1,6 +1,6 @@
 # TETROBOT Studio — Restructuring Plan
 
-Status: **in progress** (started 30 Oct 2026, work began 31 Oct on branch `restructure`). Owner: Nischay. P0 done; GOS G0 waiting on decisions in §10.10.
+Status: **in progress** (started 30 Oct 2026, work began 31 Oct on branch `restructure`). Owner: Nischay. See "Where it stands" just below.
 
 **Why this exists (Nischay):** this restructuring turns TETROBOT from AI-prompted software into efficient, optimised, properly engineered software. It is one part of the project. Anyone can use this software for their own projects that need graphs, but the final goal comes after it: making my robots into shape-changing Transformers and Big Hero 6-style microbots.
 
@@ -13,6 +13,28 @@ physics and robot-model changes. Background documents it builds on:
 - UI chooser artifact: https://claude.ai/artifact/1eWmjYiaRLh1myrBhC4LGE
 
 ---
+
+## Where it stands (31 Oct 2026, branch `restructure`, nothing pushed)
+
+| Phase | State |
+|---|---|
+| P0 Safety net, P1 Foundation, P2 Viewport, P3 Frame scheduler, P4 Dockview, P5 One undo | **Done** |
+| P6 Operators and keymap | **Done for shortcuts, palette, help and main menu items.** Panel buttons still dispatch directly |
+| P7 Components | **Started:** direction A tokens everywhere, dark by default. Controls not yet moved to shadcn and Tweakpane |
+| P8 Original vs evaluated, P9 Render engines | Not started |
+| P10 Physics interface | **Waiting for §7** |
+| P11 Registries and versioning | **File versioning done.** Entity registry and property descriptors not started |
+| GOS G0 Contract | **Done** |
+| GOS G1 Graph core | **Done:** Rust core shared by Python and Studio; MJCF export moved into it |
+| GOS G2 Transport | **Started:** interface, local, Zenoh across processes. Budget checked only for Python to Python |
+| GOS G3 Basics | **Started:** `gos.App`, topics, locks, `gos run`, `graph`, `sim`, `topic echo`. Services, actions, parameters, lifecycle, transform graph and MCAP not yet over GOS |
+| GOS G4 GraphIK | **Started:** `robot.ik` on mink holds rings. Comparison table and reaching hard goals not done |
+| GOS G5 Studio as client | Not started; the operators it needs exist |
+| GOS G6 Real robot | Not started; needs the robot and your approval to move motors |
+| GOS G7 Packaging | Not started; bundling physics waits for §7 |
+| GOS G8 ROS 2 bridge, G9 Full parity | Not started; G8 needs a ROS 2 install |
+
+Decided 31 Oct by Nischay: Rust for the core; `C:\TETROBOT\sim` brought into the repo as `sim/`.
 
 ## 1. Decisions made
 
@@ -336,7 +358,7 @@ Most of G1–G3 can start before the UI work, so the restructure and GOS don't b
 
 | Decision | Recommendation | Why |
 |---|---|---|
-| Core language | **Rust** for a small core, **waiting for Nischay** | One source reaches Python and the browser (WASM). Speed is not the reason: nothing measured needs native code yet. Evidence in `docs/design/gos-g0-contract.md`. |
+| Core language | **Rust** for a small core, **decided by Nischay 31 Oct** | One source reaches Python and the browser (WASM). Speed is not the reason: nothing measured needs native code yet. Evidence in `docs/design/gos-g0-contract.md`. |
 | Transport | Zenoh first, iceoryx2 only if measured need | One dependency covers both local and network |
 | Message format | Fixed binary layout for hot data, schema with generation for the rest; Arrow for batches | Decide after G0 |
 | IK | mink first | Fastest to test |

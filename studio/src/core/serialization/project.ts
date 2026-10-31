@@ -17,6 +17,7 @@ import { bridge } from '@/bridge/cameraBridge';
 import { getActiveSpins } from '@/core/motor/spinState';
 import { makeDocument } from '../model/index';
 import { num } from '@/shared/coerce';
+import { upgradeProject, PROJECT_SUBVERSION } from './versioning';
 
 export const PROJECT_FORMAT  = 'tetrobot-project';
 export const PROJECT_VERSION = 1;
@@ -26,6 +27,7 @@ export function serializeProject() {
   return {
     format:  PROJECT_FORMAT,
     version: PROJECT_VERSION,
+    subversion: PROJECT_SUBVERSION,
     app:     'TETROBOT',
     savedAt: new Date().toISOString(),
     scene: { activeModuleId: null, nextId: 1, modules: [], welds: [] },
@@ -65,8 +67,10 @@ export function parseProject(obj: any) {
     throw new Error('Not a TETROBOT project file.');
   }
   if (typeof obj.version !== 'number' || obj.version > PROJECT_VERSION) {
-    throw new Error(`Unsupported project version: ${obj.version}`);
+    throw new Error(`This project was saved by a newer TETROBOT (file version ${obj.version}, this app reads up to ${PROJECT_VERSION}). Update the app to open it.`);
   }
+
+  obj = upgradeProject(obj);
 
   const sc = obj.scene ?? {};
   const rawModules = Array.isArray(sc.modules) ? sc.modules : []; // empty is allowed

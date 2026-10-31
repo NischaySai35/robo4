@@ -27,6 +27,7 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { serializeProject, parseProject } from '@/core/serialization/project';
+import { PROJECT_SUBVERSION } from '@/core/serialization/versioning';
 import { UndoStack } from '@/core/commands/undoStack';
 import { projectStepsSame, type ProjectStep } from '@/core/commands/projectStep';
 import { saveAutosave, loadAutosave } from '@/core/serialization/storage';
@@ -402,7 +403,7 @@ export default function SimCanvas() {
     const applyStep = (step: ProjectStep | null) => {
       if (!step) return;
       restoring = true; // the store change this causes is the undo itself, not a new edit
-      vp.loadScene!({ format: 'tetrobot-project', version: 1, scene: EMPTY_SCENE, model: step.model, animation: JSON.parse(step.animation) }, { fit: false, skipWorkspace: true });
+      vp.loadScene!({ format: 'tetrobot-project', version: 1, subversion: PROJECT_SUBVERSION, scene: EMPTY_SCENE, model: step.model, animation: JSON.parse(step.animation) }, { fit: false, skipWorkspace: true });
       // Fit camera after undo/redo so restored content is always visible even if
       // a previous file-open moved the camera to a completely different position.
       setTimeout(() => vp.fitCamera?.(), 120);

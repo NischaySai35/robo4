@@ -11,7 +11,8 @@ Always run `npm run typecheck` and `npm run depcruise` from `studio/`, and the t
 | State | `studio/src/state` | Tab checklist |
 | Physics in the browser | `studio/src/physics`, `viewport/PhysicsSim.ts`, `features/gravity` | `npx tsx --test "src/features/gravity/*.test.ts"` and the viewport tests |
 | MSRR and planner | `studio/src/robotics/msrr`, `robotics/msrr2`, `features/msrr`, `features/msrr2`, `state/msrr*` | The `robotics/msrr2` tests; the `msrr` tests in pieces, because `transform.test.ts` is over 105 s |
-| Physics service | `C:\TETROBOT\sim` (not in git yet) | Short service endpoints only, 120 s at most |
+| GOS core and package | `gos/core`, `gos/python` | `cargo test` in `gos/`, `py -3.12 -m pytest gos/python/tests`, `tools/test_mjcf.py` |
+| Physics service | `sim/` | Short service endpoints only, 120 s at most |
 | Hardware | `studio/src/hardware`, `features/espttl`, `features/servo`, `firmware/` | `features/espttl/motion.test.ts`. Do not change `firmware/` without asking. |
 | Packaging | `studio/package.json` `build`, `.github/workflows` | `docs/RELEASING.md` |
 | Benchmarks | `studio/tools/bench`, `tools/bench` | `docs/design/gos-g0-baseline.md` |

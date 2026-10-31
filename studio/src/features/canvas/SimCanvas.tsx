@@ -27,6 +27,8 @@ import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
 import { serializeProject, parseProject } from '@/core/serialization/project';
+import { UndoStack } from '@/core/commands/undoStack';
+import { projectStepsSame, type ProjectStep } from '@/core/commands/projectStep';
 import { saveAutosave, loadAutosave } from '@/core/serialization/storage';
 import { tryRestoreFileHandle } from '@/core/serialization/projectActions';
 import { downloadBlob, writeProjectToHandle } from '@/core/serialization/fileIO';
@@ -46,6 +48,8 @@ import { computeFK } from '@/kinematics/modelFK';
 import { robotBaseXZ } from '@/robotics/nav/worldModel';
 import { toggleSpin, stopAllSpins } from '@/features/motor/spinEngine';
 import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
+
+const EMPTY_SCENE = { activeModuleId: null, nextId: 1, modules: [], welds: [] };
 
 export default function SimCanvas() {
   const canvasRef = useRef<any>(null);
@@ -391,42 +395,27 @@ export default function SimCanvas() {
       return { ok: false, error: `Unknown format: ${format}` };
     };
 
-    // ── Undo / redo (full-project snapshots: model + animation) ──────────────────
-    const history: { undo: string[]; redo: string[]; last: string | null; suppressNext: boolean } = { undo: [], redo: [], last: null, suppressNext: false };
-    const applySnapshot = (snapJSON: any) => {
-      const d = JSON.parse(snapJSON);
-      vp.loadScene!({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false, skipWorkspace: true });
+    // ── Undo / redo: one history of document references (docs/design/p5-one-undo.md) ─────────
+    const history = new UndoStack<ProjectStep>(projectStepsSame);
+    let restoring = false;
+    const syncHistoryFlags = () => useHistoryStore.getState().setFlags(history.canUndo, history.canRedo);
+    const applyStep = (step: ProjectStep | null) => {
+      if (!step) return;
+      restoring = true; // the store change this causes is the undo itself, not a new edit
+      vp.loadScene!({ format: 'tetrobot-project', version: 1, scene: EMPTY_SCENE, model: step.model, animation: JSON.parse(step.animation) }, { fit: false, skipWorkspace: true });
       // Fit camera after undo/redo so restored content is always visible even if
       // a previous file-open moved the camera to a completely different position.
       setTimeout(() => vp.fitCamera?.(), 120);
+      syncHistoryFlags();
     };
-    vp.undo = () => {
-      if (!history.undo.length) return;
-      if (history.last != null) history.redo.push(history.last);
-      const prev = history.undo.pop();
-      history.last = prev ?? null;
-      history.suppressNext = true;
-      applySnapshot(prev);
-      useHistoryStore.getState().setFlags(history.undo.length > 0, history.redo.length > 0);
-    };
-    vp.redo = () => {
-      if (!history.redo.length) return;
-      if (history.last != null) history.undo.push(history.last);
-      const next = history.redo.pop();
-      history.last = next ?? null;
-      history.suppressNext = true;
-      applySnapshot(next);
-      useHistoryStore.getState().setFlags(history.undo.length > 0, history.redo.length > 0);
-    };
+    vp.undo = () => applyStep(history.undo());
+    vp.redo = () => applyStep(history.redo());
 
     // ── Autosave + record undo history when the model/animation settles ──────────
 
-    // Remove assets from the model that aren't referenced by any body.
-    // Orphaned assets (e.g. from deleted bodies or experimental imports) can be
-    // tens of MB each as base64 strings. With 30 undo entries each carrying a
-    // full copy, the heap can exceed 1 GB on large projects and cause the GC to
-    // freeze the render loop. The live doc keeps all assets; only snapshots are
-    // trimmed so undo/redo never blows up memory.
+    // Remove assets from the model that aren't referenced by any body: orphaned assets
+    // (deleted bodies, experimental imports) can be tens of MB each as base64 strings.
+    // The live doc keeps them; the saved file doesn't.
     function stripOrphanAssets(model: any): any {
       if (!model?.assets || !model?.bodies) return model;
       const used = new Set<string>();
@@ -449,17 +438,9 @@ export default function SimCanvas() {
         const project = serializeProject();
         saveAutosave(project);
 
-        // Undo snapshots strip orphaned assets to keep each entry small.
-        const snap = JSON.stringify({ scene: project.scene, model: stripOrphanAssets(project.model), animation: project.animation });
-        if (history.suppressNext) {
-          history.suppressNext = false;
-        } else if (history.last !== null && snap !== history.last) {
-          history.undo.push(history.last);
-          if (history.undo.length > 30) history.undo.shift();
-          history.redo = [];
-        }
-        history.last = snap;
-        useHistoryStore.getState().setFlags(history.undo.length > 0, history.redo.length > 0);
+        const step: ProjectStep = { model: project.model, animation: JSON.stringify(project.animation ?? null) };
+        if (restoring) { restoring = false; history.sync(step); } else history.record(step);
+        syncHistoryFlags();
 
         const docState = useDocStore.getState();
         if (docState.handle) {

@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
-// Reactive flags for enabling/disabling the Undo/Redo controls. The actual
-// snapshot stacks live in SimCanvas (it owns serialize/loadScene).
+// Reactive flags for enabling/disabling the Undo/Redo controls. The history
+// itself is core/commands/undoStack.ts, driven from SimCanvas (it owns serialize/loadScene).
 interface HistoryState {
   canUndo: boolean;
   canRedo: boolean;

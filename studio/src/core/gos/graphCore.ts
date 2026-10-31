@@ -49,6 +49,14 @@ export const exportMjcf = (doc: Document, name: string): MjcfPackage => {
   return call('gos_export_mjcf', { doc: light, name });
 };
 
+export interface IkResult { values: Record<string, number>; reached: boolean; goal_error_m: number; closure_error_m: number; iterations: number; message: string }
+
+/** GraphIK in the Rust core: reaches toward a target while every closed loop stays shut. */
+export const solveGraphIK = (doc: Document, tip: string, target: [number, number, number], opts: { root?: string; iterations?: number; tolerance?: number } = {}): IkResult => {
+  const { assets: _assets, ...light } = doc as any;
+  return call('gos_solve_ik', { doc: light, tip, target, ...opts });
+};
+
 export function compileDocument(doc: Document, roots: string[] = []) {
   return compileGraph({
     bodies: Object.keys(doc.bodies).map((id) => ({ id })),

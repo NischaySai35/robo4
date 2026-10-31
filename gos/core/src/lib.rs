@@ -7,6 +7,7 @@
 mod ffi;
 pub mod mjcf;
 pub mod tf;
+pub mod ik;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};

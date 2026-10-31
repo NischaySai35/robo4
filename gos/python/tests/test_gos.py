@@ -253,3 +253,20 @@ def test_transform_graph_reports_a_loop_that_does_not_close():
         rel = exact['p']
         r = app.loop_check('A', 'D', measured=[('A', 'D', [rel[0] + 0.005, rel[1], rel[2]], exact['q'])])
         assert abs(r['worst_position_m'] - 0.005) < 1e-9
+
+
+def test_rust_graph_ik_holds_a_ring_and_reaches_on_the_real_module():
+    import math
+    r = gos.solve_ik(SQUARE, 'C', [0.2 - 0.2 * math.sin(0.3), 0.2 * math.cos(0.3), 0], tolerance=1e-4)
+    assert r['reached'] and r['closure_error_m'] < 1e-4, r['message']
+    with open(MODULE, encoding='utf-8') as f: raw = json.load(f)
+    doc = raw.get('model', raw)
+    tip = next(i for i, b in doc['bodies'].items() if b['name'].startswith('EndB'))
+    with gos.App() as app:
+        app.load_document(doc)
+        app.set_joints(**{n: 0.3 * (-1) ** k for k, n in enumerate(app.robot.joints())})
+        goal = app.robot.body_position(app.robot.body_names[tip])
+    r = gos.solve_ik(doc, tip, goal)
+    assert r['reached'] and r['goal_error_m'] < 1e-3, r['message']
+    far = gos.solve_ik(doc, tip, [5, 5, 5], iterations=40)
+    assert not far['reached'] and 'reach' in far['message']

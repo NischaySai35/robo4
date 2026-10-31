@@ -3,7 +3,7 @@
 //! the JSON reply from `gos_reply_ptr` and `gos_reply_len`. A reply is `{"ok":true,...}` or
 //! `{"ok":false,"error":"..."}`, so a failure always says what went wrong.
 
-use crate::{compile, mjcf, tf, GraphIn};
+use crate::{compile, ik, mjcf, tf, GraphIn};
 use std::cell::RefCell;
 
 thread_local! { static REPLY: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) }; }
@@ -92,6 +92,24 @@ pub unsafe extern "C" fn gos_tf_query(ptr: *const u8, len: usize) -> i32 {
     };
     match tf::query(&q) {
         Ok(a) => { let mut v = serde_json::to_value(a).unwrap(); v["ok"] = true.into(); reply(v.to_string()); 1 }
+        Err(e) => fail(e),
+    }
+}
+
+/// GraphIK: `{doc, tip, target, root?, iterations?, tolerance?}` in, joint values and both errors out.
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes of UTF-8 JSON.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_solve_ik(ptr: *const u8, len: usize) -> i32 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let req: ik::Request = match serde_json::from_slice(bytes) {
+        Ok(r) => r,
+        Err(e) => return fail(format!("The IK request isn't valid: {e}. Expected {{doc, tip, target:[x,y,z]}}.")),
+    };
+    match ik::solve(&req) {
+        // "ok" in the reply means the call worked; "reached" says whether the goal was met.
+        Ok(a) => { let mut v = serde_json::to_value(&a).unwrap(); v["reached"] = a.ok.into(); v["ok"] = true.into(); reply(v.to_string()); 1 }
         Err(e) => fail(e),
     }
 }

@@ -51,6 +51,12 @@ def tf_query(edges, frm, to) -> dict:
     return _call('gos_tf_query', {'edges': edges, 'from': frm, 'to': to})
 
 
+def solve_ik(doc: dict, tip: str, target, root=None, iterations=200, tolerance=0.001) -> dict:
+    """GraphIK in the Rust core, the same code the Studio runs: holds closed loops. Returns values, reached, both errors."""
+    light = {k: v for k, v in doc.items() if k != 'assets'}
+    return _call('gos_solve_ik', {'doc': light, 'tip': tip, 'target': list(target), 'root': root, 'iterations': iterations, 'tolerance': tolerance})
+
+
 def graph_of_document(doc: dict, roots=None) -> dict:
     """The core's view of a Studio document, without the mesh data."""
     return {

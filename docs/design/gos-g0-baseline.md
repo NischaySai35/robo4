@@ -43,6 +43,18 @@ The TS row uses unconnected modules in one document. The MuJoCo rows use an abst
 
 mink holds a closed loop while moving, which is the thing nothing else here can do. It did not reach the goal in this test, and I don't know yet whether the goal is out of reach or the solver stalls. That is GOS G4 stage A. `solveModelIK` giving no failure signal is a silent failure and should be fixed in the same stage.
 
+## IK stage B: same 30 goals, real module (31 Oct)
+
+Goals are where EndB lands at random joint angles within 80% of the limits, so all are reachable. Both start from all joints at 0. Studio FK and MuJoCo agree to 0.001 mm on these goals, so the comparison is fair. Rerun: `tools/bench/ik_goals.py` then `studio/tools/bench/ikCompare.ts`.
+
+| Solver | Reached within 2 mm | Median error | Median time |
+|---|---|---|---|
+| Studio `solveModelIK` (TypeScript, 200 iterations) | 28/30 | 1.0 mm | 5.6 ms |
+| GOS `robot.ik` (mink, Python) | 30/30 | 0.3 mm | 1.0 ms |
+| GOS GraphIK (Rust core, runs in the Studio and Python) | 30/30 | 0.0 mm | 0.6 ms |
+
+Only GOS holds closed loops (ring closure 0.003 mm, above). The earlier 82 mm miss was `solveModelIK` with its default 24 iterations. Stage C (a native solver) is not needed for speed. Done the same evening: GraphIK in the Rust core (`gos/core/src/ik.rs`) also holds rings, and is the fastest and most accurate of the three. The Studio's drag IK still uses `solveModelIK`; switching it over is a separate step, best after a real transformation has been run on the new layout.
+
 ## Idle drawing per page
 
 **Correction:** the first version of this table showed 949 draw calls/s on an idle Editor. That was wrong: the test waited only 2.5 s, and was counting the end of the 90-frame redraw burst after a click. With time to settle, only MSRR drew while idle.

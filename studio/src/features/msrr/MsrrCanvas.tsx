@@ -37,11 +37,13 @@ import { manualToFitted } from '@/robotics/msrr/manualBuild';
 import { useV2Store, type ManualState } from '@/state/msrrV2Store';
 import { bridge } from '@/bridge/cameraBridge';
 import { SceneManager } from '@/viewport/SceneManager';
+import SpreadHud from '@/features/canvas/SpreadHud';
 import ViewportStats from '@/features/canvas/ViewportStats';
 import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
 import ViewControls from '@/features/viewport-ui/ViewControls';
 import HomeButton from '@/features/viewport-ui/HomeButton';
 import { UNITS_PER_M } from '@/robotics/msrr/modulink';
+import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
 import { toView } from '@/features/msrr2/v2View';
 import { ManualPortMenu } from '@/features/msrr2/ManualTab';
 import { CUBES_PER_METRE } from '@/features/msrr/moduleMeshes';
@@ -61,10 +63,9 @@ export default function MsrrCanvas() {
     // Its OWN viewport built from the SAME parts as the Editor's: the SceneManager engine (renderer, lights, shadows, theme,
     // render engines, grid, camera + orbit, resize) and, in the JSX, the same gizmo / view controls / Home / stats. Its scene
     // holds only MSRR robots, in `scene` = a root group in metres (MSRR draws in its own units: 5.5 per metre, floor y -0.5).
-    // The camera bridge (what gizmo, view controls, Home and stats talk to) belongs to whichever viewport is on screen:
-    // save the editor's entries now and give every one of them back on close (30 Oct: not restoring broke the other tabs).
-    const savedBridge = { ...bridge };
-    const sm = new SceneManager(canvas);
+    // Gizmo, view controls, Home and stats reach it through its own viewport handle, so the Editor's stays untouched.
+    const sm = new SceneManager(canvas, 'msrr');
+    const vp = sm.viewport;
     sm.applyTheme(useThemeStore.getState().theme);
     const unsubTheme = useThemeStore.subscribe((s) => sm.applyTheme(s.theme));
     const { renderer, camera, controls } = sm;
@@ -73,17 +74,19 @@ export default function MsrrCanvas() {
     sm.scene.add(scene);
     camera.position.set(9 / UNITS_PER_M, 8 / UNITS_PER_M, 12 / UNITS_PER_M);
     controls.target.set(0, 1.5 / UNITS_PER_M, 0); controls.update();
-    bridge.getRendererStats = () => sm.getRendererStats();
-    bridge.getRenderEngine = () => sm._engineMode ?? 'eevee';
-    bridge.setRenderEngine = (e: string) => sm.setRenderEngine(e);
-    bridge.setWireframe = (on: boolean) => { scene.traverse((o: any) => { if (o.material && 'wireframe' in o.material) o.material.wireframe = on; }); };
-    bridge.setConnectorsVisible = (on: boolean) => { stateRef.current && (stateRef.current.portsHidden = !on); };
-    bridge.getConnectorsVisible = () => !stateRef.current?.portsHidden;
-    bridge.getFitBox = () => {
+    vp.getRendererStats = () => sm.getRendererStats();
+    vp.getRenderEngine = () => sm._engineMode ?? 'eevee';
+    vp.setRenderEngine = (e: string) => sm.setRenderEngine(e);
+    vp.setWireframe = (on: boolean) => { scene.traverse((o: any) => { if (o.material && 'wireframe' in o.material) o.material.wireframe = on; }); };
+    vp.setConnectorsVisible = (on: boolean) => { stateRef.current && (stateRef.current.portsHidden = !on); };
+    vp.getConnectorsVisible = () => !stateRef.current?.portsHidden;
+    vp.getFitBox = () => {
       scene.updateMatrixWorld(true); const b = new THREE.Box3();
       for (const c of scene.children) if (c !== grid && c !== ground && c.visible) b.expandByObject(c);   // the robots, not the lattice / pick floor
       return b.isEmpty() ? null : b;
     };
+
+    vp.getBodyCentres = () => stateRef.current?.bodyCentres ?? [];
 
     const grid = new THREE.GridHelper(40, 40);   // the cube lattice (Legacy tab only; v2 uses the Studio grid)
     // Lattice cell centres are integers, so the grid LINES must fall on half
@@ -207,6 +210,8 @@ export default function MsrrCanvas() {
       partPool: [] as THREE.Mesh[],
       /** signature of what partPool currently shows, so FK is not re-run per frame */
       partSig: '',
+      /** what the VSEPR score measures: every body drawn, in metres */
+      bodyCentres: [] as [number, number, number][],
       cubePool: [] as THREE.Group[],
       ghostPool: [] as THREE.LineSegments[],
       /** translucent cubes showing where a click/drag would place */
@@ -231,8 +236,6 @@ export default function MsrrCanvas() {
         for (const m of Object.values(partMats)) m.dispose();
         for (const m of Object.values(mats)) (m as any).dispose?.();
         unsubTheme(); sm.dispose();
-        for (const k of Object.keys(bridge)) if (!(k in savedBridge)) delete (bridge as any)[k];
-        Object.assign(bridge, savedBridge);                         // the editor's viewport owns the controls again
       },
     };
     stateRef.current = st;
@@ -477,7 +480,7 @@ export default function MsrrCanvas() {
       {/* the same viewport overlays as the Editor's (they talk to this viewport through the bridge while it is open) */}
       <div className="top-center-cluster"><HomeButton /></div>
       <div className="top-right-cluster"><NavigationGizmo /><ViewControls /></div>
-      <div className="vp-hud-stack"><ViewportStats /></div>
+      <div className="vp-hud-stack"><SpreadHud source="viewport" /><ViewportStats /></div>
       {v2Mode && <ManualPortMenu />}
       {!v2Mode && <div className="msrr-canvas-hint">
         click the ground or a cube face to add one · drag to extrude a run · right-click a cube to delete
@@ -650,6 +653,11 @@ function syncScene(st: any) {
       }
     }
 
+    // Drawn positions are cube units: metres * UNITS_PER_M / MODULINK_CUBE_SIZE (moduleGeometry.ts). Using only UNITS_PER_M
+    // gave a 1.42 m module and a score of 132 for the Editor's 278 (31 Oct); this must match the Editor's number.
+    st.bodyCentres = [];
+    const toM = MODULINK_CUBE_SIZE / UNITS_PER_M;
+    const addCentre = (p: readonly number[]) => st.bodyCentres.push([p[0] * toM, p[1] * toM, p[2] * toM]);
     let n = 0;
     const nextMesh = (geo: THREE.BufferGeometry, mat: THREE.Material): THREE.Mesh => {
       if (n >= st.partPool.length) {
@@ -677,6 +685,7 @@ function syncScene(st: any) {
       // is only on screen while it is moving.
       if (g.moduleId !== inFlight?.moduleId) {
         for (const body of moduleBodies(shownModules[i])) {
+          addCentre(body.position);
           const geo = meshGeos.get(body.name);
           if (!geo) continue;
           // the two OUTER end connectors in their own colours (the module is symmetric: which end is on the floor?)
@@ -708,6 +717,7 @@ function syncScene(st: any) {
         setSegment(mesh, rod.from, rod.to, rod.radius);
       }
       for (const j of g.joints) {
+        addCentre(j.at);
         // Joints carry the module's own colour, so a chain still reads as
         // separate parts the way the assembly list numbers them.
         const mesh = nextMesh(st.ballGeo, highlight ? st.mats.moving : tint);

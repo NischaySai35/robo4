@@ -601,8 +601,11 @@ export function hasLockLoop(doc: Document): boolean {
  */
 export function spreadScore(doc: Document): { energy: number; minGapMM: number; meanGapMM: number; bodies: number } {
   const fk = computeFK(doc) as FKMap;
-  const ids = Object.keys(doc.bodies);
-  const pts = ids.map((id) => new THREE.Vector3().setFromMatrixPosition(bodyWorldMatrix(doc, id, fk)));
+  return spreadFromPoints(Object.keys(doc.bodies).map((id) => new THREE.Vector3().setFromMatrixPosition(bodyWorldMatrix(doc, id, fk))));
+}
+
+/** The VSEPR objective itself, for any set of body centres in metres. Every score goes through here. */
+export function spreadFromPoints(pts: THREE.Vector3[]): { energy: number; minGapMM: number; meanGapMM: number; bodies: number } {
   let energy = 0, minD = Infinity, sum = 0, n = 0;
   for (let i = 0; i < pts.length; i++) {
     for (let k = i + 1; k < pts.length; k++) {
@@ -616,7 +619,7 @@ export function spreadScore(doc: Document): { energy: number; minGapMM: number; 
     energy: +energy.toFixed(2),
     minGapMM: n ? +(minD * 1000).toFixed(0) : 0,
     meanGapMM: n ? +((sum / n) * 1000).toFixed(0) : 0,
-    bodies: ids.length,
+    bodies: pts.length,
   };
 }
 

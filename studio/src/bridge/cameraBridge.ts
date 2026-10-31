@@ -1,10 +1,9 @@
 /**
- * cameraBridge — module-level singleton so React components can reach Three.js
- * state without prop-drilling.
+ * cameraBridge — how React components reach a viewport's Three.js state without prop-drilling.
  *
- * SceneManager sets camera/animateTo/fitCamera/orbitDelta after construction;
- * SimCanvas sets getFitBox/loadScene/exportModel/undo/redo. NavigationGizmo,
- * ViewControls, the menus, and the panels read from them.
+ * Each SceneManager owns a ViewportHandle and it, SimCanvas and ModelEditor write to that handle.
+ * NavigationGizmo, ViewControls, the menus and the panels read `bridge`, which forwards to the
+ * active viewport. See docs/design/p2-viewport-context.md.
  */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -78,11 +77,48 @@ export interface CameraBridge {
   getWireframe?: () => boolean;
   setConnectorsVisible?: (on: boolean) => void;
   getConnectorsVisible?: () => boolean;
+  // World positions in metres of the bodies this viewport draws, for a score of the robot on screen.
+  getBodyCentres?: () => [number, number, number][];
 }
 
-export const bridge: CameraBridge = {
-  camera:    null,
-  animateTo: null, // (pos, lookAt, ms?) => void
-  fitCamera: null, // () => void
-  orbitDelta: null, // (dx, dy) => void  — gizmo drag orbit
-};
+export type ViewportKind = 'editor' | 'msrr';
+export interface ViewportHandle extends CameraBridge { kind: ViewportKind }
+
+const DEFAULTS: CameraBridge = { camera: null, animateTo: null, fitCamera: null, orbitDelta: null };
+const viewports: ViewportHandle[] = [];
+let active: ViewportHandle | null = null;
+
+/** Called by SceneManager: one handle per viewport. A new Editor viewport doesn't take focus from another viewport. */
+export function createViewport(kind: ViewportKind): ViewportHandle {
+  const h: ViewportHandle = { kind, ...DEFAULTS };
+  viewports.push(h);
+  if (!active || kind !== 'editor') active = h;
+  return h;
+}
+
+export function releaseViewport(h: ViewportHandle) {
+  const i = viewports.indexOf(h);
+  if (i >= 0) viewports.splice(i, 1);
+  if (active === h) active = viewports.find((v) => v.kind === 'editor') ?? viewports[viewports.length - 1] ?? null;
+}
+
+/** The canvas under the pointer is the active viewport, like Blender's context from the region under the mouse. */
+export function setActiveViewport(h: ViewportHandle) { active = h; }
+export function activeViewport() { return active; }
+
+const editorViewport = () => viewports.find((v) => v.kind === 'editor') ?? null;
+
+/**
+ * Reads: active viewport, then the Editor, then the defaults. The Editor fallback is needed: on MSRR,
+ * undo and loadScene still act on the Editor's project. Writes throw, because a write through here
+ * would land on whichever viewport happens to be active.
+ */
+export const bridge: CameraBridge = new Proxy(DEFAULTS, {
+  get(_t, k: string) {
+    const a = active as any, e = editorViewport() as any, d = DEFAULTS as any;
+    return a?.[k] ?? e?.[k] ?? d[k];
+  },
+  set(_t, k: string) {
+    throw new Error(`bridge.${k}: write to the viewport that owns it, through its ViewportHandle`);
+  },
+});

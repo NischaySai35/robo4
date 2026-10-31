@@ -41,7 +41,6 @@ import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
 import { PivotPickTool } from '@/viewport/PivotPickTool';
 import { hideGizmoVisuals, constantScreenSize } from '@/viewport/gizmoUtil';
 import { useTransformHudStore } from '@/state/transformHudStore';
-import { bridge } from '@/bridge/cameraBridge';
 import { mateBridge, type MateAnimRequest } from '@/bridge/mateBridge';
 import { useWorkspaceStore } from '@/state/workspaceStore';
 import { jointLoads, centerOfMass, bodyStressField } from '@/kinematics/analysis';
@@ -58,7 +57,7 @@ if (import.meta.hot) (import.meta.hot as any).decline();
 export class ModelEditor {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor({ scene, camera, controls, domElement }: any) {
+  constructor({ scene, camera, controls, domElement, viewport }: any) {
     this.controls = controls;
     this.bodyRenderer = new BodyRenderer(scene);
     this.jointRenderer = new JointRenderer(scene);
@@ -69,7 +68,7 @@ export class ModelEditor {
     // commit the real patches+joint at the end (see _startMateAnim/_tickMateAnim).
     this._mateAnim = null;
     mateBridge.play = (req: MateAnimRequest) => this._startMateAnim(req);
-    bridge.orientSelectionAxis = (axis: 'x' | 'y' | 'z') => this._orientSelectionToAxis(axis);
+    viewport.orientSelectionAxis = (axis: 'x' | 'y' | 'z') => this._orientSelectionToAxis(axis);
 
     this.transform = new TransformControls(camera, domElement);
     this.transform.setSize(1.1);
@@ -236,9 +235,9 @@ export class ModelEditor {
     });
 
     // Wire axis modal to bridge so App.tsx keyboard handler can call it.
-    bridge.startAxisModal  = (axis: 'x'|'y'|'z') => this.startAxisModal(axis);
-    bridge.commitAxisModal = (v?: number)          => this._commitAxisModal(v);
-    bridge.cancelAxisModal = ()                    => this._cancelAxisModal();
+    viewport.startAxisModal  = (axis: 'x'|'y'|'z') => this.startAxisModal(axis);
+    viewport.commitAxisModal = (v?: number)          => this._commitAxisModal(v);
+    viewport.cancelAxisModal = ()                    => this._cancelAxisModal();
 
     // Canvas click-picking: click a model body to select it (shows the gizmo),
     // click empty space to deselect (hides the gizmo). A small move threshold
@@ -294,8 +293,8 @@ export class ModelEditor {
       scene, camera, domElement,
       getMeshes: () => [this.bodyRenderer.group],
     });
-    bridge.startPivotPick  = (opts: any) => this._pivotPickTool.start(opts.onPick, opts.onCancel);
-    bridge.cancelPivotPick = ()          => this._pivotPickTool.stop();
+    viewport.startPivotPick  = (opts: any) => this._pivotPickTool.start(opts.onPick, opts.onCancel);
+    viewport.cancelPivotPick = ()          => this._pivotPickTool.stop();
 
     // React to model + selection changes. NOT a direct `_syncModel` call: spinEngine (and
     // physics/IK/animation) call applyTransient() from THEIR OWN independent requestAnimationFrame

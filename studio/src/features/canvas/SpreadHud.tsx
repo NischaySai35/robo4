@@ -4,15 +4,31 @@
  * Shows only the repulsion energy (Σ 1/dist between body centres): LOWER = more spread out.
  * Updates live as you drag; the number tints green while it's dropping, red while it climbs.
  */
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import * as THREE from 'three';
 import { useModelStore } from '@/state/modelStore';
-import { spreadScore } from '@/assembly/connectorSnap';
+import { spreadScore, spreadFromPoints } from '@/assembly/connectorSnap';
+import { bridge } from '@/bridge/cameraBridge';
 
-export default function SpreadHud() {
+/** Bodies drawn by the active viewport. MSRR's robot isn't in the document, and it moves with live physics, so this polls. */
+function useViewportCentres(on: boolean) {
+  const [pts, setPts] = useState<THREE.Vector3[]>([]);
+  useEffect(() => {
+    if (!on) return;
+    const read = () => setPts((bridge.getBodyCentres?.() ?? []).map(([x, y, z]) => new THREE.Vector3(x, y, z)));
+    read();
+    const t = setInterval(read, 250);
+    return () => clearInterval(t);
+  }, [on]);
+  return pts;
+}
+
+export default function SpreadHud({ source = 'document' }: { source?: 'document' | 'viewport' }) {
   const doc = useModelStore((s) => s.doc);
+  const pts = useViewportCentres(source === 'viewport');
   const prev = useRef<number | null>(null);
 
-  const s = spreadScore(doc);
+  const s = source === 'viewport' ? spreadFromPoints(pts) : spreadScore(doc);
   if (s.bodies < 2) return null;
 
   const better = prev.current != null && s.energy < prev.current - 1e-6;

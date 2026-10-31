@@ -12,12 +12,20 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { WebGLPathTracer } from 'three-gpu-pathtracer';
-import { bridge } from '@/bridge/cameraBridge';
+import { createViewport, releaseViewport, setActiveViewport, type ViewportHandle, type ViewportKind } from '@/bridge/cameraBridge';
 
 export class SceneManager {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
   [key: string]: any;
-  constructor(canvas: any) {
+  /** This viewport's own context; see docs/design/p2-viewport-context.md. */
+  viewport: ViewportHandle;
+  _onActivate: () => void;
+
+  constructor(canvas: any, kind: ViewportKind = 'editor') {
+    this.viewport = createViewport(kind);
+    this._onActivate = () => setActiveViewport(this.viewport);
+    canvas.addEventListener('pointerenter', this._onActivate);
+    canvas.addEventListener('pointerdown', this._onActivate);
     this.canvas = canvas;
     this._init();
   }
@@ -174,7 +182,7 @@ export class SceneManager {
       return { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 } as THREE.Vector2;
     };
     const modelHit = (ndc: THREE.Vector2): THREE.Vector3 | null => {
-      const grp = bridge.getModelGroup?.();
+      const grp = this.viewport.getModelGroup?.();
       if (!grp) return null;
       _ray.setFromCamera(ndc, this.camera);
       for (const h of _ray.intersectObjects([grp], true)) {
@@ -186,7 +194,7 @@ export class SceneManager {
     const pickPivot = (ndc: THREE.Vector2): THREE.Vector3 => {
       const hit = modelHit(ndc);                              // 1) geometry under cursor
       if (hit) return hit;
-      const box = bridge.getFitBox?.() as THREE.Box3 | null | undefined;
+      const box = this.viewport.getFitBox?.() as THREE.Box3 | null | undefined;
       if (!box || box.isEmpty()) return this.controls.target.clone();
       this.camera.updateMatrixWorld();
       const frustum = new THREE.Frustum().setFromProjectionMatrix(
@@ -244,16 +252,16 @@ export class SceneManager {
     this._resizeObserver = new ResizeObserver(() => this._onResize());
     this._resizeObserver.observe(canvas.parentElement);
 
-    // Register with bridge so React components can access camera + controls
-    bridge.camera = this.camera;
-    bridge.scene = this.scene; // exposed for the Analysis split's secondary view
-    bridge.animateTo = (pos, lookAt, ms) => this.animateCameraTo(pos, lookAt, ms);
-    bridge.fitCamera = () => this.fitCamera();
-    bridge.updateCameraLimits = () => this.updateCameraLimits();
-    bridge.requestRender = (n?: number) => this.requestRender(n ?? 4); // any UI change → redraw
+    // Register with this viewport so React components can access camera + controls
+    this.viewport.camera = this.camera;
+    this.viewport.scene = this.scene; // exposed for the Analysis split's secondary view
+    this.viewport.animateTo = (pos, lookAt, ms) => this.animateCameraTo(pos, lookAt, ms);
+    this.viewport.fitCamera = () => this.fitCamera();
+    this.viewport.updateCameraLimits = () => this.updateCameraLimits();
+    this.viewport.requestRender = (n?: number) => this.requestRender(n ?? 4); // any UI change → redraw
 
     // Camera Settings panel: read current lens/control state…
-    bridge.getCameraState = () => ({
+    this.viewport.getCameraState = () => ({
       fov:         this.camera.fov,
       focalLength: this.camera.getFocalLength(),
       near:        this.camera.near,
@@ -266,7 +274,7 @@ export class SceneManager {
     // Every value is validated: a non-finite number (e.g. from a half-typed
     // input) is ignored so it can never poison the projection matrix and blank
     // the viewport.
-    bridge.applyCameraState = (p: any) => {
+    this.viewport.applyCameraState = (p: any) => {
       const cam = this.camera, ctl = this.controls;
       const fin = (v: any) => typeof v === 'number' && Number.isFinite(v);
       if (fin(p.focalLength)) cam.setFocalLength(THREE.MathUtils.clamp(p.focalLength, 8, 300));
@@ -288,7 +296,7 @@ export class SceneManager {
     // Snap the camera to look down `dir` (e.g. [1,0,0] for +X) while KEEPING the
     // current orbit target — so axis views / perspective reset pivot around the
     // place you panned to, not the scene origin.
-    bridge.snapToAxis = (dir: number[], ms?: number) => {
+    this.viewport.snapToAxis = (dir: number[], ms?: number) => {
       const t = this.controls.target.clone();
       const dist = Math.max(this.camera.position.distanceTo(t), 0.5);
       const v = new THREE.Vector3(dir[0], dir[1], dir[2]).normalize().multiplyScalar(dist);
@@ -298,13 +306,13 @@ export class SceneManager {
 
     // Capture the current frame as a data URL (used by the Render → Export
     // button). Force a fresh composite first so the read-back is never blank.
-    bridge.captureImage = (mime = 'image/png', quality = 0.92) => {
+    this.viewport.captureImage = (mime = 'image/png', quality = 0.92) => {
       this.renderer.render(this.scene, this.camera);
       return this.renderer.domElement.toDataURL(mime, quality);
     };
 
     // Small downscaled JPEG of the current frame, for project-card thumbnails.
-    bridge.captureThumbnail = (maxDim = 256) => {
+    this.viewport.captureThumbnail = (maxDim = 256) => {
       // Render inside a try-catch: if materials are mid-recompile (e.g. called from
       // the autoSave setInterval between RAF frames), the render can crash and leave
       // the WebGL context dirty. resetState() restores bindings so the main loop survives.
@@ -328,7 +336,7 @@ export class SceneManager {
     };
 
     // Gizmo drag: orbit camera without OrbitControls event interference
-    bridge.orbitDelta = (dx, dy) => {
+    this.viewport.orbitDelta = (dx, dy) => {
       const target = this.controls.target.clone();
       const offset = this.camera.position.clone().sub(target);
       const sp = new THREE.Spherical().setFromVector3(offset);
@@ -678,7 +686,7 @@ export class SceneManager {
    * Clamps the current camera distance into the new limits without jumping.
    */
   updateCameraLimits() {
-    const box = bridge.getFitBox ? bridge.getFitBox() : null;
+    const box = this.viewport.getFitBox ? this.viewport.getFitBox() : null;
     let radius: number;
     if (box && !box.isEmpty()) {
       radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.05);
@@ -718,7 +726,7 @@ export class SceneManager {
    * No content → no-op.
    */
   fitCamera() {
-    const box = bridge.getFitBox ? bridge.getFitBox() : null;
+    const box = this.viewport.getFitBox ? this.viewport.getFitBox() : null;
     if (!box || box.isEmpty()) return;
     const center = box.getCenter(new THREE.Vector3());
     // Bounding-sphere radius of the content (no hard floor → tiny parts frame closely).
@@ -834,6 +842,9 @@ export class SceneManager {
   _hidePivotDot() { if (this._pivotDot) this._pivotDot.visible = false; }
 
   dispose() {
+    this.canvas.removeEventListener('pointerenter', this._onActivate);
+    this.canvas.removeEventListener('pointerdown', this._onActivate);
+    releaseViewport(this.viewport);
     this._resizeObserver.disconnect();
     if (this._onOrbitDown) this.canvas.removeEventListener('pointerdown', this._onOrbitDown);
     if (this._onOrbitMove) this.canvas.removeEventListener('pointermove', this._onOrbitMove);

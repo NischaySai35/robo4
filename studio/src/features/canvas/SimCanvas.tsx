@@ -23,7 +23,6 @@ import { createFrameProfiler } from '@/viewport/frameProfiler';
 import { startEspPoll } from '@/features/servo/espPoll';
 import { useThemeStore } from '@/state/themeStore';
 import { useEditorStore } from '@/state/editorStore';
-import { bridge } from '@/bridge/cameraBridge';
 import { GLTFExporter } from 'three/examples/jsm/exporters/GLTFExporter.js';
 import { OBJExporter } from 'three/examples/jsm/exporters/OBJExporter.js';
 import { STLExporter } from 'three/examples/jsm/exporters/STLExporter.js';
@@ -66,12 +65,14 @@ export default function SimCanvas() {
 
     // Scene + theme.
     const sceneMgr = new SceneManager(canvas);
+    const vp = sceneMgr.viewport;
     sceneRef.current = sceneMgr;
     sceneMgr.applyTheme(useThemeStore.getState().theme);
     const unsubTheme = useThemeStore.subscribe((s) => sceneMgr.applyTheme(s.theme));
 
     // Model-graph layer (renderers + gizmo + selection + mate + physics).
     const modelEditor = new ModelEditor({
+      viewport: vp,
       scene: sceneMgr.scene,
       camera: sceneMgr.camera,
       controls: sceneMgr.controls,
@@ -80,11 +81,11 @@ export default function SimCanvas() {
     modelEditorRef.current = modelEditor;
 
     // Render utilities: canvas stream capture + resolution scaling.
-    bridge.captureStream = (fps = 30) => {
+    vp.captureStream = (fps = 30) => {
       try { return (sceneMgr.renderer.domElement as any).captureStream(fps); }
       catch { return null; }
     };
-    bridge.setRenderScale = (scale: number) => {
+    vp.setRenderScale = (scale: number) => {
       const dpr = Math.max(0.5, Math.min(8, scale)) * (window.devicePixelRatio || 1);
       sceneMgr.renderer.setPixelRatio(dpr);
       sceneMgr.renderer.setSize(canvas.clientWidth, canvas.clientHeight, false);
@@ -94,7 +95,7 @@ export default function SimCanvas() {
     let _preDpr = window.devicePixelRatio || 1;
     let _preW = 0;
     let _preH = 0;
-    bridge.setRenderResolution = (w: number, h: number) => {
+    vp.setRenderResolution = (w: number, h: number) => {
       _preDpr = sceneMgr.renderer.getPixelRatio();
       _preW = sceneMgr.renderer.domElement.width;
       _preH = sceneMgr.renderer.domElement.height;
@@ -104,7 +105,7 @@ export default function SimCanvas() {
       sceneMgr.camera.updateProjectionMatrix();
       sceneMgr.composer.setSize(w, h);
     };
-    bridge.resetRenderResolution = () => {
+    vp.resetRenderResolution = () => {
       if (!_preW) return;
       sceneMgr.renderer.setPixelRatio(_preDpr);
       sceneMgr.renderer.setSize(_preW, _preH, false);
@@ -116,24 +117,24 @@ export default function SimCanvas() {
 
     // Engine switching — delegates to SceneManager which owns the render pipeline.
     let _currentEngine = 'eevee';
-    bridge.getRenderEngine = () => _currentEngine;
-    bridge.getPathTracerSamples = () => sceneMgr.getPathTracerSamples();
-    bridge.markSceneChanged = () => sceneMgr.markPathTracerDirty();
-    bridge.getRendererStats = () => sceneMgr.getRendererStats();
-    bridge.setComputeDevice = (d) => sceneMgr.setComputeDevice(d);
-    bridge.getComputeDevice = () => sceneMgr.getComputeDevice();
-    bridge.setMaxSamples = (n: number) => sceneMgr.setMaxSamples(n);
-    bridge.getMaxSamples = () => sceneMgr.getMaxSamples();
-    bridge.setWireframe = (on) => {
+    vp.getRenderEngine = () => _currentEngine;
+    vp.getPathTracerSamples = () => sceneMgr.getPathTracerSamples();
+    vp.markSceneChanged = () => sceneMgr.markPathTracerDirty();
+    vp.getRendererStats = () => sceneMgr.getRendererStats();
+    vp.setComputeDevice = (d) => sceneMgr.setComputeDevice(d);
+    vp.getComputeDevice = () => sceneMgr.getComputeDevice();
+    vp.setMaxSamples = (n: number) => sceneMgr.setMaxSamples(n);
+    vp.getMaxSamples = () => sceneMgr.getMaxSamples();
+    vp.setWireframe = (on) => {
       if (modelEditor?.bodyRenderer) {
         modelEditor.bodyRenderer.setWireframe(on);
         if (modelEditor._doc) modelEditor._syncModel(modelEditor._doc);
       }
     };
-    bridge.getWireframe = () => modelEditor?.bodyRenderer?._wireframe ?? false;
-    bridge.setConnectorsVisible = (on) => modelEditor?.connectorRenderer?.setVisible(on);
-    bridge.getConnectorsVisible = () => modelEditor?.connectorRenderer?._visible ?? true;
-    bridge.setRenderEngine = (engine: string) => {
+    vp.getWireframe = () => modelEditor?.bodyRenderer?._wireframe ?? false;
+    vp.setConnectorsVisible = (on) => modelEditor?.connectorRenderer?.setVisible(on);
+    vp.getConnectorsVisible = () => modelEditor?.connectorRenderer?._visible ?? true;
+    vp.setRenderEngine = (engine: string) => {
       _currentEngine = engine;
       sceneMgr.setRenderEngine(engine);
       // BodyRenderer material mode for clay / wireframe override.
@@ -141,10 +142,10 @@ export default function SimCanvas() {
     };
 
     // Model body group — used by the smart orbit-pivot raycast (bodies only, no grid/overlays).
-    bridge.getModelGroup = () => modelEditor.bodyRenderer?.group ?? null;
+    vp.getModelGroup = () => modelEditor.bodyRenderer?.group ?? null;
 
     // FIT bounding box over the model bodies.
-    bridge.getFitBox = () => {
+    vp.getFitBox = () => {
       const g = modelEditor.bodyRenderer?.group;
       if (!g || g.children.length === 0) return null;
       g.updateMatrixWorld(true);
@@ -243,7 +244,7 @@ export default function SimCanvas() {
 
     // LiDAR scan against obstacle meshes (from the robot base, or a given origin).
     const lidarRay = new THREE.Raycaster();
-    bridge.scanLidar = (origin) => {
+    vp.scanLidar = (origin) => {
       const doc = useModelStore.getState().doc;
       let o: THREE.Vector3;
       if (origin) o = new THREE.Vector3(origin[0], origin[1], origin[2]);
@@ -319,7 +320,7 @@ export default function SimCanvas() {
     raf = requestAnimationFrame(loop);
 
     // ── Load a project (model + animation) ──────────────────────────────────────
-    bridge.loadScene = (project, opts: any = {}) => {
+    vp.loadScene = (project, opts: any = {}) => {
       let scene;
       try { scene = parseProject(project); }
       catch (e) { return { ok: false, error: e.message }; }
@@ -336,7 +337,7 @@ export default function SimCanvas() {
         }
         if (ws.dockSplit !== undefined && ws.dockSplit !== dock.split) dock.toggleSplit();
         if (ws.dockSecondary) dock.setSecondary(ws.dockSecondary);
-        if (ws.cameraState) bridge.applyCameraState?.(ws.cameraState);
+        if (ws.cameraState) vp.applyCameraState?.(ws.cameraState);
       }
       // Restore transient UI toggles (gravity switch, rigid mode + active bodies, A/B
       // lock-connector picks, mid-spin joints), skipped during undo/redo (those snapshots
@@ -356,12 +357,12 @@ export default function SimCanvas() {
           if (dir === 1 || dir === -1) toggleSpin(jointId, dir);
         }
       }
-      if (opts.fit !== false) setTimeout(() => bridge.fitCamera?.(), 60);
+      if (opts.fit !== false) setTimeout(() => vp.fitCamera?.(), 60);
       return { ok: true };
     };
 
     // ── Export the model meshes (GLB / OBJ / STL) ───────────────────────────────
-    bridge.exportModel = (format) => {
+    vp.exportModel = (format) => {
       const fmt = (format || 'glb').toLowerCase();
       if (fmt === 'step') {
         return { ok: false, error: 'STEP export needs a CAD kernel — not supported yet. Use OBJ / STL / GLB.' };
@@ -393,12 +394,12 @@ export default function SimCanvas() {
     const history: { undo: string[]; redo: string[]; last: string | null; suppressNext: boolean } = { undo: [], redo: [], last: null, suppressNext: false };
     const applySnapshot = (snapJSON: any) => {
       const d = JSON.parse(snapJSON);
-      bridge.loadScene!({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false, skipWorkspace: true });
+      vp.loadScene!({ format: 'tetrobot-project', version: 1, scene: d.scene, model: d.model, animation: d.animation }, { fit: false, skipWorkspace: true });
       // Fit camera after undo/redo so restored content is always visible even if
       // a previous file-open moved the camera to a completely different position.
-      setTimeout(() => bridge.fitCamera?.(), 120);
+      setTimeout(() => vp.fitCamera?.(), 120);
     };
-    bridge.undo = () => {
+    vp.undo = () => {
       if (!history.undo.length) return;
       if (history.last != null) history.redo.push(history.last);
       const prev = history.undo.pop();
@@ -407,7 +408,7 @@ export default function SimCanvas() {
       applySnapshot(prev);
       useHistoryStore.getState().setFlags(history.undo.length > 0, history.redo.length > 0);
     };
-    bridge.redo = () => {
+    vp.redo = () => {
       if (!history.redo.length) return;
       if (history.last != null) history.undo.push(history.last);
       const next = history.redo.pop();
@@ -492,7 +493,7 @@ export default function SimCanvas() {
     let lastBodyCount = Object.keys(useModelStore.getState().doc.bodies).length;
     const unsubCamLimits = useModelStore.subscribe((s) => {
       const count = Object.keys(s.doc.bodies).length;
-      if (count !== lastBodyCount) { lastBodyCount = count; bridge.updateCameraLimits?.(); }
+      if (count !== lastBodyCount) { lastBodyCount = count; vp.updateCameraLimits?.(); }
     });
     const unsubAnimSave = useAnimationStore.subscribe((s, p) => {
       if (s.tracks !== p.tracks || s.duration !== p.duration) scheduleSave();
@@ -501,9 +502,9 @@ export default function SimCanvas() {
     // ── Startup restore ─────────────────────────────────────────────────────────
     // loadAutosave is async (IndexedDB). Restore takes <50ms; fitCamera fires
     // 300ms later so the scene will be ready regardless.
-    loadAutosave().then(saved => { if (saved) bridge.loadScene?.(saved); }).catch(() => {});
+    loadAutosave().then(saved => { if (saved) vp.loadScene?.(saved); }).catch(() => {});
     tryRestoreFileHandle().catch(() => {}); // regain write access to last session's real file, if the browser still allows it silently
-    const fitTimer = setTimeout(() => { bridge.fitCamera?.(); bridge.updateCameraLimits?.(); }, 300);
+    const fitTimer = setTimeout(() => { vp.fitCamera?.(); vp.updateCameraLimits?.(); }, 300);
     const stopMemoryMonitor = startMemoryMonitor(() => modelEditor._doc);
     // Continuous multi-ESP telemetry polling (all module boards at once).
     const stopEspPoll = startEspPoll();
@@ -531,7 +532,7 @@ export default function SimCanvas() {
       canvas.removeEventListener('pointerdown', onReachPick);
       clearAuto();
       sceneMgr.scene.remove(autoGroup);
-      bridge.scanLidar = undefined;
+      vp.scanLidar = undefined;
       measureTool.dispose();
       modelEditor.dispose();
       sceneMgr.dispose();

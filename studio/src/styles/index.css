@@ -33,9 +33,9 @@
   --danger: #bd1c00;
   --success: #007a36;
   --scene-bg: #f4f2ee;
-  /* Project-wide font: Times New Roman (the TETROBOT wordmark keeps its own face). */
-  --font-mono: 'Times New Roman', Times, serif;
-  --font-ui: 'Times New Roman', Times, serif;
+  /* Each system's own UI font: nothing to download (the TETROBOT wordmark keeps its own face). */
+  --font-mono: ui-monospace, 'Cascadia Mono', Consolas, Menlo, 'DejaVu Sans Mono', monospace;
+  --font-ui: 'Segoe UI', system-ui, -apple-system, Roboto, 'Noto Sans', sans-serif;
   --panel-w: 340px;
 
   /* Overlay / glass panels */

@@ -1,0 +1,11 @@
+# spot,yaw,partner pose q0..q6 (deg: T1,B1,B2,T2,B3,B4,T3),target   (spots = multi_reach2.xml floor receivers; from reach2 / reach_end sweeps)
+# END -> SIDE (walker End B into a partner side receiver)
+14,225,0,0,0,0,0,0,0,srx3
+26,315,0,0,0,0,0,0,0,srx1
+21,135,0,0,0,0,0,0,0,srx2
+11,135,0,0,0,0,0,0,0,srx1
+# END <-> END (walker End B into the partner's End B)
+5,45,0,30,0,0,0,90,0,endB
+5,225,0,0,0,0,-60,-60,0,endB
+1,135,0,0,0,0,90,0,0,endB
+12,45,0,0,0,0,45,45,0,endB

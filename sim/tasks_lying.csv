@@ -1,0 +1,7 @@
+# END <-> END onto a partner LYING on the floor: L,x,y,heading(deg),q0..q6(deg),target   (from reach_lying.py GOOD cases)
+L,0.45,0.0,0,0,0,0,0,0,0,0,endA
+L,0.0,0.45,90,0,0,0,0,0,0,0,endA
+L,-0.45,0.0,180,0,0,0,0,0,0,0,endA
+L,-0.25,0.0,90,0,0,0,0,0,0,0,endA
+L,0.1768,0.1768,135,0,0,0,0,0,0,0,endA
+L,0.15,0.0,270,0,0,0,0,0,0,0,endA

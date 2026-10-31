@@ -1,0 +1,86 @@
+<mujoco model="tetrobot_module">
+ <compiler angle="degree" inertiafromgeom="false" boundmass="0.001" boundinertia="1e-8"/>
+ <option timestep="0.002" integrator="implicitfast" gravity="0 0 -9.81"/>
+ <visual><global offwidth="1280" offheight="720"/><headlight ambient="0.4 0.4 0.4"/></visual>
+ <asset>
+  <texture name="grid" type="2d" builtin="checker" rgb1="0.62 0.52 0.40" rgb2="0.56 0.46 0.35" width="512" height="512"/>
+  <material name="cardboard" texture="grid" texrepeat="8 8"/>
+  <mesh name="L1_LockRotor_A" file="../brain/meshes/L1_LockRotor_A.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="EndA_LockModule" file="../brain/meshes/EndA_LockModule.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="T1_Housing_B1Fork" file="../brain/meshes/T1_Housing_B1Fork.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="Spine1_B1B2" file="../brain/meshes/Spine1_B1B2.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="T2_Housing_B2Fork_GROUND" file="../brain/meshes/T2_Housing_B2Fork_GROUND.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="T2_Ring_B3Fork" file="../brain/meshes/T2_Ring_B3Fork.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="Spine2_B3B4" file="../brain/meshes/Spine2_B3B4.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="T3_Housing_B4Fork" file="../brain/meshes/T3_Housing_B4Fork.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="EndB_LockModule" file="../brain/meshes/EndB_LockModule.stl" scale="0.001 0.001 0.001"/>
+  <mesh name="L2_LockRotor_B" file="../brain/meshes/L2_LockRotor_B.stl" scale="0.001 0.001 0.001"/>
+ </asset>
+ <worldbody>
+  <light pos="0.5 -0.5 1.5" dir="-0.3 0.3 -1" diffuse="0.8 0.8 0.8"/>
+  <geom name="floor" type="plane" size="1.2 1.2 0.01" material="cardboard" contype="2" conaffinity="1" friction="0.4 0.005 0.0001"/>
+  <geom name="base_receiver_placeholder" type="cylinder" pos="0 0 0.01" size="0.038 0.01" rgba="0.95 0.55 0.15 1" contype="2" conaffinity="1"/>
+  <body name="module_frame" pos="0.0698 -0.2615 0.219" quat="0.7071068 0.7071068 0 0">
+   <body name="EndA_LockModule" pos="-0.069800 -0.190000 -0.261500">
+    <inertial pos="0.000520 0.036306 0.000052" mass="0.15786" fullinertia="9.9264e-05 9.5368e-05 1.1159e-04 4.3488e-06 1.1335e-08 -1.1450e-08"/>
+    <geom type="mesh" mesh="EndA_LockModule" pos="0.069800 0.190000 0.261500" rgba="0.92 0.92 0.90 1" contype="1" conaffinity="2"/>
+    <body name="L1_LockRotor_A" pos="0.000000 -0.001051 0.000000">
+     <joint name="J_L1_lock" axis="0 1 0" range="-45.000 45.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+     <inertial pos="-0.000008 0.001324 0.000035" mass="0.00953" fullinertia="1.4485e-06 2.7794e-06 1.4485e-06 1.3741e-12 2.2025e-14 3.4966e-14"/>
+     <geom type="mesh" mesh="L1_LockRotor_A" pos="0.069800 0.191051 0.261500" rgba="0.30 0.55 0.95 1" contype="1" conaffinity="2"/>
+    </body>
+    <body name="T1_Housing_B1Fork" pos="0.000000 0.057624 0.000000">
+     <joint name="J_T1_twist" axis="0 1 0" range="-180.000 180.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+     <inertial pos="0.000623 0.032418 0.000030" mass="0.10008" fullinertia="3.0571e-05 4.2574e-05 4.1067e-05 -1.7364e-06 -7.2411e-10 1.4394e-09"/>
+     <geom type="mesh" mesh="T1_Housing_B1Fork" pos="0.069800 0.132376 0.261500" rgba="0.80 0.80 0.78 1" contype="1" conaffinity="2"/>
+     <body name="Spine1_B1B2" pos="0.000000 0.068420 0.000000">
+      <joint name="J_B1_bend" axis="1 0 0" range="-90.000 90.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+      <inertial pos="0.000223 0.080466 0.000064" mass="0.24350" fullinertia="6.8539e-04 9.0770e-05 7.2579e-04 -6.4318e-09 2.1406e-08 -3.6904e-09"/>
+      <geom type="mesh" mesh="Spine1_B1B2" pos="0.069800 0.063956 0.261500" rgba="0.85 0.85 0.82 1" contype="1" conaffinity="2"/>
+      <body name="T2_Housing_B2Fork_GROUND" pos="0.000000 0.160712 0.000000">
+       <joint name="J_B2_bend" axis="1 0 0" range="-90.000 90.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+       <inertial pos="0.000623 0.036002 0.000030" mass="0.10008" fullinertia="3.0571e-05 4.2574e-05 4.1067e-05 1.7364e-06 -7.2411e-10 -1.4394e-09"/>
+       <geom type="mesh" mesh="T2_Housing_B2Fork_GROUND" pos="0.069800 -0.096756 0.261500" rgba="0.80 0.80 0.78 1" contype="1" conaffinity="2"/>
+       <body name="T2_Ring_B3Fork" pos="0.000000 0.068420 0.000000">
+        <joint name="J_T2_twist" axis="0 1 0" range="-180.000 180.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+        <inertial pos="-0.000008 0.001635 0.000035" mass="0.04664" fullinertia="2.0179e-05 3.6030e-05 2.1688e-05 -2.3077e-12 -1.9438e-15 -1.6325e-14"/>
+        <geom type="mesh" mesh="T2_Ring_B3Fork" pos="0.069800 -0.165176 0.261500" rgba="0.80 0.80 0.78 1" contype="1" conaffinity="2"/>
+        <body name="Spine2_B3B4" pos="0.000000 0.026300 0.000000">
+         <joint name="J_B3_bend" axis="1 0 0" range="-90.000 90.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+         <inertial pos="0.000136 0.080273 0.000052" mass="0.20850" fullinertia="6.8160e-04 8.1529e-05 7.1439e-04 3.0517e-09 2.2849e-08 3.2411e-09"/>
+         <geom type="mesh" mesh="Spine2_B3B4" pos="0.069800 -0.191476 0.261500" rgba="0.85 0.85 0.82 1" contype="1" conaffinity="2"/>
+         <body name="T3_Housing_B4Fork" pos="0.000000 0.160712 0.000000">
+          <joint name="J_B4_bend" axis="1 0 0" range="-90.000 90.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+          <inertial pos="0.000623 0.036002 0.000030" mass="0.10008" fullinertia="3.0571e-05 4.2574e-05 4.1067e-05 1.7364e-06 -7.2411e-10 -1.4394e-09"/>
+          <geom type="mesh" mesh="T3_Housing_B4Fork" pos="0.069800 -0.352188 0.261500" rgba="0.80 0.80 0.78 1" contype="1" conaffinity="2"/>
+          <body name="EndB_LockModule" pos="0.000000 0.068420 0.000000">
+           <joint name="J_T3_twist" axis="0 1 0" range="-180.000 180.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+           <inertial pos="0.000520 0.021318 0.000052" mass="0.15786" fullinertia="9.9264e-05 9.5367e-05 1.1159e-04 -4.3488e-06 1.1343e-08 1.1448e-08"/>
+           <geom type="mesh" mesh="EndB_LockModule" pos="0.069800 -0.420608 0.261500" rgba="0.92 0.92 0.90 1" contype="1" conaffinity="2"/>
+           <body name="L2_LockRotor_B" pos="0.000000 0.058675 0.000000">
+            <joint name="J_L2_lock" axis="0 1 0" range="-45.000 45.000" armature="0.01" damping="0.1" frictionloss="0.02"/>
+            <inertial pos="-0.000008 -0.001324 0.000035" mass="0.00953" fullinertia="1.4485e-06 2.7794e-06 1.4485e-06 -1.3885e-12 2.2026e-14 -8.8925e-14"/>
+            <geom type="mesh" mesh="L2_LockRotor_B" pos="0.069800 -0.479283 0.261500" rgba="0.30 0.55 0.95 1" contype="1" conaffinity="2"/>
+           </body>
+          </body>
+         </body>
+        </body>
+       </body>
+      </body>
+     </body>
+    </body>
+   </body>
+  </body>
+ </worldbody>
+ <actuator>
+  <position name="m_L1_lock" joint="J_L1_lock" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-0.7854 0.7854"/>
+  <position name="m_T1_twist" joint="J_T1_twist" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-3.1416 3.1416"/>
+  <position name="m_B1_bend" joint="J_B1_bend" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-1.5708 1.5708"/>
+  <position name="m_B2_bend" joint="J_B2_bend" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-1.5708 1.5708"/>
+  <position name="m_T2_twist" joint="J_T2_twist" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-3.1416 3.1416"/>
+  <position name="m_B3_bend" joint="J_B3_bend" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-1.5708 1.5708"/>
+  <position name="m_B4_bend" joint="J_B4_bend" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-1.5708 1.5708"/>
+  <position name="m_T3_twist" joint="J_T3_twist" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-3.1416 3.1416"/>
+  <position name="m_L2_lock" joint="J_L2_lock" kp="20" kv="0.3" forcerange="-2.70 2.70" ctrlrange="-0.7854 0.7854"/>
+ </actuator>
+</mujoco>

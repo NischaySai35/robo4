@@ -1,0 +1,23 @@
+{
+ "kp": 80.0,
+ "kv": 1.0,
+ "armature": 0.012,
+ "servo_damping": 0.05,
+ "friction": 0.03,
+ "friction_twist": 0.08,
+ "backlash_deg": 0.2,
+ "flex_k_bend": 39.44293288183222,
+ "flex_k_twist": 59.16439932274833,
+ "flex_c": 0.15,
+ "flex_range_deg": 3.0,
+ "_why": {
+  "kp": "ST3215 holds within ~2 deg up to stall: 2.7/0.035 rad ~ 80 N*m/rad",
+  "armature": "motor rotor inertia through 345:1 gearbox",
+  "backlash_deg": "gear slop guess, refine from video",
+  "flex_k": "PLA bracket stiffness, tuned so tip error under load is 2-4 deg like the real module",
+  "flex_c": "light damping so it rings after a move and settles",
+  "friction_twist": "PLA-on-PLA ring bearing"
+ },
+ "backlash_twist_deg": 0.5,
+ "flex_k_in": 67.56908344885683
+}

@@ -1,0 +1,8 @@
+# END <-> END: partner LYING on the floor with its End A bent UP (B1 90, axis vertical, ~161 mm high) -> walker docks from above like on a floor receiver
+# L,x,y,heading,roll,q0..q6(deg),target      (from check_lying_up2.py REACHABLE cases)
+L,0.10,0.0,0,90,0,90,0,0,0,0,0,endA
+L,0.15,0.0,0,90,0,90,0,0,0,0,0,endA
+L,0.20,0.0,0,90,0,90,0,0,0,0,0,endA
+L,0.0,0.15,90,90,0,90,0,0,0,0,0,endA
+L,-0.20,0.0,180,90,0,90,0,0,0,0,0,endA
+L,0.0,-0.15,270,90,0,90,0,0,0,0,0,endA

@@ -27,7 +27,7 @@ module.exports = function physicsPlugin() {
     if (stopping || await listening(PORT)) return;
     const script = path.join(SIM, 'verify_service.py');
     if (!fs.existsSync(script)) { log(`[physics] ${script} not found - physics features stay off`); return; }
-    const out = fs.openSync(path.join(SIM, '..', 'logs', 'verify_service_console.log'), 'a');
+    const out = fs.openSync(path.join(DATA, 'logs', 'verify_service_console.log'), 'a');
     child = spawn('py', ['-3.12', script], { cwd: SIM, stdio: ['ignore', out, out], windowsHide: true });
     log(`[physics] started the physics service (pid ${child.pid}, port ${PORT})`);
     child.on('exit', (code) => { child = null; if (!stopping) { log(`[physics] service exited (${code}) - starting it again in 3 s`); setTimeout(() => start(log), 3000); } });

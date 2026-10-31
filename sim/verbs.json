@@ -1,0 +1,40 @@
+{
+ "_note": "counted from GPU logs (random robots, judge ON). successP = ok / finished; unfinished = hit the run time cap, not counted as failures.",
+ "verbs": {
+  "dock_floor": {
+   "successP": 0.99,
+   "observed": 1.0,
+   "ok": 103,
+   "finished": 103,
+   "started": 256,
+   "durationS": null,
+   "sources": [
+    "gpu_walk_mag1.json"
+   ]
+  },
+  "dock_end_side": {
+   "successP": 0.952,
+   "observed": 1.0,
+   "ok": 19,
+   "finished": 19,
+   "started": 32,
+   "durationS": 13.3,
+   "sources": [
+    "gpu_multi_es_ee46.json",
+    "gpu_multi_es_ee46_s23.json"
+   ]
+  },
+  "dock_end_end": {
+   "successP": 0.0,
+   "observed": 0.0,
+   "ok": 0,
+   "finished": 3,
+   "started": 36,
+   "durationS": null,
+   "sources": [
+    "gpu_multi_ee_ee46.json",
+    "gpu_multi_ee_prerot.json"
+   ]
+  }
+ }
+}

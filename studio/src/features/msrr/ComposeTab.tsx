@@ -29,7 +29,7 @@ import {
   addRoot, attachTo, setAngle, setRoll, removeModule, emptyManual,
   checkManual, manualCells, manualToJSON, manualFromJSON,
 } from '@/robotics/msrr/manualBuild';
-import { Section, Row } from './MsrrPanel';
+import { Section, Row } from './panelParts';
 
 const deg = (rad: number) => Math.round((rad * 180) / Math.PI);
 

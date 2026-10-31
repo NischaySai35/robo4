@@ -10,7 +10,7 @@ import { useV2Store } from '@/state/msrrV2Store';
 import { executeDryRun, type ExecEvent, type ExecResult, LOCK_OPEN_DEG, LOCK_TURN_DEG } from '@/robotics/msrr2/executor';
 import type { Plan } from '@/robotics/msrr2/planner';
 import type { Config } from '@/robotics/msrr2/model';
-import { Section, Row } from '@/features/msrr/MsrrPanel';
+import { Section, Row } from '@/features/msrr/panelParts';
 
 function replanInWorker(from: Config, plan: Plan, onMsg: (m: string) => void): Promise<Plan> {
   return new Promise((resolve) => {

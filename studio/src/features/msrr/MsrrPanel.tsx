@@ -35,6 +35,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './MsrrPanel.css';
 import V2Panel from '@/features/msrr2/V2Panel';
+import { Section, Row } from './panelParts';
 import { useV2Store } from '@/state/msrrV2Store';
 import { useMsrrStore, DEFAULT_CELL_SIZE } from '@/state/msrrStore';
 import { ComposeTab } from './ComposeTab';
@@ -1343,39 +1344,7 @@ function ReachTableSection() {
  * prose", because that is the state you are in ninety-nine visits out of a
  * hundred. Passing no `info` simply renders no ⓘ.
  */
-export function Section({ title, info, children }: {
-  title: string; info?: React.ReactNode; children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section className="msrr-section">
-      <h3 className="msrr-section-title">
-        <span className="msrr-title-text">{title}</span>
-        {info && (
-          <button
-            className={`msrr-info ${open ? 'open' : ''}`}
-            onClick={() => setOpen((v) => !v)}
-            aria-expanded={open}
-            title={open ? 'Hide the explanation' : 'What is this?'}
-          >
-            i
-          </button>
-        )}
-      </h3>
-      {info && open && <div className="msrr-info-body">{info}</div>}
-      {children}
-    </section>
-  );
-}
 
-export function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="msrr-field">
-      <span className="msrr-field-label">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 function Toggle({ label, hint, value, onChange }: {
   label: string; hint?: string; value: boolean; onChange: (v: boolean) => void;

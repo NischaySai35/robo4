@@ -26,8 +26,7 @@
  *     kinematics robotics runtime control hardware   (engine/domain)
  *     shared workers
  *
- * The baseline (.dependency-cruiser-known-violations.json) now holds only TWO entries, and
- * both are tool false positives (see not-to-unresolvable below). Every real architectural
+ * The baseline (.dependency-cruiser-known-violations.json) is empty. Every real architectural
  * violation found when these rules were introduced — 16 of them — has been fixed, not
  * tolerated. If that file starts growing again, something is being waved through.
  */
@@ -73,10 +72,7 @@ module.exports = {
         'An import that cannot be resolved is a build waiting to break. This one has real ' +
         'teeth: it is what caught BoxWorld/PhysicsSim after the jolt* move, when their ' +
         'relative imports were left dangling and typecheck+build were both still green. ' +
-        'Two baselined entries are parser FALSE POSITIVES — dependency-cruiser matches the ' +
-        'word "import" inside JSX text ("multiple importance sampling", className="ol-import") ' +
-        'and reports it as an unnameable dependency. Do NOT try to filter those out with ' +
-        'dependencyTypesNot [unknown] — verified that a genuinely broken named import is ' +
+        'Do NOT try to filter parser noise out with dependencyTypesNot [unknown] — verified that a genuinely broken named import is ' +
         'ALSO typed "unknown", so that filter silently disables the whole rule.',
       severity: 'error',
       from: {},
@@ -86,7 +82,7 @@ module.exports = {
       name: 'no-dev-deps-in-src',
       comment: 'Shipping code must not import a devDependency — it will not exist at runtime.',
       severity: 'error',
-      from: { path: '^src/', pathNot: '\\.test\\.tsx?$' },
+      from: { path: '^src/', pathNot: '(\\.test\\.tsx?|\\.d\\.ts)$' },
       to: { dependencyTypes: ['npm-dev'] },
     },
   ],
@@ -98,6 +94,11 @@ module.exports = {
     // made every rule below match nothing and pass vacuously. See that file for why the
     // obvious fix (adding baseUrl) is not available.
     webpackConfig: { fileName: 'depcruise-resolve.cjs' },
+    // Same conditions as the bundler, plus types for type-only entries such as vite/client.
+    enhancedResolveOptions: {
+      exportsFields: ['exports'],
+      conditionNames: ['types', 'import', 'module', 'browser', 'default'],
+    },
     tsPreCompilationDeps: true,
     reporterOptions: { text: { highlightFocused: true } },
   },

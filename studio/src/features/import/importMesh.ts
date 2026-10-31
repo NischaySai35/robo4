@@ -202,31 +202,39 @@ async function _importSingleBodyBatch(files: { name: string; bytes: Uint8Array }
   });
 }
 
-// ── URDF import ───────────────────────────────────────────────────────────────
+// ── Robot description import (URDF, SDF) ───────────────────────────────────────
 
-export async function importURDF() {
+const ROBOT_FORMATS = {
+  URDF: { ext: ['urdf', 'xml'], parse: async (xml: string) => (await import('@/core/serialization/importers/urdf')).parseURDF(xml) },
+  SDF: { ext: ['sdf', 'xml'], parse: async (xml: string) => (await import('@/core/serialization/importers/sdf')).parseSDF(xml) },
+};
+
+/** Read a robot file into the open project as one undo step. What could not be read exactly is listed, not hidden. */
+export async function importRobotFile(format: keyof typeof ROBOT_FORMATS) {
+  const f = ROBOT_FORMATS[format];
   let picked: { name: string; bytes: Uint8Array } | null;
   try {
-    const files = await pickFiles(['urdf', 'xml']);
+    const files = await pickFiles(f.ext);
     picked = files[0] ?? null;
   }
   catch (e: any) { alert(`Could not open file: ${e.message}`); return; }
   if (!picked) return;
 
   await useBusyStore.getState().run(`Importing ${picked.name}…`, async () => {
-    const { parseURDF } = await import('@/core/serialization/importers/urdf');
     let result;
-    try { result = parseURDF(new TextDecoder().decode(picked!.bytes)); }
-    catch (e: any) { alert(`URDF import failed: ${e.message}`); return; }
-    if (!result.entities.length) { alert('No links found in the URDF.'); return; }
+    try { result = await f.parse(new TextDecoder().decode(picked!.bytes)); }
+    catch (e: any) { alert(`${format} import failed: ${e.message}`); return; }
+    if (!result.entities.length) { alert(`No links found in the ${format} file.`); return; }
 
-    useModelStore.getState().dispatch(commands.addEntities(result.entities, `Import URDF: ${result.robotName}`));
+    useModelStore.getState().dispatch(commands.addEntities(result.entities, `Import ${format}: ${result.robotName}`));
     const firstBody = result.entities.find((e: any) => e.kind === 'body');
     if (firstBody) useSelectionStore.getState().select(firstBody.id, 'body');
     setTimeout(() => bridge.fitCamera?.(), 80);
-    if (result.warnings.length) console.warn('URDF import warnings:\n' + result.warnings.join('\n'));
+    if (result.warnings.length) alert(`Imported ${result.robotName}, with ${result.warnings.length} note(s):\n\n${result.warnings.slice(0, 12).join('\n')}${result.warnings.length > 12 ? '\n…' : ''}`);
   });
 }
+
+export const importURDF = () => importRobotFile('URDF');
 
 // ── File picker (multi-select) ────────────────────────────────────────────────
 

@@ -1,0 +1,9 @@
+# Follow timed joint poses, as control_msgs/FollowJointTrajectory in small
+string[] joints
+float64[] times
+float64[] positions   # one row per time, joints in order, flattened
+---
+bool ok
+string message
+---
+float64 t

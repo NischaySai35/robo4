@@ -12,9 +12,10 @@ dependencies = ["mujoco>=3.17", "numpy"]
 
 [project.optional-dependencies]
 ik = ["mink", "daqp"]
-network = ["eclipse-zenoh"]
+network = ["eclipse-zenoh", "cryptography"]
 studio = ["websockets"]
 record = ["mcap"]
+sim = ["scipy", "gymnasium", "pillow", "opencv-python-headless"]
 
 [project.scripts]
 gos = "gos.__main__:main"
@@ -23,4 +24,4 @@ gos = "gos.__main__:main"
 include = ["gos*"]
 
 [tool.setuptools.package-data]
-gos = ["_native/*"]
+gos = ["_native/*", "interfaces/*"]

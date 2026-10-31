@@ -20,6 +20,7 @@ class StudioLink:
         self._replies: dict[int, queue.Queue] = {}
         self._next = 1
         self.operators = []
+        self._topics: dict[str, list] = {}
         self._server = serve(self._handle, '127.0.0.1', port)
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
@@ -42,7 +43,9 @@ class StudioLink:
             self._ready.set()
             for raw in conn:
                 m = json.loads(raw)
-                if m.get('type') == 'reply' and m.get('id') in self._replies:
+                if m.get('type') == 'topic':
+                    for fn in list(self._topics.get(m.get('topic'), [])): fn(m.get('msg'))
+                elif m.get('type') == 'reply' and m.get('id') in self._replies:
                     self._replies[m['id']].put(m)
         except Exception:
             pass  # a closed page ends the link; the next call reports it
@@ -98,6 +101,24 @@ class StudioLink:
             return True
         except Exception:
             return False
+
+    def publish(self, topic, msg):
+        """Send a message on a Studio topic, as if a Studio part published it. Fire and forget."""
+        conn = self._conn
+        if conn is None: return False
+        try:
+            conn.send(json.dumps({'type': 'publish', 'topic': topic, 'msg': msg}))
+            return True
+        except Exception:
+            return False
+
+    def subscribe(self, topic, fn):
+        """Call fn(msg) for every message the Studio publishes on this topic. Messages this script sent are not echoed."""
+        first = topic not in self._topics
+        self._topics.setdefault(topic, []).append(fn)
+        r = self._request('subscribe', topic=topic) if first else Result(True)
+        if not r.ok and first: self._topics.pop(topic, None)
+        return r
 
     def close(self):
         self._server.shutdown()

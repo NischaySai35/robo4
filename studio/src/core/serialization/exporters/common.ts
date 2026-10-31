@@ -6,8 +6,8 @@ import type { Document } from '@/core/model/index';
 /** A name safe for XML ids / message fields: anything not [A-Za-z0-9_] → '_'. */
 export const san = (s: unknown, fallback = 'x') => String(s ?? fallback).replace(/[^A-Za-z0-9_]/g, '_');
 
-/** Fixed 6-decimal number, with tiny values printed as exactly '0'. */
-export const n = (v: any) => (Math.abs(v) < 1e-9 ? '0' : (+v).toFixed(6));
+/** Fixed 6-decimal number; anything that rounds to zero prints as exactly "0", never -0.000000. */
+export const n = (v: any) => (Math.abs(v) < 5e-7 ? '0' : (+v).toFixed(6));
 
 /** [lower, upper] for a ranged joint, ±3.14 when unset. */
 export const limitRange = (j: any): [number, number] => [j.limit?.lower ?? -3.14, j.limit?.upper ?? 3.14];

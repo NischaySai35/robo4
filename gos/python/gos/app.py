@@ -5,10 +5,7 @@ from dataclasses import dataclass, field
 from . import _core
 from .transport import NamedBus, open_transport
 from .runtime import Actions, Logger, Node, Parameters, Recorder, Services, play
-
-
-class GosError(RuntimeError):
-    """Something could not be done. The message says what to do about it."""
+from .physics import Cache, GosError, open_engine
 
 
 @dataclass
@@ -43,13 +40,10 @@ class Robot:
     def graph(self): return self.app.graph()
 
     def joints(self):
-        m, d = self.app.model, self.app.data
-        mj = _physics()
-        return {mj.mj_id2name(m, mj.mjtObj.mjOBJ_JOINT, i): float(d.qpos[m.jnt_qposadr[i]]) for i in range(m.njnt)}
+        return self.app.engine.joint_values()
 
     def body_position(self, name):
-        i = self.app._body_id(name)
-        return [float(v) for v in self.app.data.xpos[i]]
+        return self.app.engine.body_position(name)
 
     def ik(self, body, position, steps=800, keep_closed=True, tolerance=0.002):
         """Move a body toward a position, holding any closed loops shut. The result always reports both errors."""
@@ -57,7 +51,7 @@ class Robot:
 
 
 class App:
-    def __init__(self, headless=True, seed=0, transport='local', name='gos', namespace='/', remap=None, domain=0, executor=None, trace=None, introspect=False, **transport_options):
+    def __init__(self, headless=True, seed=0, transport='local', name='gos', namespace='/', remap=None, domain=0, executor=None, trace=None, introspect=False, engine='mujoco', **transport_options):
         if not headless:
             raise GosError('Only headless=True works so far. A window comes with GOS G5 (gos studio --attach).')
         self.seed = seed
@@ -71,7 +65,7 @@ class App:
         self.tracer = self.bus.tracer = Tracer(trace) if trace else None
         self.arrays = SharedArrays(self.bus)
         self.sim_time = 0.0
-        self.model = self.data = self.robot = self.spec = None
+        self._engine_name, self.engine, self.robot, self.cache = engine, None, None, Cache()
         self._locks, self._dir, self._doc = {}, None, None
         self.params, self.services, self.nodes, self._recorders = Parameters(self.bus, name), Services(self.bus), {}, []
         self.actions = Actions(self.bus)
@@ -88,7 +82,17 @@ class App:
         self._recorders = []
         self.bus.close()
         if self._dir: shutil.rmtree(self._dir, ignore_errors=True); self._dir = None
-        self.model = self.data = self.spec = None
+        if self.engine: self.engine.close()
+        self.engine = None; self.cache.clear()
+
+    # MuJoCo's own objects, for locks, IK and scripts that want them. None when nothing is loaded.
+    def _mujoco(self, what):
+        if self.engine is None: return None
+        if self.engine.name != 'mujoco': raise GosError(f'{what} needs the MuJoCo engine; this app runs on {self.engine.name}. Open it with gos.App(engine="mujoco").')
+        return getattr(self.engine, what)
+    model = property(lambda self: self._mujoco('model'))
+    data = property(lambda self: self._mujoco('data'))
+    spec = property(lambda self: self._mujoco('spec'))
 
     # ── loading ──────────────────────────────────────────────────────────────
     def load(self, path):
@@ -124,17 +128,15 @@ class App:
         return self._open_xml(scene, doc, export)
 
     def _open_xml(self, path, doc, export):
-        mj = _physics()
-        self.spec = mj.MjSpec.from_file(path)
-        self.model = self.spec.compile()
-        self.data = mj.MjData(self.model)
-        mj.mj_forward(self.model, self.data)
+        engine = open_engine(self._engine_name)
+        engine.open(path)
+        self.engine = engine; self.cache.clear()
         self.robot = Robot(self, doc, export)
         self.publish_graph('loaded')
         return self.robot
 
     def _need_robot(self):
-        if self.model is None: raise GosError('No robot loaded. Call app.load(path) first.')
+        if self.engine is None: raise GosError('No robot loaded. Call app.load(path) first.')
 
     def _body_id(self, name):
         mj = _physics()
@@ -200,35 +202,39 @@ class App:
         return Result(True, f'Unlocked {body_a} from {body_b}.')
 
     def _recompile(self):
-        self.model, self.data = self.spec.recompile(self.model, self.data)
-        _physics().mj_forward(self.model, self.data)
+        self.engine.recompile(); self.cache.clear()
 
     # ── running ──────────────────────────────────────────────────────────────
     def set_joints(self, **values):
         """Set joint positions by name, then settle the kinematics. Works without any motor."""
         self._need_robot()
-        mj = _physics()
-        for name, v in values.items():
-            j = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, name)
-            if j < 0: raise GosError(f'No joint named "{name}". Joints: {", ".join(self.robot.joints())}')
-            self.data.qpos[self.model.jnt_qposadr[j]] = v
-        mj.mj_forward(self.model, self.data)
+        for name, v in values.items(): self.engine.set_joint(name, v)
+        self.engine.forward(); self.cache.clear()
 
-    def run(self, seconds=None, steps=None, publish_every=10):
-        """Step the physics, publishing /joints. Stops by itself."""
+    def run(self, seconds=None, steps=None, publish_every=10, cache=False, cache_every=10):
+        """Step the physics, publishing /joints. Stops by itself. cache=True keeps frames for app.seek."""
         self._need_robot()
-        mj = _physics()
-        n = steps if steps is not None else max(1, round((seconds or 0) / self.model.opt.timestep))
+        e = self.engine
+        n = steps if steps is not None else max(1, round((seconds or 0) / e.timestep))
         names = list(self.robot.joints())
+        if cache and not self.cache.frames: self.cache.add(e.snapshot())
         for k in range(n):
-            mj.mj_step(self.model, self.data)
+            e.step()
             self.time_steps += 1
-            self.sim_time = float(self.data.time)
+            self.sim_time = e.time
+            if cache and (k + 1) % cache_every == 0: self.cache.add(e.snapshot())
             if publish_every and k % publish_every == 0: self.bus.publish('/clock', {'t': self.sim_time})
             if publish_every and k % publish_every == 0:
-                m = self.model
-                self.bus.publish('/joints', {'t': float(self.data.time), 'names': names, 'q': [float(self.data.qpos[m.jnt_qposadr[i]]) for i in range(m.njnt)]})
-        return Result(True, f'Ran {n} steps.', {'steps': n, 't': float(self.data.time)})
+                self.bus.publish('/joints', {'t': e.time, 'names': names, 'q': list(e.joint_values().values())})
+        return Result(True, f'Ran {n} steps.', {'steps': n, 't': e.time})
+
+    def seek(self, seconds):
+        """Go back to the cached frame nearest this time. Running on from there replays the same physics."""
+        self._need_robot()
+        f = self.cache.nearest(seconds)
+        self.cache.frames = [c for c in self.cache.frames if c['t'] <= f['t']]
+        self.engine.restore(f); self.sim_time = self.engine.time
+        return Result(True, f'At {self.engine.time:.3f} s.', {'t': self.engine.time, 'frames': len(self.cache.frames)})
 
     def closure_error(self):
         """Worst gap across every loop constraint, in metres. 0 when there are none."""
@@ -239,7 +245,16 @@ class App:
         rows = d.efc_type[:d.nefc] == mj.mjtConstraint.mjCNSTR_EQUALITY
         return float(abs(d.efc_pos[:d.nefc][rows]).max()) if rows.any() else 0.0
 
-    def topic(self, name, latched=False, reliable=True): return _Topic(self.bus, name, latched, reliable)
+    def topic(self, name, latched=False, reliable=True, type=None):
+        """A topic. With type='JointState' (or any loaded .msg) a wrong message is refused on publish, saying what is wrong."""
+        t = _Topic(self.bus, name, latched, reliable)
+        if type is not None:
+            if getattr(self, 'types', None) is None:
+                from . import interfaces
+                self.types = interfaces.load()
+            if type not in self.types.types: raise GosError(f'No message type "{type}". Types: {", ".join(sorted(self.types.types))}. Add yours with app.types = gos.interfaces.load("folder").')
+            t.check = lambda m: self.types.check(type, m)
+        return t
 
     def logger(self, name=None, level='info'): return Logger(self.bus, name or self.name, level)
 
@@ -284,22 +299,25 @@ class App:
         real = getattr(self, 'real', None)
         return real.stop() if real else Result(True, 'No real robot attached; nothing to stop.')
 
-    def loop_check(self, frm, to, measured=()):
-        """Transform graph of the robot as simulated now, plus any measured links (camera, touch) as
-        (parent, child, position, quaternion xyzw). Reports how far each extra path disagrees: the loop gap."""
+    def body_edges(self):
+        """Every body seen from its parent body as simulated now: {'parent', 'child', 'p', 'q' (xyzw)}. What gos.tf broadcasts."""
         self._need_robot()
+        import numpy as np
         mj = _physics()
         m, d = self.model, self.data
         name = lambda b: mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, b)
         edges = []
         for b in range(1, m.nbody):
             par = m.body_parentid[b]
-            pp, pq = d.xpos[par], d.xquat[par]
-            neg, rel_p, rel_q = [0.0] * 4, [0.0] * 3, [0.0] * 4
-            import numpy as np
             neg, rel_p, rel_q = np.zeros(4), np.zeros(3), np.zeros(4)
-            mj.mju_negQuat(neg, pq); mj.mju_rotVecQuat(rel_p, d.xpos[b] - pp, neg); mj.mju_mulQuat(rel_q, neg, d.xquat[b])
+            mj.mju_negQuat(neg, d.xquat[par]); mj.mju_rotVecQuat(rel_p, d.xpos[b] - d.xpos[par], neg); mj.mju_mulQuat(rel_q, neg, d.xquat[b])
             edges.append({'parent': name(par) or 'world', 'child': name(b), 'p': list(rel_p), 'q': [rel_q[1], rel_q[2], rel_q[3], rel_q[0]]})
+        return edges
+
+    def loop_check(self, frm, to, measured=()):
+        """Transform graph of the robot as simulated now, plus any measured links (camera, touch) as
+        (parent, child, position, quaternion xyzw). Reports how far each extra path disagrees: the loop gap."""
+        edges = self.body_edges()
         for parent, child, p, q in measured:
             edges.append({'parent': parent, 'child': child, 'p': list(p), 'q': list(q)})
         return _core.tf_query(edges, frm, to)
@@ -348,8 +366,11 @@ class App:
 class _Topic:
     """A named channel. QoS like ROS: latched (late joiners get the last value), reliable or best effort,
     and keep_last=N on the receiving side (only the N newest messages are kept in .history)."""
+    check = None
     def __init__(self, bus, name, latched=False, reliable=True): self.bus, self.name, self.latched, self.reliable = bus, name, latched, reliable
-    def publish(self, msg): self.bus.publish(self.name, msg, self.latched, self.reliable)
+    def publish(self, msg):
+        if self.check: self.check(msg)
+        self.bus.publish(self.name, msg, self.latched, self.reliable)
     def history(self, keep_last=10, where=None):
         from collections import deque
         q = deque(maxlen=keep_last)

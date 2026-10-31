@@ -79,6 +79,16 @@
       "tools/gpuWatcher.cjs",
       "tools/psStream.cjs"
     ],
+    "extraResources": [
+      {
+        "from": "../gos/runtime_dist",
+        "to": "gos",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**"
+        ]
+      }
+    ],
     "directories": {
       "output": "release2"
     },

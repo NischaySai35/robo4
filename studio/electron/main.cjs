@@ -83,6 +83,8 @@ function appRamAndCpu() {
  * streaming process rather than a poll-and-spawn. */
 const { ensureGpuWatcher, stopGpuWatcher, gpuPercentFor } = require('../tools/gpuWatcher.cjs');
 app.on('before-quit', stopGpuWatcher);
+let stopPhysics = () => {};
+app.on('before-quit', () => stopPhysics());
 
 ipcMain.handle('metrics:sample', () => {
   const { ramBytes, cpuPercent, pids } = appRamAndCpu();
@@ -146,6 +148,7 @@ function createWindow() {
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 
 app.whenReady().then(() => {
+  if (app.isPackaged) stopPhysics = require('./physicsService.cjs').startPhysicsService({ resourcesPath: process.resourcesPath, userData: app.getPath('userData') });
   createWindow();
   // (The renderer runs a quiet check shortly after launch via window.tetrobot —
   // it only prompts if an update is actually available.)

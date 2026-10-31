@@ -8,7 +8,7 @@ import { bridge } from '@/bridge/cameraBridge';
 import { newProject, newRobotArm, newHumanoid, newModule, openProject, saveProject, saveProjectAs, exportModel, openFromLibrary } from '@/core/serialization/projectActions';
 import { listProjects } from '@/core/serialization/projectLibrary';
 import type { LibraryEntry } from '@/core/serialization/projectLibrary';
-import { importMesh, importURDF } from '@/features/import/importMesh';
+import { importMesh, importURDF, importRobotFile } from '@/features/import/importMesh';
 import { checkForUpdates, getAppVersion } from '@/features/update/checkForUpdates';
 import { exportRobot } from '@/features/export/exportRobot';
 import { runOperator } from '@/core/ops/registry';
@@ -156,6 +156,7 @@ export default function MenuBar({ onToggleConn, onHelpOpen, onOpenProjects }: an
         { label: 'Any file…',     onClick: () => importMesh() },
         SEP,
         { label: 'URDF Project…', onClick: () => importURDF() },
+        { label: 'SDF Model…', onClick: () => importRobotFile('SDF') },
       ] },
       { label: 'Export', submenu: [
         { label: 'OBJ',  onClick: () => exportModel('obj') },

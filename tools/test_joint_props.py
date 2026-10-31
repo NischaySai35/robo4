@@ -28,7 +28,7 @@ async def main():
         panes = pg.locator('.property-pane')
         check('joint numbers show in the shared property pane', await panes.count() >= 2, f'{await panes.count()} panes')
         before = await pg.evaluate(LIM, jid)
-        lower = panes.first.locator('input').first
+        lower = panes.filter(has_text='Lower').locator('input').first
         await lower.fill('-45'); await lower.press('Enter'); await pg.wait_for_timeout(1200)
         after = await pg.evaluate(LIM, jid)
         check('typing -45° stores -45° in the joint', abs(after['lower'] + math.pi / 4) < 1e-6, f"{math.degrees(before['lower']):.1f} to {math.degrees(after['lower']):.1f}")
@@ -37,6 +37,15 @@ async def main():
         check('a script sets a property by name', r['ok'], str(r))
         r = await pg.evaluate("window.tetrobotOps.run('joint.set', { joint: 'J_B1_bend', path: 'dynamics.damping', value: -1 })")
         check('a bad scripted value is refused with the reason', not r['ok'] and 'below 0' in r['error'], r.get('error', ''))
+        mass = "async () => Object.values((await import('/src/state/modelStore.ts')).useModelStore.getState().doc.bodies).find((b) => b.name === 'Spine1_B1B2')?.inertial.mass"
+        m0 = await pg.evaluate(mass)
+        r = await pg.evaluate("window.tetrobotOps.run('entity.set', { kind: 'body', name: 'Spine1_B1B2', path: 'inertial.mass', value: 300 })")
+        check('a script sets a body mass in grams with the same command for every kind', r['ok'] and abs(await pg.evaluate(mass) - 0.3) < 1e-9, f'{m0} kg to {await pg.evaluate(mass)} kg')
+        r = await pg.evaluate("window.tetrobotOps.run('entity.set', { kind: 'body', name: 'Nope', path: 'inertial.mass', value: 1 })")
+        check('a wrong name lists the bodies there are', not r['ok'] and 'Spine1_B1B2' in r['error'], r.get('error', '')[:90])
+        await pg.evaluate('document.activeElement.blur()')
+        await pg.keyboard.press('Control+z'); await pg.wait_for_timeout(1200)
+        check('undo takes the mass back', abs(await pg.evaluate(mass) - m0) < 1e-9)
         await pg.wait_for_timeout(1500)
         await pg.evaluate('document.activeElement.blur()')  # out of the number box, as a user clicking the view
         await pg.keyboard.press('Control+z'); await pg.wait_for_timeout(1500)

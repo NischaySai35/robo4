@@ -10,6 +10,7 @@ import { withJointValues } from '@/core/model/index';
 import { spreadScore } from '@/assembly/connectorSnap';
 import { exportMjcf } from '@/core/gos/graphCore';
 import { bridge } from '@/bridge/cameraBridge';
+import { bus } from '@/runtime/messageBus';
 
 type Status = 'off' | 'connecting' | 'on' | 'error';
 export const useGosStore = create<{ status: Status; message: string }>(() => ({ status: 'off', message: 'Not connected.' }));
@@ -18,6 +19,9 @@ const say = (status: Status, message: string) => useGosStore.setState({ status, 
 let socket: WebSocket | null = null;
 // MuJoCo joint name to Studio joint id: the exporter renames repeated joints, so ask it rather than guess.
 let jointIds = new Map<string, string>();
+// Topics the script asked for: Studio messages on them go to the script. Its own messages are not sent back.
+const forwarded = new Map<string, () => void>();
+const SCRIPT = 'gos-script';
 
 function rememberJointNames() {
   const doc = useModelStore.getState().doc;
@@ -43,6 +47,13 @@ function handle(m: any): unknown {
       const doc = useModelStore.getState().doc;
       return { bodies: Object.keys(doc.bodies).length, joints: Object.values<any>(doc.joints).map((j) => [j.name, j.state?.value ?? 0]), vsepr: spreadScore(doc).energy, page: usePageStore.getState().page };
     }
+    case 'subscribe': {
+      if (typeof m.topic !== 'string' || !m.topic.startsWith('/')) throw new Error('A topic name starts with "/", e.g. /joints.');
+      if (!forwarded.has(m.topic)) forwarded.set(m.topic, bus.subscribe(m.topic, (msg, env) => {
+        if (env.node !== SCRIPT) socket?.send(JSON.stringify({ type: 'topic', topic: m.topic, msg }));
+      }));
+      return null;
+    }
     default: throw new Error(`The Studio doesn't know the message type "${m.type}". Update the app or the gos package.`);
   }
 }
@@ -65,6 +76,7 @@ export function connectGos(url: string, token: string) {
       useModelStore.getState().applyTransient((d) => withJointValues(d, values));
       return;
     }
+    if (m.type === 'publish') { bus.publish(m.topic, m.msg, SCRIPT); return; }
     let reply: any;
     try { reply = { type: 'reply', id: m.id, ok: true, value: handle(m) }; }
     catch (err: any) { reply = { type: 'reply', id: m.id, ok: false, error: err?.message ?? String(err) }; }
@@ -76,6 +88,8 @@ export function disconnectGos() {
   const ws = socket;
   socket = null;
   ws?.close();
+  for (const off of forwarded.values()) off();
+  forwarded.clear();
   say('off', 'Not connected.');
 }
 

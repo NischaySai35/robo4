@@ -11,6 +11,7 @@ import type { Document, Connector } from '@/core/model/index';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import PropertyPane from '@/features/ui/PropertyPane';
+import { BODY_PROPS, PROFILE_PROPS, MATERIAL_PROPS } from '@/core/props/entityTypes';
 import { JOINT_PROPS, propsFor, getProp, patchFor, type PropertyDescriptor } from '@/core/props/props';
 import { commands } from '@/core/commands/index';
 import { JointType, GeometryType, makeMaterial, makeJointProfile, getJointActuator, bodiesOfComponent, bodyConnectors, newConnector, jointsOfComponent } from '@/core/model/index';
@@ -94,13 +95,11 @@ function IkSection({ body, doc, dispatch }: any) {
 function PhysicsSection({ body, up }: { body: any; up: (patch: any) => void }) {
   const meta = body.meta ?? {};
   const upMeta = (patch: any) => up({ meta: { ...meta, ...patch } });
-  const mass = body.inertial?.mass ?? 0.05;
 
   return (
     <>
       <div className="in-group">PHYSICS · the body's structural properties</div>
-      <Num label="Mass (kg)" value={mass} step={0.001}
-        onChange={(v: any) => up({ inertial: { ...body.inertial, mass: Math.max(0, v) } })} />
+      <EntityProps entity={body} defs={BODY_PROPS} up={up} group="Inertia" />
       <div className="in-row2">
         <Num label="I-min (mA)" value={meta.currentLimitMin ?? 6} step={1}
           onChange={(v: any) => upMeta({ currentLimitMin: Math.max(0, v) })} />
@@ -330,16 +329,7 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
           <input type="color" value={rgbToHex(color)}
             onChange={(e) => editMat({ color: [...hexToRgb(e.target.value), color[3]] })} />
         </label>
-        <div className="in-slider">
-          <span className="in-mat-lbl">Metal</span>
-          <input type="range" min="0" max="1" step="0.05" value={mat?.metalness ?? 0.45}
-            onChange={(e) => editMat({ metalness: parseFloat(e.target.value) })} />
-        </div>
-        <div className="in-slider">
-          <span className="in-mat-lbl">Rough</span>
-          <input type="range" min="0" max="1" step="0.05" value={mat?.roughness ?? 0.45}
-            onChange={(e) => editMat({ roughness: parseFloat(e.target.value) })} />
-        </div>
+        <EntityProps entity={mat ?? {}} defs={MATERIAL_PROPS} up={editMat} group="Look" />
         <div className="in-slider">
           <span className="in-mat-lbl">Opacity</span>
           <input type="range" min="0" max="1" step="0.05" value={color[3]}
@@ -436,8 +426,7 @@ function JointTypePanel({ joint, doc, dispatch }: { joint: any; doc: Document; d
               {MOTOR_IDS.map((m) => <option key={m} value={m}>{MOTOR_DB[m].name} ({MOTOR_DB[m].stallTorque} N·m)</option>)}
             </select>
           </label>
-          <Num label="Torque limit (N·m)" value={profile.torqueLimit} step={0.1}
-            onChange={(v: any) => editProfile({ torqueLimit: Math.max(0, v) })} />
+          <EntityProps entity={profile} defs={PROFILE_PROPS} up={editProfile} group="Actuator" />
           <div className="in-hint">{count} joint{count === 1 ? '' : 's'} share “{profile.name}”. Editing here updates all of them.</div>
         </>
       ) : (
@@ -450,16 +439,16 @@ function JointTypePanel({ joint, doc, dispatch }: { joint: any; doc: Document; d
   );
 }
 
-/** Numbers of one group of a joint, from the shared property descriptors (core/props). */
-function JointProps({ joint, up, group }: { joint: any; up: (patch: any) => void; group: string }) {
-  const defs = propsFor(JOINT_PROPS, joint).filter((d) => d.group === group);
+/** Numbers of one group of any entity, from its property descriptors (core/props/entityTypes). */
+function EntityProps({ entity, defs: all, up, group }: { entity: any; defs: PropertyDescriptor[]; up: (patch: any) => void; group: string }) {
+  const defs = propsFor(all, entity).filter((d) => d.group === group);
   if (!defs.length) return null;
   const key = (d: PropertyDescriptor) => `${d.path}${d.unit ? ':' + d.unit : ''}`;
   return (
     <PropertyPane
       props={defs.map((d) => ({ key: key(d), label: d.label, unit: d.unit, step: d.step, min: d.min, max: d.max }))}
-      values={Object.fromEntries(defs.map((d) => [key(d), getProp(joint, d) * (d.scale ?? 1)]))}
-      onChange={(k, v) => { const d = defs.find((x) => key(x) === k)!; up(patchFor(joint, d.path, (v as number) / (d.scale ?? 1))); }}
+      values={Object.fromEntries(defs.map((d) => [key(d), getProp(entity, d) * (d.scale ?? 1)]))}
+      onChange={(k, v) => { const d = defs.find((x) => key(x) === k)!; up(patchFor(entity, d.path, (v as number) / (d.scale ?? 1))); }}
     />
   );
 }
@@ -656,7 +645,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
       {hasLimits && (
         <>
           <div className="in-group">LIMITS</div>
-          <JointProps joint={joint} up={up} group="Limits" />
+          <EntityProps entity={joint} defs={JOINT_PROPS} up={up} group="Limits" />
         </>
       )}
 
@@ -673,7 +662,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
               ? 'Under gravity this joint swings freely (like a chain link).'
               : 'Under gravity this joint stays rigid (holds its pose). Motorised joints always drive.'}
           </div>
-          <JointProps joint={joint} up={up} group="Dynamics" />
+          <EntityProps entity={joint} defs={JOINT_PROPS} up={up} group="Dynamics" />
 
           <div className="in-group">MIMIC</div>
           <label className="in-check">
@@ -689,7 +678,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
                   {otherJoints.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
                 </select>
               </label>
-              <JointProps joint={joint} up={up} group="Mimic" />
+              <EntityProps entity={joint} defs={JOINT_PROPS} up={up} group="Mimic" />
             </>
           )}
 

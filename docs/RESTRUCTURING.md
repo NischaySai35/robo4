@@ -14,17 +14,17 @@ physics and robot-model changes. Background documents it builds on:
 
 ---
 
-## Where it stands (31 Oct 2026, branch `restructure`, nothing pushed)
+## Where it stands (31 Oct 2026, branch `restructure`)
 
 | Phase | State |
 |---|---|
 | P0 Safety net, P1 Foundation, P2 Viewport, P3 Frame scheduler, P4 Dockview, P5 One undo | **Done** |
-| P6 Operators and keymap | **Done for shortcuts, palette, help, main menu, Add Module, Home, view buttons, gravity, joint properties.** Timeline and the older MSRR panel done too. Still direct: Planner v2 panel, and hardware on purpose, because a scriptable motor move needs Nischay's approval |
+| P6 Operators and keymap | **Done for shortcuts, palette, help, main menu, Add Module, Home, view buttons, gravity, joint properties.** Timeline, the older MSRR panel and Planner v2 (check, real physics, plan sketch, Manual live robot; `tools/test_planner_ops.py`) done too. Still direct: hardware on purpose, because a scriptable motor move needs Nischay's approval, and a few view-only toggles |
 | P7 Components | **Started:** direction A tokens everywhere, dark by default. Controls not yet moved to shadcn and Tweakpane |
 | P8 Original vs evaluated | **Done for saving and undo:** design and shown pose kept apart, Keep and Back to design. Separate evaluated pose store and notifiers not done |
 | P9 Render engines | Part done: engines are one table, each viewport picks its own (`tools/test_engines.py`). One GPU context for Analysis deferred, reasons in `docs/design/p9-render-engines.md` |
-| P10 Physics interface | **Waiting for §7** |
-| P11 Registries and versioning | **File versioning done.** Entity registry and property descriptors not started |
+| P10 Physics interface | **Started:** plug-in point and rewind cache in GOS, same script runs on MuJoCo and Newton. Checked 31 Oct: the Studio already follows §7 (MuJoCo through the physics service judges robots; Jolt drives only the gravity preview, training and boxes, and makes no stand-or-fall verdict). `sim/` not on the plug-in point yet |
+| P11 Registries and versioning | **File versioning done. Entity registry started:** `core/props/entityTypes.ts` lists bodies, joints, joint types and materials with their editable numbers; one `entity.set` command edits any of them with undo. The Properties panel shows body mass (g), joint-type torque and material Metal/Rough from the same list (`tools/test_body_props.py`). Not yet: components, frames and constraints in the list |
 | GOS G0 Contract | **Done** |
 | GOS G1 Graph core | **Done:** Rust core shared by Python and Studio; MJCF export moved into it |
 | GOS G2 Transport | **Started:** interface, local, Zenoh across processes. Budget checked only for Python to Python |
@@ -32,9 +32,9 @@ physics and robot-model changes. Background documents it builds on:
 | GOS G4 GraphIK | **Stages A and B done:** `robot.ik` holds rings; on 30 goals mink reached 30, Studio IK 28, mink 5x faster (`gos-g0-baseline.md`). GraphIK in the Rust core: 30/30, about 0 mm, 0.6 ms, holds rings, usable from the Studio and Python. Studio drag IK not switched to it yet |
 | GOS G5 Studio as client | **Started:** `gos.studio.StudioLink`, GOS panel, commands by name, live joints. View-only mode: `gos.studio.view()` opens the installed app as just a 3D view and drives it (`tools/test_gos_view.py` on the packaged app) |
 | GOS G6 Real robot | **Started:** `app.attach_robot()`: arm, stop, limits, small steps, one script for sim and real; tested on a pretend board only. Servo directions to confirm on the robot |
-| GOS G7 Packaging | **Started:** the GOS wheel carries the Rust core; a fresh Python installs it with pip and runs a script with no window (`tools/test_clean_install.py`, also in CI). Shipping GOS inside the app installer and bundling physics wait for §7 |
-| GOS G8 ROS 2 bridge | **Started:** ROS 2 Jazzy in `ros2/` (pixi). `gos/ros2_bridge` carries joints both ways; a stock ROS 2 node received the GOS robot and its command reached GOS (`tools/test_ros2_bridge.py`). Services, actions and other message types not bridged yet |
-| GOS G9 Full parity | **Most rows covered:** 22 native, 22 partial, 1 missing (ROS 1 bridge: ROS 1 is end-of-life and the bridge is not available on Windows). Partial rows say exactly what is left |
+| GOS G7 Packaging | **Mostly done:** pip install works on a fresh Python (`tools/test_clean_install.py`). `gos/build_runtime.py` makes a private Python with GOS and the physics service (461 MB), which the installer carries; the installed app starts the service itself; `gos path add` puts `gos` on PATH. `tools/test_runtime.py` passes with no system Python. The built Windows app (920 MB unpacked) starts its own physics service from its install folder in 3 s and stops it when closed. Not yet done: an installer run on a clean machine, and Mac and Linux runs |
+| GOS G8 ROS 2 bridge | **Done:** ROS 2 Jazzy in `ros2/` (pixi). The bridge carries joints both ways, any ROS 2 message type both ways, GOS services to ROS 2 clients, and gos.tf to /tf; a stock ROS 2 program checked all of them (`tools/test_ros2_bridge.py`). Fixed 1 Nov: the bridge had stopped receiving after GOS domains were added (it read raw names); it now uses the same naming layer as gos.App. ROS 2 actions run as GOS actions with feedback, result and cancel |
+| GOS G9 Full parity | **Most rows covered:** 31 native, 13 partial, 0 missing (ROS 1 not wanted: ROS 2 only, Nischay's decision). Partial rows say exactly what is left |
 
 Decided 31 Oct by Nischay: Rust for the core; `C:\TETROBOT\sim` brought into the repo as `sim/`.
 
@@ -126,15 +126,20 @@ Order note: P2/P3 come before Dockview because docking multiple viewports needs 
 
 ## 7. Physics and robot model — to be filled in by Nischay
 
-Current recommendation (for discussion, not decided):
+Earlier recommendation, replaced by the decision below where they differ:
 - Robot physics stays **MuJoCo**: CPU for the live Studio and single runs, **MuJoCo Warp** (later possibly **Newton**) on the GPU for many robots.
 - One robot description: the Studio model exported through its MJCF exporter feeds the simulator (today the Python sim builds its own).
 - Browser: either the Studio stays a viewer of the server physics (as MSRR now) or MuJoCo's WebAssembly build runs in the Studio; Jolt and the unused Rapier dependency retired for robot work.
 - Drake only as an optional specialist (contact check of the connector, trajectory optimisation), via WSL2.
 - The new module (mechanical locks, no electromagnets) needs a new sim model with real collision shapes from the CAD.
 
-Nischay's additions:
-- _(to be added)_
+Decided by Nischay, 31 Oct 2026:
+- MuJoCo stays the working engine. Your own Three.js viewer stays the display; physics and drawing are separate jobs.
+- P10 builds one plug-in point, so the engine can be swapped without rebuilding the app.
+- A short Newton test on the real module (locks, rings, many robots on the 8 GB card, runs of 2 minutes or less) decides. If Newton handles the locks better, switch.
+- Newton test (31 Oct, `tools/bench/newton_vs_mjw.py`, one module, 30 N pull for 0.5 s, lock closed): MuJoCo CPU 0.54 mm, MuJoCo Warp 0.65 to 0.8 mm, Newton 1.7 with its MuJoCo solver 0.54 mm. An open lock comes out in all three. An earlier 940 mm for Newton was a test mistake: the motor target was left at 0, so the lock opened itself. At 512 copies, half of them flying off with the lock open: MuJoCo Warp 20,400 steps/s and 352 MB, Newton 10,700 steps/s and 1,314 MB; both hold at 0.54 mm. Newton ran with a higher contact limit, so that gap is not final. Not tested yet: its tight-fit contact methods, rings, and whole-robot runs.
+- Newton needs its own environment (it pins MuJoCo 3.15, the project uses 3.17) and four import settings: `docs/design/p10-physics-interface.md`.
+- Blender: copy design ideas, not its physics. Movie-quality video later through an export to Blender.
 
 ## 8. Other changes — to be filled in by Nischay
 - _(to be added)_

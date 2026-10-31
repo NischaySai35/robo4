@@ -19,12 +19,14 @@ import { commands } from '@/core/commands/index';
 import { useAnimationStore } from '@/state/animationStore';
 import { useMsrrStore } from '@/state/msrrStore';
 import { keyAll, keyJoints, keyBase, keyConnections, keySpins, togglePlay } from '@/features/ops/animOps';
+import '@/features/ops/plannerOps';
 import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
 import { bodiesOfComponent, jointsOfComponent, uid } from '@/core/model/index';
 import { resetLayout } from '@/features/shell/layouts';
 import { addModule, homePose } from '@/features/ops/moduleOps';
 import { useEditorStore } from '@/state/editorStore';
-import { JOINT_PROPS, checkValue, patchFor } from '@/core/props/props';
+import { checkValue, patchFor } from '@/core/props/props';
+import { findEntity } from '@/core/props/entityTypes';
 
 /** Copy selected bodies to the clipboard. If the selection is exactly every body
  *  of one Component, copy that whole component (with its joints) as a unit. */
@@ -152,15 +154,17 @@ defineOperator({ id: 'pose.apply', label: 'Keep the simulated pose as the design
 defineOperator({ id: 'pose.revert', label: 'Back to the design pose', group: 'Edit', poll: simulated, exec: () => useModelStore.getState().bus.revertToDesign() });
 
 // Scripts and GOS set joint numbers by name and path in shown units, e.g. { joint: 'J_B1_bend', path: 'limit.lower', value: -45 }.
-defineOperator({ id: 'joint.set', label: 'Set a joint property', group: 'Edit', hidden: true, needsProps: true, exec: (p: any) => {
-  const doc = useModelStore.getState().doc;
-  const joint = Object.values<any>(doc.joints).find((j) => j.id === p?.joint || j.name === p?.joint);
-  if (!joint) throw new Error(`No joint "${p?.joint}". Joints: ${Object.values<any>(doc.joints).map((j) => j.name).join(', ')}.`);
-  const r = checkValue(joint, JOINT_PROPS, p.path, Number(p.value));
+// Any kind in core/props/entityTypes.ts the same way: { kind: 'body', name: 'Spine1_B1B2', path: 'inertial.mass', value: 250 }.
+const setEntity = (kind: string, name: string, path: string, value: number) => {
+  const f = findEntity(useModelStore.getState().doc, kind, name);
+  if (!f.ok) throw new Error(f.error);
+  const r = checkValue(f.entity, f.type.props, path, Number(value));
   if (!r.ok) throw new Error(r.error);
-  useModelStore.getState().dispatch(commands.updateJoint(joint.id, patchFor(joint, p.path, r.stored)));
+  useModelStore.getState().dispatch(f.type.update(f.entity.id, patchFor(f.entity, path, r.stored)));
   return r.stored;
-} });
+};
+defineOperator({ id: 'entity.set', label: 'Set a property', group: 'Edit', hidden: true, needsProps: true, exec: (p: any) => setEntity(p?.kind, p?.name ?? p?.id, p?.path, p?.value) });
+defineOperator({ id: 'joint.set', label: 'Set a joint property', group: 'Edit', hidden: true, needsProps: true, exec: (p: any) => setEntity('joint', p?.joint, p?.path, p?.value) });
 
 defineOperator({ id: 'module.add', label: 'Add module', group: 'Build', poll: () => !editing(), exec: () => addModule() });
 defineOperator({ id: 'pose.home', label: 'Home: all joints to rest', group: 'Edit', poll: () => Object.values<any>(useModelStore.getState().doc.joints).some((j) => j.type !== 'fixed'), exec: () => homePose() });

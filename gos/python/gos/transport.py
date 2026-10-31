@@ -49,7 +49,7 @@ class ZenohTransport:
     """Across processes and machines. Localhost-only by default, because this can move real motors."""
     name = 'zenoh'
 
-    def __init__(self, listen=None, connect=None, network=False, user=None, password=None, users_file=None):
+    def __init__(self, listen=None, connect=None, network=False, user=None, password=None, users_file=None, certs=None, cert_name=None):
         try:
             import zenoh
         except ImportError as e:
@@ -65,6 +65,10 @@ class ZenohTransport:
         if user: cfg.insert_json5('transport/auth/usrpwd/user', json.dumps(user))
         if password: cfg.insert_json5('transport/auth/usrpwd/password', json.dumps(password))
         if users_file: cfg.insert_json5('transport/auth/usrpwd/dictionary_file', json.dumps(users_file))
+        # Encryption: certs is a folder from `gos certs new`; endpoints then start with tls/ (see gos/certs.py)
+        if certs:
+            from .certs import zenoh_tls
+            for k, v in zenoh_tls(certs, cert_name or 'gos').items(): cfg.insert_json5(k, json.dumps(v))
         self._z = zenoh.open(cfg)
         self._pubs, self._subs = {}, []
 

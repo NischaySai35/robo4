@@ -103,6 +103,51 @@ def test_ik_reports_both_errors_and_holds_a_ring():
         assert r.goal_error_m is not None and isinstance(r.ok, bool)
 
 
+def test_path_entry_adds_removes_and_keeps_the_rest():
+    from gos.__main__ import path_entry
+    sep, x, y, g = os.pathsep, 'first', 'second', os.path.join('apps', 'gos')
+    start = sep.join([x, y])
+    added = path_entry(start, g, True)
+    assert added == sep.join([x, y, g]) and path_entry(added, g, True) == added, 'adding twice changes nothing'
+    assert path_entry(added, g, False) == start, 'removing restores what was there'
+    assert path_entry('', g, True) == g
+
+
+def test_engine_plug_in_point_and_rewind():
+    from gos import physics
+    with pytest.raises(gos.GosError, match='Engines: mujoco'):
+        with gos.App(engine='nope') as app: app.load_document(CHAIN)
+
+    class Fake(physics.Engine):
+        name, timestep, time = 'fake', 0.01, 0.0
+        def open(self, path): self.q = {'j': 0.0}
+        def step(self): self.time += self.timestep; self.q['j'] += 1
+        def joint_names(self): return list(self.q)
+        def joint_values(self): return dict(self.q)
+        def set_joint(self, name, value):
+            if name not in self.q: raise self._no_joint(name)
+            self.q[name] = value
+        def body_position(self, name): return [self.q['j'], 0, 0]
+        def snapshot(self): return dict(t=self.time, q=dict(self.q))
+        def restore(self, s): self.time, self.q = s['t'], dict(s['q'])
+    physics.register('fake', Fake)
+    with gos.App(engine='fake') as app:
+        app.load_document(CHAIN)
+        assert app.run(steps=20, cache=True).steps == 20 and app.robot.joints()['j'] == 20
+        assert app.seek(0.1).t == pytest.approx(0.1) and app.robot.joints()['j'] == 10
+        with pytest.raises(gos.GosError, match='needs the MuJoCo engine'): app.lock('A', 'B')
+        with pytest.raises(gos.GosError, match='Joints: j'): app.set_joints(x=1)
+        app.set_joints(j=5)
+        with pytest.raises(gos.GosError, match='Nothing cached'): app.seek(0)
+    with gos.App() as app:
+        app.load_document(CHAIN)
+        name = list(app.robot.joints())[0]
+        app.set_joints(**{name: 0.4})
+        app.run(seconds=0.2, cache=True); first = app.robot.joints()[name]
+        app.seek(0.1)
+        app.run(seconds=0.1); assert app.robot.joints()[name] == pytest.approx(first, abs=1e-9), 'running on from a rewind replays the same physics'
+
+
 def test_cli_runs_a_script_with_no_window(tmp_path):
     script = tmp_path / 'demo.py'
     doc = tmp_path / 'robot.json'
@@ -146,6 +191,64 @@ def test_two_processes_exchange_a_topic_over_zenoh(tmp_path):
             app.topic('/robot/ping').publish({'n': 7}); time.sleep(.05)
     out = p.communicate(timeout=20)[0]
     assert 'GOT 7' in out
+
+
+def test_same_code_in_one_program_and_across_programs(tmp_path):
+    from gos.testing import collect, wait_until, GosTimeout
+    pytest.importorskip('zenoh')
+    def part(app):  # a user's part: answers every /in with /out
+        app.topic('/in').subscribe(lambda m: app.topic('/out').publish({'n': m['n'] * 2}))
+    for options in ({'transport': 'local'}, {'transport': 'zenoh', 'listen': ['tcp/127.0.0.1:17493']}):
+        with gos.App(**options) as app:
+            part(app); got = collect(app, '/out')
+            import time; time.sleep(0.3)
+            app.topic('/in').publish({'n': 4})
+            wait_until(lambda: got == [{'n': 8}], f'/out over {options["transport"]}')
+    # and the same part answering another program
+    other = tmp_path / 'other.py'
+    other.write_text(textwrap.dedent('''
+        import time, gos
+        with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17494']) as app:
+            app.topic('/in').subscribe(lambda m: app.topic('/out').publish({'n': m['n'] * 2}))
+            print('READY', flush=True); time.sleep(8)
+    '''))
+    with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17494']) as app:
+        p = subprocess.Popen([sys.executable, str(other)], env=dict(os.environ, PYTHONPATH=PY), stdout=subprocess.PIPE, text=True)
+        try:
+            assert p.stdout.readline().strip() == 'READY'
+            got = collect(app, '/out'); import time; time.sleep(0.5)
+            app.topic('/in').publish({'n': 5})
+            wait_until(lambda: {'n': 10} in got, '/out from the other program')
+        finally:
+            p.kill()
+        with pytest.raises(GosTimeout, match='Waited 0.1 s for nothing'):
+            wait_until(lambda: False, 'nothing', timeout=0.1)
+
+
+def test_message_types_are_checked_and_generated(tmp_path):
+    from gos import interfaces
+    t = interfaces.load()
+    assert {'JointState', 'Header', 'Lock_Request', 'Lock_Response', 'FollowPoses_Goal', 'FollowPoses_Feedback'} <= set(t.types)
+    good = {'header': {'stamp': 1.5, 'frame_id': 'base'}, 'name': ['a'], 'position': [0.1], 'velocity': [0.0], 'effort': [0.0]}
+    assert t.problems('JointState', good) == []
+    bad = dict(good, position=['x'], extra=1); del bad['effort']
+    p = ' '.join(t.problems('JointState', bad))
+    assert 'position[0] must be a number' in p and 'extra is not a field' in p and 'effort is missing' in p
+    assert 'header.frame_id must be text' in ' '.join(t.problems('JointState', dict(good, header={'stamp': 0, 'frame_id': 3})))
+    with gos.App() as app:
+        topic = app.topic('/joint_states', type='JointState')
+        topic.publish(good)
+        with pytest.raises(gos.GosError, match='Not a valid JointState: position'): topic.publish(dict(good, position=None))
+        with pytest.raises(gos.GosError, match='Types: FollowPoses'): app.topic('/x', type='Nope')
+    # a user's ROS-style folder, with a package prefix and a constant
+    (tmp_path / 'Battery.msg').write_text('uint8 FULL=100\nstd_msgs/Header header\nfloat32 volts\nuint8[3] cells\n')
+    t2 = interfaces.load(str(tmp_path))
+    assert t2.problems('Battery', {'header': good['header'], 'volts': 7.4, 'cells': [1, 2]}) == ['cells must have 3 items, not 2.']
+    (tmp_path / 'Broken.msg').write_text('Missing thing\n')
+    with pytest.raises(gos.GosError, match='not loaded'): interfaces.load(str(tmp_path))
+    # the Studio's copy is generated from these files and must be current
+    studio_ts = os.path.join(REPO, 'studio', 'src', 'runtime', 'gosTypes.generated.ts')
+    assert open(studio_ts, encoding='utf-8').read() == t.to_ts(), 'run: python -m gos interfaces ts studio/src/runtime/gosTypes.generated.ts'
 
 
 def test_services_say_what_exists():
@@ -240,6 +343,39 @@ def test_a_service_is_called_from_another_process(tmp_path):
             with pytest.raises(LookupError, match='answered'): app.services.call('/robot/none', {}, timeout=1)
     finally:
         p.kill()
+
+
+def test_tf_over_time_interpolates_streams_and_reports_gaps():
+    from gos import tf
+    from gos.testing import wait_until
+    import math
+    with gos.App() as app:
+        buf = tf.Buffer(app, seconds=1.0)
+        tf.Broadcaster(app, static=True).send('base', 'camera', [0, 0, 0.3], [0, 0, 0, 1])
+        b = tf.Broadcaster(app)
+        s = math.sin(math.pi / 4)
+        b.send('base', 'tip', [0, 0, 0], [0, 0, 0, 1], t=1.0)
+        b.send('base', 'tip', [0.2, 0, 0], [0, 0, s, s], t=2.0)  # moved 20 cm and turned 90 degrees
+        wait_until(lambda: len(buf.edges.get(('base', 'tip'), [])) == 2, 'two samples of the tip')
+        mid = buf.lookup('camera', 'tip', t=1.5)
+        assert mid['p'] == pytest.approx([0.1, 0, -0.3], abs=1e-9), 'halfway, seen from the camera 30 cm up'
+        assert mid['q'] == pytest.approx([0, 0, math.sin(math.pi / 8), math.cos(math.pi / 8)], abs=1e-9), 'halfway through the turn'
+        assert buf.lookup('camera', 'tip')['p'] == pytest.approx([0.2, 0, -0.3]), 'no time = newest'
+        with pytest.raises(gos.GosError, match='known from 1.000 s to 2.000 s'): buf.lookup('camera', 'tip', t=3.0)
+        with pytest.raises(gos.GosError, match='Frames: base, camera, tip'): buf.lookup('camera', 'hand')
+        b.send('base', 'tip', [0.3, 0, 0], [0, 0, 0, 1], t=3.5)
+        wait_until(lambda: buf.edges[('base', 'tip')][0]['t'] > 1.0, 'old samples to expire')
+        # a camera also sees the tip: the two paths disagree by 1 cm, and that is reported
+        tf.Broadcaster(app, static=True).send('camera', 'tip', [0.31, 0, -0.3], [0, 0, 0, 1])
+        wait_until(lambda: ('camera', 'tip') in buf.static, 'the camera edge')
+        assert buf.lookup('base', 'tip', t=3.5)['worst_position_m'] == pytest.approx(0.01, abs=1e-9)
+    with gos.App() as app:  # the robot broadcasts its own bodies; a lookup matches the simulation
+        app.load_document(CHAIN); app.set_joints(AB=0.3, BC=-0.2)
+        buf = tf.Buffer(app); stop = tf.robot_state_publisher(app, rate=100)
+        wait_until(lambda: ('C', 'D') in buf.edges, 'the robot on /tf')
+        stop()
+        got, want = buf.lookup('A', 'D'), app.loop_check('A', 'D')
+        assert got['p'] == pytest.approx(want['p'], abs=1e-9)
 
 
 def test_transform_graph_reports_a_loop_that_does_not_close():
@@ -415,6 +551,13 @@ def test_params_actions_and_cli_across_processes(tmp_path):
         r = cli('param', 'get', 'arm', 'speed'); assert r.stdout.strip() == '20', r.stdout + r.stderr
         r = cli('topic', 'echo', '/arm/state', '--count', '1'); assert '"ok": true' in r.stdout
         r = cli('service', 'call', '/arm/none'); assert r.returncode == 1 and 'gos:' in r.stderr
+        r = cli('topic', 'stats', '/arm/state', '--seconds', '1'); assert 10 < json.loads(r.stdout)['per_second'] < 30, r.stdout + r.stderr
+        r = cli('topic', 'stats', '/arm/none', '--seconds', '0.2'); assert r.returncode == 1 and 'gos topic list' in r.stderr
+        msgs = tmp_path / 'msgs.json'; msgs.write_text('[{"n": 1}, {"n": 2}]')
+        with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17451']) as app:
+            got = []; app.topic('/from/file').subscribe(lambda m: got.append(m['n'])); time.sleep(0.5)
+            r = cli('topic', 'pub', '/from/file', '--file', str(msgs)); assert r.returncode == 0, r.stderr
+            time.sleep(0.3); assert got == [1, 2]
     finally:
         p.kill()
 
@@ -542,6 +685,50 @@ def test_trajectory_controller_follows_poses_and_can_be_cancelled():
         assert h.status == 'aborted' and 'rise' in h.error
 
 
+def test_position_controller_and_joint_state_broadcaster():
+    from gos.control import forward_command_controller, joint_state_broadcaster
+    from gos.testing import collect, wait_until
+    with gos.App() as app:
+        app.load_document(CHAIN)
+        states, diag = collect(app, '/joint_states'), collect(app, '/diagnostics')
+        stop = joint_state_broadcaster(app, rate=100)
+        forward_command_controller(app, ['AB', 'BC'])
+        app.topic('/position_commands').publish({'data': [0.3, -0.1]})
+        wait_until(lambda: app.robot.joints()['AB'] == pytest.approx(0.3), 'AB at 0.3')
+        wait_until(lambda: any(s['position'][s['name'].index('AB')] == pytest.approx(0.3) for s in states), 'a JointState showing AB at 0.3')
+        app.topic('/position_commands').publish({'data': [1.0]})
+        wait_until(lambda: diag and 'Expected' in diag[-1]['message'], 'a diagnostic about the short command')
+        assert app.robot.joints()['AB'] == pytest.approx(0.3), 'a wrong command is not half-applied'
+        stop(); import time; time.sleep(0.05); n = len(states); time.sleep(0.1)
+        assert len(states) == n, 'stop() stops the broadcaster'
+        with pytest.raises(ValueError, match='No joints XY'): forward_command_controller(app, ['XY'])
+
+
+def test_controller_manager_switches_and_refuses_two_on_one_joint():
+    from gos.control import ControllerManager
+    from gos.testing import collect, wait_until
+    with gos.App() as app:
+        app.load_document(CHAIN)
+        cm = ControllerManager(app)
+        cm.add('arm', 'position', ['AB', 'BC']); cm.add('wrist', 'position', ['BC', 'CD']); cm.add('traj', 'trajectory', ['AB', 'BC']); cm.add('states', 'broadcaster')
+        app.topic('/arm/commands').publish({'data': [0.4, 0.1]}); import time; time.sleep(0.1)
+        assert app.robot.joints()['AB'] == pytest.approx(0.0), 'switched off: commands are ignored'
+        cm.switch(on=['arm', 'states'])
+        app.topic('/arm/commands').publish({'data': [0.4, 0.1]})
+        wait_until(lambda: app.robot.joints()['AB'] == pytest.approx(0.4), 'arm to move AB')
+        with pytest.raises(ValueError, match='wrist and arm would both drive BC|arm and wrist would both drive BC'): cm.switch(on=['wrist'])
+        assert [e['name'] for e in cm.list() if e['active']] == ['arm', 'states'], 'a refused switch changes nothing'
+        h = app.actions.send_goal('/traj/follow_joint_trajectory', {'names': ['AB'], 'points': [{'q': [0.0], 't': 0.1}]}).wait(5)
+        assert h.status == 'aborted' and 'switched off' in h.error
+        r = app.services.call('/controller_manager/switch', {'off': ['arm'], 'on': ['traj']})
+        assert {e['name'] for e in r if e['active']} == {'traj', 'states'}
+        h = app.actions.send_goal('/traj/follow_joint_trajectory', {'names': ['AB'], 'points': [{'q': [0.0], 't': 0.1}]}).wait(5)
+        assert h.status == 'succeeded' and app.robot.joints()['AB'] == pytest.approx(0.0)
+        states = collect(app, '/joint_states'); wait_until(lambda: states, 'the broadcaster to publish')
+        with pytest.raises(ValueError, match='No controller nope'): cm.switch(on=['nope'])
+        cm.switch(off=['states'])
+
+
 def test_composition_runs_parts_in_one_program(tmp_path):
     (tmp_path / 'talker.py').write_text("def start(app):\n    app.topic('/chat').publish({'hi': 1})\n")
     (tmp_path / 'listener.py').write_text("got = []\ndef start(app):\n    app.topic('/chat').subscribe(got.append)\n    return got\n")
@@ -565,6 +752,24 @@ def test_password_protected_programs_refuse_strangers(tmp_path):
         with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17454'], user='robot', password='wrong') as stranger:
             time.sleep(0.3)
             with pytest.raises(LookupError): stranger.services.call('/arm/ping', None, timeout=1)
+
+
+def test_encrypted_links_refuse_programs_without_a_certificate(tmp_path):
+    pytest.importorskip('zenoh'); pytest.importorskip('cryptography')
+    import time
+    from gos import certs
+    keys = str(tmp_path / 'keys'); certs.new(keys, ['robot', 'laptop'])
+    strange = str(tmp_path / 'other'); certs.new(strange, ['laptop'])  # signed by a different authority
+    tls = lambda name, folder=keys: dict(transport='zenoh', certs=folder, cert_name=name)
+    with gos.App(listen=['tls/127.0.0.1:17497'], **tls('robot')) as robot:
+        robot.services.advertise('/arm/ping', lambda r: 'pong')
+        with gos.App(connect=['tls/127.0.0.1:17497'], **tls('laptop')) as friend:
+            time.sleep(0.5)
+            assert friend.services.call('/arm/ping', None, timeout=3) == 'pong'
+        with gos.App(connect=['tls/127.0.0.1:17497'], **tls('laptop', strange)) as stranger:
+            time.sleep(0.5)
+            with pytest.raises(LookupError): stranger.services.call('/arm/ping', None, timeout=1)
+    with pytest.raises(gos.GosError, match='gos certs new'): gos.App(transport='zenoh', certs=keys, cert_name='nobody')
 
 
 def test_programs_find_each_other_on_the_network_without_addresses():
@@ -601,3 +806,17 @@ def test_new_package_runs_and_passes_its_own_test(tmp_path):
     assert r.returncode == 1 and 'already exists' in r.stderr
     r = subprocess.run([sys.executable, '-m', 'gos', 'doc', 'gos.App'], env=env, capture_output=True, text=True, timeout=60)
     assert 'attach_robot' in r.stdout and 'lock' in r.stdout
+    r = subprocess.run([sys.executable, '-m', 'gos', 'doc', '--html', str(tmp_path / 'site')], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and 'gos.physics.html' in (tmp_path / 'site' / 'index.html').read_text(), r.stderr
+    assert 'register' in (tmp_path / 'site' / 'gos.physics.html').read_text(errors='replace')
+    # a gos-NAME program on PATH becomes a gos command, as with git
+    bin_dir = tmp_path / 'bin'; bin_dir.mkdir()
+    (bin_dir / 'hello.py').write_text('import sys; print("HELLO", *sys.argv[1:])')
+    if os.name == 'nt': (bin_dir / 'gos-hello.cmd').write_text(f'@"{sys.executable}" "%~dp0hello.py" %*\r\n')
+    else:
+        (bin_dir / 'gos-hello').write_text(f'#!/bin/sh\nexec "{sys.executable}" "$(dirname "$0")/hello.py" "$@"\n'); (bin_dir / 'gos-hello').chmod(0o755)
+    path_env = dict(env, PATH=str(bin_dir) + os.pathsep + os.environ['PATH'])
+    r = subprocess.run([sys.executable, '-m', 'gos', 'hello', 'world'], env=path_env, capture_output=True, text=True, timeout=60)
+    assert 'HELLO world' in r.stdout, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, '-m', 'gos', 'nosuch'], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2 and 'invalid choice' in r.stderr

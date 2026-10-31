@@ -1,0 +1,7 @@
+# Lock or unlock two bodies at their current pose
+string body_a
+string body_b
+bool lock
+---
+bool ok
+string message

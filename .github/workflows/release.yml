@@ -57,6 +57,18 @@ jobs:
         with:
           node-version: '26'
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      # GOS and the physics service ride inside the installer (resources/gos), so a machine with no Python runs them
+      - name: Build GOS and its private Python
+        working-directory: .
+        run: |
+          rustup target add wasm32-unknown-unknown
+          python gos/build.py
+          python gos/build_runtime.py
+
       - name: Install
         run: npm install --no-audit --no-fund
 

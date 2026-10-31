@@ -1,0 +1,174 @@
+{
+ "pages": {
+  "editor": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 1,
+   "log": [
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+   ]
+  },
+  "analysis": {
+   "canvases": 3,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 1,
+   "log": [
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+   ]
+  },
+  "training": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 1,
+   "log": []
+  },
+  "animation": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 1,
+   "log": [
+    "warning: env.wasm.numThreads is set to 16, but this will not work unless you enable crossOriginIsolated mode. See https://web.dev/cross-origin-isolation-guide/ for more info.",
+    "warning: WebAssembly multi-threading is not supported in the current environment. Falling back to single-threading."
+   ]
+  },
+  "esptt": {
+   "canvases": 0,
+   "stats": 0,
+   "fit": 0,
+   "home": 0,
+   "vsepr": 0,
+   "log": [
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+   ]
+  },
+  "motor": {
+   "canvases": 0,
+   "stats": 0,
+   "fit": 0,
+   "home": 0,
+   "vsepr": 0,
+   "log": [
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+   ]
+  },
+  "msrr_robot": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 0,
+   "log": [
+    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
+    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures"
+   ]
+  },
+  "msrr_shapes": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 0,
+   "log": []
+  },
+  "msrr_plan": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 0,
+   "log": []
+  },
+  "msrr_ask": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 0,
+   "log": []
+  },
+  "msrr_run": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 0,
+   "log": []
+  },
+  "msrr_manual": {
+   "canvases": 1,
+   "stats": 1,
+   "fit": 1,
+   "home": 1,
+   "vsepr": 0,
+   "log": [
+    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+   ]
+  }
+ },
+ "failures": [],
+ "startup": [
+  "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+ ],
+ "bodies": 10,
+ "roundtrip": {
+  "before": {
+   "uuid": "1deb14b2-9912-44e8-8e44-18eee4be4270",
+   "pos": [
+    0.1978,
+    0.6751,
+    0.9444
+   ]
+  },
+  "insideMsrr": {
+   "uuid": "856b76cf-2142-401d-9276-0d0dab93ec00",
+   "pos": [
+    1.6364,
+    1.4545,
+    2.1818
+   ]
+  },
+  "after": {
+   "uuid": "1deb14b2-9912-44e8-8e44-18eee4be4270",
+   "pos": [
+    0.1976,
+    0.6751,
+    0.9444
+   ]
+  },
+  "afterFit": {
+   "uuid": "1deb14b2-9912-44e8-8e44-18eee4be4270",
+   "pos": [
+    0.3341,
+    0.6329,
+    0.9613
+   ]
+  },
+  "sameCamera": true,
+  "poseKept": true,
+  "fitStillDrives": true,
+  "undo": {
+   "start": 10,
+   "added": 20,
+   "undone": 10,
+   "redone": 20
+  },
+  "undoWorks": true,
+  "log": [
+   "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
+   "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
+   "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+  ]
+ }
+}

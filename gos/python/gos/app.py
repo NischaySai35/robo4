@@ -166,6 +166,8 @@ class App:
         eq.name, eq.type, eq.objtype, eq.name1, eq.name2 = key, mj.mjtEq.mjEQ_WELD, mj.mjtObj.mjOBJ_BODY, body_a, body_b
         # MuJoCo weld data: anchor (3), relative position (3), relative quaternion (4), torque scale.
         eq.data[:11] = [0, 0, 0, *rel_p, *rel_q, 1.0]
+        # A mechanical lock is hard: MuJoCo's default weld is soft enough to open 2.4 mm under a 1 rad/s shake.
+        eq.solref[:2] = [2 * self.model.opt.timestep, 1.0]
         self._recompile()
         self._locks[key] = (body_a, body_b)
         self.publish_graph('lock')

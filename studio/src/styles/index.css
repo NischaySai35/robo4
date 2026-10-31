@@ -46,19 +46,20 @@
   --overlay-text-dim: #4c648a;
 }
 
+/* Direction A: Blender-like greys and one selection blue (RESTRUCTURING 4.1). */
 [data-theme="dark"] {
-  --bg: #0d111b;
-  --bg-panel: #131927;
-  --bg-card: #1b2030;
-  --bg-card-hover: #262d41;
-  --border: #2c3a52;
-  --border-bright: #3d4f6e;
-  --text: #e8edf6;
-  --text-dim: #969ab0;
+  --bg: #1d1d1d;
+  --bg-panel: #262626;
+  --bg-card: #2b2b2b;
+  --bg-card-hover: #343434;
+  --border: #3a3a3a;
+  --border-bright: #4d4d4d;
+  --text: #cfcfcf;
+  --text-dim: #8a8a8a;
   --text-bright: #ffffff;
 
-  --accent: #4a9eff;
-  --accent-glow: rgba(74, 158, 255, 0.28);
+  --accent: #6a97db;
+  --accent-glow: rgba(106, 151, 219, 0.28);
 
   --accent-yellow: #f0c040;
   --accent-yellow-soft: rgba(240, 192, 64, 0.16);
@@ -69,10 +70,10 @@
   --warn: #f0a23a;
   --danger: #ff5c43;
   --success: #34c47a;
-  --scene-bg: #0d111b;
+  --scene-bg: #2b2b2b;
 
-  --overlay-bg: rgba(20, 26, 40, 0.9);
-  --overlay-border: #2c3a52;
+  --overlay-bg: rgba(38, 38, 38, 0.92);
+  --overlay-border: #3a3a3a;
   --overlay-text: #c9d2e2;
   --overlay-text-bright: #ffffff;
   --overlay-text-dim: #8b93a6;

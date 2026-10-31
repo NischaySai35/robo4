@@ -448,14 +448,14 @@ export class SceneManager {
   applyTheme(theme: any) {
     const dark = theme === 'dark';
     this._theme = theme;
-    this.scene.background = new THREE.Color(dark ? 0x0d111b : 0xf4f2ee);
+    this.scene.background = new THREE.Color(dark ? 0x2b2b2b : 0xf4f2ee);
     if (this.ground) {
-      this.ground.material.color.set(dark ? 0x11161f : 0xd2ccc2);
+      this.ground.material.color.set(dark ? 0x1d1d1d : 0xd2ccc2);
       this.ground.material.opacity = dark ? 0.18 : 0.13;
     }
     if (this.grid) {
-      this.grid.material.uniforms.uColor.value.set(dark ? 0x33405c : 0xa7b9d2);
-      this.grid.material.uniforms.uColorMajor.value.set(dark ? 0x55659a : 0x8499b8);
+      this.grid.material.uniforms.uColor.value.set(dark ? 0x404040 : 0xa7b9d2);
+      this.grid.material.uniforms.uColorMajor.value.set(dark ? 0x5a5a5a : 0x8499b8);
     }
   }
 

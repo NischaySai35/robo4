@@ -10,12 +10,12 @@ interface ThemeState {
 }
 
 const initial: Theme = (() => {
-  try { return localStorage.getItem(KEY) === 'dark' ? 'dark' : 'light'; }
-  catch { return 'light'; }
+  try { return localStorage.getItem(KEY) === 'light' ? 'light' : 'dark'; }
+  catch { return 'dark'; }
 })();
 
 export const useThemeStore = create<ThemeState>((set, get) => ({
-  theme: initial, // 'light' | 'dark' (default light)
+  theme: initial, // 'light' | 'dark' (default dark, direction A)
   setTheme(t) {
     try { localStorage.setItem(KEY, t); } catch { /* ignore */ }
     set({ theme: t });

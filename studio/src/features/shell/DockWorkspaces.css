@@ -3,3 +3,23 @@
 .dock-panel-fill { width: 100%; height: 100%; position: relative; overflow: hidden; display: flex; flex-direction: column; }
 .dock-panel-scroll { overflow: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
 .dock-shared-viewport { width: 100%; height: 100%; }
+
+/* The dock chrome uses the app's tokens, so it follows both themes. */
+.dock-workspace-main .dv-dockview, .dock-workspace-main [class*="dockview-theme"] {
+  --dv-group-view-background-color: var(--bg-panel);
+  --dv-tabs-and-actions-container-background-color: var(--bg);
+  --dv-activegroup-visiblepanel-tab-background-color: var(--bg-panel);
+  --dv-activegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-inactivegroup-visiblepanel-tab-background-color: var(--bg-panel);
+  --dv-inactivegroup-hiddenpanel-tab-background-color: var(--bg);
+  --dv-activegroup-visiblepanel-tab-color: var(--text-bright);
+  --dv-activegroup-hiddenpanel-tab-color: var(--text-dim);
+  --dv-inactivegroup-visiblepanel-tab-color: var(--text);
+  --dv-inactivegroup-hiddenpanel-tab-color: var(--text-dim);
+  --dv-separator-border: var(--border);
+  --dv-paneview-header-border-color: var(--border);
+  --dv-tabs-and-actions-container-height: 24px;
+  --dv-tabs-and-actions-container-font-size: 11px;
+  --dv-drag-over-background-color: var(--accent-glow);
+  --dv-drag-over-border-color: var(--accent);
+}

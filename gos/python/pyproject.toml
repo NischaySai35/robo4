@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# "gos" on PyPI is not checked yet, so nothing is published.
+name = "tetrobot-gos"
+version = "0.1.0"
+description = "GOS: the graph engine under TETROBOT, usable with no window"
+requires-python = ">=3.12"
+dependencies = ["mujoco>=3.17", "numpy"]
+
+[project.optional-dependencies]
+ik = ["mink", "daqp"]
+network = ["eclipse-zenoh"]
+
+[project.scripts]
+gos = "gos.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["gos*"]
+
+[tool.setuptools.package-data]
+gos = ["_native/*"]

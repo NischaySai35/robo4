@@ -1,0 +1,14 @@
+[package]
+name = "gos-core"
+version = "0.1.0"
+edition = "2024"
+description = "GOS graph core: the one implementation of the robot graph and its topology compiler"
+publish = false
+
+[lib]
+name = "gos_core"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }

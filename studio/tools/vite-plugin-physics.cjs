@@ -1,5 +1,5 @@
 /**
- * vite-plugin-physics.cjs — DEV only: start the MuJoCo physics service (C:\TETROBOT\sim\verify_service.py, port 8771)
+ * vite-plugin-physics.cjs — DEV only: start the MuJoCo physics service (sim/verify_service.py, port 8771)
  * together with `npm run dev`, so Shapes / Manual / Real physics work without starting anything by hand.
  *   - if something already listens on 8771, it is left alone (e.g. started by hand)
  *   - crashed? started again after 3 s;  the dev server stops -> the service stops
@@ -11,7 +11,8 @@ const net = require('node:net');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SIM = process.env.TETROBOT_SIM || 'C:\\TETROBOT\\sim';
+const SIM = process.env.TETROBOT_SIM || path.resolve(__dirname, '..', '..', 'sim');
+const DATA = process.env.TETROBOT_DATA || 'C:\\TETROBOT'; // logs stay outside git, see sim/paths.py
 const PORT = 8771;
 
 function listening(port) {

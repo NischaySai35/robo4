@@ -35,7 +35,7 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | A15 | Launch system | missing | | Graph file of nodes, wiring and scene | G3 | `launch_graph_file` |
 | A16 | Namespaces for nodes and topics | missing | | Native | G3 | `namespace_isolation` |
 | A17 | Static remapping of names | missing | | Native | G9 | `remap_names` |
-| A18 | Demos of a complete mobile robot | missing | | TETROBOT demo; a ROS mobile robot through the bridge | G8 | `demo_end_to_end` |
+| A18 | Demos of a complete mobile robot | partial | A stock ROS 2 node reads and commands the GOS robot through the bridge (`tools/test_ros2_bridge.py`). No full mobile demo yet |
 | A19 | Preliminary real-time support | missing | Hard loop on the ESP32 | ESP32 and real-time Linux | G6 | `jitter_measured` |
 | A20 | Bare-metal microcontrollers | partial | ESP32 firmware, no GOS client | GOS client on the ESP32. Needs Nischay's approval for `firmware/`. | G6, G9 | `esp32_client` |
 | A21 | Content-filtering subscriptions | missing | | Native filter | G9 | `content_filter` |
@@ -66,7 +66,7 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | B17 | Sim time | partial | `runtime/clock.ts` | Over transport | G3 | `sim_clock_cross_process` |
 | B18 | `ros2_control` | missing | Direct ESP32 calls | Hardware interface | G6 | `same_script_sim_real` |
 | B19 | MoveIt-style planning | partial | `robotics/msrr2`, `robotics/planning` | GraphIK, collision, planner | G4, G5 | `plan_closed_chain` |
-| B20 | Nav2, perception, community packages | partial | `robotics/nav` | Bridge first | G8 | `stock_node_talks` |
+| B20 | Nav2, perception, community packages | partial | Bridge carries `sensor_msgs/JointState` both ways and mirrors any GOS topic as JSON strings; other message types not yet. |
 | B21 | Fleet, multi-machine | missing | | Network transport | G2, G9 | `two_machines` |
 
 **Count at 31 Oct evening:** see the rows. Native only where a test passes outside the Studio. The goal is no missing rows.

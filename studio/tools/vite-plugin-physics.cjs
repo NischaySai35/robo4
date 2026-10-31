@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const SIM = process.env.TETROBOT_SIM || path.resolve(__dirname, '..', '..', 'sim');
-const DATA = process.env.TETROBOT_DATA || 'C:\\TETROBOT'; // logs stay outside git, see sim/paths.py
+const DATA = process.env.TETROBOT_DATA || path.resolve(__dirname, '..', '..', 'data'); // the project's data/, see sim/paths.py
 const PORT = 8771;
 
 function listening(port) {
@@ -28,6 +28,7 @@ module.exports = function physicsPlugin() {
     if (stopping || await listening(PORT)) return;
     const script = path.join(SIM, 'verify_service.py');
     if (!fs.existsSync(script)) { log(`[physics] ${script} not found - physics features stay off`); return; }
+    fs.mkdirSync(path.join(DATA, 'logs'), { recursive: true });
     const out = fs.openSync(path.join(DATA, 'logs', 'verify_service_console.log'), 'a');
     child = spawn('py', ['-3.12', script], { cwd: SIM, stdio: ['ignore', out, out], windowsHide: true });
     log(`[physics] started the physics service (pid ${child.pid}, port ${PORT})`);

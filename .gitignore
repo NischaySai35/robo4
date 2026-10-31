@@ -117,3 +117,33 @@ esp32/firmware.ino
 
 # Claude Code agent worktrees: never commit (a gitlink here breaks actions/checkout cleanup)
 .claude/worktrees/
+
+# ── Simulation data: only what the software needs goes to git (see data/README.md) ──
+data/**
+!data/README.md
+!data/logs/
+!data/logs/shapes*.json
+!data/logs/grown_shapes.json
+!data/logs/tf_*.json
+!data/logs/transform_run_*.json
+!data/runs/
+!data/runs/dock_v3/
+!data/runs/dock_v3/brain.npz
+!data/logs/bridge_cands.json
+!data/logs/chain_scenes.json
+!data/logs/grow_cands.json
+!data/logs/grown_shapes.json
+!data/logs/judge_scene.json
+!data/logs/reach2.csv
+!data/logs/reach_end.csv
+!data/logs/reach_lying.csv
+!data/logs/shapes.json
+!data/logs/shapes_ok.json
+!data/logs/shapes_v1.json
+!data/logs/target_stiffness.csv
+!data/runs/dock_ikrl/brain.npz
+!data/runs/dock_v3/brain.npz
+!data/runs/dock_ikrl/
+
+# ROS 2 installed by pixi (big, on this computer only); ros2/pixi.toml and pixi.lock say what is installed
+ros2/.pixi/

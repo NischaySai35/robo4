@@ -1,0 +1,88 @@
+{
+ "base": {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 1
+ },
+ "cands": [
+  {
+   "walker": 18,
+   "wyaw": 135,
+   "into": "W1",
+   "srx": 3,
+   "twist": 52,
+   "dist": 0.32
+  },
+  {
+   "walker": 33,
+   "wyaw": 315,
+   "into": "W1",
+   "srx": 0,
+   "twist": 52,
+   "dist": 0.32
+  },
+  {
+   "walker": 12,
+   "wyaw": 225,
+   "into": "W1",
+   "srx": 2,
+   "twist": 58,
+   "dist": 0.41
+  },
+  {
+   "walker": 26,
+   "wyaw": 135,
+   "into": "W2",
+   "srx": 1,
+   "twist": 65,
+   "dist": 0.4
+  },
+  {
+   "walker": 16,
+   "wyaw": 315,
+   "into": "W2",
+   "srx": 2,
+   "twist": 66,
+   "dist": 0.32
+  },
+  {
+   "walker": 10,
+   "wyaw": 225,
+   "into": "W2",
+   "srx": 2,
+   "twist": 67,
+   "dist": 0.3
+  },
+  {
+   "walker": 31,
+   "wyaw": 135,
+   "into": "W1",
+   "srx": 0,
+   "twist": 67,
+   "dist": 0.51
+  },
+  {
+   "walker": 19,
+   "wyaw": 315,
+   "into": "R",
+   "srx": 0,
+   "twist": 68,
+   "dist": 0.28
+  }
+ ]
+}

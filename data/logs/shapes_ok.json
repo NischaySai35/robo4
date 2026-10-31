@@ -1,0 +1,34 @@
+[
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90,
+  "index": 60,
+  "order": [
+   "W3",
+   "W2",
+   "W1"
+  ]
+ }
+]

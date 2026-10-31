@@ -1,0 +1,15 @@
+[workspace]
+channels = ["robostack-jazzy", "conda-forge"]
+name = "ros2"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+ros-jazzy-desktop = ">=0.11.0,<0.12"
+ros-jazzy-rmw-zenoh-cpp = ">=0.2.11,<0.3"
+python = "3.12.*"
+
+[pypi-dependencies]
+eclipse-zenoh = ">=1.10.2, <2"

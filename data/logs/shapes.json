@@ -1,0 +1,4298 @@
+[
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 19,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 22,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 4,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 4,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 3,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 21,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 24,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 24,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 13,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 13,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 34,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 31,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 31,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 16,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 31,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 16,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 15,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 15,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 33,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 33,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 18,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 2
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 29,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 5
+   }
+  ],
+  "worst_twist": 5
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 26,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 5
+   }
+  ],
+  "worst_twist": 5
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 31,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 11,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 5
+   }
+  ],
+  "worst_twist": 5
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 8,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 5
+   }
+  ],
+  "worst_twist": 5
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 20,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 59
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 9,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 59
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 28,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 59
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 17,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 59
+ },
+ {
+  "kind": "star2",
+  "root": 10,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 20,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 1
+   },
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 14,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 28,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 1
+   },
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 10,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 16,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 23,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 21,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 14,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 22,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 2
+   },
+   {
+    "walker": 27,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 23,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 9,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 1
+   },
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 27,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 17,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 1
+   },
+   {
+    "walker": 31,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 73
+ },
+ {
+  "kind": "star2",
+  "root": 4,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 4,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 18,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 4,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 12,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 4,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 17,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 5,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 9,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 7,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 20,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 10,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 14,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 10,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 23,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 13,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 3,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 13,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 13,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 2,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 13,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 9,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 14,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 10,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 14,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 27,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 23,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 10,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star2",
+  "root": 23,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 27,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 86
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 2,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 7,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 6,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 5,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 12,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 31,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 31,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 25,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 32,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 36,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 30,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 35,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 90
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 91
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 6,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 91
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 31,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 91
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 36,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 91
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 1,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 1,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 2,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 22,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 7,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 6,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 6,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 5,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 21,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 12,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 31,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 31,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 31,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 25,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 21,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 16,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 32,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 36,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 36,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 36,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 30,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 22,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 15,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 35,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 106
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 1,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 1,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 1,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 2,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 7,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 2,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 15,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 26,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 22,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 7,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 6,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 6,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 6,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 6,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 1
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 6,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 91
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 5,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 8,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 12,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 5,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 59
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star3",
+  "root": 16,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 21,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 12,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 73
+   }
+  ],
+  "worst_twist": 116
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 35,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 35,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 35,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 45,
+  "docks": [
+   {
+    "walker": 33,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 7,
+    "wyaw": 135,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 35,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 3,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 19,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 19,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 12,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 3,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 12,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 19,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 19,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 11,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 19,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 12,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 135,
+  "docks": [
+   {
+    "walker": 24,
+    "wyaw": 45,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 32,
+    "wyaw": 225,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 12,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 19,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 2,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 34,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 2,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 34,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 34,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 4,
+    "wyaw": 135,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 2,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 34,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 2,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 34,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 45,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 34,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 19,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 30,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 8,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 25,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 25,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 13,
+    "wyaw": 225,
+    "srx": 0,
+    "twist": 106
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 25,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 25,
+    "wyaw": 315,
+    "srx": 2,
+    "twist": 138
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 135,
+    "srx": 2,
+    "twist": 90
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 18,
+    "wyaw": 45,
+    "srx": 3,
+    "twist": 136
+   }
+  ],
+  "worst_twist": 147
+ },
+ {
+  "kind": "star4",
+  "root": 0,
+  "ryaw": 315,
+  "docks": [
+   {
+    "walker": 34,
+    "wyaw": 315,
+    "srx": 0,
+    "twist": 86
+   },
+   {
+    "walker": 5,
+    "wyaw": 45,
+    "srx": 1,
+    "twist": 147
+   },
+   {
+    "walker": 26,
+    "wyaw": 225,
+    "srx": 2,
+    "twist": 116
+   },
+   {
+    "walker": 18,
+    "wyaw": 135,
+    "srx": 3,
+    "twist": 99
+   }
+  ],
+  "worst_twist": 147
+ }
+]

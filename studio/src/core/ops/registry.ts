@@ -12,6 +12,8 @@ export interface Operator {
   exec: (props?: any) => unknown;
   /** Opens a file dialog or similar: skipped by the run-every-operator test. */
   interactive?: boolean;
+  /** Needs arguments (from a script or a panel), so it can't run bare: also skipped by that test. */
+  needsProps?: boolean;
   /** Not listed in the palette: for keys that only make sense as keys. */
   hidden?: boolean;
 }

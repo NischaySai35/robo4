@@ -64,6 +64,9 @@ jobs:
       - name: Python packages
         run: pip install mujoco numpy pytest mink daqp eclipse-zenoh websockets mcap
 
+      - name: Clean install (pip install, script with no window)
+        run: python tools/test_clean_install.py
+
       - name: GOS tests
         run: python -m pytest gos/python/tests -q
         env:

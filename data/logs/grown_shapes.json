@@ -1,0 +1,158 @@
+[
+ {
+  "name": "4 modules (grown: 4th into a walker spine)",
+  "shape": {
+   "kind": "star2",
+   "root": 15,
+   "ryaw": 225,
+   "docks": [
+    {
+     "walker": 29,
+     "wyaw": 315,
+     "srx": 1,
+     "twist": 1
+    },
+    {
+     "walker": 8,
+     "wyaw": 135,
+     "srx": 2,
+     "twist": 1
+    }
+   ],
+   "worst_twist": 1,
+   "extra": [
+    {
+     "walker": 18,
+     "wyaw": 135,
+     "into": "W1",
+     "srx": 3,
+     "twist": 52,
+     "dist": 0.32
+    }
+   ]
+  },
+  "measured": "whole shape 2/2 random robots",
+  "tags": {
+   "height_mm": 725,
+   "footprint_cm2": 800,
+   "span_mm": 566,
+   "modules": 4,
+   "locked": 3,
+   "of": 3,
+   "drift_mm": 0.6,
+   "measuredBy": "sim"
+  }
+ },
+ {
+  "name": "5 modules (grown)",
+  "shape": {
+   "kind": "star2",
+   "root": 15,
+   "ryaw": 225,
+   "docks": [
+    {
+     "walker": 29,
+     "wyaw": 315,
+     "srx": 1,
+     "twist": 1
+    },
+    {
+     "walker": 8,
+     "wyaw": 135,
+     "srx": 2,
+     "twist": 1
+    }
+   ],
+   "worst_twist": 1,
+   "extra": [
+    {
+     "walker": 18,
+     "wyaw": 135,
+     "into": "W1",
+     "srx": 3,
+     "twist": 52,
+     "dist": 0.32
+    },
+    {
+     "walker": 26,
+     "wyaw": 135,
+     "into": "W2",
+     "srx": 1,
+     "twist": 65,
+     "dist": 0.4
+    }
+   ]
+  },
+  "measured": "whole shape 2/4, docks 14/16",
+  "tags": {
+   "height_mm": 725,
+   "footprint_cm2": 1600,
+   "span_mm": 583,
+   "modules": 5,
+   "locked": 3,
+   "of": 4,
+   "drift_mm": 0.0,
+   "measuredBy": "sim"
+  }
+ },
+ {
+  "name": "6 modules (grown)",
+  "shape": {
+   "kind": "star2",
+   "root": 15,
+   "ryaw": 225,
+   "docks": [
+    {
+     "walker": 29,
+     "wyaw": 315,
+     "srx": 1,
+     "twist": 1
+    },
+    {
+     "walker": 8,
+     "wyaw": 135,
+     "srx": 2,
+     "twist": 1
+    }
+   ],
+   "worst_twist": 1,
+   "extra": [
+    {
+     "walker": 18,
+     "wyaw": 135,
+     "into": "W1",
+     "srx": 3,
+     "twist": 52,
+     "dist": 0.32
+    },
+    {
+     "walker": 26,
+     "wyaw": 135,
+     "into": "W2",
+     "srx": 1,
+     "twist": 65,
+     "dist": 0.4
+    },
+    {
+     "walker": 31,
+     "wyaw": 135,
+     "into": "W1",
+     "srx": 0,
+     "twist": 67,
+     "dist": 0.51
+    }
+   ]
+  },
+  "measured": "whole shape 3/4, docks 19/20, held (0.2-0.3 mm)",
+  "tags": {
+   "height_mm": 725,
+   "footprint_cm2": 2000,
+   "span_mm": 721,
+   "modules": 6,
+   "locked": 5,
+   "of": 5,
+   "drift_mm": 0.2,
+   "measuredBy": "sim"
+  }
+ }
+]

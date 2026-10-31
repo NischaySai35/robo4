@@ -14,7 +14,7 @@ RUN_ALL = """async () => {
   const { usePageStore } = await import('/src/state/pageStore.ts');
   const ops = window.tetrobotOps; const out = { run: [], blocked: [], failed: [] };
   for (const o of ops.list()) {
-    if (o.interactive || o.id.startsWith('ui.')) continue;
+    if (o.interactive || o.needsProps || o.id.startsWith('ui.')) continue;
     if (!ops.canRun(o.id)) { out.blocked.push(o.id); continue; }
     const r = ops.run(o.id); (r.ok ? out.run : out.failed).push(r.ok ? o.id : o.id + ': ' + r.error);
     if (o.id.startsWith('axis.')) ops.run('modal.cancel');

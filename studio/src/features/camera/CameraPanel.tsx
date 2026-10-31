@@ -16,6 +16,7 @@ import { useEffect, useState } from 'react';
 import { bridge } from '@/bridge/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
 import NumberField from '@/features/ui/NumberField';
+import PropertyPane, { type PropDef } from '@/features/ui/PropertyPane';
 import { scheduleFrame } from '@/runtime/frameScheduler';
 
 type State = {
@@ -29,28 +30,16 @@ const DEFAULTS: State = {
   minDistance: 0.1, maxDistance: 25, distance: 0,
 };
 
-/** A label + numeric input + range slider, all driven by one number. */
-function Field({ label, value, min, max, step, unit, onChange }: {
-  label: string; value: number; min: number; max: number; step: number;
-  unit?: string; onChange: (v: number) => void;
-}) {
-  return (
-    <div className="cam-row">
-      <div className="cam-row-head">
-        <span>{label}</span>
-        <span className="cam-row-val">
-          <NumberField value={value} min={min} max={max} step={step} onCommit={onChange} />
-          {unit && <em>{unit}</em>}
-        </span>
-      </div>
-      <input
-        type="range" min={min} max={max} step={step}
-        value={Math.min(max, Math.max(min, value || 0))}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-      />
-    </div>
-  );
-}
+// The lens and zoom settings, shown by the shared PropertyPane.
+const LENS: PropDef[] = [
+  { key: 'focalLength', label: 'Focal length', min: 8, max: 200, step: 1, unit: 'mm', folder: 'Lens' },
+  { key: 'minDistance', label: 'Min distance', min: 0.001, max: 20, step: 0.001, unit: 'm', folder: 'Zoom' },
+  { key: 'maxDistance', label: 'Max distance', min: 5, max: 200, step: 1, unit: 'm', folder: 'Zoom' },
+  { key: 'fov', label: 'Field of view', min: 10, max: 120, step: 1, unit: '°', folder: 'Advanced', collapsed: true },
+  { key: 'distance', label: 'Distance', min: 0.001, max: 200, step: 0.1, unit: 'm', folder: 'Advanced', collapsed: true },
+  { key: 'near', label: 'Near clip', min: 0.01, max: 5, step: 0.01, unit: 'm', folder: 'Advanced', collapsed: true },
+  { key: 'far', label: 'Far clip', min: 10, max: 500, step: 1, unit: 'm', folder: 'Advanced', collapsed: true },
+];
 
 const dataURLtoBlob = (url: string) => {
   const [head, body] = url.split(',');
@@ -79,7 +68,6 @@ const CAM_ENGINE_LABELS: Record<CamEngine, string> = {
 
 export default function CameraPanel() {
   const [s, setS] = useState<State>(DEFAULTS);
-  const [advanced, setAdvanced] = useState(false);
 
   const [outputName, setOutputName] = useState('tetrobot');
   const [mediaType,  setMediaType]  = useState<'image' | 'video'>('image');
@@ -167,31 +155,7 @@ export default function CameraPanel() {
 
   return (
     <div className="cam-panel">
-      <div className="cam-section">LENS</div>
-      <Field label="Focal length" value={s.focalLength} min={8} max={200} step={1}
-        unit="mm" onChange={(v) => apply({ focalLength: v })} />
-
-      <div className="cam-section">ZOOM</div>
-      <Field label="Min distance" value={s.minDistance} min={0.001} max={20} step={0.001}
-        unit="m" onChange={(v) => apply({ minDistance: v })} />
-      <Field label="Max distance" value={s.maxDistance} min={5} max={200} step={1}
-        unit="m" onChange={(v) => apply({ maxDistance: v })} />
-
-      <button className="cam-disclosure" onClick={() => setAdvanced((a) => !a)}>
-        <span className={`cam-caret ${advanced ? 'open' : ''}`}>▸</span> Advanced
-      </button>
-      {advanced && (
-        <div className="cam-advanced">
-          <Field label="Field of view" value={s.fov} min={10} max={120} step={1}
-            unit="°" onChange={(v) => apply({ fov: v })} />
-          <Field label="Distance" value={s.distance} min={s.minDistance} max={s.maxDistance} step={0.1}
-            unit="m" onChange={(v) => apply({ distance: v })} />
-          <Field label="Near clip" value={s.near} min={0.01} max={5} step={0.01}
-            unit="m" onChange={(v) => apply({ near: v })} />
-          <Field label="Far clip" value={s.far} min={10} max={500} step={1}
-            unit="m" onChange={(v) => apply({ far: v })} />
-        </div>
-      )}
+      <PropertyPane props={LENS} values={s} onChange={(k, v) => apply({ [k]: v } as Partial<State>)} />
 
       <div className="cam-actions">
         <button onClick={() => bridge.fitCamera?.()}>Fit to model</button>

@@ -73,6 +73,7 @@ class App:
     def __exit__(self, *_): self.close()
 
     def close(self):
+        if getattr(self, 'real', None) is not None and self.real.armed: self.real.stop()
         for r in self._recorders: r.close()
         self._recorders = []
         self.bus.close()
@@ -227,6 +228,32 @@ class App:
         return float(abs(d.efc_pos[:d.nefc][rows]).max()) if rows.any() else 0.0
 
     def topic(self, name): return _Topic(self.bus, name)
+
+    # ── the same script for simulation and the real robot ───────────────────────
+    def attach_robot(self, url='http://mod1.local', **options):
+        """Connect the real module board. Joint names and limits come from the loaded robot, so sim and real match."""
+        self._need_robot()
+        from .hardware import Esp32Robot
+        mj = _physics()
+        m = self.model
+        names = [mj.mj_id2name(m, mj.mjtObj.mjOBJ_JOINT, i) for i in range(m.njnt)]
+        limits = {n: (float(m.jnt_range[i][0]), float(m.jnt_range[i][1])) for i, n in enumerate(names) if m.jnt_limited[i]}
+        self.real = Esp32Robot(url, joints=names, limits=limits, **options)
+        return self.real
+
+    def move(self, **values):
+        """Pose the robot: always in the simulation, and on the real robot too when one is attached and armed."""
+        self.set_joints(**values)
+        real = getattr(self, 'real', None)
+        if real is None: return Result(True, 'Moved in simulation.')
+        if not real.armed: return Result(True, 'Moved in simulation only: the real robot is attached but not armed.')
+        r = real.move(values)
+        return Result(r.ok, f'Simulation and real robot: {r.message}', r.data)
+
+    def stop(self):
+        """Stop everything now. Safe to call any time."""
+        real = getattr(self, 'real', None)
+        return real.stop() if real else Result(True, 'No real robot attached; nothing to stop.')
 
     def loop_check(self, frm, to, measured=()):
         """Transform graph of the robot as simulated now, plus any measured links (camera, touch) as

@@ -1,12 +1,12 @@
-"""Where the sim finds things. Code lives in the repo; big generated data (logs, lessons, runs) stays outside git.
+"""Where the sim finds things. Everything lives in this project: code here, data in ../data.
 
-tpath('sim/x') and tpath('deploy/x') are inside this folder. Anything else is under TETROBOT_DATA,
-which defaults to C:\\TETROBOT, so existing logs and trained brains keep working on this PC.
+tpath('sim/x') and tpath('deploy/x') are inside this folder. Anything else is under the project's data/
+folder (TETROBOT_DATA can point elsewhere). What the software needs there is in git; new logs stay local.
 """
 import os
 
 SIM = os.path.dirname(os.path.abspath(__file__))
-DATA = os.environ.get('TETROBOT_DATA', r'C:\TETROBOT')
+DATA = os.environ.get('TETROBOT_DATA', os.path.join(os.path.dirname(SIM), 'data'))
 # Byte-identical to the copy the XML scenes were built from; assets/tetrobot-module/meshes has X and Y swapped.
 MESHES = os.path.join(os.path.dirname(SIM), 'brain', 'meshes')
 

@@ -1,0 +1,22 @@
+/* Tweakpane on the app's tokens, so it follows the theme like every other control. */
+.property-pane { margin: 4px 0 8px; }
+.property-pane .tp-rotv {
+  --tp-base-background-color: var(--bg-panel);
+  --tp-base-shadow-color: transparent;
+  --tp-button-background-color: var(--bg-card);
+  --tp-button-background-color-hover: var(--bg-card-hover);
+  --tp-button-foreground-color: var(--text);
+  --tp-container-background-color: var(--bg-card);
+  --tp-container-background-color-hover: var(--bg-card-hover);
+  --tp-container-foreground-color: var(--text);
+  --tp-groove-foreground-color: var(--border);
+  --tp-input-background-color: var(--bg-card);
+  --tp-input-background-color-hover: var(--bg-card-hover);
+  --tp-input-background-color-focus: var(--bg-card-hover);
+  --tp-input-foreground-color: var(--text-bright);
+  --tp-label-foreground-color: var(--text-dim);
+  --tp-monitor-background-color: var(--bg-card);
+  --tp-monitor-foreground-color: var(--text);
+  --tp-base-font-family: var(--font-ui);
+  font-size: 11px;
+}

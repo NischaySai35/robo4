@@ -270,3 +270,74 @@ def test_rust_graph_ik_holds_a_ring_and_reaches_on_the_real_module():
     assert r['reached'] and r['goal_error_m'] < 1e-3, r['message']
     far = gos.solve_ik(doc, tip, [5, 5, 5], iterations=40)
     assert not far['reached'] and 'reach' in far['message']
+
+
+
+class FakeBoard:
+    """Answers like firmware/esp32_multi's web API, records every command, moves nothing."""
+    def __init__(self, n=9):
+        import http.server, threading
+        self.angles = {i + 1: 180.0 for i in range(n)}
+        self.homes = {i + 1: 180.0 + i for i in range(n)}
+        self.angles.update(self.homes)
+        self.calls = []
+        board = self
+        class H(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def do_GET(self):
+                from urllib.parse import urlparse, parse_qs
+                u = urlparse(self.path); q = {k: v[0] for k, v in parse_qs(u.query).items()}
+                board.calls.append((u.path, q))
+                if u.path == '/api/telemetry':
+                    body = {'servos': [{'id': i, 'currentAngle': board.angles[i], 'home': board.homes[i]} for i in board.angles]}
+                else:
+                    if u.path == '/api/batch':
+                        for k, v in q.items():
+                            if k.isdigit(): board.angles[int(k)] = float(v)
+                    body = {'ok': True}
+                data = json.dumps(body).encode()
+                self.send_response(200); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+        self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def batches(self): return [q for p, q in self.calls if p == '/api/batch']
+
+
+def test_real_robot_is_safe_by_default_and_follows_the_same_script():
+    import math
+    board = FakeBoard()
+    with open(MODULE, encoding='utf-8') as f: raw = json.load(f)
+    with gos.App() as app:
+        app.load_document(raw.get('model', raw))
+        robot = app.attach_robot(board.url)
+        names = robot.joints
+        assert len(names) == 9
+        r = app.move(**{names[2]: 0.2})
+        assert r.ok and 'not armed' in r.message and not board.batches(), 'nothing may move before arm()'
+        assert not robot.move({names[2]: 0.2}).ok
+        assert robot.arm().ok
+        r = app.move(**{names[2]: 0.2})
+        assert r.ok, r.message
+        sent = board.batches()[-1]
+        assert float(sent['3']) == pytest.approx(board.homes[3] + math.degrees(0.2), abs=0.01), 'servo 3 = third joint, from its home'
+        assert app.robot.joints()[names[2]] == pytest.approx(0.2), 'the simulation follows the same command'
+        n = len(board.batches())
+        r = robot.move({names[2]: 1.2})
+        assert len(board.batches()) - n == r.steps > 1, 'a big jump goes in small steps'
+        r = robot.move({names[2]: 99.0})
+        assert names[2] in r.data['clamped'], 'commands are clamped to the joint limits'
+        read = robot.read()
+        assert read[names[2]] == pytest.approx(app.model.jnt_range[2][1], abs=1e-3)
+        assert robot.move({'nope': 1}).message.startswith('Unknown joints')
+        assert app.stop().ok and not robot.armed
+        assert board.calls[-1] == ('/api/command', {'servo': 'all', 'cmd': 'estop'})
+        assert not robot.move({names[2]: 0}).ok, 'stop disarms'
+
+
+def test_an_unreachable_robot_says_what_to_check():
+    from gos.hardware import Esp32Robot
+    r = Esp32Robot('http://127.0.0.1:9', joints=['a'], timeout=0.2)
+    with pytest.raises(gos.GosError, match='powered'): r.arm()
+    s = r.stop()
+    assert not s.ok and 'Cut the power' in s.message

@@ -31,9 +31,10 @@ physics and robot-model changes. Background documents it builds on:
 | GOS G3 Basics | **Started:** `gos.App`, topics, locks, services, parameters, lifecycle, MCAP record and play, `gos run`, `graph`, `sim`, `topic echo`. Services work across processes; parameters and actions in one process. Transform graph not done |
 | GOS G4 GraphIK | **Stages A and B done:** `robot.ik` holds rings; on 30 goals mink reached 30, Studio IK 28, mink 5x faster (`gos-g0-baseline.md`). GraphIK in the Rust core: 30/30, about 0 mm, 0.6 ms, holds rings, usable from the Studio and Python. Studio drag IK not switched to it yet |
 | GOS G5 Studio as client | **Started:** `gos.studio.StudioLink`, GOS panel, commands by name, live joints. View-only mode: `gos.studio.view()` opens the installed app as just a 3D view and drives it (`tools/test_gos_view.py` on the packaged app) |
-| GOS G6 Real robot | Not started; needs the robot and your approval to move motors |
-| GOS G7 Packaging | Not started; bundling physics waits for §7 |
-| GOS G8 ROS 2 bridge, G9 Full parity | Not started; G8 needs a ROS 2 install |
+| GOS G6 Real robot | **Started:** `app.attach_robot()`: arm, stop, limits, small steps, one script for sim and real; tested on a pretend board only. Servo directions to confirm on the robot |
+| GOS G7 Packaging | **Started:** the GOS wheel carries the Rust core; a fresh Python installs it with pip and runs a script with no window (`tools/test_clean_install.py`, also in CI). Shipping GOS inside the app installer and bundling physics wait for §7 |
+| GOS G8 ROS 2 bridge | **Started:** ROS 2 Jazzy in `ros2/` (pixi). `gos/ros2_bridge` carries joints both ways; a stock ROS 2 node received the GOS robot and its command reached GOS (`tools/test_ros2_bridge.py`). Services, actions and other message types not bridged yet |
+| GOS G9 Full parity | Not started |
 
 Decided 31 Oct by Nischay: Rust for the core; `C:\TETROBOT\sim` brought into the repo as `sim/`.
 

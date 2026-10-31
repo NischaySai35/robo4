@@ -10,6 +10,8 @@ import './Inspector.css';
 import type { Document, Connector } from '@/core/model/index';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
+import PropertyPane from '@/features/ui/PropertyPane';
+import { JOINT_PROPS, propsFor, getProp, patchFor, type PropertyDescriptor } from '@/core/props/props';
 import { commands } from '@/core/commands/index';
 import { JointType, GeometryType, makeMaterial, makeJointProfile, getJointActuator, bodiesOfComponent, bodyConnectors, newConnector, jointsOfComponent } from '@/core/model/index';
 import { MOTOR_DB, MOTOR_IDS } from '@/kinematics/motorDatabase';
@@ -448,6 +450,20 @@ function JointTypePanel({ joint, doc, dispatch }: { joint: any; doc: Document; d
   );
 }
 
+/** Numbers of one group of a joint, from the shared property descriptors (core/props). */
+function JointProps({ joint, up, group }: { joint: any; up: (patch: any) => void; group: string }) {
+  const defs = propsFor(JOINT_PROPS, joint).filter((d) => d.group === group);
+  if (!defs.length) return null;
+  const key = (d: PropertyDescriptor) => `${d.path}${d.unit ? ':' + d.unit : ''}`;
+  return (
+    <PropertyPane
+      props={defs.map((d) => ({ key: key(d), label: d.label, unit: d.unit, step: d.step, min: d.min, max: d.max }))}
+      values={Object.fromEntries(defs.map((d) => [key(d), getProp(joint, d) * (d.scale ?? 1)]))}
+      onChange={(k, v) => { const d = defs.find((x) => key(x) === k)!; up(patchFor(joint, d.path, (v as number) / (d.scale ?? 1))); }}
+    />
+  );
+}
+
 function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; dispatch: any }) {
   const [pickingPivot, setPickingPivot] = useState(false);
   const id = joint.id;
@@ -639,26 +655,8 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
 
       {hasLimits && (
         <>
-          <div className="in-group">LIMITS {joint.type === 'prismatic' ? '(mm)' : '(°)'}</div>
-          <div className="in-row2">
-            {joint.type === 'prismatic' ? (
-              <>
-                <Num label="Lower (mm)" value={lim.lower} onChange={(v: any) => up({ limit: { ...lim, lower: v } })} scale={1000} step={1} />
-                <Num label="Upper (mm)" value={lim.upper} onChange={(v: any) => up({ limit: { ...lim, upper: v } })} scale={1000} step={1} />
-              </>
-            ) : (
-              <>
-                <Num label="Lower°" value={rDeg(lim.lower)} step={5}
-                  onChange={(v: any) => up({ limit: { ...lim, lower: v * DEG2RAD } })} />
-                <Num label="Upper°" value={rDeg(lim.upper)} step={5}
-                  onChange={(v: any) => up({ limit: { ...lim, upper: v * DEG2RAD } })} />
-              </>
-            )}
-          </div>
-          <div className="in-row2">
-            <Num label="Effort (N·m)" value={lim.effort} onChange={(v: any) => up({ limit: { ...lim, effort: v } })} />
-            <Num label="Velocity" value={lim.velocity} onChange={(v: any) => up({ limit: { ...lim, velocity: v } })} />
-          </div>
+          <div className="in-group">LIMITS</div>
+          <JointProps joint={joint} up={up} group="Limits" />
         </>
       )}
 
@@ -675,10 +673,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
               ? 'Under gravity this joint swings freely (like a chain link).'
               : 'Under gravity this joint stays rigid (holds its pose). Motorised joints always drive.'}
           </div>
-          <div className="in-row2">
-            <Num label="Damping" value={dyn.damping} onChange={(v: any) => up({ dynamics: { ...dyn, damping: v } })} step={0.01} />
-            <Num label="Friction" value={dyn.friction} onChange={(v: any) => up({ dynamics: { ...dyn, friction: v } })} step={0.01} />
-          </div>
+          <JointProps joint={joint} up={up} group="Dynamics" />
 
           <div className="in-group">MIMIC</div>
           <label className="in-check">
@@ -694,10 +689,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
                   {otherJoints.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
                 </select>
               </label>
-              <div className="in-row2">
-                <Num label="Multiplier" value={mimic.multiplier} onChange={(v: any) => up({ mimic: { ...mimic, multiplier: v } })} step={0.1} />
-                <Num label="Offset" value={mimic.offset} onChange={(v: any) => up({ mimic: { ...mimic, offset: v } })} step={0.1} />
-              </div>
+              <JointProps joint={joint} up={up} group="Mimic" />
             </>
           )}
 

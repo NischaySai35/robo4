@@ -20,6 +20,7 @@ import { commands } from '@/core/commands/index';
 import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
 import { bodiesOfComponent, jointsOfComponent, uid } from '@/core/model/index';
 import { resetLayout } from '@/features/shell/layouts';
+import { JOINT_PROPS, checkValue, patchFor } from '@/core/props/props';
 
 /** Copy selected bodies to the clipboard. If the selection is exactly every body
  *  of one Component, copy that whole component (with its joints) as a unit. */
@@ -145,6 +146,17 @@ defineOperator({ id: 'file.saveAs', label: 'Save project as', group: 'File', int
 const simulated = () => useModelStore.getState().showingSimulation;
 defineOperator({ id: 'pose.apply', label: 'Keep the simulated pose as the design', group: 'Edit', poll: simulated, exec: () => useModelStore.getState().bus.applyShownPose() });
 defineOperator({ id: 'pose.revert', label: 'Back to the design pose', group: 'Edit', poll: simulated, exec: () => useModelStore.getState().bus.revertToDesign() });
+
+// Scripts and GOS set joint numbers by name and path in shown units, e.g. { joint: 'J_B1_bend', path: 'limit.lower', value: -45 }.
+defineOperator({ id: 'joint.set', label: 'Set a joint property', group: 'Edit', hidden: true, needsProps: true, exec: (p: any) => {
+  const doc = useModelStore.getState().doc;
+  const joint = Object.values<any>(doc.joints).find((j) => j.id === p?.joint || j.name === p?.joint);
+  if (!joint) throw new Error(`No joint "${p?.joint}". Joints: ${Object.values<any>(doc.joints).map((j) => j.name).join(', ')}.`);
+  const r = checkValue(joint, JOINT_PROPS, p.path, Number(p.value));
+  if (!r.ok) throw new Error(r.error);
+  useModelStore.getState().dispatch(commands.updateJoint(joint.id, patchFor(joint, p.path, r.stored)));
+  return r.stored;
+} });
 
 defineOperator({ id: 'select.all', label: 'Select all bodies', group: 'Selection', poll: objectMode, exec: () => { if (page() === 'editor') selectAllBodies(); } });
 defineOperator({ id: 'clipboard.copy', label: 'Copy', group: 'Edit', poll: () => objectMode() && page() === 'editor', exec: copySelected });

@@ -1,0 +1,108 @@
+{
+ "base": {
+  "kind": "star2",
+  "root": 15,
+  "ryaw": 225,
+  "docks": [
+   {
+    "walker": 29,
+    "wyaw": 315,
+    "srx": 1,
+    "twist": 1
+   }
+  ],
+  "worst_twist": 1
+ },
+ "cands": [
+  {
+   "spot": 5,
+   "uyaw": 135,
+   "srx": 1,
+   "port": "S1B",
+   "twist": 5,
+   "dist_root": 0.36,
+   "dist_w1foot": 0.5
+  },
+  {
+   "spot": 5,
+   "uyaw": 315,
+   "srx": 0,
+   "port": "S1A",
+   "twist": 5,
+   "dist_root": 0.36,
+   "dist_w1foot": 0.5
+  },
+  {
+   "spot": 10,
+   "uyaw": 225,
+   "srx": 0,
+   "port": "S1A",
+   "twist": 5,
+   "dist_root": 0.22,
+   "dist_w1foot": 0.41
+  },
+  {
+   "spot": 25,
+   "uyaw": 45,
+   "srx": 1,
+   "port": "S1B",
+   "twist": 5,
+   "dist_root": 0.36,
+   "dist_w1foot": 0.5
+  },
+  {
+   "spot": 26,
+   "uyaw": 315,
+   "srx": 0,
+   "port": "S1A",
+   "twist": 5,
+   "dist_root": 0.32,
+   "dist_w1foot": 0.4
+  },
+  {
+   "spot": 31,
+   "uyaw": 315,
+   "srx": 1,
+   "port": "S1B",
+   "twist": 5,
+   "dist_root": 0.45,
+   "dist_w1foot": 0.51
+  },
+  {
+   "spot": 5,
+   "uyaw": 135,
+   "srx": 0,
+   "port": "S1A",
+   "twist": 6,
+   "dist_root": 0.36,
+   "dist_w1foot": 0.5
+  },
+  {
+   "spot": 5,
+   "uyaw": 315,
+   "srx": 1,
+   "port": "S1B",
+   "twist": 6,
+   "dist_root": 0.36,
+   "dist_w1foot": 0.5
+  },
+  {
+   "spot": 6,
+   "uyaw": 225,
+   "srx": 0,
+   "port": "S1A",
+   "twist": 6,
+   "dist_root": 0.45,
+   "dist_w1foot": 0.51
+  },
+  {
+   "spot": 12,
+   "uyaw": 135,
+   "srx": 0,
+   "port": "S1A",
+   "twist": 6,
+   "dist_root": 0.41,
+   "dist_w1foot": 0.41
+  }
+ ]
+}

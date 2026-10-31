@@ -10,21 +10,11 @@
 
 .cam-empty { font-size: 12px; color: var(--text-dim); }
 
-.cam-row { display: flex; flex-direction: column; gap: 4px; }
-.cam-row-head {
-  display: flex; align-items: center; justify-content: space-between;
-  font-size: 12px; color: var(--text-dim);
-}
-.cam-row-val { display: flex; align-items: center; gap: 3px; }
-.cam-row-val input {
-  width: 56px; text-align: right;
-  background: var(--bg); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
-  font-family: var(--font-mono); font-size: 11px; padding: 2px 4px;
-}
-.cam-row-val em { font-style: normal; color: var(--text-dim); font-size: 10px; width: 16px; }
 
-.cam-row input[type='range'] { width: 100%; accent-color: var(--accent); cursor: pointer; }
+
+
+
+
 
 .cam-actions { display: flex; gap: 6px; margin-top: 6px; }
 .cam-actions button {
@@ -34,15 +24,10 @@
 }
 .cam-actions button:hover { border-color: var(--accent); color: var(--accent); }
 
-.cam-disclosure {
-  display: flex; align-items: center; gap: 6px; margin-top: 2px;
-  background: none; border: none; cursor: pointer; padding: 2px 0;
-  font-family: var(--font-ui); font-size: 12px; color: var(--text-dim);
-}
-.cam-disclosure:hover { color: var(--text); }
-.cam-caret { display: inline-block; transition: transform 0.12s; font-size: 10px; }
-.cam-caret.open { transform: rotate(90deg); }
-.cam-advanced { display: flex; flex-direction: column; gap: 8px; }
+
+
+
+
 
 .cam-field {
   display: flex; align-items: center; justify-content: space-between;

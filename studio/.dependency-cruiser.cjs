@@ -82,28 +82,7 @@ module.exports = {
       name: 'no-dev-deps-in-src',
       comment: 'Shipping code must not import a devDependency — it will not exist at runtime.',
       severity: 'error',
-      from: { path: '^src/', pathNot: '(\.test\.tsx?|\.d\.ts),
-      to: { dependencyTypes: ['npm-dev'] },
-    },
-  ],
-  options: {
-    doNotFollow: { path: 'node_modules' },
-    // Resolution comes from depcruise-resolve.cjs, NOT from tsConfig. The app's tsconfig
-    // uses `moduleResolution: bundler` with no `baseUrl`, which dependency-cruiser cannot
-    // follow — under it all 749 `@/...` imports came back unresolvable, which would have
-    // made every rule below match nothing and pass vacuously. See that file for why the
-    // obvious fix (adding baseUrl) is not available.
-    webpackConfig: { fileName: 'depcruise-resolve.cjs' },
-    // Same conditions as the bundler, plus types for type-only entries such as vite/client.
-    enhancedResolveOptions: {
-      exportsFields: ['exports'],
-      conditionNames: ['types', 'import', 'module', 'browser', 'default'],
-    },
-    tsPreCompilationDeps: true,
-    reporterOptions: { text: { highlightFocused: true } },
-  },
-};
- },
+      from: { path: '^src/', pathNot: '(\\.test\\.tsx?|\\.d\\.ts)$' },
       to: { dependencyTypes: ['npm-dev'] },
     },
   ],

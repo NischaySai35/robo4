@@ -5,7 +5,7 @@ name: CI
 # this is what stops them silently rotting.
 on:
   push:
-    branches: [main]
+    branches: [main, restructure]
   pull_request:
   workflow_dispatch:
 
@@ -36,3 +36,44 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  gos:
+    name: gos (rust core · exports in MuJoCo · python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '26'
+
+      - name: Rust
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Core tests
+        run: cargo test --release
+        working-directory: gos
+
+      - name: Build core
+        run: python gos/build.py
+
+      - name: Python packages
+        run: pip install mujoco numpy pytest mink daqp eclipse-zenoh
+
+      - name: GOS tests
+        run: python -m pytest gos/python/tests -q
+        env:
+          PYTHONPATH: gos/python
+
+      - name: Studio packages
+        run: npm install --no-audit --no-fund
+        working-directory: studio
+
+      - name: Exports work in real MuJoCo
+        run: |
+          (cd studio && npx tsx tools/bench/mjcfCases.ts "$RUNNER_TEMP/mj")
+          python tools/test_mjcf.py "$RUNNER_TEMP/mj"

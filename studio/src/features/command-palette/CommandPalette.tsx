@@ -3,6 +3,7 @@ import './CommandPalette.css';
 import { bridge } from '@/bridge/cameraBridge';
 import { useThemeStore } from '@/state/themeStore';
 import { scheduleFrame } from '@/runtime/frameScheduler';
+import { resetLayout } from '@/features/shell/layouts';
 
 /**
  * Phase 14 — Command palette. A single keyboard-driven launcher (Ctrl/Cmd+K or
@@ -29,6 +30,7 @@ export default function CommandPalette({ open, onClose, page, setPage, onToggleC
     { id: 'fit',        title: 'Fit view to scene',      hint: 'View',    keys: 'F',         run: () => bridge.fitCamera?.() },
     { id: 'undo',       title: 'Undo',                   hint: 'Edit',    keys: 'Ctrl+Z',    run: () => (bridge as { undo?: () => void }).undo?.() },
     { id: 'redo',       title: 'Redo',                   hint: 'Edit',    keys: 'Ctrl+Y',    run: () => (bridge as { redo?: () => void }).redo?.() },
+    { id: 'layout',     title: 'Reset layout of this page', hint: 'View',    keys: '',          run: () => resetLayout(page) },
     { id: 'theme',      title: theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', hint: 'View', keys: '', run: () => toggleTheme() },
     { id: 'conn',       title: 'Toggle connection window', hint: 'Hardware', keys: '',        run: () => onToggleConn?.() },
   ].filter(c => c.when !== false), [page, setPage, theme, toggleTheme, onToggleConn]);

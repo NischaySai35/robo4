@@ -32,6 +32,7 @@
     "@mintplex-labs/piper-tts-web": "^1.0.5",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "dockview-react": "^8.8.3",
     "electron-updater": "^6.8.11",
     "jolt-physics": "^1.1.1",
     "lucide-react": "^1.66.0",

@@ -1,20 +1,11 @@
 import { useState, useCallback, useEffect } from 'react';
 import './App.css';
-import LeftPanel from '@/features/panels/LeftPanel';
-import AnimLeftPanel from '@/features/panels/AnimLeftPanel';
-import SimCanvas from '@/features/canvas/SimCanvas';
-import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
-import ViewControls from '@/features/viewport-ui/ViewControls';
-import HomeButton from '@/features/viewport-ui/HomeButton';
-import IkIndicator from '@/features/viewport-ui/IkIndicator';
-import ServoController from '@/features/servo/ServoController';
 import SimTransmitPanel from '@/features/connection/SimTransmitPanel';
-import { beginDrag } from '@/features/common/drag';
 import ConnectionWindow from '@/features/connection/ConnectionWindow';
 import IntroOverlay from '@/features/intro/IntroOverlay';
 import StartupProjects from '@/features/startup/StartupProjects';
 import MenuBar from '@/features/menu/MenuBar';
-import RightDock from '@/features/dock/RightDock';
+import DockWorkspaces from '@/features/shell/DockWorkspaces';
 import LoadingBar from '@/features/common/LoadingBar';
 import CommandPalette from '@/features/command-palette/CommandPalette';
 import KeyboardHelp from '@/features/help/KeyboardHelp';
@@ -34,21 +25,9 @@ import { editBridge } from '@/viewport/editBridge';
 import { bridge } from '@/bridge/cameraBridge';
 import { useTransformHudStore } from '@/state/transformHudStore';
 import { usePageStore } from '@/state/pageStore';
-import { useWorkspaceStore } from '@/state/workspaceStore';
-import AnalysisPanel from '@/features/analysis/AnalysisPanel';
-import AnalysisBottomView from '@/features/analysis/AnalysisBottomView';
-import AnalysisModeButtons from '@/features/analysis/AnalysisModeButtons';
-import OverloadCards from '@/features/analysis/OverloadCards';
-import TrainingPanel from '@/features/training/TrainingPanel';
-import Timeline from '@/features/animation/Timeline';
-import EspTtlPage from '@/features/espttl/EspTtlPage';
 import VoiceControl from '@/features/voice/VoiceControl';
 import { initVoiceAnnouncer } from '@/features/voice/announcer';
 import { batteryPct } from '@/features/voice/battery';
-import MsrrPanel from '@/features/msrr/MsrrPanel';
-import MsrrCanvas from '@/features/msrr/MsrrCanvas';
-import HardwarePanel from '@/features/hardware/HardwarePanel';
-import ResizablePanel from '@/features/common/ResizablePanel';
 import { initRuntimeBridge } from '@/state/runtimeBridge';
 import { initMotionRuntime } from '@/control/motionRuntime';
 
@@ -438,8 +417,6 @@ export default function App() {
   const page    = usePageStore(s => s.page);
   const setPage = usePageStore(s => s.setPage);
   const [connOpen,   setConnOpen]   = useState(false);
-  const panelWidth    = useWorkspaceStore(s => s.leftPanelWidth);
-  const setPanelWidth = useWorkspaceStore(s => s.setLeftPanelWidth);
   const [showIntro,  setShowIntro]  = useState(true);
   const [showPicker, setShowPicker] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -477,10 +454,6 @@ export default function App() {
     document.title = `TETROBOT — ${docName ?? 'untitled'}`;
   }, [docName]);
 
-  const startPanelResize = (e: React.MouseEvent) => {
-    const w0 = panelWidth, maxW = Math.floor(window.innerWidth / 2);
-    beginDrag(e, 'col-resize', (dx) => setPanelWidth(Math.max(MIN_PANEL_W, Math.min(maxW, w0 + dx))));
-  };
 
   const toggleConn = useCallback(() => setConnOpen(v => !v), []);
 
@@ -625,79 +598,7 @@ export default function App() {
       <AppHeader page={page} setPage={setPage} />
 
       <main className="app-main">
-        {/* Shared 3D workspace — Editor / Analysis / Training / Animation. Always mounted (keeps the Three scene
-            alive); hidden on the Motor, MSRR and ESP-TTL pages (MSRR has its own viewport from the same components). */}
-        <div
-          className="app-root"
-          style={page === 'motor' || page === 'msrr' || page === 'esptt' ? {
-            visibility: 'hidden',
-            pointerEvents: 'none',
-            position: 'absolute',
-            inset: 0,
-          } : {}}
-        >
-          {/* Left panel + resize handle on Editor and Animation pages. */}
-          {page === 'editor' && (
-            <>
-              <LeftPanel style={{ width: panelWidth }} />
-              <div className="panel-resize-handle" onMouseDown={startPanelResize} />
-            </>
-          )}
-          {page === 'animation' && (
-            <>
-              <AnimLeftPanel style={{ width: panelWidth }} />
-              <div className="panel-resize-handle" onMouseDown={startPanelResize} />
-            </>
-          )}
-
-          <div className={`canvas-wrapper ${page === 'analysis' ? 'canvas-split' : ''}`}>
-            <div className="canvas-top">
-              {page === 'analysis' && <AnalysisModeButtons />}
-              {page === 'analysis' && <OverloadCards />}
-              <SimCanvas />
-              <div className="top-center-cluster">
-                <HomeButton />
-                <IkIndicator />
-              </div>
-              <div className="top-right-cluster">
-                <NavigationGizmo />
-                <ViewControls isConnOpen={connOpen} onConnToggle={toggleConn} onHelpOpen={() => setHelpOpen(v => !v)} />
-              </div>
-            </div>
-            {page === 'analysis' && <AnalysisBottomView />}
-          </div>
-
-          {/* Right side is page-specific. Editor keeps the full Blender-style dock;
-              the other pages show a single dedicated panel (no left panel). */}
-          {page === 'editor'    && <RightDock />}
-          {page === 'analysis'  && <ResizablePanel storageKey="tetrobot:panel:analysis" defaultW={400}><AnalysisPanel /></ResizablePanel>}
-          {page === 'training'  && <ResizablePanel storageKey="tetrobot:panel:training" defaultW={400}><TrainingPanel /></ResizablePanel>}
-          {page === 'animation' && <ResizablePanel storageKey="tetrobot:panel:animation" defaultW={480}><Timeline /></ResizablePanel>}
-        </div>
-
-        {/* MSRR Experiments: its OWN viewport, built from the same viewport components (SceneManager engine, gizmo,
-            view controls, Home, stats) with its own scene: only MSRR robots. Mounted only while active. */}
-        {page === 'msrr' && (
-          <div className="app-msrr-wrap">
-            <div className="msrr-main"><MsrrCanvas /></div>
-            <ResizablePanel storageKey="tetrobot:panel:msrr" defaultW={430}><MsrrPanel /></ResizablePanel>
-          </div>
-        )}
-
-
-        {/* ESP-TTL — full-width console for one board. Mounted only while active so its
-            telemetry poll stops the moment you leave: the ESP serves one client at a time. */}
-        {page === 'esptt' && <EspTtlPage />}
-
-        {/* Motor Control — servo/motor view + hardware config panel on the right.
-            Hidden with display:none (keeps polling alive) when not active. */}
-        <div
-          className="app-servo-wrap"
-          style={page !== 'motor' ? { display: 'none' } : {}}
-        >
-          <div className="motor-main"><ServoController /></div>
-          <ResizablePanel storageKey="tetrobot:panel:motor" defaultW={380}><HardwarePanel /></ResizablePanel>
-        </div>
+        <DockWorkspaces connOpen={connOpen} onConnToggle={toggleConn} onHelpOpen={() => setHelpOpen(v => !v)} />
       </main>
 
       <AppFooter />

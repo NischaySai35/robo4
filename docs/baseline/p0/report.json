@@ -16,9 +16,7 @@
    "fit": 1,
    "home": 1,
    "vsepr": 1,
-   "log": [
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
-   ]
+   "log": []
   },
   "training": {
    "canvases": 1,
@@ -63,8 +61,7 @@
    "vsepr": 1,
    "log": [
     "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
-    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
-    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
+    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures"
    ]
   },
   "msrr_shapes": {
@@ -113,15 +110,15 @@
  "bodies": 10,
  "roundtrip": {
   "before": {
-   "uuid": "2ae5099b-4010-4a7a-a687-f34481ec302a",
+   "uuid": "d0230245-f0a4-4dd3-8a68-555500039bfa",
    "pos": [
-    0.1978,
-    0.6751,
-    0.9444
+    0.1922,
+    0.6768,
+    0.9437
    ]
   },
   "insideMsrr": {
-   "uuid": "f1b3e9cc-9425-470c-bab5-5a4532bbd4e3",
+   "uuid": "a43b2c18-ad18-4a11-915e-0844388d6c8b",
    "pos": [
     1.6364,
     1.4545,
@@ -129,15 +126,15 @@
    ]
   },
   "after": {
-   "uuid": "2ae5099b-4010-4a7a-a687-f34481ec302a",
+   "uuid": "d0230245-f0a4-4dd3-8a68-555500039bfa",
    "pos": [
-    0.1976,
-    0.6751,
-    0.9444
+    0.192,
+    0.6769,
+    0.9437
    ]
   },
   "afterFit": {
-   "uuid": "2ae5099b-4010-4a7a-a687-f34481ec302a",
+   "uuid": "d0230245-f0a4-4dd3-8a68-555500039bfa",
    "pos": [
     0.3341,
     0.6329,
@@ -158,6 +155,7 @@
    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
    "warning: WebGL: INVALID_OPERATION: texImage3D: FLIP_Y or PREMULTIPLY_ALPHA isn't allowed for uploading 3D textures",
+   "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED",
    "error: Failed to load resource: net::ERR_NAME_NOT_RESOLVED"
   ]
  }

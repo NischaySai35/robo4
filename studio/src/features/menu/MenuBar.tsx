@@ -11,6 +11,8 @@ import type { LibraryEntry } from '@/core/serialization/projectLibrary';
 import { importMesh, importURDF } from '@/features/import/importMesh';
 import { checkForUpdates, getAppVersion } from '@/features/update/checkForUpdates';
 import { exportRobot } from '@/features/export/exportRobot';
+import { resetLayout } from '@/features/shell/layouts';
+import { usePageStore } from '@/state/pageStore';
 
 const SEP = { sep: true };
 
@@ -171,6 +173,7 @@ export default function MenuBar({ onToggleConn, onHelpOpen, onOpenProjects }: an
       { label: 'Redo', shortcut: 'Ctrl+Y', disabled: !canRedo, onClick: () => bridge.redo?.() },
     ],
     View: [
+      { label: 'Reset Layout', onClick: () => resetLayout(usePageStore.getState().page) },
       { label: 'Fit View', shortcut: 'F', onClick: () => bridge.fitCamera?.() },
       SEP,
       { label: 'Properties (Edit panel)', onClick: () => openPanel('inspector') },

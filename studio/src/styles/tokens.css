@@ -1,0 +1,73 @@
+/* Direction A design tokens and Tailwind v4 (docs/RESTRUCTURING.md §4.1). Starting values, tuned on screen in P7.
+ *
+ * Three choices keep every existing screen unchanged until each one is migrated (P1, 31 Oct 2026):
+ *  - No preflight: Tailwind's reset would restyle all the hand-written CSS.
+ *  - prefix(tw): classes are tw:flex, so the scanner can't match old class names like "hidden".
+ *  - Tokens live under [data-ui="a"], because shadcn's --border would overwrite the app's own --border.
+ * Migrated pieces opt in with data-ui="a" on a parent. Layers lose to unlayered CSS, so old rules still win. */
+@layer theme, utilities;
+@import "tailwindcss/theme.css" layer(theme) prefix(tw);
+@import "tailwindcss/utilities.css" layer(utilities);
+
+/* Fonts are self-hosted so the installed app looks the same with no network. */
+@import "@fontsource/rajdhani/400.css";
+@import "@fontsource/rajdhani/500.css";
+@import "@fontsource/rajdhani/600.css";
+@import "@fontsource/rajdhani/700.css";
+@import "@fontsource/share-tech-mono/400.css";
+
+[data-ui="a"] {
+  --background: #1d1d1d;
+  --foreground: #cfcfcf;
+  --card: #262626;
+  --card-foreground: #cfcfcf;
+  --popover: #2b2b2b;
+  --popover-foreground: #cfcfcf;
+  --primary: #4772b3;
+  --primary-foreground: #ffffff;
+  --secondary: #2b2b2b;
+  --secondary-foreground: #cfcfcf;
+  --muted: #262626;
+  --muted-foreground: #8a8a8a;
+  --accent: #4772b3;
+  --accent-foreground: #ffffff;
+  --destructive: #d9534f;
+  --border: #111111;
+  --input: #111111;
+  --ring: #4772b3;
+  --ok: #5cb85c;
+  --warn: #e0a030;
+  --end-a: #1a2f8f;
+  --end-b: #f08c00;
+  --locked: #5cb85c;
+  --radius: 3px;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-end-a: var(--end-a);
+  --color-end-b: var(--end-b);
+  --color-locked: var(--locked);
+  --radius-sm: var(--radius);
+  --radius-md: var(--radius);
+  --radius-lg: 4px;
+}

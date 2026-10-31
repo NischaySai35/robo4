@@ -1,6 +1,6 @@
 # TETROBOT Studio — Restructuring Plan
 
-Status: **draft, decisions being collected** (started 30 Oct 2026). Owner: Nischay. Nothing in here is implemented yet.
+Status: **in progress** (started 30 Oct 2026, work began 31 Oct on branch `restructure`). Owner: Nischay. P0 done; GOS G0 waiting on decisions in §10.10.
 
 **Why this exists (Nischay):** this restructuring turns TETROBOT from AI-prompted software into efficient, optimised, properly engineered software. It is one part of the project. Anyone can use this software for their own projects that need graphs, but the final goal comes after it: making my robots into shape-changing Transformers and Big Hero 6-style microbots.
 
@@ -173,10 +173,10 @@ The operating system and driver level still matter in three places:
 | Graph model | `core/model/graph.ts`, loops allowed | Good base. Keep it as the source of truth. |
 | ROS-like runtime | `runtime/`: bus, services, actions, params, TF, clock, recorder (967 lines with tests) | Runs **inside the Studio window**, so nothing outside can reach it. `tf.ts` is a tree. Few features use it. |
 | IK | `modelIK.ts`: damped least squares and Levenberg-Marquardt with a numerical Jacobian, along **one path** between two bodies. Also `fabrik.ts`, `msrr/chainSolve.ts`, and SciPy `least_squares` in `manual.py`. | **No general closed-loop IK.** FK only tolerates loops. `loopClosure.ts` is cited in a comment but isn't in the source or its git history. |
-| Exporters | URDF writes loop joints as comments, with a warning. | A grep of `mjcf.ts` finds no loop constraints, so loops may be dropped. Confirm in G1. |
+| Exporters | URDF writes loop joints as comments, with a warning. | **Confirmed 31 Oct: `mjcf.ts` loses loops.** A ring exports an empty world, a diamond loses its closing joint silently, and the default module does not load in MuJoCo (no `<asset>`). See `docs/design/gos-g0-baseline.md`. |
 | External control | None. `main.cjs` reads no script arguments. Dev services run only under `npm run dev`. | Everything in §10.5 is new. |
 | Physics service | `verify_service.py` on `:8771`, from `C:\TETROBOT\sim` | **Not in git and not in the installed app.** Must move into the repo first. |
-| Native core | `docs/STATUS.md` describes a Rust core, then a C++ port in `native/`. | `native/` **is not in this repo**, and the docs say the port never compiled. Rust crates exist only in git history. Recover or restart. |
+| Native core | `docs/STATUS.md` describes a Rust core, then a C++ port in `native/`. | **`native/` is gone: it was never committed.** The Rust core (8 crates, 45 tests) can be recovered from `f566107^`. The reason for the move is not recorded. |
 
 ### 10.4 Architecture
 
@@ -297,7 +297,7 @@ This doesn't remove the real-world limit found in G6: joint flex of 0.8–1.4° 
 
 ### 10.8 Measure first: performance budget
 
-Numbers below are **starting targets to test, not promises**. G0 measures today's values, because very little here has been measured yet.
+Numbers below are **starting targets to test, not promises**. Today's measured values are in `docs/design/gos-g0-baseline.md`.
 
 | Path | Target |
 |---|---|
@@ -308,7 +308,7 @@ Numbers below are **starting targets to test, not promises**. G0 measures today'
 | Topology change (lock) | under 50 ms |
 | Laptop to servo round trip | measure first, then set the target |
 | Idle with no window | close to 0% CPU |
-| Installer and app size | Currently a 320 MB `app.asar`; find out why |
+| Installer and app size | **Explained:** 320 MB `app.asar` + 307 MB unpacked, about 540 MB of it packages already bundled in `dist` (estimate until a build confirms) |
 
 Vendor numbers aren't trusted: iceoryx2's README snapshots disagree with each other, and Dora gives no method. We run our own benchmark on Windows and Ubuntu 24.04.
 
@@ -335,7 +335,7 @@ Most of G1–G3 can start before the UI work, so the restructure and GOS don't b
 
 | Decision | Recommendation | Why |
 |---|---|---|
-| Core language | **Rust** with a C API, calling MuJoCo through its C API | Zenoh, iceoryx2 and Dora are all Rust. **Check first:** the repo moved from Rust to C++ once, and the reason is in the missing `native/MIGRATION.md`. |
+| Core language | **Rust** for a small core, **waiting for Nischay** | One source reaches Python and the browser (WASM). Speed is not the reason: nothing measured needs native code yet. Evidence in `docs/design/gos-g0-contract.md`. |
 | Transport | Zenoh first, iceoryx2 only if measured need | One dependency covers both local and network |
 | Message format | Fixed binary layout for hot data, schema with generation for the rest; Arrow for batches | Decide after G0 |
 | IK | mink first | Fastest to test |
@@ -345,12 +345,15 @@ Most of G1–G3 can start before the UI work, so the restructure and GOS don't b
 
 ### 10.11 Not verified yet
 
-- Modular-robot software (Roombots, M-TRAN and similar): the one search returned nothing useful, so search again before G0.
-- Webots external controllers and Drake's Context: pages did not load.
-- ROS 2 `rcl` and QoS details: the official docs blocked the fetch, so those rows rely on the design articles and general knowledge.
-- MoveIt closed chains: forum answers (2023 and older), not official docs. The MoveIt roadmap has also mentioned closed-loop work.
-- Zenoh shared memory and latency on Windows: no source found.
-- CH340/CP2102 latency behaviour: no source found.
+Rechecked 31 Oct 2026.
+
+- **Modular-robot software: nothing found that replaces GOS.** VisibleSim (C++, AGPLv3) is a behaviour simulator for lattice robots. USSR (BSD, Java) and ReMod3D (C++) are older simulators. `psrr` is geometric ROS planning for planar robots. RoFI (Masaryk University) is the closest: real modules with shared docks, what looks like a Gazebo-based simulator, and Rust in the repo. Its licence and planner are not confirmed, so read it properly before G1. Only summaries were read for most of these. SMORES-EP has a listed repository, not opened. Nothing found for Roombots or M-TRAN control software.
+- **Webots:** an external controller connects by local IPC or TCP with `webots-controller`; a good model for `gos run`. Source: `docs/guide/running-extern-robot-controllers.md` in their repo.
+- **Drake:** `Context` holds time, inputs, state and parameters, separate from the `System`. Matches our model/state split.
+- **ROS 2 docs:** `docs.ros.org` blocks automated fetches, so `GOS_PARITY.md` reads the same source from GitHub. QoS page bodies are still unread.
+- **MoveIt closed chains:** `robot_model.hpp` describes a kinematic tree with one root and mentions no loops. No official statement of support found, and forum answers say no. Still not proof that no plugin exists.
+- **Zenoh on Windows, measured here:** 89 µs round trip, Python to Python, no shared memory. Shared memory on Windows is **still untested**; PyPI builds need a source build for it.
+- **CH340/CP2102 latency:** one project's release notes report batching at the read timeout on Windows, with a 59 ms median loopback after its fix (not vendor data, not our chip). Nothing found for ESP32-C3 native USB. Measure on the robot.
 
 ### 10.13 What this finishes, and what it doesn't
 

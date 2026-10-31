@@ -1,5 +1,7 @@
 # TETROBOT — Platform Status & Demo Guide
 
+> **Out of date (checked 31 Oct 2026):** `native/` was never committed and the Rust core was removed from the tree, so the RT Core rows and demo steps below cannot be run from this repo. See `docs/design/gos-g0-contract.md`.
+
 A one-page, honest snapshot of where the platform is: what's built and tested, what's
 pending, and how to demo it. Audience: a technical reviewer (software engineer).
 

@@ -589,3 +589,10 @@ End tip vs receiver error (S2B checkpoint, 6 tags/end, 35 mm board tags):
 6. Long runs for Nischay (GPU): walking re-check with the new brain switches (PULL_CONVERGE, BASE_FOLLOW, TARGET_FOLLOW, FOLLOW_CHECK, MID_CHECK) on vs off; shape change on 64 robots with disturbances. CPU, ~10 min: the S2B dock on 16 robots, encoders / camera / truth, honest belief:
    `cd C:\TETROBOT\sim` then `set MARKERS=1& set TAGS_PER_END=8& set FLOOR_TAG_MM=35& set CAM_RES=3840x2160& set BELIEF=model& py -3.12 cam_dock_batch.py C:\TETROBOT\logs\roomy_dock_S2B.json 1 M1.B F:F0 M2.S2B 16 off,cam,truth 8`
 7. Later: "glasses" network (data around real dock poses), residual RL docking skill, a third camera if coverage is poor.
+
+
+### 31 Oct: restructuring started (platform track, not goal G6)
+This is P0 and GOS G0 of `RESTRUCTURING.md`. It does not advance goal G6.
+- **CI:** red on `main` at every recent commit because of the Layer boundaries step, which also skips Build. Fixed by `c810121` from the deps session. Locally typecheck, layers and build pass, and 51 of 52 test files pass (337 tests). `transform.test.ts` was still running at 105 s. Not yet confirmed on GitHub, because the workflow only runs on `main` and PRs.
+- **P0:** `tools/ui_baseline.py`, `docs/baseline/p0`, `docs/TAB_SMOKE_CHECKLIST.md`, `docs/MODULES.md`. Round trip passes: camera kept within 1 mm, FIT moves it, undo and redo work. Found: VSEPR missing on all MSRR tabs, and no page idles at 0 draws.
+- **G0:** `docs/design/gos-g0-baseline.md`, `gos-g0-contract.md`, `docs/GOS_PARITY.md` (45 rows: 16 partial, 29 missing). MJCF export loses loops and the default module does not load in MuJoCo. mink holds a closed ring to 0.003 mm, but did not reach the goal (58 to 38 mm). `solveModelIK` missed by 82 mm with no failure flag.

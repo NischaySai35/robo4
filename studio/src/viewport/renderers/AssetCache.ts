@@ -1,7 +1,7 @@
 /**
  * AssetCache — parses embedded mesh Assets into Three.js objects, cached by id.
  *
- * Sync formats (parsed on demand): STL, OBJ, USD/USDZ/USDA (USDZLoader.parse).
+ * Sync formats (parsed on demand): STL, OBJ, USD/USDZ/USDA (USDLoader.parse).
  * Async formats (must be preloaded once before render): glTF/GLB (GLTFLoader) and
  * STEP/STP (OpenCascade WASM via occt-import-js). Importers call `preloadAsset()` and
  * await it; after that `getAssetObject()` returns clones synchronously like the others.
@@ -11,13 +11,13 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { OBJLoader } from 'three/examples/jsm/loaders/OBJLoader.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { USDZLoader } from 'three/examples/jsm/loaders/USDZLoader.js';
+import { USDLoader } from 'three/examples/jsm/loaders/USDLoader.js';
 import { base64ToBytes } from '@/core/serialization/binary';
 
 const _stl = new STLLoader();
 const _obj = new OBJLoader();
 const _gltf = new GLTFLoader();
-const _usdz = new USDZLoader();
+const _usd = new USDLoader();
 const _cache = new Map(); // assetId -> THREE.Object3D (template; callers clone)
 
 /** Repair missing or black materials that come out of the USDZ/USD loader. */
@@ -75,8 +75,8 @@ function parseSync(asset: any): THREE.Object3D | null {
     return center(_obj.parse(new TextDecoder().decode(bytes)));
   }
   if (fmt === 'usd' || fmt === 'usdz' || fmt === 'usda') {
-    // USDZLoader handles zipped .usdz and raw .usd/.usda; parse is synchronous.
-    const obj = _usdz.parse(bytes.buffer.slice(0)) as unknown as THREE.Object3D;
+    // USDLoader handles zipped .usdz and raw .usd/.usda; the group comes back synchronously.
+    const obj = _usd.parse(bytes.buffer.slice(0)) as unknown as THREE.Object3D;
     fixUSDMaterials(obj);
     return center(obj);
   }

@@ -74,7 +74,7 @@ export class ModelEditor {
     this.transform = new TransformControls(camera, domElement);
     this.transform.setSize(1.1);
     this.transform.enabled = false;
-    this.transform.visible = false;
+    this.transform.getHelper().visible = false;
     // Hide the library gizmo's own arrows/rings/planes entirely and drive the
     // visuals from our constant-screen-size custom indicator below. This is what
     // removes the "two kinds of axes" double gizmo: the big constant-size
@@ -83,8 +83,8 @@ export class ModelEditor {
     // dragging a handle still works exactly as before.
     hideGizmoVisuals(this.transform);
     // Tag the entire gizmo tree so getRendererStats() excludes its ~7K internal triangles
-    this.transform.traverse((o: any) => { o.userData.isGizmo = true; });
-    scene.add(this.transform);
+    this.transform.getHelper().traverse((o: any) => { o.userData.isGizmo = true; });
+    scene.add(this.transform.getHelper());
 
     // Backup visual indicator: TransformControls' own arrows/rings have proven
     // unreliable to render in some scenes despite every visibility flag checking
@@ -1927,7 +1927,7 @@ export class ModelEditor {
     this._attachedConnector = null;
     this.transform.attach(this._multiProxy);
     this.transform.enabled = true;
-    this.transform.visible = true;
+    this.transform.getHelper().visible = true;
     this._syncMoveIndicator();
   }
 
@@ -2041,7 +2041,7 @@ export class ModelEditor {
     this._jointProxy.updateMatrixWorld(true);
     this.transform.attach(this._jointProxy);
     this.transform.enabled = true;
-    this.transform.visible = true;
+    this.transform.getHelper().visible = true;
     this._attachedId = null;
     this._attachedJointId = jointId;
     this._attachedConnector = null;
@@ -2060,7 +2060,7 @@ export class ModelEditor {
     this._connectorProxy.updateMatrixWorld(true);
     this.transform.attach(this._connectorProxy);
     this.transform.enabled = true;
-    this.transform.visible = true;
+    this.transform.getHelper().visible = true;
     this._attachedId = null;
     this._attachedJointId = null;
     this._attachedConnector = { bodyId, connectorId };
@@ -2074,12 +2074,12 @@ export class ModelEditor {
     if (mesh) {
       this.transform.attach(mesh);
       this.transform.enabled = true;
-      this.transform.visible = true;
+      this.transform.getHelper().visible = true;
       this._attachedId = bodyId;
     } else {
       this.transform.detach();
       this.transform.enabled = false;
-      this.transform.visible = false;
+      this.transform.getHelper().visible = false;
       this._attachedId = null;
     }
     this._syncMoveIndicator();
@@ -2090,7 +2090,7 @@ export class ModelEditor {
   _syncMoveIndicator() {
     if (!this._moveIndicator) return;
     const obj = this.transform.object;
-    if (!this.transform.enabled || !this.transform.visible || !obj) {
+    if (!this.transform.enabled || !this.transform.getHelper().visible || !obj) {
       this._moveIndicator.visible = false;
       return;
     }
@@ -2264,7 +2264,7 @@ export class ModelEditor {
 
     // Disable standard gizmo (and its fallback indicator) so nothing fights the modal.
     this.transform.enabled = false;
-    this.transform.visible = false;
+    this.transform.getHelper().visible = false;
     if (this._moveIndicator) this._moveIndicator.visible = false;
 
     // Right-click cancels the modal
@@ -2474,7 +2474,7 @@ export class ModelEditor {
     // Re-enable gizmo
     const sel = useSelectionStore.getState();
     this.transform.enabled = !!sel.showGizmo;
-    this.transform.visible = !!sel.showGizmo;
+    this.transform.getHelper().visible = !!sel.showGizmo;
     this._syncMoveIndicator();
   }
 
@@ -2499,7 +2499,7 @@ export class ModelEditor {
     this._sim?.dispose();
     this.transform.detach();
     this.transform.dispose?.();
-    this.transform.parent?.remove(this.transform);
+    this.transform.getHelper().removeFromParent();
     this._jointProxy?.parent?.remove(this._jointProxy);
     this._multiProxy?.parent?.remove(this._multiProxy);
     this._connectorProxy?.parent?.remove(this._connectorProxy);

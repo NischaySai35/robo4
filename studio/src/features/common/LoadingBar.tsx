@@ -1,8 +1,9 @@
 import './LoadingBar.css';
+import { useShallow } from 'zustand/shallow';
 import { useBusyStore, busySnapshot } from '@/state/busyStore';
 
 export default function LoadingBar() {
-  const { active, label } = useBusyStore(busySnapshot);
+  const { active, label } = useBusyStore(useShallow(busySnapshot));
   const cancel = useBusyStore((s) => s.cancel);
   if (!active) return null;
   return (

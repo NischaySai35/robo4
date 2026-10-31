@@ -3,7 +3,7 @@
  *
  * Format → behavior:
  *   glTF / GLB   → scene decomposed into N bodies (one per component/mesh node).
- *   USD / USDZ   → same decomposition; Three.js USDZLoader is used.
+ *   USD / USDZ   → same decomposition; Three.js USDLoader is used.
  *   STL / OBJ    → one body (these formats carry no component hierarchy).
  *   STEP / STP   → N bodies via OpenCascade WASM (one per solid/component).
  *   URDF         → importURDF() — separate entry point, always.

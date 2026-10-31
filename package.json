@@ -15,13 +15,9 @@
     "build": "npm run build --prefix studio",
     "typecheck": "npm run typecheck --prefix studio",
     "electron:dev": "npm run electron:dev --prefix studio",
-    "depcruise": "cd studio && depcruise --config .dependency-cruiser.cjs \"src/**/*.ts\" \"src/**/*.tsx\" --ignore-known",
-    "depcruise:all": "cd studio && depcruise --config .dependency-cruiser.cjs \"src/**/*.ts\" \"src/**/*.tsx\" --no-ignore-known --output-type err-long",
-    "depcruise:baseline": "cd studio && depcruise --config .dependency-cruiser.cjs \"src/**/*.ts\" \"src/**/*.tsx\" --output-type baseline > .dependency-cruiser-known-violations.json",
+    "depcruise": "npm run depcruise --prefix studio",
+    "depcruise:all": "npm run depcruise:all --prefix studio",
+    "depcruise:baseline": "npm run depcruise:baseline --prefix studio",
     "test": "npm run test --prefix studio"
-  },
-  "devDependencies": {
-    "dependency-cruiser": "^16.10.4",
-    "playwright": "^1.60.0"
   }
 }

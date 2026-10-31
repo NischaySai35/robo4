@@ -80,11 +80,20 @@ function speakSystem(text: string, volume: number): Promise<void> {
 const cache = new Map<string, string>();      // phrase -> object URL of the rendered wav
 let current: HTMLAudioElement | null = null;
 
+/** Piper's default runtime URL is pinned to onnxruntime-web 1.18, whose files don't match the
+ *  installed package (404, no backend), so point it at the version actually installed. */
+async function piperSession() {
+  const [p, ort] = await Promise.all([loadPiper(), import('onnxruntime-web')]);
+  const { piperData, piperWasm } = p.TtsSession.WASM_LOCATIONS;
+  const onnxWasm = `https://cdn.jsdelivr.net/npm/onnxruntime-web@${ort.env.versions.web}/dist/`;
+  return p.TtsSession.create({ voiceId: PIPER_VOICE, wasmPaths: { onnxWasm, piperData, piperWasm } });
+}
+
 async function render(text: string): Promise<string> {
   const hit = cache.get(text);
   if (hit) return hit;
-  const p = await loadPiper();
-  const blob = await p.predict({ text, voiceId: PIPER_VOICE });
+  const session = await piperSession();
+  const blob = await session.predict(text);
   const url = URL.createObjectURL(blob);
   if (cache.size > 120) { const k = cache.keys().next().value!; URL.revokeObjectURL(cache.get(k)!); cache.delete(k); }
   cache.set(text, url);

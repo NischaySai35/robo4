@@ -65,9 +65,9 @@ export class EditModeController {
     this.gizmo = new TransformControls(camera, domElement);
     this.gizmo.setSize(0.7);
     this.gizmo.enabled = false;
-    this.gizmo.visible = false;
+    this.gizmo.getHelper().visible = false;
     stripNegativeTranslate(this.gizmo); // only +X/+Y/+Z move arrows
-    scene.add(this.gizmo);
+    scene.add(this.gizmo.getHelper());
     this.gizmo.addEventListener('dragging-changed', (e: any) => { this.controls.enabled = !e.value; });
     this.gizmo.addEventListener('objectChange', () => this._onGizmoDrag());
     this.gizmo.addEventListener('mouseUp', () => { if (this._snapIndicator) this._snapIndicator.visible = false; this._commit(); });
@@ -833,13 +833,13 @@ export class EditModeController {
     this._proxy.updateMatrixWorld(true);
     this.gizmo.setMode('translate');
     this.gizmo.attach(this._proxy);
-    this.gizmo.enabled = true; this.gizmo.visible = true;
+    this.gizmo.enabled = true; this.gizmo.getHelper().visible = true;
     this._dragVerts = [...set];
     this._dragStart = this._dragVerts.map((v: any) => this._v(v).clone());
   }
 
   _detachGizmo() {
-    this.gizmo.detach(); this.gizmo.enabled = false; this.gizmo.visible = false;
+    this.gizmo.detach(); this.gizmo.enabled = false; this.gizmo.getHelper().visible = false;
     this._dragVerts = null; this._dragStart = null;
   }
 
@@ -1705,6 +1705,6 @@ export class EditModeController {
     this.domElement.removeEventListener('pointerdown', this._onDown);
     this.domElement.removeEventListener('pointerup', this._onUp);
     this._leave();
-    this.gizmo.detach(); this.gizmo.dispose?.(); this.gizmo.parent?.remove(this.gizmo);
+    this.gizmo.detach(); this.gizmo.dispose?.(); this.gizmo.getHelper().removeFromParent();
   }
 }

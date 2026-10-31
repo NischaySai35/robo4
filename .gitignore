@@ -114,3 +114,6 @@ rtcore/target/
 
 # Firmware sketch — kept local, not on GitHub (per request)
 esp32/firmware.ino
+
+# Claude Code agent worktrees: never commit (a gitlink here breaks actions/checkout cleanup)
+.claude/worktrees/

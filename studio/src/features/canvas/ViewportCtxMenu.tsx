@@ -23,10 +23,8 @@ export default function ViewportCtxMenu() {
   const dispatch = useModelStore((s) => s.dispatch);
   const select  = useSelectionStore((s) => s.select);
   const openPanel = useDockStore((s) => s.open);
-  const { bodyMode, activeBodyId } = useWorkspaceStore((s) => ({
-    bodyMode: s.bodyMode,
-    activeBodyId: s.activeBodyId,
-  }));
+  const bodyMode = useWorkspaceStore((s) => s.bodyMode);
+  const activeBodyId = useWorkspaceStore((s) => s.activeBodyId);
   const rigidMode = useAnimSceneStore((s) => s.rigidMode);
 
   const close = useCallback(() => useSelectionStore.getState().setVpCtxMenu(null), []);

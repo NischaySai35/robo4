@@ -244,9 +244,8 @@ function BatteryChip() {
 
 // Dynamic actuator count — groups movable joints by their configured motor type.
 function ServoCountChip() {
-  const joints = useModelStore(
-    (s) => Object.values(s.doc.joints).filter((j) => j.type !== 'fixed'),
-  );
+  const allJoints = useModelStore((s) => s.doc.joints);
+  const joints = Object.values(allJoints).filter((j) => j.type !== 'fixed');
   if (joints.length === 0) return null;
   const typeCounts: Record<string, number> = {};
   for (const j of joints) {

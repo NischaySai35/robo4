@@ -14,20 +14,14 @@ jobs:
     name: studio (typecheck · test · build · layers)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '26'
 
-      # --legacy-peer-deps is required, not preference: three-gpu-pathtracer@0.0.24 declares
-      # a peer of three>=0.180.0 while postprocessing caps three at <0.170.0, so a strict
-      # install cannot resolve. That conflict predates this workflow and is unrelated to it.
-      - name: Install (root tooling)
-        run: npm install --legacy-peer-deps --no-audit --no-fund
-
-      - name: Install (studio)
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+      - name: Install
+        run: npm install --no-audit --no-fund
         working-directory: studio
 
       - name: Typecheck

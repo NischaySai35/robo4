@@ -58,8 +58,9 @@ export function disableGizmoFrustumCulling(control: any) {
  *  instance's updateMatrixWorld to re-assert X/Y/Z visibility every frame,
  *  after the library's own hide check has run. */
 export function forceGizmoAxesVisible(control: any) {
-  const orig = control.updateMatrixWorld.bind(control);
-  control.updateMatrixWorld = (force?: boolean) => {
+  const helper = control.getHelper();
+  const orig = helper.updateMatrixWorld.bind(helper);
+  helper.updateMatrixWorld = (force?: boolean) => {
     orig(force);
     const g = control._gizmo;
     if (!g) return;
@@ -84,8 +85,9 @@ export function forceGizmoAxesVisible(control: any) {
 export function hideGizmoVisuals(control: any) {
   const g = control?._gizmo;
   if (!g) return;
-  const orig = control.updateMatrixWorld.bind(control);
-  control.updateMatrixWorld = (force?: boolean) => {
+  const helper = control.getHelper();
+  const orig = helper.updateMatrixWorld.bind(helper);
+  helper.updateMatrixWorld = (force?: boolean) => {
     orig(force);
     for (const key of ['gizmo', 'helper']) {
       const byMode = g[key];

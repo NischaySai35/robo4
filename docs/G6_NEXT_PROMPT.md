@@ -31,7 +31,7 @@ plan → physics-proven transformation → watchable in the Studio → real robo
 - Studio `D:\robo4\studio` (`npm run dev`, Nischay usually has it running on :5173): MSRR Experiments → Planner v2.
   - Shapes tab: **Transformations (watch)** gallery (T2, AB, bridge5, chain_ABC). Plan tab: red "SKETCH, not physics" + "▶ Real physics: run this plan". Ask tab: chat with qwen3.5:9b (Send/Stop/Retry/New).
   - `robotics/msrr2/approach.ts` (stand-off/straight-in sketch), `planner.ts` (`DOCK_BEND_DEG` = 75° room rule), `intent.ts` (chat), `features/msrr/MsrrCanvas.tsx` (real floor-receiver STL, End A/B colours).
-  - Tests: `npm test` (364 + new approach tests). Screenshots: `py -3.14 D:\robo4\tools\ui_shot.py` (Windows paths for `shot:`).
+  - Tests: `npm test` (364 + new approach tests). Screenshots: `py -3.12 D:\robo4\tools\ui_shot.py` (Windows paths for `shot:`).
 - Local AI: Ollama `qwen3.5:9b` (~87% on the RTX 5050), `cosmos-reason2:8b`. OpenCV 5.0.0.
 
 ## State at the end of 29 Oct (measured)

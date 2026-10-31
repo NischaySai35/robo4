@@ -24,7 +24,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Tag must match studio/package.json
         run: |
@@ -51,15 +51,14 @@ jobs:
       run:
         working-directory: studio
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '26'
 
-      # --legacy-peer-deps: same peer conflict as ci.yml.
       - name: Install
-        run: npm install --legacy-peer-deps --no-audit --no-fund
+        run: npm install --no-audit --no-fund
 
       - name: Build the web app
         run: npm run build
@@ -81,7 +80,7 @@ jobs:
 
       - name: Keep the test build
         if: ${{ !startsWith(github.ref, 'refs/tags/') && inputs.upload_to == '' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: tetrobot-${{ matrix.os }}
           retention-days: 7

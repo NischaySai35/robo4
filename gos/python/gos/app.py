@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from . import _core
 from .transport import open_transport
-from .runtime import Node, Parameters, Recorder, Services, play
+from .runtime import Actions, Node, Parameters, Recorder, Services, play
 
 
 class GosError(RuntimeError):
@@ -65,7 +65,8 @@ class App:
         self.bus = open_transport(transport, **transport_options)
         self.model = self.data = self.robot = self.spec = None
         self._locks, self._dir, self._doc = {}, None, None
-        self.params, self.services, self.nodes, self._recorders = Parameters(self.bus), Services(), {}, []
+        self.params, self.services, self.nodes, self._recorders = Parameters(self.bus), Services(self.bus), {}, []
+        self.actions = Actions(self.bus)
         self.time_steps = 0
 
     def __enter__(self): return self
@@ -226,6 +227,26 @@ class App:
         return float(abs(d.efc_pos[:d.nefc][rows]).max()) if rows.any() else 0.0
 
     def topic(self, name): return _Topic(self.bus, name)
+
+    def loop_check(self, frm, to, measured=()):
+        """Transform graph of the robot as simulated now, plus any measured links (camera, touch) as
+        (parent, child, position, quaternion xyzw). Reports how far each extra path disagrees: the loop gap."""
+        self._need_robot()
+        mj = _physics()
+        m, d = self.model, self.data
+        name = lambda b: mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, b)
+        edges = []
+        for b in range(1, m.nbody):
+            par = m.body_parentid[b]
+            pp, pq = d.xpos[par], d.xquat[par]
+            neg, rel_p, rel_q = [0.0] * 4, [0.0] * 3, [0.0] * 4
+            import numpy as np
+            neg, rel_p, rel_q = np.zeros(4), np.zeros(3), np.zeros(4)
+            mj.mju_negQuat(neg, pq); mj.mju_rotVecQuat(rel_p, d.xpos[b] - pp, neg); mj.mju_mulQuat(rel_q, neg, d.xquat[b])
+            edges.append({'parent': name(par) or 'world', 'child': name(b), 'p': list(rel_p), 'q': [rel_q[1], rel_q[2], rel_q[3], rel_q[0]]})
+        for parent, child, p, q in measured:
+            edges.append({'parent': parent, 'child': child, 'p': list(p), 'q': list(q)})
+        return _core.tf_query(edges, frm, to)
 
     def node(self, name):
         return self.nodes.setdefault(name, Node(self.bus, name))

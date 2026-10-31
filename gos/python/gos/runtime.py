@@ -9,19 +9,64 @@ LIFECYCLE = {'unconfigured': {'configure': 'inactive'}, 'inactive': {'activate':
 
 
 class Services:
-    def __init__(self): self._s = {}
+    """Request and reply. Over Zenoh another process can call them; in one process they are a direct call."""
+
+    def __init__(self, bus): self._s, self._bus = {}, bus
 
     def advertise(self, name, fn):
         if name in self._s: raise ValueError(f'Service {name} already exists.')
-        self._s[name] = fn
-        return lambda: self._s.pop(name, None)
+        self._s[name] = self._bus.serve(name, fn)
+        return lambda: self._s.pop(name, lambda: None)()
 
-    def call(self, name, request=None):
-        if name not in self._s:
-            raise LookupError(f'No service named {name}. Services: {", ".join(sorted(self._s)) or "none"}.')
-        return self._s[name](request)
+    def call(self, name, request=None, timeout=5.0):
+        try:
+            return self._bus.request(name, request, timeout)
+        except LookupError as e:
+            raise LookupError(f'{e} Services here: {", ".join(sorted(self._s)) or "none"}.') from None
 
     def list(self): return sorted(self._s)
+
+
+class Actions:
+    """Long jobs with progress and cancel, like ROS actions. The server function gets the goal,
+    a feedback function and a cancelled() check, and returns the result."""
+
+    def __init__(self, bus): self._bus, self._servers, self._n = bus, {}, 0
+
+    def advertise(self, name, fn):
+        if name in self._servers: raise ValueError(f'Action {name} already exists.')
+        self._servers[name] = fn
+
+    def send_goal(self, name, goal, on_feedback=None):
+        if name not in self._servers:
+            raise LookupError(f'No action named {name}. Actions: {", ".join(sorted(self._servers)) or "none"}.')
+        self._n += 1
+        return GoalHandle(self._bus, name, self._n, self._servers[name], goal, on_feedback)
+
+
+class GoalHandle:
+    def __init__(self, bus, name, gid, fn, goal, on_feedback):
+        import threading
+        self.status, self.result, self.error, self._cancel = 'running', None, None, threading.Event()
+        topic = f'{name}/feedback'
+        def feedback(msg):
+            bus.publish(topic, {'goal': gid, **msg})
+            if on_feedback: on_feedback(msg)
+        def work():
+            try:
+                self.result = fn(goal, feedback, self._cancel.is_set)
+                self.status = 'canceled' if self._cancel.is_set() else 'succeeded'
+            except Exception as e:
+                self.status, self.error = 'aborted', f'{type(e).__name__}: {e}'
+        self._t = threading.Thread(target=work, daemon=True)
+        self._t.start()
+
+    def cancel(self): self._cancel.set()
+
+    def wait(self, timeout=None):
+        self._t.join(timeout)
+        if self._t.is_alive(): raise TimeoutError('The action is still running.')
+        return self
 
 
 class Parameters:

@@ -22,7 +22,7 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 | A2 | Multiple middleware implementations, chosen at runtime | partial | `gos.App(transport=...)`: local and Zenoh | More backends, shared memory | G2 | `transport_swap` |
 | A3 | Common core library wrapped per language | native | Rust core with one C interface: Python through ctypes, Studio through WebAssembly | Node and C++ bindings later | G1 | `tools/test_mjcf.py`, `gos/python/tests` |
 | A4 | Publish/subscribe over topics | partial | `runtime/messageBus.ts`; Python to Python over Zenoh passes (`test_two_processes_exchange_a_topic_over_zenoh`). Not yet Studio to Python. | Same API over transport | G2 | `pubsub_python_studio` |
-| A5 | Clients and services | partial | `runtime/services.ts`; `app.services` in one process, not yet across processes | Same | G3 | `service_cross_process` |
+| A5 | Clients and services | native | `app.services`, in one process or across processes over Zenoh, errors returned to the caller (`test_a_service_is_called_from_another_process`) | Same | G3 | `service_cross_process` |
 | A6 | Set and retrieve parameters | partial | `runtime/params.ts`; `app.params` with type checks and events, one process | Same, per node | G3 | `param_cross_process` |
 | A7 | ROS 1 to ROS 2 bridge | missing | | Reached through ROS 2's own bridge plus G8 | G8 | `ros1_via_bridge` |
 | A8 | QoS for non-ideal networks | partial | Latching only | Reliable/best effort, keep-last, deadline, lifespan, liveliness | G2 | `qos_matrix` |
@@ -47,9 +47,9 @@ Today nothing can be **native**, because GOS doesn't exist outside the window ye
 
 | # | ROS 2 area | Status | What exists | Plan | Phase | Test |
 |---|---|---|---|---|---|---|
-| B1 | Actions | partial | `runtime/actions.ts` | Over transport | G3 | `action_cross_process` |
+| B1 | Actions | partial | `app.actions`: goal, feedback, cancel, result, tested in one process. Not yet across processes | Over transport | G3 | `action_cross_process` |
 | B2 | Interfaces: `.msg`, `.srv`, `.action`, generation | partial | Hand-written `idl.ts` exporter | One schema, generated types | G2 | `generated_types_roundtrip` |
-| B3 | tf2 | partial | `runtime/tf.ts`, a tree | Transform **graph** reporting loop mismatch | G3 | `tf_loop_mismatch` |
+| B3 | tf2 | partial | Transform **graph** in the Rust core: several paths, loop gap reported (`app.loop_check`, tested). Not yet time-stamped or streamed like tf2; the Studio still uses `runtime/tf.ts` | Transform **graph** reporting loop mismatch | G3 | `tf_loop_mismatch` |
 | B4 | Domain ID | missing | | Native | G2 | `domain_isolation` |
 | B5 | Discovery details | missing | | Zenoh | G2 | `discovery_two_processes` |
 | B6 | Logging and logger config | missing | | Levels, files, per-node config | G3 | `log_levels` |

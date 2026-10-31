@@ -31,7 +31,7 @@ export function serializeProject() {
     app:     'TETROBOT',
     savedAt: new Date().toISOString(),
     scene: { activeModuleId: null, nextId: 1, modules: [], welds: [] },
-    model: useModelStore.getState().doc,
+    model: useModelStore.getState().bus.original, // the design, never a simulated pose (P8)
     animation: useAnimationStore.getState().exportClip(),
     // Workspace layout: page, panel widths, collapse states, dock.
     workspace: {

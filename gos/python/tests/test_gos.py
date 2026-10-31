@@ -192,3 +192,64 @@ def test_record_then_play_gives_the_same_messages(tmp_path):
         app.topic('/joints').subscribe(again.append)
         assert app.play(path) == 5
         assert again == first
+
+
+def test_actions_give_feedback_and_can_be_cancelled():
+    import time
+    with gos.App() as app:
+        def count(goal, feedback, cancelled):
+            for i in range(goal['n']):
+                if cancelled(): return i
+                feedback({'done': i}); time.sleep(0.01)
+            return goal['n']
+        app.actions.advertise('/count', count)
+        seen = []
+        h = app.actions.send_goal('/count', {'n': 5}, seen.append).wait(5)
+        assert h.status == 'succeeded' and h.result == 5 and len(seen) == 5
+        h = app.actions.send_goal('/count', {'n': 1000})
+        time.sleep(0.05); h.cancel(); h.wait(5)
+        assert h.status == 'canceled' and h.result < 1000
+        def broken(goal, feedback, cancelled): raise ValueError('no robot')
+        app.actions.advertise('/broken', broken)
+        h = app.actions.send_goal('/broken', {}).wait(5)
+        assert h.status == 'aborted' and 'no robot' in h.error
+        with pytest.raises(LookupError, match='/count'): app.actions.send_goal('/nope', {})
+
+
+def test_a_service_is_called_from_another_process(tmp_path):
+    pytest.importorskip('zenoh')
+    server = tmp_path / 's.py'
+    server.write_text(textwrap.dedent('''
+        import time, gos
+        with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17448']) as app:
+            app.services.advertise('/robot/add', lambda r: r['a'] + r['b'])
+            def fail(r): raise ValueError('joint J9 is past its limit')
+            app.services.advertise('/robot/fail', fail)
+            print('READY', flush=True)
+            time.sleep(15)
+    '''))
+    env = dict(os.environ, PYTHONPATH=PY)
+    p = subprocess.Popen([sys.executable, str(server)], env=env, stdout=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout.readline().strip() == 'READY'
+        import time
+        with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17448']) as app:
+            time.sleep(0.5)
+            assert app.services.call('/robot/add', {'a': 2, 'b': 40}) == 42
+            with pytest.raises(RuntimeError, match='past its limit'): app.services.call('/robot/fail', {})
+            with pytest.raises(LookupError, match='answered'): app.services.call('/robot/none', {}, timeout=1)
+    finally:
+        p.kill()
+
+
+def test_transform_graph_reports_a_loop_that_does_not_close():
+    with gos.App() as app:
+        app.load_document(CHAIN)
+        app.set_joints(AB=0.2, BC=0.3, CD=-0.1)
+        a, dpos = app.robot.body_position('A'), app.robot.body_position('D')
+        exact = app.loop_check('A', 'D')
+        assert exact['path'][0] == 'A' and exact['path'][-1] == 'D' and exact['loops'] == []
+        # A camera says D sits 5 mm further along than the joint angles say: the gap is reported, not hidden.
+        rel = exact['p']
+        r = app.loop_check('A', 'D', measured=[('A', 'D', [rel[0] + 0.005, rel[1], rel[2]], exact['q'])])
+        assert abs(r['worst_position_m'] - 0.005) < 1e-9

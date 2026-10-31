@@ -21,13 +21,14 @@ physics and robot-model changes. Background documents it builds on:
 | P0 Safety net, P1 Foundation, P2 Viewport, P3 Frame scheduler, P4 Dockview, P5 One undo | **Done** |
 | P6 Operators and keymap | **Done for shortcuts, palette, help and main menu items.** Panel buttons still dispatch directly |
 | P7 Components | **Started:** direction A tokens everywhere, dark by default. Controls not yet moved to shadcn and Tweakpane |
-| P8 Original vs evaluated, P9 Render engines | Not started |
+| P8 Original vs evaluated | **Done for saving and undo:** design and shown pose kept apart, Keep and Back to design. Separate evaluated pose store and notifiers not done |
+| P9 Render engines | Not started |
 | P10 Physics interface | **Waiting for §7** |
 | P11 Registries and versioning | **File versioning done.** Entity registry and property descriptors not started |
 | GOS G0 Contract | **Done** |
 | GOS G1 Graph core | **Done:** Rust core shared by Python and Studio; MJCF export moved into it |
 | GOS G2 Transport | **Started:** interface, local, Zenoh across processes. Budget checked only for Python to Python |
-| GOS G3 Basics | **Started:** `gos.App`, topics, locks, services, parameters, lifecycle, MCAP record and play, `gos run`, `graph`, `sim`, `topic echo`. Services and parameters work in one process only. Actions and the transform graph not done |
+| GOS G3 Basics | **Started:** `gos.App`, topics, locks, services, parameters, lifecycle, MCAP record and play, `gos run`, `graph`, `sim`, `topic echo`. Services work across processes; parameters and actions in one process. Transform graph not done |
 | GOS G4 GraphIK | **Started:** `robot.ik` on mink holds rings. Comparison table and reaching hard goals not done |
 | GOS G5 Studio as client | **Started:** `gos.studio.StudioLink`, GOS panel, commands by name, live joints. Animation-only window and `gos view` not done |
 | GOS G6 Real robot | Not started; needs the robot and your approval to move motors |

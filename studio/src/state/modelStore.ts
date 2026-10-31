@@ -31,6 +31,8 @@ bus.setStabilizer(stabilizeLoops);
 bus.setTransientStabilizer((doc) => stabilizeLoops(doc, { iterations: 4 }));
 
 interface ModelState {
+  /** True while the view shows a simulated pose that is not the saved design. */
+  showingSimulation: boolean;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   bus: any;
   doc: Document;
@@ -44,6 +46,7 @@ interface ModelState {
 export const useModelStore = create<ModelState>((set) => {
   const sync = () => set({
     doc: bus.doc,
+    showingSimulation: bus.showingSimulation,
   });
 
   bus.subscribe(sync);
@@ -51,6 +54,7 @@ export const useModelStore = create<ModelState>((set) => {
   return {
     bus,
     doc: bus.doc,
+    showingSimulation: false,
 
     /** Apply a command (from @/core/commands). */
     dispatch: (command) => { bus.dispatch(command); },

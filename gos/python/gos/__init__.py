@@ -10,7 +10,7 @@ Every result says whether it worked and why not. See docs/design/gos-g0-contract
 """
 from .app import App, GosError, Result
 from .transport import LocalTransport, ZenohTransport, open_transport
-from ._core import compile_graph, export_mjcf
+from ._core import compile_graph, export_mjcf, tf_query
 
 __version__ = '0.1.0'
-__all__ = ['App', 'GosError', 'Result', 'LocalTransport', 'ZenohTransport', 'open_transport', 'compile_graph', 'export_mjcf']
+__all__ = ['App', 'GosError', 'Result', 'LocalTransport', 'ZenohTransport', 'open_transport', 'compile_graph', 'export_mjcf', 'tf_query']

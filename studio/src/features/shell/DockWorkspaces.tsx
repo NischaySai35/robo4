@@ -17,6 +17,7 @@ import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
 import ViewControls from '@/features/viewport-ui/ViewControls';
 import HomeButton from '@/features/viewport-ui/HomeButton';
 import IkIndicator from '@/features/viewport-ui/IkIndicator';
+import SimPoseBadge from '@/features/viewport-ui/SimPoseBadge';
 import ServoController from '@/features/servo/ServoController';
 import RightDock from '@/features/dock/RightDock';
 import AnalysisPanel from '@/features/analysis/AnalysisPanel';
@@ -96,7 +97,7 @@ export default function DockWorkspaces({ connOpen, onConnToggle, onHelpOpen }: {
           {page === 'analysis' && <AnalysisModeButtons />}
           {page === 'analysis' && <OverloadCards />}
           <SimCanvas />
-          <div className="top-center-cluster"><HomeButton /><IkIndicator /></div>
+          <div className="top-center-cluster"><HomeButton /><IkIndicator /><SimPoseBadge /></div>
           <div className="top-right-cluster">
             <NavigationGizmo />
             <ViewControls isConnOpen={connOpen} onConnToggle={onConnToggle} onHelpOpen={onHelpOpen} />

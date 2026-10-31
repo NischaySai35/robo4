@@ -142,6 +142,10 @@ defineOperator({ id: 'edit.redo', label: 'Redo', group: 'Edit', poll: () => useH
 defineOperator({ id: 'file.save', label: 'Save project', group: 'File', interactive: true, exec: () => saveProject() });
 defineOperator({ id: 'file.saveAs', label: 'Save project as', group: 'File', interactive: true, exec: () => saveProjectAs() });
 
+const simulated = () => useModelStore.getState().showingSimulation;
+defineOperator({ id: 'pose.apply', label: 'Keep the simulated pose as the design', group: 'Edit', poll: simulated, exec: () => useModelStore.getState().bus.applyShownPose() });
+defineOperator({ id: 'pose.revert', label: 'Back to the design pose', group: 'Edit', poll: simulated, exec: () => useModelStore.getState().bus.revertToDesign() });
+
 defineOperator({ id: 'select.all', label: 'Select all bodies', group: 'Selection', poll: objectMode, exec: () => { if (page() === 'editor') selectAllBodies(); } });
 defineOperator({ id: 'clipboard.copy', label: 'Copy', group: 'Edit', poll: () => objectMode() && page() === 'editor', exec: copySelected });
 defineOperator({ id: 'clipboard.paste', label: 'Paste', group: 'Edit', poll: () => objectMode() && page() === 'editor', exec: pasteClipboard });

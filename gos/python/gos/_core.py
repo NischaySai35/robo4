@@ -46,6 +46,11 @@ def export_mjcf(doc: dict, name: str = 'tetrobot') -> dict:
     return _call('gos_export_mjcf', {'doc': light, 'name': name})
 
 
+def tf_query(edges, frm, to) -> dict:
+    """Transform from one frame to another, with the mismatch of every extra path (loop-closure error)."""
+    return _call('gos_tf_query', {'edges': edges, 'from': frm, 'to': to})
+
+
 def graph_of_document(doc: dict, roots=None) -> dict:
     """The core's view of a Studio document, without the mesh data."""
     return {

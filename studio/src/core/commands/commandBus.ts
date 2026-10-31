@@ -21,6 +21,10 @@ export class CommandBus {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _redo: any[];
   _cap: number;
+  // The user's design (P8, docs/design/p8-original-evaluated.md). `_doc` is what is shown: the design plus
+  // whatever physics, animation or IK did since. Only edits and loads change the design, so saves never catch a moving pose.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  _original: any;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   _listeners: Set<any>;
   // Injected loop-closure stabilizer (doc→doc). Kept out of core so @/core stays framework- and
@@ -39,6 +43,7 @@ export class CommandBus {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   constructor(doc: any, { cap = DEFAULT_CAP }: { cap?: number } = {}) {
     this._doc = doc;
+    this._original = doc;
     this._undo = [];
     this._redo = [];
     this._cap = cap;
@@ -63,6 +68,25 @@ export class CommandBus {
   }
 
   get doc() { return this._doc; }
+  get original() { return this._original; }
+  /** True while what is shown differs from the design, e.g. after a physics run. */
+  get showingSimulation() { return this._doc !== this._original; }
+
+  /** Keep the pose on screen as the design: Blender's Apply Visual Transform. */
+  applyShownPose() {
+    if (!this.showingSimulation) return this._doc;
+    this._original = this._doc;
+    this._emit('dispatch', null);
+    return this._doc;
+  }
+
+  /** Throw away the simulated pose and show the design again. */
+  revertToDesign() {
+    if (!this.showingSimulation) return this._doc;
+    this._doc = this._original;
+    this._emit('reset', null);
+    return this._doc;
+  }
   get canUndo() { return this._undo.length > 0; }
   get canRedo() { return this._redo.length > 0; }
   get history() {
@@ -77,7 +101,9 @@ export class CommandBus {
     if (!command || typeof command.redo !== 'function') {
       throw new Error('dispatch() requires a command with redo()/undo()');
     }
+    // An edit starts from what is shown, as before, so editing during a simulation keeps the pose you see.
     this._doc = this._stabilized(command.redo(this._doc));
+    this._original = this._doc;
     this._undo.push(command);
     if (this._undo.length > this._cap) this._undo.shift();
     this._redo.length = 0;
@@ -89,6 +115,7 @@ export class CommandBus {
     const cmd = this._undo.pop();
     if (!cmd) return this._doc;
     this._doc = cmd.undo(this._doc);
+    this._original = this._doc;
     this._redo.push(cmd);
     this._emit('undo', cmd);
     return this._doc;
@@ -98,6 +125,7 @@ export class CommandBus {
     const cmd = this._redo.pop();
     if (!cmd) return this._doc;
     this._doc = cmd.redo(this._doc);
+    this._original = this._doc;
     this._undo.push(cmd);
     this._emit('redo', cmd);
     return this._doc;
@@ -106,8 +134,8 @@ export class CommandBus {
   /**
    * Apply a doc→doc transform WITHOUT recording undo history. For high-frequency,
    * non-authoritative updates (live action playback, IK scrub) where flooding the
-   * undo stack would be useless. History (and autosave snapshots) capture the
-   * settled pose afterwards.
+   * undo stack would be useless. Changes only what is shown: saving, autosave and undo
+   * keep the design until an edit or applyShownPose().
    */
   applyTransient(fn: any) {
     this._doc = this._stabilizedTransient(fn(this._doc));
@@ -118,6 +146,7 @@ export class CommandBus {
   /** Replace the document and clear history (e.g. on file open / new project). */
   reset(doc: any) {
     this._doc = doc;
+    this._original = doc;
     this._undo.length = 0;
     this._redo.length = 0;
     this._emit('reset', null);

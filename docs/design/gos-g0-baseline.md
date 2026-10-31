@@ -70,6 +70,8 @@ Measured from the header of the v1.0.4 build, `studio/release2/win-unpacked`. Th
 | Unpacked | 301 MB | `onnxruntime-node`, with binaries for **every OS and CPU**, on a Windows install |
 | | 20 MB | `@img/sharp-win32-x64` |
 
+**Fixed 31 Oct:** the bundled packages moved to `devDependencies`, so `electron-builder` stops copying them. Measured on a real package build: `app.asar` 116 MB, no unpacked folder (was 320 + 307 MB). The packaged app was launched and opened the Editor, MSRR and Motor pages with no errors. Voice and the local AI model were not exercised; voice loads its runtime from the internet, not from the package.
+
 **Cause:** Vite already bundles the app into `dist`, yet electron-builder also packs everything under `dependencies`. `studio/electron/` needs only `electron-updater` from them. Moving the bundled packages to `devDependencies` should remove about 540 MB. That is an estimate until a build confirms that voice and the AI model still work. The current `dist` is already 106 MB. Packaging work, GOS G7.
 
 ## Exporters

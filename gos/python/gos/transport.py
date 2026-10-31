@@ -24,6 +24,16 @@ class LocalTransport:
     def topics(self):
         return sorted(set(self._subs) | set(self._latched))
 
+    def serve(self, name, fn):
+        self._services = getattr(self, '_services', {})
+        self._services[name] = fn
+        return lambda: self._services.pop(name, None)
+
+    def request(self, name, payload, timeout=5.0):
+        fn = getattr(self, '_services', {}).get(name)
+        if fn is None: raise LookupError(f'No service named {name} in this process.')
+        return fn(payload)
+
     def close(self):
         self._subs.clear()
 
@@ -64,6 +74,28 @@ class ZenohTransport:
 
     def topics(self):
         return sorted('/' + k for k in self._pubs)
+
+    def serve(self, name, fn):
+        """Answer requests from any process: a Zenoh queryable. Errors go back to the caller as text."""
+        def on(query):
+            try:
+                req = json.loads(query.payload.to_bytes()) if query.payload is not None else None
+                reply = {'ok': True, 'value': fn(req)}
+            except Exception as e:
+                reply = {'ok': False, 'error': f'{type(e).__name__}: {e}'}
+            query.reply(query.key_expr, json.dumps(reply))
+        q = self._z.declare_queryable(self._key(name), on)
+        self._subs.append(q)
+        return q.undeclare
+
+    def request(self, name, payload, timeout=5.0):
+        replies = list(self._z.get(self._key(name), payload=json.dumps(payload), timeout=timeout))
+        for r in replies:
+            if r.ok is not None:
+                out = json.loads(r.ok.payload.to_bytes())
+                if out['ok']: return out['value']
+                raise RuntimeError(f'Service {name} failed: {out["error"]}')
+        raise LookupError(f'No service named {name} answered within {timeout} s. Is the process that offers it running and connected?')
 
     def close(self):
         self._z.close()

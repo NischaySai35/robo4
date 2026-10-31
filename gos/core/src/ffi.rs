@@ -3,7 +3,7 @@
 //! the JSON reply from `gos_reply_ptr` and `gos_reply_len`. A reply is `{"ok":true,...}` or
 //! `{"ok":false,"error":"..."}`, so a failure always says what went wrong.
 
-use crate::{compile, mjcf, GraphIn};
+use crate::{compile, mjcf, tf, GraphIn};
 use std::cell::RefCell;
 
 thread_local! { static REPLY: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) }; }
@@ -75,6 +75,23 @@ pub unsafe extern "C" fn gos_export_mjcf(ptr: *const u8, len: usize) -> i32 {
             reply(v.to_string());
             1
         }
+        Err(e) => fail(e),
+    }
+}
+
+/// Look up a transform in a graph of frames, and report how much every extra path disagrees.
+///
+/// # Safety
+/// `ptr` must point at `len` readable bytes of UTF-8 JSON.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_tf_query(ptr: *const u8, len: usize) -> i32 {
+    let bytes = unsafe { std::slice::from_raw_parts(ptr, len) };
+    let q: tf::Query = match serde_json::from_slice(bytes) {
+        Ok(q) => q,
+        Err(e) => return fail(format!("The query isn't valid: {e}. Expected {{edges:[{{parent,child,p,q}}], from, to}}.")),
+    };
+    match tf::query(&q) {
+        Ok(a) => { let mut v = serde_json::to_value(a).unwrap(); v["ok"] = true.into(); reply(v.to_string()); 1 }
         Err(e) => fail(e),
     }
 }

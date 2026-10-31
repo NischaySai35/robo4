@@ -26,7 +26,8 @@ Restart the dev server first: after edits Vite serves changed files with a `?t=`
 |---|---|---|---|
 | 1 | ~~VSEPR score not shown on any MSRR tab.~~ **Fixed in P2**, scoring the robot on screen. | `vsepr: 1` on all six; same module scores the same in Editor and MSRR | Done |
 | 1b | The MSRR scene is drawn about 2.1× too big against its grid: `scene.scale` is `1 / UNITS_PER_M` and ignores `MODULINK_CUBE_SIZE`. A 0.67 m module spans 1.42 m of grid. | Measured from body centres, 31 Oct | When MSRR moves to the shared scene (P9) |
-| 2 | Pages draw while idle: no page reaches 0 draw calls/s, and ESP-TTL and Motor still draw with no visible canvas. | `docs/design/gos-g0-baseline.md` | P3 |
+| 2 | ~~MSRR drew every frame while idle.~~ **Fixed in P3:** 0 renders/s on all 7 pages on the real GPU. | `docs/design/gos-g0-baseline.md` | Done |
+| 2b | **Page crash in tests only:** on the software renderer, live physics crashed the page after an orbit or WIRE click, also on the code before P3, and `g0_idle.py` crashed on software rendering too. The real GPU survived every sequence tried (15 to 24 s runs). Root cause not found. | Runs of 31 Oct | Investigate if it ever appears on a real GPU |
 | 3 | The app polls `http://mod1.local/api/telemetry` from startup on every page, so the console fills with `NAME_NOT_RESOLVED` when no robot is on. | Request log, `report.json` | Poll only when a connection is wanted (P4) |
 | 4 | `texImage3D: FLIP_Y ... isn't allowed` on opening MSRR. | `report.json` | Check with the renderer work (P9) |
 | 5 | ~~Rajdhani and Share Tech Mono came from Google, so some panels looked different with no network.~~ **Fixed in P1:** self-hosted. | Build has 13 `woff2` files and no Google link | Done |

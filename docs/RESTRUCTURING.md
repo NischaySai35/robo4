@@ -78,10 +78,10 @@ Each phase: design note in `docs/design/` (for the marked ones) → small change
 
 | Phase | What | Arch step | Done when |
 |---|---|---|---|
-| **P0 Safety net** | Tab checklist + baseline screenshots of all 7 pages and an MSRR open/close round trip (`tools/ui_shot.py`); record what already fails | 0 | Baseline saved; failures listed |
-| **P1 Foundation** | Tailwind v4 (Vite plugin) + direction-A tokens + shadcn/ui init + fonts; no screen changes yet | — | Builds, nothing looks different, tests green |
+| **P0 Safety net** *(done)* | Tab checklist + baseline screenshots of all 7 pages and an MSRR open/close round trip (`tools/ui_shot.py`); record what already fails | 0 | Baseline saved; failures listed |
+| **P1 Foundation** *(done)* | Tailwind v4 (Vite plugin) + direction-A tokens + shadcn/ui init + fonts; no screen changes yet | — | Builds, nothing looks different, tests green |
 | **P2 Viewport context** *(design note, done: `docs/design/p2-viewport-context.md`; reader migration moved to P4)* | `viewportRegistry`, a handle per `SceneManager`; `bridge` becomes a forwarder to the active viewport; remove MsrrCanvas' save/restore workaround | 1–2 | Every tab passes the checklist; MSRR round trip leaves the editor camera untouched |
-| **P3 Frame scheduler** | One `requestAnimationFrame`, `tagRedraw()`; hidden pages and idle viewports draw nothing | 3 | Idle = 0 renders/s (`?profile`), playback still smooth |
+| **P3 Frame scheduler** *(done: `runtime/frameScheduler.ts`, a test fails if anything else calls `requestAnimationFrame`)* | One `requestAnimationFrame`, `tagRedraw()`; hidden pages and idle viewports draw nothing | 3 | Idle = 0 renders/s (`?profile`), playback still smooth |
 | **P4 Dockview shell** | App layout moved into Dockview workspaces; panels wrapped one by one; layouts saved | — | All panels reachable; layouts persist; checklist green |
 | **P5 One undo stack** *(design note)* | Undo of immutable document references; remove SimCanvas JSON-snapshot history; route Ctrl+Z | 4 | Single undo path; undo/redo works on every page |
 | **P6 Operators + keymap** *(design note)* | Operator registry (poll / exec / invoke / modal); buttons, menus, palette, shortcuts call operators; keymap table | 5–6 | "Run every operator" test; shortcuts listed in one place |

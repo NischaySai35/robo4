@@ -45,19 +45,16 @@ mink holds a closed loop while moving, which is the thing nothing else here can 
 
 ## Idle drawing per page
 
-Default module loaded, nothing touched, 4 s, software rendering. Compare counts, not time.
+**Correction:** the first version of this table showed 949 draw calls/s on an idle Editor. That was wrong: the test waited only 2.5 s, and was counting the end of the 90-frame redraw burst after a click. With time to settle, only MSRR drew while idle.
 
-| Page | Draw calls/s | Animation-frame requests/s |
+Renders/s, default module loaded, nothing touched, measured on the real GPU after 3.5 s of settling:
+
+| Page | Before P3 | After P3 |
 |---|---|---|
-| Editor | 949 | 95 |
-| Analysis | 278 | 208 |
-| Training | 377 | 126 |
-| Animation | 486 | 101 |
-| ESP-TTL | 13 | 117 |
-| Motor Control | 91 | 102 |
-| MSRR | 780 | 59 |
+| Editor, Analysis, Training, Animation, ESP-TTL, Motor Control | 0 | **0** |
+| MSRR | every frame it could draw (7 to 21/s on software rendering) | **0** |
 
-Target for P3 is 0 on an idle page. ESP-TTL and Motor have no visible canvas and still draw.
+Browser frame requests are now one per frame, about 60/s, for the loops that still tick. Those loops do no drawing while idle. `tools/bench/g0_idle.py` counts raw draw calls on software rendering and settles more slowly, so it can still show a burst on the first page visited.
 
 ## Why `app.asar` is 320 MB
 

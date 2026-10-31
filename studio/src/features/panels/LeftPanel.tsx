@@ -9,15 +9,15 @@ import { useWorkspaceStore } from '@/state/workspaceStore';
 import { groundBody } from '@/features/rigid/groundBody';
 import { setBodyModePreservingPose } from '@/features/rigid/bodyModeAction';
 import { commands } from '@/core/commands/index';
+import { runOperator } from '@/core/ops/registry';
 import {
-  makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin, makeComponent, uid,
-  bodiesOfComponent, jointsOfComponent, componentGroups,
+  makeBody, makeJoint, makeGeometry, GeometryType, JointType, identityOrigin, makeComponent,
+  componentGroups,
 } from '@/core/model/index';
 import { jointFramesForBodies } from '@/kinematics/modelFK';
-import { buildDefaultModuleEntities, getDefaultModuleDoc, moduleDocToProject, saveDefaultModule } from '@/core/factory/defaultModule';
+import { getDefaultModuleDoc, moduleDocToProject, saveDefaultModule } from '@/core/factory/defaultModule';
 import { bridge } from '@/bridge/cameraBridge';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
-import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
 import GizmoModeButtons, { BODY_GIZMO_MODES, POINT_GIZMO_MODES, type GizmoModeId } from '@/features/common/GizmoModeButtons';
 import I from '@/features/common/Icon';
 import ContextMenu, { ConnectorItems, MenuSep } from '@/features/common/ContextMenu';
@@ -165,58 +165,10 @@ export default function LeftPanel({ style }: any) {
    *  in the project (the hand-built original), not whichever copy was added last —
    *  otherwise repeated clicks would chain off each other ("Module 2 2 2 …"). */
   const addModule = () => {
-    const templateId = comps[0]?.id;
-    const template = templateId ? doc.components[templateId] : null;
-    const templateBodies = templateId ? bodiesOfComponent(doc, templateId) : [];
-    // No module in THIS project → instantiate the global default module (the
-    // bundled hand-built one, or the user's saved override) so Add Module works
-    // in every project, not just the one that contains the original.
-    if (!template || !templateBodies.length) {
-      const { entities, componentName } = buildDefaultModuleEntities(doc);
-      if (!entities.length) { alert('No default module available.'); return; }
-      dispatch(commands.addEntities(entities, `Add ${componentName}`));
-      const newBodyIds = entities.filter((e: any) => e.kind === 'body').map((e: any) => e.id);
-      useSelectionStore.getState().selectMany(newBodyIds, 'body');
-      setAddOpen(false);
-      return;
-    }
-    const templateJoints = jointsOfComponent(doc, templateId!);
-
-    // Offset along +X by the template's own width (+ a margin), stepped further out
-    // for each existing copy so modules line up side by side without overlapping.
-    let minX = Infinity, maxX = -Infinity;
-    for (const b of templateBodies) {
-      minX = Math.min(minX, b.transform.position[0]);
-      maxX = Math.max(maxX, b.transform.position[0]);
-    }
-    const spacing = Math.max(0.15, maxX - minX) + 0.25;
-    const existingCopies = comps.filter((c) => c.name === template.name || c.name.startsWith(`${template.name} `)).length;
-    const offsetX = spacing * existingCopies;
-
-    const newComponent = { ...structuredClone(template), id: uid('comp'), name: `${template.name} ${existingCopies + 1}` };
-    const bodyIdRemap = new Map<string, string>();
-    const newBodies = templateBodies.map((b) => {
-      const copy = duplicateInPlace(b);
-      copy.componentId = newComponent.id;
-      copy.transform = { ...copy.transform, position: [copy.transform.position[0] + offsetX, copy.transform.position[1], copy.transform.position[2]] };
-      bodyIdRemap.set(b.id, copy.id);
-      return copy;
-    });
-    const jointIdRemap = new Map<string, string>();
-    for (const j of templateJoints) jointIdRemap.set(j.id, uid('joint'));
-    let newJoints = templateJoints.map((j) => {
-      const copy = duplicateJointInPlace(j, bodyIdRemap, jointIdRemap);
-      copy.componentId = newComponent.id;
-      return copy;
-    });
-    // New module copy gets its own servo ids, continuing from whatever's already
-    // assigned — otherwise it'd collide with the template module's real servos.
-    newJoints = reassignServoIds(newJoints, doc);
-
-    dispatch(commands.addEntities([newComponent, ...newBodies, ...newJoints], `Add ${newComponent.name}`));
-    const next = new Set(collapsedComps); next.delete(newComponent.id);
-    setCollapsedCompIds(Array.from(next));
-    useSelectionStore.getState().selectMany(newBodies.map((b) => b.id), 'body');
+    const r = runOperator('module.add');
+    if (!r.ok) { alert(r.error); return; }
+    const id = (r.value as any)?.componentId;
+    if (id) { const next = new Set(collapsedComps); next.delete(id); setCollapsedCompIds(Array.from(next)); }
     setAddOpen(false);
   };
 

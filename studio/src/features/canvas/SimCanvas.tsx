@@ -122,8 +122,7 @@ export default function SimCanvas() {
     };
 
     // Engine switching — delegates to SceneManager which owns the render pipeline.
-    let _currentEngine = 'eevee';
-    vp.getRenderEngine = () => _currentEngine;
+    vp.getRenderEngine = () => sceneMgr._engineMode;
     vp.getPathTracerSamples = () => sceneMgr.getPathTracerSamples();
     vp.markSceneChanged = () => sceneMgr.markPathTracerDirty();
     vp.getRendererStats = () => sceneMgr.getRendererStats();
@@ -141,10 +140,9 @@ export default function SimCanvas() {
     vp.setConnectorsVisible = (on) => modelEditor?.connectorRenderer?.setVisible(on);
     vp.getConnectorsVisible = () => modelEditor?.connectorRenderer?._visible ?? true;
     vp.setRenderEngine = (engine: string) => {
-      _currentEngine = engine;
       sceneMgr.setRenderEngine(engine);
       // BodyRenderer material mode for clay / wireframe override.
-      if (modelEditor?.bodyRenderer) modelEditor.bodyRenderer._engineMode = engine;
+      if (modelEditor?.bodyRenderer) modelEditor.bodyRenderer._engineMode = sceneMgr._engineMode;
     };
 
     // Model body group — used by the smart orbit-pivot raycast (bodies only, no grid/overlays).

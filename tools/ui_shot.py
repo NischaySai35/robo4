@@ -9,9 +9,9 @@ from playwright.async_api import async_playwright
 
 STUDIO_URL = os.environ.get('STUDIO_URL', 'http://localhost:5173/')
 
-async def open_studio(p, startup_shot=None):
+async def open_studio(p, startup_shot=None, real_gpu=False):
     """Open the Studio past its startup dialog. Returns (browser, page, logs). Shared with ui_baseline.py."""
-    b = await p.chromium.launch(args=['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
+    b = await p.chromium.launch(args=['--use-angle=d3d11' if real_gpu else '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
     pg = await b.new_page(viewport={'width': 1700, 'height': 1000})
     logs = []
     pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}') if m.type in ('error', 'warning') else None)

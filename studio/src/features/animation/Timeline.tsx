@@ -40,10 +40,8 @@ function CommitNumber({ value, onCommit, min, max, step, int }: {
   );
 }
 import { useAnimationStore, type ClipGroup } from '@/state/animationStore';
-import { getSpin } from '@/features/motor/spinEngine';
-import { isMotorJoint } from '@/features/motor/endBody';
+import { runOperator } from '@/core/ops/registry';
 import { useModelStore } from '@/state/modelStore';
-import { useWorkspaceStore } from '@/state/workspaceStore';
 import { bridge } from '@/bridge/cameraBridge';
 import { downloadBlob } from '@/core/serialization/fileIO';
 import { scheduleFrame } from '@/runtime/frameScheduler';
@@ -207,31 +205,7 @@ function AnimationTab() {
   const keyTimes = useAnimationStore((s) => s.keyTimes)();
   const [clipDragOver, setClipDragOver] = useState<number | null>(null);
 
-  // ── Keying: joint poses, the grounded base (foot-plant), and lock (connect) states. ──
-  const keyJoints = () => {
-    const doc = useModelStore.getState().doc;
-    const vals: Record<string, number> = {};
-    for (const j of Object.values(doc.joints)) vals[j.id] = j.state?.value ?? 0;
-    if (Object.keys(vals).length) a.addKeyframe(vals);
-  };
-  const keyBase = () => {
-    const ws = useWorkspaceStore.getState();
-    a.addBaseKey(ws.bodyMode === 'rigid' ? ws.activeBodyId : null);
-  };
-  const keyConnections = () => {
-    for (const j of Object.values(useModelStore.getState().doc.joints) as any[]) {
-      if (j?.meta?.generatedFromConnector) a.addConnectionKey(j.id, !j.state?.disabled);
-    }
-  };
-  // Record each spinnable motor's CURRENT live spin direction (from the spin engine)
-  // as a step key, so playback starts/stops the continuous rotation at this time.
-  const keySpins = () => {
-    const doc = useModelStore.getState().doc;
-    for (const j of Object.values(doc.joints) as any[]) {
-      if (isMotorJoint(doc, j)) a.addSpinKey(j.id, getSpin(j.id));
-    }
-  };
-  const addKey = () => { keyJoints(); keyBase(); keyConnections(); keySpins(); }; // ◆ Key = everything
+  const run = (id: string) => { const r = runOperator(id); if (!r.ok) alert(r.error); };
   const [keyMenu, setKeyMenu] = useState(false);
   const rename = (id: string, cur: string) => {
     const name = window.prompt('Clip name', cur);
@@ -269,7 +243,7 @@ function AnimationTab() {
             </span>
           </div>
         ))}
-        <button className="tl-addclip" onClick={() => a.addClip()}>＋ Add clip</button>
+        <button className="tl-addclip" onClick={() => run('anim.clip.add')}>＋ Add clip</button>
         <div className="tl-hint">◆ Key records into the <strong>selected</strong> clip automatically (its key count shows on the right). Ctrl+S saves every clip, key and group into your .nischay file.</div>
       </div>
 
@@ -279,22 +253,22 @@ function AnimationTab() {
       {/* Transport */}
       <div className="tl-section">TRANSPORT</div>
       <div className="tl-controls">
-        <button onClick={() => (a.playing ? a.pause() : a.play())} title="Play / pause this clip (loops)">{a.playing && !a.sequence ? '⏸' : '▶'}</button>
-        <button onClick={() => a.playAll()} title="Play all clips in order">⏭ All</button>
-        <button onClick={() => a.stop()} title="Stop">⏹</button>
+        <button onClick={() => run('anim.play')} title="Play / pause this clip (loops)">{a.playing && !a.sequence ? '⏸' : '▶'}</button>
+        <button onClick={() => run('anim.playAll')} title="Play all clips in order">⏭ All</button>
+        <button onClick={() => run('anim.stop')} title="Stop">⏹</button>
         <div className="tl-key-split">
-          <button className="tl-key" onClick={addKey} disabled={nJoints === 0} title="Key everything at the playhead: joint poses + grounded base + lock states">◆ Key all</button>
+          <button className="tl-key" onClick={() => run('anim.key')} disabled={nJoints === 0} title="Key everything at the playhead: joint poses + grounded base + lock states">◆ Key all</button>
           <button className="tl-key-caret" onClick={() => setKeyMenu((v) => !v)} title="Choose what to key">▾</button>
           {keyMenu && (
             <>
               <div className="tl-key-backdrop" onClick={() => setKeyMenu(false)} />
               <div className="tl-key-menu">
-                <button onClick={() => { addKey(); setKeyMenu(false); }}>◆ Key ALL (poses + base + locks)</button>
+                <button onClick={() => { run('anim.key'); setKeyMenu(false); }}>◆ Key ALL (poses + base + locks)</button>
                 <div className="tl-key-menu-sep" />
-                <button onClick={() => { keyJoints(); setKeyMenu(false); }}>◆ Joint poses only</button>
-                <button onClick={() => { keyBase(); setKeyMenu(false); }}>◆ Grounded base only (foot-plant)</button>
-                <button onClick={() => { keyConnections(); setKeyMenu(false); }}>◆ Lock states only (connect/disconnect)</button>
-                <button onClick={() => { keySpins(); setKeyMenu(false); }}>◆ Motor spin states only (CW/CCW/stop)</button>
+                <button onClick={() => { run('anim.key.joints'); setKeyMenu(false); }}>◆ Joint poses only</button>
+                <button onClick={() => { run('anim.key.base'); setKeyMenu(false); }}>◆ Grounded base only (foot-plant)</button>
+                <button onClick={() => { run('anim.key.locks'); setKeyMenu(false); }}>◆ Lock states only (connect/disconnect)</button>
+                <button onClick={() => { run('anim.key.spins'); setKeyMenu(false); }}>◆ Motor spin states only (CW/CCW/stop)</button>
               </div>
             </>
           )}
@@ -329,7 +303,7 @@ function AnimationTab() {
         <label className="tl-snap">
           <input type="checkbox" checked={a.snap} onChange={() => a.toggleSnap()} /> Snap to fps grid
         </label>
-        <button className="tl-clear" onClick={() => a.clear()} disabled={keyTimes.length === 0}>Clear keys</button>
+        <button className="tl-clear" onClick={() => run('anim.clear')} disabled={keyTimes.length === 0}>Clear keys</button>
       </div>
 
       {nJoints > 0 && keyTimes.length === 0 && (

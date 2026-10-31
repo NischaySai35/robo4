@@ -38,6 +38,7 @@ import V2Panel from '@/features/msrr2/V2Panel';
 import { Section, Row } from './panelParts';
 import { useV2Store } from '@/state/msrrV2Store';
 import { useMsrrStore, DEFAULT_CELL_SIZE } from '@/state/msrrStore';
+import { runOperator } from '@/core/ops/registry';
 import { ComposeTab } from './ComposeTab';
 import { useMsrrDrawStore } from './drawStore';
 import {
@@ -65,6 +66,8 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'transform', label: 'Transform' },
   { id: 'bridge', label: 'Bridge' },
 ];
+
+const run = (id: string) => { const r = runOperator(id); if (!r.ok) alert(r.error); };
 
 export default function MsrrPanel() {
   const mode = useV2Store((s) => s.mode);
@@ -322,12 +325,9 @@ function BuildTab() {
   const config = useMsrrStore((s) => s.config);
   const setConfigCells = useMsrrStore((s) => s.setConfigCells);
   const setTarget = useMsrrStore((s) => s.setTarget);
-  const clearConfig = useMsrrStore((s) => s.clearConfig);
   const clearTarget = useMsrrStore((s) => s.clearTarget);
   const swapWithTarget = useMsrrStore((s) => s.swapWithTarget);
   const target = useMsrrStore((s) => s.target);
-  const undo = useMsrrStore((s) => s.undo);
-  const redo = useMsrrStore((s) => s.redo);
   const canUndo = useMsrrStore((s) => s.canUndo);
   const canRedo = useMsrrStore((s) => s.canRedo);
   const resetAll = useMsrrStore((s) => s.resetAll);
@@ -434,10 +434,10 @@ function BuildTab() {
         </div>
         <ShapeQualityNote />
         <div className="msrr-row-btns">
-          <button className="msrr-btn" disabled={!canUndo} onClick={undo} title="Undo the last manual edit">
+          <button className="msrr-btn" disabled={!canUndo} onClick={() => run('msrr.shape.undo')} title="Undo the last manual edit">
             ↶ Undo
           </button>
-          <button className="msrr-btn" disabled={!canRedo} onClick={redo} title="Redo">
+          <button className="msrr-btn" disabled={!canRedo} onClick={() => run('msrr.shape.redo')} title="Redo">
             ↷ Redo
           </button>
           <button className="msrr-btn" disabled={!count} onClick={exportShape}
@@ -448,7 +448,7 @@ function BuildTab() {
                   title="Load a shape from a .json file. Replaces the cubes on screen; the build is cleared so it can be re-fitted.">
             ⭱ Import
           </button>
-          <button className="msrr-btn danger" disabled={!count} onClick={clearConfig}>
+          <button className="msrr-btn danger" disabled={!count} onClick={() => run('msrr.shape.clear')}>
             Clear cubes
           </button>
         </div>
@@ -902,14 +902,9 @@ function TransformSection() {
   const tr = useMsrrStore((s) => s.transform);
   const busy = useMsrrStore((s) => s.transforming);
   const step = useMsrrStore((s) => s.transformStep);
-  const plan = useMsrrStore((s) => s.planTransformation);
-  const clear = useMsrrStore((s) => s.clearTransformation);
   const setStep = useMsrrStore((s) => s.setTransformStep);
   const playing = useMsrrStore((s) => s.transformPlaying);
   const speed = useMsrrStore((s) => s.transformSpeed);
-  const play = useMsrrStore((s) => s.playTransform);
-  const pause = useMsrrStore((s) => s.pauseTransform);
-  const rewind = useMsrrStore((s) => s.rewindTransform);
   const setSpeed = useMsrrStore((s) => s.setTransformSpeed);
   const progress = useMsrrStore((s) => s.transformProgress);
 
@@ -947,10 +942,10 @@ function TransformSection() {
       )}
 
       <div className="msrr-row-btns">
-        <button className="msrr-btn primary" disabled={busy || !built || !target.length} onClick={plan}>
+        <button className="msrr-btn primary" disabled={busy || !built || !target.length} onClick={() => run('msrr.plan')}>
           {busy ? 'Searching for a route…' : 'Plan transformation'}
         </button>
-        {tr && <button className="msrr-btn ghost" onClick={clear}>Clear</button>}
+        {tr && <button className="msrr-btn ghost" onClick={() => run('msrr.plan.clear')}>Clear</button>}
       </div>
       {busy && <SearchProgressReadout progress={progress} />}
 
@@ -985,16 +980,16 @@ function TransformSection() {
           {tr.moves.length > 0 ? (
             <>
               <div className="msrr-row-btns">
-                <button className="msrr-btn primary" onClick={playing ? pause : play}>
+                <button className="msrr-btn primary" onClick={() => run('msrr.play')}>
                   {playing ? 'Pause' : step >= tr.moves.length ? 'Replay' : 'Play'}
                 </button>
-                <button className="msrr-btn" onClick={() => setStep(step - 1)} disabled={step <= 0}>
+                <button className="msrr-btn" onClick={() => run('msrr.step.back')} disabled={step <= 0}>
                   ◀ step
                 </button>
-                <button className="msrr-btn" onClick={() => setStep(step + 1)} disabled={step >= tr.moves.length}>
+                <button className="msrr-btn" onClick={() => run('msrr.step.next')} disabled={step >= tr.moves.length}>
                   step ▶
                 </button>
-                <button className="msrr-btn ghost" onClick={rewind}>Rewind</button>
+                <button className="msrr-btn ghost" onClick={() => run('msrr.rewind')}>Rewind</button>
               </div>
               <Row label={`Speed: ${speed.toFixed(2)}x`}>
                 <input type="range" min={0.1} max={3} step={0.1} value={speed}
@@ -1146,8 +1141,6 @@ function BuildSection() {
   const built = useMsrrStore((s) => s.built);
   const building = useMsrrStore((s) => s.building);
   const reveal = useMsrrStore((s) => s.buildReveal);
-  const build = useMsrrStore((s) => s.build);
-  const clearBuild = useMsrrStore((s) => s.clearBuild);
   const setReveal = useMsrrStore((s) => s.setBuildReveal);
 
   const cubes = config.occ.size;
@@ -1155,10 +1148,10 @@ function BuildSection() {
   return (
     <>
       <div className="msrr-row-btns">
-        <button className="msrr-btn primary" disabled={building || !cubes} onClick={build}>
+        <button className="msrr-btn primary" disabled={building || !cubes} onClick={() => run('msrr.build')}>
           {building ? 'Fitting modules…' : built ? 'Rebuild' : `Build ${cubes} cubes`}
         </button>
-        {built && <button className="msrr-btn ghost" onClick={clearBuild}>Clear build</button>}
+        {built && <button className="msrr-btn ghost" onClick={() => run('msrr.build.clear')}>Clear build</button>}
       </div>
 
       {built && (

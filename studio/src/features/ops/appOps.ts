@@ -11,15 +11,19 @@ import { useTransformHudStore } from '@/state/transformHudStore';
 import { usePageStore, type Page } from '@/state/pageStore';
 import { useThemeStore } from '@/state/themeStore';
 import { useHistoryStore } from '@/state/historyStore';
-import { useWorkspaceStore } from '@/state/workspaceStore';
 import { editBridge } from '@/viewport/editBridge';
 import { bridge } from '@/bridge/cameraBridge';
 import { saveProject, saveProjectAs } from '@/core/serialization/projectActions';
 import { deleteSelectedEntity } from '@/features/editing/deleteSelected';
 import { commands } from '@/core/commands/index';
+import { useAnimationStore } from '@/state/animationStore';
+import { useMsrrStore } from '@/state/msrrStore';
+import { keyAll, keyJoints, keyBase, keyConnections, keySpins, togglePlay } from '@/features/ops/animOps';
 import { duplicateInPlace, duplicateJointInPlace, reassignServoIds } from '@/features/ops/bodyOps';
 import { bodiesOfComponent, jointsOfComponent, uid } from '@/core/model/index';
 import { resetLayout } from '@/features/shell/layouts';
+import { addModule, homePose } from '@/features/ops/moduleOps';
+import { useEditorStore } from '@/state/editorStore';
 import { JOINT_PROPS, checkValue, patchFor } from '@/core/props/props';
 
 /** Copy selected bodies to the clipboard. If the selection is exactly every body
@@ -157,6 +161,46 @@ defineOperator({ id: 'joint.set', label: 'Set a joint property', group: 'Edit', 
   useModelStore.getState().dispatch(commands.updateJoint(joint.id, patchFor(joint, p.path, r.stored)));
   return r.stored;
 } });
+
+defineOperator({ id: 'module.add', label: 'Add module', group: 'Build', poll: () => !editing(), exec: () => addModule() });
+defineOperator({ id: 'pose.home', label: 'Home: all joints to rest', group: 'Edit', poll: () => Object.values<any>(useModelStore.getState().doc.joints).some((j) => j.type !== 'fixed'), exec: () => homePose() });
+// on: true/false sets it; no argument flips it.
+defineOperator({ id: 'view.wireframe', label: 'Wireframe view', group: 'View', exec: (p?: any) => {
+  const on = p?.on ?? !bridge.getWireframe?.();
+  if (on && bridge.getRenderEngine?.() !== 'eevee') bridge.setRenderEngine?.('eevee');
+  bridge.setWireframe?.(on); return on;
+} });
+defineOperator({ id: 'view.connectors', label: 'Show connector markers', group: 'View', exec: (p?: any) => {
+  const on = p?.on ?? !bridge.getConnectorsVisible?.(); bridge.setConnectorsVisible?.(on); return on;
+} });
+defineOperator({ id: 'physics.gravity', label: 'Gravity on or off', group: 'Physics', exec: (p?: any) => {
+  const st = useEditorStore.getState(); const on = p?.on ?? !st.gravityEnabled; st.setGravityEnabled(on); return on;
+} });
+
+const anim = () => useAnimationStore.getState();
+defineOperator({ id: 'anim.play', label: 'Play or pause this clip', group: 'Animation', exec: togglePlay });
+defineOperator({ id: 'anim.playAll', label: 'Play all clips in order', group: 'Animation', exec: () => anim().playAll() });
+defineOperator({ id: 'anim.stop', label: 'Stop playing', group: 'Animation', exec: () => anim().stop() });
+defineOperator({ id: 'anim.clip.add', label: 'Add clip', group: 'Animation', exec: () => anim().addClip() });
+defineOperator({ id: 'anim.key', label: 'Key everything at the playhead', group: 'Animation', exec: keyAll });
+defineOperator({ id: 'anim.key.joints', label: 'Key joint poses', group: 'Animation', exec: keyJoints });
+defineOperator({ id: 'anim.key.base', label: 'Key the grounded base', group: 'Animation', exec: keyBase });
+defineOperator({ id: 'anim.key.locks', label: 'Key lock states', group: 'Animation', exec: keyConnections });
+defineOperator({ id: 'anim.key.spins', label: 'Key motor spin states', group: 'Animation', exec: keySpins });
+defineOperator({ id: 'anim.clear', label: 'Clear keys in this clip', group: 'Animation', poll: () => anim().keyTimes().length > 0, exec: () => anim().clear() });
+
+const msrr = () => useMsrrStore.getState();
+defineOperator({ id: 'msrr.build', label: 'Build the robot from the shape', group: 'MSRR', poll: () => !msrr().building && msrr().config.occ.size > 0, exec: () => msrr().build() });
+defineOperator({ id: 'msrr.build.clear', label: 'Clear the built robot', group: 'MSRR', poll: () => !!msrr().built, exec: () => msrr().clearBuild() });
+defineOperator({ id: 'msrr.plan', label: 'Plan the shape change', group: 'MSRR', poll: () => !!msrr().built && msrr().target.length > 0, exec: () => msrr().planTransformation() });
+defineOperator({ id: 'msrr.plan.clear', label: 'Clear the plan', group: 'MSRR', poll: () => !!msrr().transform, exec: () => msrr().clearTransformation() });
+defineOperator({ id: 'msrr.play', label: 'Play or pause the shape change', group: 'MSRR', poll: () => !!msrr().transform, exec: () => { const m = msrr(); if (m.transformPlaying) m.pauseTransform(); else m.playTransform(); } });
+defineOperator({ id: 'msrr.step.next', label: 'Next move', group: 'MSRR', poll: () => !!msrr().transform && msrr().transformStep < msrr().transform!.moves.length, exec: () => msrr().setTransformStep(msrr().transformStep + 1) });
+defineOperator({ id: 'msrr.step.back', label: 'Previous move', group: 'MSRR', poll: () => !!msrr().transform && msrr().transformStep > 0, exec: () => msrr().setTransformStep(msrr().transformStep - 1) });
+defineOperator({ id: 'msrr.rewind', label: 'Back to the first move', group: 'MSRR', poll: () => !!msrr().transform, exec: () => msrr().rewindTransform() });
+defineOperator({ id: 'msrr.shape.undo', label: 'Undo the last shape edit', group: 'MSRR', poll: () => msrr().canUndo, exec: () => msrr().undo() });
+defineOperator({ id: 'msrr.shape.redo', label: 'Redo the shape edit', group: 'MSRR', poll: () => msrr().canRedo, exec: () => msrr().redo() });
+defineOperator({ id: 'msrr.shape.clear', label: 'Clear the shape', group: 'MSRR', poll: () => msrr().config.occ.size > 0, exec: () => msrr().clearConfig() });
 
 defineOperator({ id: 'select.all', label: 'Select all bodies', group: 'Selection', poll: objectMode, exec: () => { if (page() === 'editor') selectAllBodies(); } });
 defineOperator({ id: 'clipboard.copy', label: 'Copy', group: 'Edit', poll: () => objectMode() && page() === 'editor', exec: copySelected });

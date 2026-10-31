@@ -3,8 +3,8 @@ import base64, json, math, os, random, shutil, tempfile, time
 from dataclasses import dataclass, field
 
 from . import _core
-from .transport import open_transport
-from .runtime import Actions, Node, Parameters, Recorder, Services, play
+from .transport import NamedBus, open_transport
+from .runtime import Actions, Logger, Node, Parameters, Recorder, Services, play
 
 
 class GosError(RuntimeError):
@@ -57,15 +57,23 @@ class Robot:
 
 
 class App:
-    def __init__(self, headless=True, seed=0, transport='local', **transport_options):
+    def __init__(self, headless=True, seed=0, transport='local', name='gos', namespace='/', remap=None, domain=0, executor=None, trace=None, introspect=False, **transport_options):
         if not headless:
             raise GosError('Only headless=True works so far. A window comes with GOS G5 (gos studio --attach).')
         self.seed = seed
         random.seed(seed)
-        self.bus = open_transport(transport, **transport_options)
+        self.name = name
+        self.bus = NamedBus(open_transport(transport, **transport_options), namespace, remap, domain)
+        from .execution import Executor, Tracer
+        from .bigdata import SharedArrays
+        self.executor = Executor(executor) if isinstance(executor, str) else executor
+        self.bus.executor, self.bus.introspect = self.executor, introspect
+        self.tracer = self.bus.tracer = Tracer(trace) if trace else None
+        self.arrays = SharedArrays(self.bus)
+        self.sim_time = 0.0
         self.model = self.data = self.robot = self.spec = None
         self._locks, self._dir, self._doc = {}, None, None
-        self.params, self.services, self.nodes, self._recorders = Parameters(self.bus), Services(self.bus), {}, []
+        self.params, self.services, self.nodes, self._recorders = Parameters(self.bus, name), Services(self.bus), {}, []
         self.actions = Actions(self.bus)
         self.time_steps = 0
 
@@ -74,6 +82,8 @@ class App:
 
     def close(self):
         if getattr(self, 'real', None) is not None and self.real.armed: self.real.stop()
+        if self.tracer: self.tracer.save()
+        self.arrays.close()
         for r in self._recorders: r.close()
         self._recorders = []
         self.bus.close()
@@ -213,6 +223,8 @@ class App:
         for k in range(n):
             mj.mj_step(self.model, self.data)
             self.time_steps += 1
+            self.sim_time = float(self.data.time)
+            if publish_every and k % publish_every == 0: self.bus.publish('/clock', {'t': self.sim_time})
             if publish_every and k % publish_every == 0:
                 m = self.model
                 self.bus.publish('/joints', {'t': float(self.data.time), 'names': names, 'q': [float(self.data.qpos[m.jnt_qposadr[i]]) for i in range(m.njnt)]})
@@ -227,7 +239,24 @@ class App:
         rows = d.efc_type[:d.nefc] == mj.mjtConstraint.mjCNSTR_EQUALITY
         return float(abs(d.efc_pos[:d.nefc][rows]).max()) if rows.any() else 0.0
 
-    def topic(self, name): return _Topic(self.bus, name)
+    def topic(self, name, latched=False, reliable=True): return _Topic(self.bus, name, latched, reliable)
+
+    def logger(self, name=None, level='info'): return Logger(self.bus, name or self.name, level)
+
+    def spin(self, seconds): self.executor.spin(seconds)
+    def spin_once(self, timeout=0.0): return self.executor.spin_once(timeout)
+
+    def now(self):
+        """Simulation time in seconds, as published on /clock (ROS's use_sim_time)."""
+        return self.sim_time
+
+    def follow_clock(self):
+        """For a program that doesn't run the simulation: take the time from the /clock topic."""
+        self.bus.subscribe('/clock', lambda m: setattr(self, 'sim_time', m['t']))
+
+    def remote_params(self, node, timeout=5.0):
+        """Read and change another program's parameters, by its name."""
+        return Parameters.remote(self.bus, node, timeout)
 
     # ── the same script for simulation and the real robot ───────────────────────
     def attach_robot(self, url='http://mod1.local', **options):
@@ -317,6 +346,13 @@ class App:
 
 
 class _Topic:
-    def __init__(self, bus, name): self.bus, self.name = bus, name
-    def publish(self, msg): self.bus.publish(self.name, msg)
-    def subscribe(self, fn): return self.bus.subscribe(self.name, fn)
+    """A named channel. QoS like ROS: latched (late joiners get the last value), reliable or best effort,
+    and keep_last=N on the receiving side (only the N newest messages are kept in .history)."""
+    def __init__(self, bus, name, latched=False, reliable=True): self.bus, self.name, self.latched, self.reliable = bus, name, latched, reliable
+    def publish(self, msg): self.bus.publish(self.name, msg, self.latched, self.reliable)
+    def history(self, keep_last=10, where=None):
+        from collections import deque
+        q = deque(maxlen=keep_last)
+        self.bus.subscribe(self.name, q.append, where)
+        return q
+    def subscribe(self, fn, where=None): return self.bus.subscribe(self.name, fn, where)

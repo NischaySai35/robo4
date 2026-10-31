@@ -19,22 +19,22 @@ physics and robot-model changes. Background documents it builds on:
 | Phase | State |
 |---|---|
 | P0 Safety net, P1 Foundation, P2 Viewport, P3 Frame scheduler, P4 Dockview, P5 One undo | **Done** |
-| P6 Operators and keymap | **Done for shortcuts, palette, help and main menu items.** Panel buttons still dispatch directly |
+| P6 Operators and keymap | **Done for shortcuts, palette, help, main menu, Add Module, Home, view buttons, gravity, joint properties.** Timeline and the older MSRR panel done too. Still direct: Planner v2 panel, and hardware on purpose, because a scriptable motor move needs Nischay's approval |
 | P7 Components | **Started:** direction A tokens everywhere, dark by default. Controls not yet moved to shadcn and Tweakpane |
 | P8 Original vs evaluated | **Done for saving and undo:** design and shown pose kept apart, Keep and Back to design. Separate evaluated pose store and notifiers not done |
-| P9 Render engines | Not started |
+| P9 Render engines | Part done: engines are one table, each viewport picks its own (`tools/test_engines.py`). One GPU context for Analysis deferred, reasons in `docs/design/p9-render-engines.md` |
 | P10 Physics interface | **Waiting for §7** |
 | P11 Registries and versioning | **File versioning done.** Entity registry and property descriptors not started |
 | GOS G0 Contract | **Done** |
 | GOS G1 Graph core | **Done:** Rust core shared by Python and Studio; MJCF export moved into it |
 | GOS G2 Transport | **Started:** interface, local, Zenoh across processes. Budget checked only for Python to Python |
-| GOS G3 Basics | **Started:** `gos.App`, topics, locks, services, parameters, lifecycle, MCAP record and play, `gos run`, `graph`, `sim`, `topic echo`. Services work across processes; parameters and actions in one process. Transform graph not done |
+| GOS G3 Basics | **Done:** topics with QoS, services, parameters and actions across processes, lifecycle, logging, namespaces, remapping, domains, recording, transform graph, the `gos` command (run, sim, topic, service, param, node, action, launch) |
 | GOS G4 GraphIK | **Stages A and B done:** `robot.ik` holds rings; on 30 goals mink reached 30, Studio IK 28, mink 5x faster (`gos-g0-baseline.md`). GraphIK in the Rust core: 30/30, about 0 mm, 0.6 ms, holds rings, usable from the Studio and Python. Studio drag IK not switched to it yet |
 | GOS G5 Studio as client | **Started:** `gos.studio.StudioLink`, GOS panel, commands by name, live joints. View-only mode: `gos.studio.view()` opens the installed app as just a 3D view and drives it (`tools/test_gos_view.py` on the packaged app) |
 | GOS G6 Real robot | **Started:** `app.attach_robot()`: arm, stop, limits, small steps, one script for sim and real; tested on a pretend board only. Servo directions to confirm on the robot |
 | GOS G7 Packaging | **Started:** the GOS wheel carries the Rust core; a fresh Python installs it with pip and runs a script with no window (`tools/test_clean_install.py`, also in CI). Shipping GOS inside the app installer and bundling physics wait for §7 |
 | GOS G8 ROS 2 bridge | **Started:** ROS 2 Jazzy in `ros2/` (pixi). `gos/ros2_bridge` carries joints both ways; a stock ROS 2 node received the GOS robot and its command reached GOS (`tools/test_ros2_bridge.py`). Services, actions and other message types not bridged yet |
-| GOS G9 Full parity | Not started |
+| GOS G9 Full parity | **Most rows covered:** 22 native, 22 partial, 1 missing (ROS 1 bridge: ROS 1 is end-of-life and the bridge is not available on Windows). Partial rows say exactly what is left |
 
 Decided 31 Oct by Nischay: Rust for the core; `C:\TETROBOT\sim` brought into the repo as `sim/`.
 

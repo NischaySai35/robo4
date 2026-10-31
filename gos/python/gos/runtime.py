@@ -28,51 +28,94 @@ class Services:
 
 
 class Actions:
-    """Long jobs with progress and cancel, like ROS actions. The server function gets the goal,
-    a feedback function and a cancelled() check, and returns the result."""
+    """Long jobs with progress and cancel, like ROS actions, in one process or across processes.
 
-    def __init__(self, bus): self._bus, self._servers, self._n = bus, {}, 0
+    A server function gets the goal, a feedback function and a cancelled() check, and returns the result.
+    Under the hood: services <name>/_goal, /_cancel, /_result and the topic <name>/_feedback.
+    """
+
+    def __init__(self, bus): self._bus, self._servers = bus, {}
 
     def advertise(self, name, fn):
         if name in self._servers: raise ValueError(f'Action {name} already exists.')
-        self._servers[name] = fn
+        import threading, uuid
+        goals = {}
+        def start(req):
+            gid, goal = req['id'], req['goal']  # the caller picks the id, so it can listen for feedback before the job starts
+            g = goals[gid] = {'status': 'running', 'result': None, 'error': None, 'cancel': threading.Event()}
+            def feedback(msg): self._bus.publish(f'{name}/_feedback', {'goal': gid, **msg})
+            def work():
+                try:
+                    g['result'] = fn(goal, feedback, g['cancel'].is_set)
+                    g['status'] = 'canceled' if g['cancel'].is_set() else 'succeeded'
+                except Exception as e:
+                    g['status'], g['error'] = 'aborted', f'{type(e).__name__}: {e}'
+            threading.Thread(target=work, daemon=True).start()
+            return gid
+        def cancel(req): goals[req['goal']]['cancel'].set(); return True
+        def result(req):
+            g = goals.get(req['goal'])
+            if g is None: raise LookupError(f'No goal {req["goal"]} on action {name}.')
+            return {k: g[k] for k in ('status', 'result', 'error')}
+        self._servers[name] = [self._bus.serve(f'{name}/_goal', start), self._bus.serve(f'{name}/_cancel', cancel), self._bus.serve(f'{name}/_result', result)]
+        self._bus.announce('action', name)
 
-    def send_goal(self, name, goal, on_feedback=None):
-        if name not in self._servers:
-            raise LookupError(f'No action named {name}. Actions: {", ".join(sorted(self._servers)) or "none"}.')
-        self._n += 1
-        return GoalHandle(self._bus, name, self._n, self._servers[name], goal, on_feedback)
+    def send_goal(self, name, goal, on_feedback=None, timeout=5.0):
+        import uuid
+        h = GoalHandle(self._bus, name, uuid.uuid4().hex[:12], on_feedback)
+        try:
+            self._bus.request(f'{name}/_goal', {'id': h.goal, 'goal': goal}, timeout)
+        except LookupError:
+            h.close()
+            raise LookupError(f'No action named {name}. Actions: {", ".join(self._bus.discover("action")) or "none"}.') from None
+        return h
 
 
 class GoalHandle:
-    def __init__(self, bus, name, gid, fn, goal, on_feedback):
-        import threading
-        self.status, self.result, self.error, self._cancel = 'running', None, None, threading.Event()
-        topic = f'{name}/feedback'
-        def feedback(msg):
-            bus.publish(topic, {'goal': gid, **msg})
-            if on_feedback: on_feedback(msg)
-        def work():
-            try:
-                self.result = fn(goal, feedback, self._cancel.is_set)
-                self.status = 'canceled' if self._cancel.is_set() else 'succeeded'
-            except Exception as e:
-                self.status, self.error = 'aborted', f'{type(e).__name__}: {e}'
-        self._t = threading.Thread(target=work, daemon=True)
-        self._t.start()
+    def __init__(self, bus, name, gid, on_feedback):
+        self._bus, self.name, self.goal = bus, name, gid
+        self.status, self.result, self.error = 'running', None, None
+        self._unsub = bus.subscribe(f'{name}/_feedback', lambda m: on_feedback({k: v for k, v in m.items() if k != 'goal'}), where=lambda m: m.get('goal') == gid) if on_feedback else None
 
-    def cancel(self): self._cancel.set()
+    def cancel(self): self._bus.request(f'{self.name}/_cancel', {'goal': self.goal})
+
+    def poll(self):
+        r = self._bus.request(f'{self.name}/_result', {'goal': self.goal})
+        self.status, self.result, self.error = r['status'], r['result'], r['error']
+        return self.status
 
     def wait(self, timeout=None):
-        self._t.join(timeout)
-        if self._t.is_alive(): raise TimeoutError('The action is still running.')
+        end = None if timeout is None else time.time() + timeout
+        while self.poll() == 'running':
+            if end and time.time() > end: raise TimeoutError(f'Action {self.name} is still running after {timeout} s.')
+            time.sleep(0.02)
+        self.close()
         return self
+
+    def close(self):
+        if self._unsub: self._unsub(); self._unsub = None
 
 
 class Parameters:
-    """Named values with a type check, and a /parameter_events topic like ROS."""
+    """Named values with a type check, and a /parameter_events topic like ROS. Other processes reach them
+    through the services <node>/_params/get, /set and /list (see remote())."""
 
-    def __init__(self, bus): self._v, self._bus = {}, bus
+    def __init__(self, bus, node='gos'):
+        self._v, self._bus, self.node = {}, bus, node
+        bus.serve(f'/{node}/_params/get', lambda r: self.get(r['name']))
+        bus.serve(f'/{node}/_params/set', lambda r: self.set(r['name'], r['value']) or True)
+        bus.serve(f'/{node}/_params/list', lambda r: self.list())
+        bus.announce('node', f'/{node}')
+
+    @staticmethod
+    def remote(bus, node, timeout=5.0):
+        """Another process's parameters, by its node name."""
+        call = lambda op, req: bus.request(f'/{node.strip("/")}/_params/{op}', req, timeout)
+        class Remote:
+            def get(self, name): return call('get', {'name': name})
+            def set(self, name, value): return call('set', {'name': name, 'value': value})
+            def list(self): return call('list', {})
+        return Remote()
 
     def declare(self, name, default):
         self._v.setdefault(name, default)
@@ -90,6 +133,28 @@ class Parameters:
         self._bus.publish('/parameter_events', {'name': name, 'value': value})
 
     def list(self): return dict(self._v)
+
+
+LEVELS = {'debug': 10, 'info': 20, 'warn': 30, 'error': 40}
+
+
+class Logger:
+    """Messages from every program in one stream (/rosout, like ROS), and printed here from a chosen level up."""
+
+    def __init__(self, bus, name, level='info'):
+        self._bus, self.name, self.level = bus, name, level
+
+    def log(self, level, msg):
+        if level not in LEVELS: raise ValueError(f'Level {level}: use one of {", ".join(LEVELS)}.')
+        self._bus.publish('/rosout', {'t': time.time(), 'level': level, 'name': self.name, 'msg': str(msg)})
+        if LEVELS[level] >= LEVELS[self.level]:
+            import sys
+            print(f'[{level.upper()}] [{self.name}] {msg}', file=sys.stderr, flush=True)
+
+    def debug(self, m): self.log('debug', m)
+    def info(self, m): self.log('info', m)
+    def warn(self, m): self.log('warn', m)
+    def error(self, m): self.log('error', m)
 
 
 class Node:

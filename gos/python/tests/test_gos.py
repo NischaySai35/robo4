@@ -341,3 +341,263 @@ def test_an_unreachable_robot_says_what_to_check():
     with pytest.raises(gos.GosError, match='powered'): r.arm()
     s = r.stop()
     assert not s.ok and 'Cut the power' in s.message
+
+
+def test_namespaces_and_remapping_keep_robots_apart():
+    with gos.App(namespace='/robot1') as app:
+        got, other = [], []
+        app.topic('joints').subscribe(got.append)
+        app.topic('/robot2/joints').subscribe(other.append)
+        app.topic('/robot1/joints').publish({'q': 1})
+        assert got == [{'q': 1}] and other == [], 'relative names live in the namespace'
+    with gos.App(remap={'/joints': '/arm/joints'}) as app:
+        got = []
+        app.topic('/arm/joints').subscribe(got.append)
+        app.topic('/joints').publish({'q': 2})
+        assert got == [{'q': 2}], 'remapping renames a channel without changing code'
+
+
+def test_content_filter_and_logging():
+    with gos.App(name='driver') as app:
+        hot = []
+        app.topic('/temp').subscribe(hot.append, where=lambda m: m['c'] > 60)
+        for c in (40, 70, 55, 80): app.topic('/temp').publish({'c': c})
+        assert [m['c'] for m in hot] == [70, 80]
+        logs = []
+        app.topic('/rosout').subscribe(logs.append)
+        log = app.logger(level='warn')
+        log.info('started'); log.error('servo 3 hot')
+        assert [(l['level'], l['name']) for l in logs] == [('info', 'driver'), ('error', 'driver')]
+        with pytest.raises(ValueError, match='Level'): log.log('loud', 'x')
+
+
+def test_params_actions_and_cli_across_processes(tmp_path):
+    pytest.importorskip('zenoh')
+    server = tmp_path / 'server.py'
+    server.write_text(textwrap.dedent('''
+        import time, gos
+        with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17451'], name='arm') as app:
+            app.params.declare('speed', 10)
+            app.services.advertise('/arm/add', lambda r: r['a'] + r['b'])
+            def count(goal, feedback, cancelled):
+                for i in range(goal['n']):
+                    if cancelled(): return i
+                    feedback({'done': i}); time.sleep(0.02)
+                return goal['n']
+            app.actions.advertise('/arm/count', count)
+            pub = app.topic('/arm/state')
+            print('READY', flush=True)
+            for _ in range(600): pub.publish({'ok': True}); time.sleep(0.05)
+    '''))
+    env = dict(os.environ, PYTHONPATH=PY)
+    p = subprocess.Popen([sys.executable, str(server)], env=env, stdout=subprocess.PIPE, text=True)
+    try:
+        assert p.stdout.readline().strip() == 'READY'
+        import time
+        with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17451']) as app:
+            time.sleep(0.5)
+            rp = app.remote_params('arm')
+            assert rp.get('speed') == 10
+            rp.set('speed', 20)
+            assert rp.list() == {'speed': 20}
+            with pytest.raises(RuntimeError, match='int'): rp.set('speed', 'fast')
+            seen = []
+            h = app.actions.send_goal('/arm/count', {'n': 5}, seen.append).wait(10)
+            assert h.status == 'succeeded' and h.result == 5 and len(seen) == 5
+            h = app.actions.send_goal('/arm/count', {'n': 1000}); time.sleep(0.1); h.cancel(); h.wait(10)
+            assert h.status == 'canceled'
+        cli = lambda *args: subprocess.run([sys.executable, '-m', 'gos', '--connect', 'tcp/127.0.0.1:17451', *args], env=env, capture_output=True, text=True, timeout=60)
+        r = cli('topic', 'list'); assert '/arm/state' in r.stdout, r.stdout + r.stderr
+        r = cli('service', 'list'); assert '/arm/add' in r.stdout and '_params' not in r.stdout, r.stdout
+        r = cli('service', 'call', '/arm/add', '{"a": 2, "b": 3}'); assert r.stdout.strip() == '5', r.stdout + r.stderr
+        r = cli('node', 'list'); assert '/arm' in r.stdout, r.stdout
+        r = cli('action', 'list'); assert '/arm/count' in r.stdout, r.stdout
+        r = cli('param', 'get', 'arm', 'speed'); assert r.stdout.strip() == '20', r.stdout + r.stderr
+        r = cli('topic', 'echo', '/arm/state', '--count', '1'); assert '"ok": true' in r.stdout
+        r = cli('service', 'call', '/arm/none'); assert r.returncode == 1 and 'gos:' in r.stderr
+    finally:
+        p.kill()
+
+
+def test_domains_keep_groups_apart(tmp_path):
+    pytest.importorskip('zenoh')
+    import time
+    with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17452'], domain=1) as a, \
+         gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17452'], domain=2) as b, \
+         gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17452'], domain=1) as c:
+        got_b, got_c = [], []
+        b.topic('/x').subscribe(got_b.append); c.topic('/x').subscribe(got_c.append)
+        time.sleep(0.5)
+        for _ in range(10): a.topic('/x').publish({'n': 1}); time.sleep(0.03)
+        time.sleep(0.3)
+        assert got_c and not got_b
+
+
+def test_launch_starts_and_stops_programs_together(tmp_path):
+    (tmp_path / 'a.py').write_text('print("A up", flush=True)\nimport time; time.sleep(30)\n')
+    (tmp_path / 'b.py').write_text('print("B done", flush=True)\n')
+    (tmp_path / 'launch.json').write_text(json.dumps({'processes': [{'name': 'arm', 'run': 'a.py'}, {'name': 'planner', 'run': 'b.py'}]}))
+    env = dict(os.environ, PYTHONPATH=PY)
+    import time
+    t = time.time()
+    r = subprocess.run([sys.executable, '-m', 'gos', 'launch', str(tmp_path / 'launch.json')], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and '[arm] A up' in r.stdout and '[planner] B done' in r.stdout, r.stdout + r.stderr
+    assert time.time() - t < 20, 'when one program ends, the others are stopped'
+
+
+def test_qos_latched_keep_last_and_best_effort():
+    pytest.importorskip('zenoh')
+    import time
+    with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17453']) as a:
+        a.topic('/robot/description', latched=True).publish({'name': 'mod1'})
+        fast = a.topic('/robot/imu', reliable=False)
+        time.sleep(0.3)
+        with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17453']) as late:
+            got = []
+            late.topic('/robot/description').subscribe(got.append)
+            time.sleep(0.3)
+            assert got == [{'name': 'mod1'}], 'a late joiner gets the latched value'
+            last3 = late.topic('/robot/imu').history(keep_last=3)
+            time.sleep(0.3)
+            for i in range(10): fast.publish({'i': i}); time.sleep(0.01)
+            time.sleep(0.3)
+            assert [m['i'] for m in last3] == [7, 8, 9], 'keep_last keeps only the newest'
+
+
+def test_sim_clock_is_published_and_followed():
+    with gos.App() as app:
+        app.load_document(CHAIN)
+        follower = []
+        app.topic('/clock').subscribe(follower.append)
+        app.run(seconds=0.1)
+        assert app.now() == pytest.approx(0.1)
+        ts = [m['t'] for m in follower]
+        assert len(ts) == 5 and ts == sorted(ts) and ts[-1] < app.now(), 'one tick every 10 steps, always moving forward'
+
+
+def test_service_calls_can_be_watched():
+    with gos.App(introspect=True) as app:
+        seen = []
+        app.topic('/_events/add').subscribe(seen.append)
+        app.services.advertise('/add', lambda r: r['a'] + r['b'])
+        app.services.call('/add', {'a': 1, 'b': 2})
+        assert seen and seen[0]['request'] == {'a': 1, 'b': 2} and seen[0]['response'] == 3
+
+
+def test_single_executor_runs_callbacks_only_when_spun():
+    with gos.App(executor='single') as app:
+        got = []
+        app.topic('/x').subscribe(got.append)
+        app.topic('/x').publish({'n': 1}); app.topic('/x').publish({'n': 2})
+        assert got == [], 'nothing runs until spin'
+        app.spin(0.1)
+        assert [m['n'] for m in got] == [1, 2]
+
+
+def test_exclusive_group_never_overlaps():
+    import threading, time
+    with gos.App(executor='multi') as app:
+        g = app.executor.group('arm')
+        busy, overlaps, done = [0], [0], threading.Event()
+        @g
+        def slow(m):
+            busy[0] += 1
+            if busy[0] > 1: overlaps[0] += 1
+            time.sleep(0.02); busy[0] -= 1
+            if m['n'] == 5: done.set()
+        app.topic('/y').subscribe(slow)
+        for n in range(6): app.topic('/y').publish({'n': n})
+        done.wait(5); time.sleep(0.05)
+        assert overlaps[0] == 0
+
+
+def test_big_arrays_pass_through_shared_memory_and_traces_are_written(tmp_path):
+    import numpy as np
+    path = str(tmp_path / 'trace.json')
+    with gos.App(trace=path) as app:
+        got = []
+        app.arrays.subscribe('/camera', lambda a: got.append(a.copy()))
+        img = np.arange(480 * 640 * 3, dtype=np.uint8).reshape(480, 640, 3)
+        app.arrays.publish('/camera', img)
+        assert got and np.array_equal(got[0], img)
+    events = json.load(open(path))['traceEvents']
+    assert any(e['name'].startswith('sub /camera') for e in events)
+
+
+def test_trajectory_controller_follows_poses_and_can_be_cancelled():
+    from gos.control import joint_trajectory_controller
+    with gos.App() as app:
+        app.load_document(CHAIN)
+        act = joint_trajectory_controller(app)
+        prog = []
+        h = app.actions.send_goal(act, {'names': ['AB', 'BC'], 'points': [{'q': [0.4, -0.2], 't': 0.2}, {'q': [0.0, 0.3], 't': 0.4}]}, lambda f: prog.append(f['progress'])).wait(5)
+        assert h.status == 'succeeded', h.error
+        j = app.robot.joints()
+        assert j['AB'] == pytest.approx(0.0, abs=1e-6) and j['BC'] == pytest.approx(0.3, abs=1e-6)
+        assert prog and prog == sorted(prog) and prog[-1] == 1.0
+        h = app.actions.send_goal(act, {'names': ['AB'], 'points': [{'q': [1.0], 't': 5}]})
+        import time; time.sleep(0.2); h.cancel(); h.wait(5)
+        assert h.status == 'canceled' and 0 < app.robot.joints()['AB'] < 0.5
+        h = app.actions.send_goal(act, {'names': ['AB'], 'points': [{'q': [1.0], 't': 0.5}, {'q': [0.0], 't': 0.2}]}).wait(5)
+        assert h.status == 'aborted' and 'rise' in h.error
+
+
+def test_composition_runs_parts_in_one_program(tmp_path):
+    (tmp_path / 'talker.py').write_text("def start(app):\n    app.topic('/chat').publish({'hi': 1})\n")
+    (tmp_path / 'listener.py').write_text("got = []\ndef start(app):\n    app.topic('/chat').subscribe(got.append)\n    return got\n")
+    from gos.compose import load_parts
+    with gos.App() as app:
+        got = load_parts(app, [str(tmp_path / 'listener.py'), str(tmp_path / 'talker.py')])[0]
+        assert got == [{'hi': 1}]
+        (tmp_path / 'bad.py').write_text('x = 1\n')
+        with pytest.raises(AttributeError, match='start'): load_parts(app, [str(tmp_path / 'bad.py')])
+
+
+def test_password_protected_programs_refuse_strangers(tmp_path):
+    pytest.importorskip('zenoh')
+    import time
+    users = tmp_path / 'users.txt'; users.write_text('robot:s3cret\n')
+    with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17454'], users_file=str(users), user='robot', password='s3cret') as a:
+        a.services.advertise('/arm/ping', lambda r: 'pong')
+        with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17454'], user='robot', password='s3cret') as friend:
+            time.sleep(0.3)
+            assert friend.services.call('/arm/ping', None, timeout=2) == 'pong'
+        with gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17454'], user='robot', password='wrong') as stranger:
+            time.sleep(0.3)
+            with pytest.raises(LookupError): stranger.services.call('/arm/ping', None, timeout=1)
+
+
+def test_programs_find_each_other_on_the_network_without_addresses():
+    pytest.importorskip('zenoh')
+    import time
+    with gos.App(transport='zenoh', network=True, domain=7) as a, gos.App(transport='zenoh', network=True, domain=7) as b:
+        got = []
+        b.topic('/hello').subscribe(got.append)
+        t = time.time()
+        while not got and time.time() - t < 8:
+            a.topic('/hello').publish({'from': 'a'}); time.sleep(0.2)
+        assert got, 'multicast discovery found the other program'
+
+
+def test_rate_keeps_time_and_reports_jitter():
+    import time
+    r = gos.Rate(200)
+    t = time.perf_counter()
+    for _ in range(100): r.sleep()
+    took = time.perf_counter() - t
+    j = r.jitter()
+    print('200 Hz loop jitter on this machine:', {k: round(v, 3) for k, v in j.items()})
+    assert 0.45 < took < 0.6 and j['median_ms'] < 1.0
+
+
+def test_new_package_runs_and_passes_its_own_test(tmp_path):
+    env = dict(os.environ, PYTHONPATH=PY)
+    r = subprocess.run([sys.executable, '-m', 'gos', 'pkg', 'new', 'arm-driver'], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    pkg = tmp_path / 'arm-driver'
+    r = subprocess.run([sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', str(pkg)], cwd=pkg, env=env, capture_output=True, text=True, timeout=60)
+    assert '1 passed' in r.stdout, r.stdout + r.stderr
+    r = subprocess.run([sys.executable, '-m', 'gos', 'pkg', 'new', 'arm-driver'], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1 and 'already exists' in r.stderr
+    r = subprocess.run([sys.executable, '-m', 'gos', 'doc', 'gos.App'], env=env, capture_output=True, text=True, timeout=60)
+    assert 'attach_robot' in r.stdout and 'lock' in r.stdout

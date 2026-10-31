@@ -30,3 +30,8 @@ Panel buttons such as Inspector fields still dispatch commands directly. Those a
 - Unit tests for run results and key matching.
 - Browser test: run every non-interactive operator on an empty document and on the default module; none may throw.
 - Browser test: Esc deselects, X on a body starts an axis move, Ctrl+Z undoes.
+
+## Open problems
+
+- The browser tab crashed once in four `ui_baseline.py` runs, during the Editor to MSRR and back step. Not reproduced, cause unknown. It may be the crash already seen under software graphics.
+- `msrrStore.setConfigCells` with cells in the wrong format (objects, not `[x, y, z]`) crashes the tab when built. No button can send that today; a future command that takes cells must check them first.

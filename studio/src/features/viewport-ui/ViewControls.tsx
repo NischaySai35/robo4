@@ -1,6 +1,7 @@
 import './ViewControls.css';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { bridge } from '@/bridge/cameraBridge';
+import { runOperator } from '@/core/ops/registry';
 import { useDockStore } from '@/state/dockStore';
 import { usePageStore } from '@/state/pageStore';
 import { useBusyStore } from '@/state/busyStore';
@@ -67,20 +68,8 @@ export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: a
     useDockStore.getState().toggle('camera');
   }, []);
 
-  const toggleWireframe = useCallback(() => {
-    const next = !wireframe;
-    setWireframe(next);
-    if (next && bridge.getRenderEngine?.() !== 'eevee') {
-      bridge.setRenderEngine?.('eevee');
-    }
-    bridge.setWireframe?.(next);
-  }, [wireframe]);
-
-  const toggleConnectors = useCallback(() => {
-    const next = !connectorsVisible;
-    setConnectorsVisible(next);
-    bridge.setConnectorsVisible?.(next);
-  }, [connectorsVisible]);
+  const toggleWireframe = useCallback(() => { runOperator('view.wireframe', { on: !wireframe }); setWireframe(!wireframe); }, [wireframe]);
+  const toggleConnectors = useCallback(() => { runOperator('view.connectors', { on: !connectorsVisible }); setConnectorsVisible(!connectorsVisible); }, [connectorsVisible]);
 
   return (
     <div ref={ref} className={`view-controls view-controls--${mode}`}>

@@ -12,6 +12,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { CyclesTracer } from '@/viewport/cyclesTracer';
+import { ENGINES } from '@/viewport/engines';
 import { createViewport, releaseViewport, setActiveViewport, type ViewportHandle, type ViewportKind } from '@/bridge/cameraBridge';
 import { scheduleFrame } from '@/runtime/frameScheduler';
 
@@ -149,7 +150,7 @@ export class SceneManager {
     // OrbitControls fires 'change' on every drag/zoom/pan/damping frame.
     this.controls.addEventListener('change', () => {
       this.requestRender(2); // on-demand: camera moved → draw
-      if (this._engineMode === 'cycles' && this._pathTracer) {
+      if (ENGINES[this._engineMode]?.tracer && this._pathTracer) {
         this._pathTracer.updateCamera();
       }
     });
@@ -487,77 +488,14 @@ export class SceneManager {
     this._maxSamples    = 32;
   }
 
-  // ── setRenderEngine ───────────────────────────────────────────────────────────
-  //
-  // EEVEE  — Rasterization (like a video game engine). Single render pass per
-  //          frame = always 60fps. PCFSoftShadowMap casts a kernel of shadow rays
-  //          and blurs them → soft penumbra. UnrealBloom on bright pixels. ACES
-  //          tone curve. No global illumination. Same algorithm as Blender Eevee.
-  //
-  // CYCLES — GPU path tracer via CyclesTracer (three-gpu-pathtracer on WebGPU). On first
-  //          call, builds a BVH (Bounding Volume Hierarchy) over all scene triangles.
-  //          Then each frame fires `_samplesPerFrame` sample passes: per pixel, a ray
-  //          is cast into the scene, bounces N times (8 for GPU / 2 for CPU), and
-  //          accumulates radiance. 1 sample = very noisy; 200+ samples = clean.
-  //          Camera move clears all accumulated samples (same as Blender).
-  //          GPU mode (4 spf × 8 bounces) is substantially heavier per frame than
-  //          Eevee; visible as lower FPS on complex scenes.
-  //
-  // RAYCAST — BasicShadowMap = 1 shadow ray per texel, NO PCF filter kernel → crisp
-  //           pixel-edged hard shadows (binary in-shadow / not-in-shadow per pixel).
-  //           This is literally ray casting: a single ray tests occlusion. Cineon tone
-  //           mapping gives a different highlight rolloff from ACES.
   setRenderEngine(mode: string) {
+    const engine = ENGINES[mode];
+    if (!engine) { console.warn(`No render engine "${mode}". Engines: ${Object.keys(ENGINES).join(', ')}.`); return; }
     this._engineMode = mode;
-    const r = this.renderer;
-
-    this._renderPass.enabled = (mode !== 'cycles');
-    this.bloomPass.enabled   = (mode === 'eevee');
-
-    switch (mode) {
-      case 'eevee':
-        // PCFShadowMap, not PCFSoftShadowMap — see the constructor's note: soft shadows'
-        // multi-tap filtering was the single biggest render-time cost (frameProfiler showed
-        // render ~10x tick on a 324K-tri model). This mode is selected by default on load
-        // (ViewControls.tsx), so it was the actual default experience, not an opt-in.
-        r.shadowMap.type       = THREE.PCFShadowMap;
-        r.toneMapping          = THREE.ACESFilmicToneMapping;
-        r.toneMappingExposure  = 0.95;
-        // Subtle bloom — only very bright highlights (threshold=0.92), narrow spread.
-        // Threshold 0.92 means only pixels >92% brightness bloom → no fog.
-        this.bloomPass.strength  = 0.15;
-        this.bloomPass.threshold = 0.92;
-        this.bloomPass.radius    = 0.25;
-        if (this.sun)     { this.sun.intensity = 3.0;  this.sun.shadow.radius = 4; }
-        if (this.ambient) this.ambient.intensity = 1.4;
-        if (this.fill)    this.fill.intensity    = 0.7;
-        if (this.rim)     this.rim.intensity     = 0.5;
-        this._teardownPathTracer();
-        break;
-
-      case 'cycles':
-        r.toneMapping         = THREE.ACESFilmicToneMapping;
-        r.toneMappingExposure = 1.0;
-        if (this.sun)     this.sun.intensity     = 3.0;
-        if (this.ambient) this.ambient.intensity = 1.2;
-        if (this.fill)    this.fill.intensity    = 0.6;
-        if (this.rim)     this.rim.intensity     = 0.4;
-          this._initPathTracer();
-        break;
-
-      case 'raycast':
-        r.shadowMap.type      = THREE.BasicShadowMap;
-        r.toneMapping         = THREE.CineonToneMapping;
-        r.toneMappingExposure = 1.25;
-        if (this.sun)     { this.sun.intensity = 3.8;  this.sun.shadow.radius = 1; }
-        if (this.ambient) this.ambient.intensity = 0.5;
-        if (this.fill)    this.fill.intensity    = 1.5;
-        if (this.rim)     this.rim.intensity     = 1.2;
-        this._teardownPathTracer();
-        break;
-    }
-
-    r.shadowMap.needsUpdate = true;
+    this._renderPass.enabled = !engine.tracer;
+    this.bloomPass.enabled = engine.bloom;
+    engine.apply(this, this.renderer);
+    this.renderer.shadowMap.needsUpdate = true;
   }
 
   _initPathTracer() {
@@ -609,7 +547,7 @@ export class SceneManager {
   }
 
   markPathTracerDirty() {
-    if (this._pathTracer && this._engineMode === 'cycles') this._pathTracer.setScene(this.scene, this.camera);
+    if (this._pathTracer && ENGINES[this._engineMode]?.tracer) this._pathTracer.setScene(this.scene, this.camera);
   }
 
   getRendererStats() {
@@ -771,7 +709,7 @@ export class SceneManager {
     this.controls.update();
     this._updateGround();
 
-    if (this._engineMode === 'cycles' && this._pathTracer) {
+    if (ENGINES[this._engineMode]?.tracer && this._pathTracer) {
       this._pathTracer.renderSample(); // stops by itself at the sample limit
     } else {
       // Render directly to screen. The EffectComposer's ping-pong render targets

@@ -8,7 +8,6 @@ name: Release
 on:
   push:
     tags: ['v*']
-    branches: ['deps/**']
   workflow_dispatch:
     inputs:
       upload_to:

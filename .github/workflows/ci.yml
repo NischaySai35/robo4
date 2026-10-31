@@ -5,7 +5,7 @@ name: CI
 # this is what stops them silently rotting.
 on:
   push:
-    branches: [main, 'deps/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 

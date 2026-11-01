@@ -6,6 +6,7 @@
  * This is the seed of the "every URDF tag is a GUI control" goal — Phase 5 grows
  * the joint side into the full tag set (dynamics, mimic, effort, etc.).
  */
+import { Button } from '@/components/ui/button';
 import './Inspector.css';
 import type { Document, Connector } from '@/core/model/index';
 import { useModelStore } from '@/state/modelStore';
@@ -84,8 +85,8 @@ function IkSection({ body, doc, dispatch }: any) {
       <div className="in-group">INVERSE KINEMATICS · {chain.length} DOF</div>
       <Vec3 label="Target (mm)" value={t} onChange={setTarget} scale={1000} step={1} />
       <div className="in-ops">
-        <button onClick={solve}>Solve IK</button>
-        <button onClick={() => setTarget(null)}>Reset target</button>
+        <Button variant="outline" size="xs" onClick={solve}>Solve IK</Button>
+        <Button variant="outline" size="xs" onClick={() => setTarget(null)}>Reset target</Button>
       </div>
     </>
   );
@@ -156,9 +157,9 @@ function DriverSection({ body, up }: { body: any; up: (patch: any) => void }) {
             <option key={k} value={k}>{d.icon} {d.label}</option>
           ))}
         </select>
-        <button className="in-btn-sm" onClick={applyDefaults} title="Apply this driver's default physics values">
+        <Button variant="outline" size="sm" onClick={applyDefaults} title="Apply this driver's default physics values">
           Apply defaults
-        </button>
+        </Button>
       </div>
 
       {def && def.props.length > 0 && (
@@ -192,9 +193,9 @@ function DriverSection({ body, up }: { body: any; up: (patch: any) => void }) {
         <input className="in-text" placeholder="New driver name…" value={customName}
           onChange={(e) => setCustomName(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') addCustomDriver(); }} />
-        <button className="in-btn-sm" onClick={addCustomDriver} disabled={!customName.trim()}>
+        <Button variant="outline" size="sm" onClick={addCustomDriver} disabled={!customName.trim()}>
           + Add
-        </button>
+        </Button>
       </div>
     </>
   );
@@ -221,7 +222,7 @@ function ConnectorsSection({ body, up }: { body: any; up: (patch: any) => void }
     <>
       <div className="in-group in-group--row">
         CONNECTORS
-        <button className="in-btn-xs" onClick={addConnector} title="Add connector point">＋</button>
+        <Button variant="outline" size="icon-xs" onClick={addConnector} title="Add connector point">＋</Button>
       </div>
 
       {connectors.length === 0 && (
@@ -233,7 +234,7 @@ function ConnectorsSection({ body, up }: { body: any; up: (patch: any) => void }
           <div className="in-connector-hdr">
             <input className="in-text in-connector-name" value={c.name}
               onChange={(e) => updateConnector(idx, { name: e.target.value })} />
-            <button className="in-btn-xs in-btn-danger" onClick={() => removeConnector(idx)} title="Remove connector">✕</button>
+            <Button variant="destructive" size="icon-xs" onClick={() => removeConnector(idx)} title="Remove connector">✕</Button>
           </div>
           <Vec3 label="Position (mm)" value={c.position}
             onChange={(v: any) => updateConnector(idx, { position: v })} scale={1000} step={1} />
@@ -343,15 +344,15 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
 
       <div className="in-group">OPERATIONS</div>
       <div className="in-ops">
-        <button onClick={() => addOne(duplicate(body))}>Duplicate</button>
-        <button
-          className={mirrorOpen ? 'in-ops-active' : ''}
+        <Button variant="outline" size="xs" onClick={() => addOne(duplicate(body))}>Duplicate</Button>
+        <Button
+          size="xs" variant={mirrorOpen ? 'default' : 'outline'}
           onClick={() => { setMirrorOpen((o) => !o); setArrayOpen(false); }}
-        >Mirror {mirrorOpen ? '▴' : '▾'}</button>
-        <button
-          className={arrayOpen ? 'in-ops-active' : ''}
+        >Mirror {mirrorOpen ? '▴' : '▾'}</Button>
+        <Button
+          size="xs" variant={arrayOpen ? 'default' : 'outline'}
           onClick={() => { setArrayOpen((o) => !o); setMirrorOpen(false); }}
-        >Array {arrayOpen ? '▴' : '▾'}</button>
+        >Array {arrayOpen ? '▴' : '▾'}</Button>
       </div>
       {arrayOpen && (
         <div className="in-ops-array">
@@ -369,12 +370,12 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
             <input type="number" step={0.1} value={arrayGap}
               onChange={(e) => setArrayGap(parseFloat(e.target.value) || 1)} />
           </div>
-          <button className="in-ops-apply" onClick={() => {
+          <Button size="sm" className="tw:mt-1 tw:w-full" onClick={() => {
             const off: [number, number, number] = [0, 0, 0];
             off[arrayAxis] = arrayGap;
             dispatch(commands.addBodies(array(body, arrayCount, off)));
             setArrayOpen(false);
-          }}>Apply</button>
+          }}>Apply</Button>
         </div>
       )}
 
@@ -432,7 +433,7 @@ function JointTypePanel({ joint, doc, dispatch }: { joint: any; doc: Document; d
       ) : (
         <div className="in-row2">
           <input className="in-text" placeholder="New type name (e.g. Twist)" value={newName} onChange={(e) => setNewName(e.target.value)} />
-          <button className="in-btn-sm" onClick={createProfile} title="Create a shared joint type from this joint and assign it">+ Create type</button>
+          <Button variant="outline" size="sm" onClick={createProfile} title="Create a shared joint type from this joint and assign it">+ Create type</Button>
         </div>
       )}
     </>
@@ -574,7 +575,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
           <strong>⚠ This joint won't move anything.</strong><br />
           "{doc.bodies[joint.childBodyId]?.name}" is already driven by <em>{conflictJoint.name}</em>.
           Swap so the free body becomes Body 2.
-          <button className="in-conflict-swap" onClick={swapBodies}>⇄ Swap Body 1 ↔ Body 2</button>
+          <Button variant="outline" size="sm" onClick={swapBodies}>⇄ Swap Body 1 ↔ Body 2</Button>
         </div>
       )}
       {childConflict && parentConflict && (
@@ -590,22 +591,22 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
       <Vec3 label="Rotation (deg)" value={quatArrToEulerDeg(origin.quaternion)}
         onChange={(v: any) => movePivot({ ...origin, quaternion: eulerDegToQuatArr(v) })} step={5} />
       <div className="in-ops in-axis-presets">
-        <button onClick={() => w1 && setPivotWorld(w1.position)} title="Put the pivot on Body 1">◐ Body 1</button>
-        <button onClick={() => w2 && setPivotWorld(w2.position)} title="Put the pivot on Body 2">◑ Body 2</button>
-        <button
+        <Button variant="outline" size="xs" onClick={() => w1 && setPivotWorld(w1.position)} title="Put the pivot on Body 1">◐ Body 1</Button>
+        <Button variant="outline" size="xs" onClick={() => w2 && setPivotWorld(w2.position)} title="Put the pivot on Body 2">◑ Body 2</Button>
+        <Button variant="outline" size="xs"
           onClick={() => w1 && w2 && setPivotWorld(w1.position.map((c: any, i: any) => (c + w2.position[i]) / 2))}
-          title="Put the pivot midway between the parts">◎ Middle</button>
+          title="Put the pivot midway between the parts">◎ Middle</Button>
       </div>
       <div className="in-ops in-axis-presets" style={{ marginTop: 4 }}>
-        <button
-          className={pickingPivot ? 'in-pick-active' : ''}
+        <Button
+          size="xs" variant={pickingPivot ? 'default' : 'outline'}
           onClick={pickingPivot ? () => { bridge.cancelPivotPick?.(); setPickingPivot(false); } : startPickPivot}
           title={pickingPivot
             ? 'Click anywhere to cancel — Esc also cancels'
             : 'Click any point / edge / vertex / circle center on any body to place the pivot there'}
           style={{ flexGrow: 1 }}>
           {pickingPivot ? '⊙ Click a point on the model… (Esc to cancel)' : '⊕ Pick pivot point in viewport'}
-        </button>
+        </Button>
       </div>
       {pickingPivot && (
         <div className="in-pick-hint">
@@ -623,10 +624,10 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
           <div className="in-group">AXIS · rotation / slide direction</div>
           <Vec3 label="Axis" value={joint.axis} onChange={setAxis} step={1} />
           <div className="in-ops in-axis-presets">
-            <button onClick={() => setAxis([1, 0, 0])}>X</button>
-            <button onClick={() => setAxis([0, 1, 0])}>Y</button>
-            <button onClick={() => setAxis([0, 0, 1])}>Z</button>
-            <button onClick={() => setAxis(joint.axis.map((c: any) => -c))} title="Flip direction">⇄ Flip</button>
+            <Button variant="outline" size="xs" onClick={() => setAxis([1, 0, 0])}>X</Button>
+            <Button variant="outline" size="xs" onClick={() => setAxis([0, 1, 0])}>Y</Button>
+            <Button variant="outline" size="xs" onClick={() => setAxis([0, 0, 1])}>Z</Button>
+            <Button variant="outline" size="xs" onClick={() => setAxis(joint.axis.map((c: any) => -c))} title="Flip direction">⇄ Flip</Button>
           </div>
         </>
       )}
@@ -698,9 +699,9 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
       )}
       {joint.type !== 'fixed' && (
         <div className="in-ops in-jog">
-          {hasLimits && <button onClick={() => setValue(lim.lower)} title="Go to lower limit">⤓ Min</button>}
-          <button onClick={() => { stopSpin(id); setValue(0); }} title="Stop spin and go to home / default (0)">⌂ Home</button>
-          {hasLimits && <button onClick={() => setValue(lim.upper)} title="Go to upper limit">⤒ Max</button>}
+          {hasLimits && <Button variant="outline" size="xs" onClick={() => setValue(lim.lower)} title="Go to lower limit">⤓ Min</Button>}
+          <Button variant="outline" size="xs" onClick={() => { stopSpin(id); setValue(0); }} title="Stop spin and go to home / default (0)">⌂ Home</Button>
+          {hasLimits && <Button variant="outline" size="xs" onClick={() => setValue(lim.upper)} title="Go to upper limit">⤒ Max</Button>}
         </div>
       )}
 
@@ -756,16 +757,16 @@ export default function Inspector() {
   const multiComponentJointCount = multiComponent ? jointsOfComponent(doc, multiComponent.id).length : 0;
 
   return (
-    <div className="in-panel">
+    <div className="in-panel" data-ui="a">
       <div className="in-head">
         {entity && (
           <div className="in-gizmo">
             {(kind === 'body' ? ['translate', 'rotate', 'scale'] : ['translate', 'rotate']).map((m) => (
-              <button key={m} title={kind === 'joint' ? `${m} pivot` : m}
-                className={`in-gz ${gizmoMode === m ? 'in-gz--on' : ''}`}
+              <Button key={m} title={kind === 'joint' ? `${m} pivot` : m}
+                size="icon-xs" variant={gizmoMode === m ? 'default' : 'outline'}
                 onClick={() => setGizmoMode(m as 'translate' | 'rotate' | 'scale')}>
                 {m === 'translate' ? '✥' : m === 'rotate' ? '⟳' : '⤢'}
-              </button>
+              </Button>
             ))}
           </div>
         )}
@@ -788,24 +789,24 @@ export default function Inspector() {
               { id: 'individual', label: 'Individual', hint: 'Each around its own origin' },
               { id: 'active', label: 'Active', hint: 'Around the last-clicked body' },
             ].map((p) => (
-              <button key={p.id} title={p.hint}
-                className={`in-pivot-btn ${pivotMode === p.id ? 'in-pivot-btn--on' : ''}`}
+              <Button key={p.id} title={p.hint}
+                size="xs" className="tw:flex-1" variant={pivotMode === p.id ? 'default' : 'outline'}
                 onClick={() => setPivotMode(p.id as any)}>
                 {p.label}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="in-multi-sub">Orient long axis to</div>
           <div className="in-pivot-row">
             {(['x', 'y', 'z'] as const).map((ax) => (
-              <button key={ax} className="in-pivot-btn"
+              <Button key={ax} size="xs" variant="outline" className="tw:flex-1"
                 title={`Rotate the whole connected module so its long axis points along world ${ax.toUpperCase()} (only when at home)`}
                 onClick={() => {
                   const r = bridge.orientSelectionAxis?.(ax);
                   if (r && !r.ok) alert(r.error);
                 }}>
                 {ax.toUpperCase()}{ax === 'x' ? ' ⇢' : ax === 'y' ? ' ⇡' : ' ⊙'}
-              </button>
+              </Button>
             ))}
           </div>
           <div className="in-multi-hint">

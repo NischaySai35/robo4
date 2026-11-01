@@ -3,7 +3,22 @@
    Component-specific styles live in each component's own CSS file.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+/* In a layer so Tailwind utilities (layer utilities, after base in tokens.css) can set padding and margin; any unlayered rule still wins over it, as before. */
+@layer base { *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; } }
+/* Feel (P7, 1 Nov 2026): every control answers the pointer and the keyboard the same way, converted or not.
+   Low layer: a screen's own colours still win; this only adds what most screens never set. */
+@layer base {
+  button, select, summary, [role="button"], [role="tab"], input[type="checkbox"], input[type="radio"], input[type="range"], input[type="color"], label:has(> input[type="checkbox"]) { cursor: pointer; }
+  button:disabled, select:disabled, input:disabled { cursor: not-allowed; }
+  button, [role="button"], [role="tab"] { transition: background-color .12s ease, border-color .12s ease, color .12s ease, box-shadow .12s ease, filter .12s ease, transform .07s ease; }
+  button:not(:disabled):hover, [role="button"]:hover { filter: brightness(1.15); }
+  button:not(:disabled):active, [role="button"]:active { transform: translateY(1px) scale(.98); filter: brightness(.95); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input, select, textarea { transition: border-color .12s ease, box-shadow .12s ease; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+}
+
 
 :root {
   /* ── LIGHT THEME (default) — white + blue accent + purple brand gradient.

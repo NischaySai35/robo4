@@ -25,7 +25,7 @@ def _physics():
         import mujoco
         return mujoco
     except ImportError as e:
-        raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install mujoco') from e
+        raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install "tetrobot-gos[sim]"') from e
 
 
 class Robot:

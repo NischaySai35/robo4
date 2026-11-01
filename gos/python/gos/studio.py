@@ -129,6 +129,44 @@ class StudioLink:
 APP_NAMES = ['TETROBOT-Demo-NischaySai.exe', 'TETROBOT-Demo-NischaySai']
 
 
+RELEASES = 'https://api.github.com/repos/NischaySai35/robo4/releases/latest'
+
+
+def pick_installer(assets, system=None, machine=None):
+    """The app installer in a release for this computer: .exe on Windows, .dmg on a Mac (Apple chip or Intel), .AppImage or .deb on Linux."""
+    import platform, re
+    system, machine = system or platform.system(), (machine or platform.machine()).lower()
+    names = [a['name'] for a in assets if not a['name'].endswith(('.blockmap', '.yml'))]
+    want = {'Windows': [r'Setup.*\.exe$'],
+            'Darwin': [r'-arm64\.dmg$'] if machine in ('arm64', 'aarch64') else [r'-x64\.dmg$'],
+            'Linux': [r'\.AppImage$', r'amd64\.deb$']}.get(system)
+    if not want: raise GosError(f'No TETROBOT app for {system}. The release has: {", ".join(names)}.')
+    for pat in want:
+        hit = next((a for a in assets if re.search(pat, a['name'])), None)
+        if hit: return hit
+    raise GosError(f'This release has no installer for {system} {machine}. It has: {", ".join(names)}.')
+
+
+def install_app(folder=None, dry=False):
+    """Download the TETROBOT app installer for this computer from the latest release. Returns the file path (or the plan with dry=True)."""
+    import json, os, urllib.request
+    try:
+        with urllib.request.urlopen(urllib.request.Request(RELEASES, headers={'Accept': 'application/vnd.github+json'}), timeout=30) as r:
+            rel = json.load(r)
+    except OSError as e:
+        raise GosError(f'Could not reach GitHub to find the app ({e}). Check the internet connection, or download it from github.com/NischaySai35/robo4/releases.') from e
+    asset = pick_installer(rel.get('assets', []))
+    folder = folder or os.path.join(os.path.expanduser('~'), 'Downloads')
+    path = os.path.join(folder, asset['name'])
+    plan = {'version': rel.get('tag_name'), 'file': asset['name'], 'mb': round(asset.get('size', 0) / 1e6), 'to': path}
+    if dry: return plan
+    os.makedirs(folder, exist_ok=True)
+    tmp = path + '.part'
+    urllib.request.urlretrieve(asset['browser_download_url'], tmp)
+    os.replace(tmp, path)
+    return plan
+
+
 def find_app():
     """The installed TETROBOT app: TETROBOT_APP if set, else the usual install folder."""
     import os, sys

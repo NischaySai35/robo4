@@ -4,6 +4,8 @@
  * fps + snapping. RENDER tab: capture stills / settings for exporting the animation.
  * Playback is non-destructive (sampled pose via FK).
  */
+import { Button } from '@/components/ui/button';
+import { Segmented } from '@/components/ui/segmented';
 import { useState, useRef, useEffect } from 'react';
 import './Timeline.css';
 
@@ -243,7 +245,7 @@ function AnimationTab() {
             </span>
           </div>
         ))}
-        <button className="tl-addclip" onClick={() => run('anim.clip.add')}>＋ Add clip</button>
+        <Button variant="outline" size="sm" className="tw:w-full" onClick={() => run('anim.clip.add')}>＋ Add clip</Button>
         <div className="tl-hint">◆ Key records into the <strong>selected</strong> clip automatically (its key count shows on the right). Ctrl+S saves every clip, key and group into your .nischay file.</div>
       </div>
 
@@ -253,12 +255,12 @@ function AnimationTab() {
       {/* Transport */}
       <div className="tl-section">TRANSPORT</div>
       <div className="tl-controls">
-        <button onClick={() => run('anim.play')} title="Play / pause this clip (loops)">{a.playing && !a.sequence ? '⏸' : '▶'}</button>
-        <button onClick={() => run('anim.playAll')} title="Play all clips in order">⏭ All</button>
-        <button onClick={() => run('anim.stop')} title="Stop">⏹</button>
+        <Button variant="outline" size="sm" onClick={() => run('anim.play')} title="Play / pause this clip (loops)">{a.playing && !a.sequence ? '⏸' : '▶'}</Button>
+        <Button variant="outline" size="sm" onClick={() => run('anim.playAll')} title="Play all clips in order">⏭ All</Button>
+        <Button variant="outline" size="sm" onClick={() => run('anim.stop')} title="Stop">⏹</Button>
         <div className="tl-key-split">
-          <button className="tl-key" onClick={() => run('anim.key')} disabled={nJoints === 0} title="Key everything at the playhead: joint poses + grounded base + lock states">◆ Key all</button>
-          <button className="tl-key-caret" onClick={() => setKeyMenu((v) => !v)} title="Choose what to key">▾</button>
+          <Button size="sm" data-key="all" className="tw:flex-1 tw:rounded-r-none" onClick={() => run('anim.key')} disabled={nJoints === 0} title="Key everything at the playhead: joint poses + grounded base + lock states">◆ Key all</Button>
+          <Button size="sm" className="tw:rounded-l-none tw:border-l tw:border-l-black/30" onClick={() => setKeyMenu((v) => !v)} title="Choose what to key" aria-expanded={keyMenu}>▾</Button>
           {keyMenu && (
             <>
               <div className="tl-key-backdrop" onClick={() => setKeyMenu(false)} />
@@ -303,7 +305,7 @@ function AnimationTab() {
         <label className="tl-snap">
           <input type="checkbox" checked={a.snap} onChange={() => a.toggleSnap()} /> Snap to fps grid
         </label>
-        <button className="tl-clear" onClick={() => run('anim.clear')} disabled={keyTimes.length === 0}>Clear keys</button>
+        <Button variant="destructive" size="sm" onClick={() => run('anim.clear')} disabled={keyTimes.length === 0}>Clear keys</Button>
       </div>
 
       {nJoints > 0 && keyTimes.length === 0 && (
@@ -530,24 +532,15 @@ function RenderTab() {
 
       {/* ENGINE */}
       <div className="tl-section">ENGINE</div>
-      <div className="tl-toggle4">
-        {(['eevee', 'cycles', 'raycast'] as Engine[]).map((e) => (
-          <button key={e} className={engine === e ? 'on' : ''} onClick={() => changeEngine(e)}>
-            {e === 'raycast' ? 'Raycast' : e.charAt(0).toUpperCase() + e.slice(1)}
-          </button>
-        ))}
-      </div>
+      <Segmented value={engine} onChange={changeEngine} options={(['eevee', 'cycles', 'raycast'] as Engine[]).map((e) => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1) }))} />
       <div className="tl-hint">{ENGINE_HINTS[engine]}</div>
       {engine === 'cycles' && (
         <div className="tl-cycles-info">
           <div className="tl-cycles-row">
             <span className="tl-cycles-label">COMPUTE</span>
-            <div className="tl-cycles-compute">
-              <button className={compute === 'cpu' ? 'on' : ''} onClick={() => changeCompute('cpu')}
-                title="Fewer ray bounces — lighter per-frame GPU load. Good for slow machines.">CPU</button>
-              <button className={compute === 'gpu' ? 'on' : ''} onClick={() => changeCompute('gpu')}
-                title="Full path tracing — 5 bounces, multiple importance sampling. Best quality.">GPU</button>
-            </div>
+            <Segmented size="xs" value={compute} onChange={changeCompute} options={[
+              { value: 'cpu', label: 'CPU', title: 'Fewer ray bounces — lighter per-frame GPU load. Good for slow machines.' },
+              { value: 'gpu', label: 'GPU', title: 'Full path tracing — 5 bounces, multiple importance sampling. Best quality.' }]} />
           </div>
           <div className="tl-cycles-row">
             <span className="tl-cycles-label">SAMPLES</span>
@@ -570,30 +563,18 @@ function RenderTab() {
 
       {/* MODE */}
       <div className="tl-section">MODE</div>
-      <div className="tl-toggle2">
-        <button className={mode === 'still' ? 'on' : ''} onClick={() => setMode('still')}>Image</button>
-        <button className={mode === 'video' ? 'on' : ''} onClick={() => setMode('video')}>Video</button>
-      </div>
+      <Segmented value={mode} onChange={setMode} options={[{ value: 'still', label: 'Image' }, { value: 'video', label: 'Video' }]} />
 
       {/* FORMAT */}
       <div className="tl-section">FORMAT</div>
       {mode === 'still' ? (
-        <div className="tl-toggle2">
-          <button className={stillFmt === 'png'  ? 'on' : ''} onClick={() => setStillFmt('png')}>PNG</button>
-          <button className={stillFmt === 'jpeg' ? 'on' : ''} onClick={() => setStillFmt('jpeg')}>JPEG</button>
-        </div>
+        <Segmented value={stillFmt} onChange={setStillFmt} options={[{ value: 'png', label: 'PNG' }, { value: 'jpeg', label: 'JPEG' }]} />
       ) : (
         <>
-          <div className="tl-toggle3">
-            <button className={videoFmt === 'webm'   ? 'on' : ''} onClick={() => setVideoFmt('webm')}>
-              WebM{!webmOk ? ' ✗' : ''}
-            </button>
-            <button className={videoFmt === 'mp4' ? 'on' : ''} onClick={() => setVideoFmt('mp4')}
-              title={mp4Ok ? 'H.264 MP4' : 'Not supported in this browser'}>
-              MP4{!mp4Ok ? ' ✗' : ''}
-            </button>
-            <button className={videoFmt === 'pngseq' ? 'on' : ''} onClick={() => setVideoFmt('pngseq')}>PNG Seq</button>
-          </div>
+          <Segmented value={videoFmt} onChange={setVideoFmt} options={[
+            { value: 'webm', label: 'WebM' + (!webmOk ? ' ✗' : '') },
+            { value: 'mp4', label: 'MP4' + (!mp4Ok ? ' ✗' : ''), title: mp4Ok ? 'H.264 MP4' : 'Not supported in this browser' },
+            { value: 'pngseq', label: 'PNG Seq' }]} />
           {videoFmt === 'webm' && !webmOk && <div className="tl-warn">WebM not supported — use PNG Seq.</div>}
           {videoFmt === 'mp4' && !mp4Ok && <div className="tl-warn">MP4 not supported in this browser (try Safari).</div>}
           {videoFmt === 'pngseq' && <div className="tl-hint">Frame-by-frame PNG — import in Blender / DaVinci.</div>}
@@ -602,28 +583,16 @@ function RenderTab() {
 
       {/* RESOLUTION */}
       <div className="tl-section">RESOLUTION</div>
-      <div className="tl-toggle2x2">
-        {(['viewport', '1080p', '2k', '4k'] as Resolution[]).map((r) => {
-          const p = RES_PRESETS[r];
-          return (
-            <button key={r} className={resolution === r ? 'on' : ''} onClick={() => setResolution(r)}>
-              {r === 'viewport' ? 'Viewport' : p ? `${p[0]}×${p[1]}` : r.toUpperCase()}
-            </button>
-          );
-        })}
-      </div>
+      <Segmented className="tw:flex-wrap" value={resolution} onChange={setResolution} options={(['viewport', '1080p', '2k', '4k'] as Resolution[]).map((r) => {
+        const p = RES_PRESETS[r];
+        return { value: r, label: r === 'viewport' ? 'Viewport' : p ? `${p[0]}×${p[1]}` : r.toUpperCase() };
+      })} />
 
       {/* FPS — video only */}
       {mode === 'video' && (
         <>
           <div className="tl-section">FRAME RATE</div>
-          <div className="tl-toggle4">
-            {([12, 24, 30, 60] as RenderFps[]).map((f) => (
-              <button key={f} className={renderFps === f ? 'on' : ''} onClick={() => setRenderFps(f)}>
-                {f} fps
-              </button>
-            ))}
-          </div>
+          <Segmented value={renderFps} onChange={setRenderFps} options={([12, 24, 30, 60] as RenderFps[]).map((f) => ({ value: f, label: f + ' fps' }))} />
         </>
       )}
 
@@ -661,11 +630,11 @@ function RenderTab() {
       {progress && <div className="tl-progress">{progress}</div>}
 
       <div className="tl-render-row">
-        <button className="tl-render" onClick={doExport} disabled={btnDisabled}>
+        <Button className="tw:flex-1" onClick={doExport} disabled={btnDisabled}>
           {btnLabel}
-        </button>
+        </Button>
         {busy && (
-          <button className="tl-cancel" onClick={() => { abortRef.current = true; }}>✕</button>
+          <Button variant="destructive" onClick={() => { abortRef.current = true; }} title="Cancel the render">✕</Button>
         )}
       </div>
     </div>
@@ -680,7 +649,7 @@ const TABS = [
 export default function Timeline() {
   const [tab, setTab] = useState<'animation' | 'render'>('animation');
   return (
-    <div className="tl-panel">
+    <div className="tl-panel" data-ui="a">
       <div className="tl-tabs">
         {TABS.map((t) => (
           <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>

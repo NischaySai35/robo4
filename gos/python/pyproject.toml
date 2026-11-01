@@ -8,14 +8,16 @@ name = "tetrobot-gos"
 version = "0.1.0"
 description = "GOS: the graph engine under TETROBOT, usable with no window"
 requires-python = ">=3.12"
-dependencies = ["mujoco>=3.17", "numpy"]
+# The core (graph engine, messaging, the gos command) needs only numpy; physics and the rest are add-ons.
+dependencies = ["numpy"]
 
 [project.optional-dependencies]
 ik = ["mink", "daqp"]
 network = ["eclipse-zenoh", "cryptography"]
 studio = ["websockets"]
 record = ["mcap"]
-sim = ["scipy", "gymnasium", "pillow", "opencv-python-headless"]
+sim = ["mujoco>=3.17", "scipy", "gymnasium", "pillow", "opencv-python-headless"]
+all = ["tetrobot-gos[ik,network,studio,record,sim]"]
 
 [project.scripts]
 gos = "gos.__main__:main"

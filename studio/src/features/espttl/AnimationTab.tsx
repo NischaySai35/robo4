@@ -127,7 +127,7 @@ export default function AnimationTab() {
           <span className="ettl-sep" />
           <button className="ettl-btn" onClick={() => call('/api/home', 'home 180')}>Home all → 180°</button>
           <button className="ettl-btn accent" onClick={() => call('/api/home/manual', 'manual home')}>Go to manual home</button>
-          <button className="ettl-btn" onClick={() => call('/api/home/set', 'set home')}>Set current as home</button>
+          <button className="ettl-btn" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</button>
         </div>
         <div className="ettl-row">
           <label className="ettl-lbl">speed

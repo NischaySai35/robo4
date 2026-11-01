@@ -28,7 +28,7 @@ async def main():
         s0 = await pg.evaluate(STATE)
         # The real buttons
         await pg.locator('.lp-add-wrap > button').first.click(); await pg.wait_for_timeout(300)
-        await pg.locator('.lp-add-item--module').first.click(); await pg.wait_for_timeout(1500)
+        await pg.locator('[data-testid="add-module"]').first.click(); await pg.wait_for_timeout(1500)
         s1 = await pg.evaluate(STATE)
         check('the Add Module button adds a module', s1['bodies'] == s0['bodies'] + 10, f"{s0['bodies']} to {s1['bodies']} bodies")
         r = await pg.evaluate("window.tetrobotOps.run('module.add')"); await pg.wait_for_timeout(1500)

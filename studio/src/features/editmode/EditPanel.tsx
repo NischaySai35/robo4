@@ -1,6 +1,7 @@
 /**
  * EditPanel — right-dock panel shown only while mesh Edit Mode is active.
  */
+import { Button } from '@/components/ui/button';
 import './EditPanel.css';
 import { useEditModeStore } from '@/state/editModeStore';
 import type { SelectMode, EditStyle } from '@/state/editModeStore';
@@ -34,25 +35,25 @@ export default function EditPanel() {
   const isFace = selectMode === 'face';
 
   return (
-    <div className="ed-panel">
+    <div className="ed-panel" data-ui="a">
       <div className="ed-banner">
         <span className="ed-banner-dot" />
         EDIT MODE — MESH
       </div>
       <div className="ed-head">
         <span className="ed-editing">Editing: <strong>{name}</strong></span>
-        <button className="ed-exit" onClick={exit} title="Exit Edit Mode (Tab)">Done</button>
+        <Button size="sm" onClick={exit} title="Exit Edit Mode (Tab)">Done</Button>
       </div>
 
       <div className="ed-group">EDIT STYLE</div>
       <div className="ed-modes">
         {(['fusion', 'blender'] as EditStyle[]).map((s) => (
-          <button key={s}
-            className={`ed-mode ${editStyle === s ? 'ed-mode--on' : ''}`}
+          <Button size="sm" className="tw:flex-1" variant={editStyle === s ? 'default' : 'outline'} key={s}
+           
             onClick={() => setEditStyle(s)}
             title={s === 'fusion' ? 'Clean edges only — no tessellation lines' : 'All triangles, vertices, edges visible'}>
             {s === 'fusion' ? '◈ Fusion' : '⬡ Blender'}
-          </button>
+          </Button>
         ))}
       </div>
 
@@ -61,11 +62,11 @@ export default function EditPanel() {
           <div className="ed-group">SELECT MODE</div>
           <div className="ed-modes">
             {MODES.map((m) => (
-              <button key={m.id}
-                className={`ed-mode ${selectMode === m.id ? 'ed-mode--on' : ''}`}
+              <Button size="sm" className="tw:flex-1" variant={selectMode === m.id ? 'default' : 'outline'} key={m.id}
+               
                 onClick={() => setSelectMode(m.id)}>
                 <span className="ed-mode-ic">{m.icon}</span>{m.label}
-              </button>
+              </Button>
             ))}
           </div>
         </>
@@ -78,62 +79,62 @@ export default function EditPanel() {
 
       <div className="ed-group">SELECTION</div>
       <div className="ed-row">
-        <button className="ed-btn" onClick={() => editBridge.selectAll()}>All <kbd>A</kbd></button>
-        <button className="ed-btn" onClick={() => editBridge.deselectAll()}>None</button>
+        <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.selectAll()}>All <kbd>A</kbd></Button>
+        <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.deselectAll()}>None</Button>
       </div>
       <div className="ed-row">
-        <button className="ed-btn" onClick={() => editBridge.selectLinked()} title="Select all connected (L)">Linked <kbd>L</kbd></button>
-        <button className="ed-btn" onClick={() => editBridge.selectSimilar()} title="Select similar faces/edges/verts">Similar</button>
+        <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.selectLinked()} title="Select all connected (L)">Linked <kbd>L</kbd></Button>
+        <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.selectSimilar()} title="Select similar faces/edges/verts">Similar</Button>
       </div>
       <div className="ed-row">
-        <button className="ed-btn ed-btn--danger" onClick={() => editBridge.deleteSelection()} title="Delete selection (X)">Delete <kbd>X</kbd></button>
-        <button className="ed-btn" onClick={() => editBridge.mergeVertices()} title="Weld selected verts to centre">Merge</button>
+        <Button variant="destructive" size="sm" className="tw:flex-1" onClick={() => editBridge.deleteSelection()} title="Delete selection (X)">Delete <kbd>X</kbd></Button>
+        <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.mergeVertices()} title="Weld selected verts to centre">Merge</Button>
       </div>
 
       <div className="ed-group">MODIFY</div>
       {editStyle === 'fusion' ? (
         <>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.extrude()} title="Push/Pull selected face (E)">Extrude <kbd>E</kbd></button>
-            <button className="ed-btn" onClick={() => editBridge.inset()} title="Inset face (I)">Inset <kbd>I</kbd></button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.extrude()} title="Push/Pull selected face (E)">Extrude <kbd>E</kbd></Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.inset()} title="Inset face (I)">Inset <kbd>I</kbd></Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.bevel()} title="Chamfer / Fillet edge (B)">Chamfer <kbd>B</kbd></button>
-            <button className="ed-btn" onClick={() => editBridge.subdivide()} title="Subdivide selected">Subdivide</button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.bevel()} title="Chamfer / Fillet edge (B)">Chamfer <kbd>B</kbd></Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.subdivide()} title="Subdivide selected">Subdivide</Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.smooth()} title="Smooth vertices">Smooth</button>
-            <button className="ed-btn" onClick={() => editBridge.shrinkFatten()} title="Shell / Offset along normals">Shell</button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.smooth()} title="Smooth vertices">Smooth</Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.shrinkFatten()} title="Shell / Offset along normals">Shell</Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.fill()} title="Fill / close open edges (F)">Fill <kbd>F</kbd></button>
-            <button className="ed-btn" onClick={() => editBridge.startTwoPointMove()} title="Snap vertex to another vertex">2-Pt Move</button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.fill()} title="Fill / close open edges (F)">Fill <kbd>F</kbd></Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.startTwoPointMove()} title="Snap vertex to another vertex">2-Pt Move</Button>
           </div>
         </>
       ) : (
         <>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.extrude()} title="Extrude faces (E)" disabled={!isFace}>Extrude <kbd>E</kbd></button>
-            <button className="ed-btn" onClick={() => editBridge.inset()} title="Inset faces (I)" disabled={!isFace}>Inset <kbd>I</kbd></button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.extrude()} title="Extrude faces (E)" disabled={!isFace}>Extrude <kbd>E</kbd></Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.inset()} title="Inset faces (I)" disabled={!isFace}>Inset <kbd>I</kbd></Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.bevel()} title="Bevel selected edges (B)" disabled={!isEdge}>Bevel <kbd>B</kbd></button>
-            <button className="ed-btn" onClick={() => editBridge.loopCut()} title="Loop Cut: insert edge ring (Ctrl+R)" disabled={!isEdge}>Loop Cut</button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.bevel()} title="Bevel selected edges (B)" disabled={!isEdge}>Bevel <kbd>B</kbd></Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.loopCut()} title="Loop Cut: insert edge ring (Ctrl+R)" disabled={!isEdge}>Loop Cut</Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.fill()} title="Fill: create face (F)" disabled={isFace}>Fill <kbd>F</kbd></button>
-            <button className="ed-btn" onClick={() => editBridge.connect()} title="Connect 2 verts (J)" disabled={!isVert}>Connect <kbd>J</kbd></button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.fill()} title="Fill: create face (F)" disabled={isFace}>Fill <kbd>F</kbd></Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.connect()} title="Connect 2 verts (J)" disabled={!isVert}>Connect <kbd>J</kbd></Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.subdivide()}>Subdivide</button>
-            <button className="ed-btn" onClick={() => editBridge.duplicateSelection()} disabled={!isFace}>Duplicate</button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.subdivide()}>Subdivide</Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.duplicateSelection()} disabled={!isFace}>Duplicate</Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.shrinkFatten()} title="Shrink/Fatten along normals">Shrink/Fat</button>
-            <button className="ed-btn" onClick={() => editBridge.smooth()}>Smooth</button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.shrinkFatten()} title="Shrink/Fatten along normals">Shrink/Fat</Button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.smooth()}>Smooth</Button>
           </div>
           <div className="ed-row">
-            <button className="ed-btn" onClick={() => editBridge.startTwoPointMove()} title="Move: snap vertex to vertex">2-Pt Move</button>
+            <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => editBridge.startTwoPointMove()} title="Move: snap vertex to vertex">2-Pt Move</Button>
           </div>
         </>
       )}

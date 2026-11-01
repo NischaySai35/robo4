@@ -16,8 +16,13 @@ try:
     py = os.path.join(env_dir, 'Scripts' if os.name == 'nt' else 'bin', 'python')
     gos_cmd = os.path.join(env_dir, 'Scripts' if os.name == 'nt' else 'bin', 'gos')
     wheel = os.path.join(wheels, os.listdir(wheels)[0])
-    subprocess.run([py, '-m', 'pip', 'install', '-q', wheel], check=True)
     shutil.copy(os.path.join(ROOT, 'studio', 'src', 'core', 'factory', 'single-module-demo.json'), os.path.join(work, 'robot.json'))
+    subprocess.run([py, '-m', 'pip', 'install', '-q', wheel], check=True)
+    # the core alone: messaging works, and simulating says which add-on to install
+    core_only = "import gos\nwith gos.App() as a:\n    a.topic('/x').publish(1)\n    a.load('robot.json')"
+    out = subprocess.run([py, '-c', core_only], cwd=work, capture_output=True, text=True, timeout=120)
+    assert out.returncode != 0 and 'tetrobot-gos[sim]' in out.stderr, out.stdout + out.stderr
+    subprocess.run([py, '-m', 'pip', 'install', '-q', wheel + '[sim]'], check=True)
     with open(os.path.join(work, 'demo.py'), 'w') as f:
         f.write("import gos\nwith gos.App(headless=True) as app:\n    app.load('robot.json')\n    r = app.run(seconds=0.2)\nprint('RAN', r.steps, app.model is None)\n")
     # Outside the repo, with no PYTHONPATH: only the installed package can answer.

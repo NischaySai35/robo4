@@ -39,7 +39,7 @@ class MujocoEngine(Engine):
         try:
             import mujoco
         except ImportError as e:
-            raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install mujoco') from e
+            raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install "tetrobot-gos[sim]"') from e
         self.mj = mujoco
         self.spec = self.model = self.data = None
 

@@ -11,6 +11,8 @@
  * Cycles / Raycast) are presentational — there is no GPU path tracer here — but
  * Export produces a real PNG/JPEG of the current frame.
  */
+import { Button } from '@/components/ui/button';
+import { Segmented } from '@/components/ui/segmented';
 import './CameraPanel.css';
 import { useEffect, useState } from 'react';
 import { bridge } from '@/bridge/cameraBridge';
@@ -154,12 +156,12 @@ export default function CameraPanel() {
   };
 
   return (
-    <div className="cam-panel">
+    <div className="cam-panel" data-ui="a">
       <PropertyPane props={LENS} values={s} onChange={(k, v) => apply({ [k]: v } as Partial<State>)} />
 
       <div className="cam-actions">
-        <button onClick={() => bridge.fitCamera?.()}>Fit to model</button>
-        <button onClick={reset}>Reset defaults</button>
+        <Button variant="outline" size="sm" className="tw:flex-1" onClick={() => bridge.fitCamera?.()}>Fit to model</Button>
+        <Button variant="outline" size="sm" className="tw:flex-1" onClick={reset}>Reset defaults</Button>
       </div>
 
       {/* ── RENDER ──────────────────────────────────────────────── */}
@@ -173,25 +175,16 @@ export default function CameraPanel() {
 
       {/* Engine */}
       <div className="cam-sublabel">ENGINE</div>
-      <div className="cam-seg4">
-        {(['eevee', 'cycles', 'raycast'] as CamEngine[]).map((e) => (
-          <button key={e} className={engine === e ? 'on' : ''} onClick={() => changeEngine(e)}
-            title={CAM_ENGINE_LABELS[e]}>
-            {e.charAt(0).toUpperCase() + e.slice(1)}
-          </button>
-        ))}
-      </div>
+      <Segmented value={engine} onChange={changeEngine}
+        options={(['eevee', 'cycles', 'raycast'] as CamEngine[]).map((e) => ({ value: e, label: e.charAt(0).toUpperCase() + e.slice(1), title: CAM_ENGINE_LABELS[e] }))} />
       <div className="cam-note-sm">{CAM_ENGINE_LABELS[engine]}</div>
       {engine === 'cycles' && (
         <>
           <div className="cam-compute-row">
             <span className="cam-sublabel" style={{ margin: 0 }}>COMPUTE</span>
-            <div className="cam-seg" style={{ flex: 1 }}>
-              <button className={compute === 'cpu' ? 'on' : ''} onClick={() => changeCompute('cpu')}
-                title="2 bounces — lighter load, faster convergence">CPU</button>
-              <button className={compute === 'gpu' ? 'on' : ''} onClick={() => changeCompute('gpu')}
-                title="5 bounces, MIS — full quality path tracing">GPU</button>
-            </div>
+            <Segmented className="tw:flex-1" value={compute} onChange={changeCompute} options={[
+              { value: 'cpu', label: 'CPU', title: '2 bounces — lighter load, faster convergence' },
+              { value: 'gpu', label: 'GPU', title: '5 bounces, MIS — full quality path tracing' }]} />
           </div>
           <div className="cam-compute-row">
             <span className="cam-sublabel" style={{ margin: 0 }}>MAX SAMPLES</span>
@@ -205,38 +198,24 @@ export default function CameraPanel() {
 
       {/* Image / Video */}
       <div className="cam-sublabel">MODE</div>
-      <div className="cam-seg">
-        <button className={mediaType === 'image' ? 'on' : ''} onClick={() => setMediaType('image')}>Image</button>
-        <button className={mediaType === 'video' ? 'on' : ''} onClick={() => setMediaType('video')}>Video</button>
-      </div>
+      <Segmented value={mediaType} onChange={setMediaType} options={[{ value: 'image', label: 'Image' }, { value: 'video', label: 'Video' }]} />
 
       {/* Format */}
       <div className="cam-sublabel">FORMAT</div>
       {mediaType === 'image' ? (
-        <div className="cam-seg">
-          <button className={imgFmt === 'png' ? 'on' : ''} onClick={() => setImgFmt('png')}>PNG</button>
-          <button className={imgFmt === 'jpg' ? 'on' : ''} onClick={() => setImgFmt('jpg')}>JPEG</button>
-        </div>
+        <Segmented value={imgFmt} onChange={setImgFmt} options={[{ value: 'png', label: 'PNG' }, { value: 'jpg', label: 'JPEG' }]} />
       ) : (
-        <div className="cam-seg">
-          <button className={vidFmt === 'webm' ? 'on' : ''} onClick={() => setVidFmt('webm')}>WebM</button>
-          <button className={vidFmt === 'mp4' ? 'on' : ''} onClick={() => setVidFmt('mp4')}>MP4</button>
-        </div>
+        <Segmented value={vidFmt} onChange={setVidFmt} options={[{ value: 'webm', label: 'WebM' }, { value: 'mp4', label: 'MP4' }]} />
       )}
 
       {/* Resolution */}
       <div className="cam-sublabel">RESOLUTION</div>
-      <div className="cam-seg4">
-        {(['viewport', '1080p', '2k', '4k'] as CamRes[]).map((r) => (
-          <button key={r} className={resolution === r ? 'on' : ''} onClick={() => setResolution(r)}>
-            {resLabel(r)}
-          </button>
-        ))}
-      </div>
+      <Segmented value={resolution} onChange={setResolution}
+        options={(['viewport', '1080p', '2k', '4k'] as CamRes[]).map((r) => ({ value: r, label: resLabel(r) }))} />
 
-      <button className="cam-export" onClick={onExport} disabled={busy}>
+      <Button className="tw:mt-2 tw:w-full" onClick={onExport} disabled={busy}>
         {busy ? 'Rendering…' : mediaType === 'image' ? `⤓ Export ${imgFmt.toUpperCase()}` : '⏺ Video → Render tab'}
-      </button>
+      </Button>
       {note && <div className="cam-note">{note}</div>}
     </div>
   );

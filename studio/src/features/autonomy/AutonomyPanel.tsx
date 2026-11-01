@@ -6,6 +6,7 @@
  *   • Learning     — Evolution-Strategies trainer on a reach task (watch it learn).
  *   • Behaviour    — a Behaviour-Tree mission (patrol: pick → plan → go → scan).
  */
+import { Button } from '@/components/ui/button';
 import './AutonomyPanel.css';
 import { useEffect, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
@@ -340,40 +341,40 @@ export default function AutonomyPanel() {
   };
 
   return (
-    <div className="auto-panel">
+    <div className="auto-panel" data-ui="a">
       <div className="auto-sec">NAVIGATION</div>
       <div className="auto-row"><span>Status</span><strong className={status === 'failed' ? 'bad' : ''}>{status}{navigating ? ' ▶' : ''}</strong></div>
       <div className="auto-row"><span>Goal</span><strong>{goal ? `${fmt(goal[0])}, ${fmt(goal[1])}` : '—'}</strong></div>
       <div className="auto-row"><span>Path</span><strong>{path ? `${path.length} pts` : '—'}</strong></div>
-      <div className="auto-btns"><button onClick={addObstacles}>Add obstacles</button><button onClick={clearObstacles}>Clear</button></div>
+      <div className="auto-btns"><Button variant="outline" size="sm" onClick={addObstacles}>Add obstacles</Button><Button variant="outline" size="sm" onClick={clearObstacles}>Clear</Button></div>
       <div className="auto-btns">
-        <button className={settingGoal ? 'on' : ''} onClick={() => useAutonomyStore.getState().setSettingGoal(!settingGoal)}>{settingGoal ? 'Click ground…' : 'Pick goal'}</button>
-        <button onClick={plan}>Plan A*</button>
+        <Button size="sm" variant={settingGoal ? 'default' : 'outline'} onClick={() => useAutonomyStore.getState().setSettingGoal(!settingGoal)}>{settingGoal ? 'Click ground…' : 'Pick goal'}</Button>
+        <Button variant="outline" size="sm" onClick={plan}>Plan A*</Button>
       </div>
       <div className="auto-btns">
-        <button className={avoidance ? 'on' : ''} onClick={() => useAutonomyStore.getState().toggleAvoidance()}
+        <Button size="sm" variant={avoidance ? 'default' : 'outline'} onClick={() => useAutonomyStore.getState().toggleAvoidance()}
           title="Obstacle-aware local planning (DWB on an inflated costmap) vs plain pure-pursuit">
           {avoidance ? 'DWB avoidance ✓' : 'DWB avoidance'}
-        </button>
-        {!navigating ? <button className="primary" onClick={go}>Navigate ▶</button> : <button onClick={stop}>Stop ■</button>}
+        </Button>
+        {!navigating ? <Button size="sm" onClick={go}>Navigate ▶</Button> : <Button variant="outline" size="sm" onClick={stop}>Stop ■</Button>}
       </div>
       {navigating && poseEstimate && (
         <div className="auto-row"><span>AMCL est</span><strong>{fmt(poseEstimate[0])}, {fmt(poseEstimate[1])}</strong></div>
       )}
 
       <div className="auto-sec">PERCEPTION &amp; MAPPING</div>
-      <div className="auto-btns"><button onClick={scan}>LiDAR scan</button><button onClick={buildMap}>Build map</button><button className={showLidar ? 'on' : ''} onClick={() => useAutonomyStore.getState().toggleLidar()}>Rays</button></div>
+      <div className="auto-btns"><Button variant="outline" size="sm" onClick={scan}>LiDAR scan</Button><Button variant="outline" size="sm" onClick={buildMap}>Build map</Button><Button size="sm" variant={showLidar ? 'default' : 'outline'} onClick={() => useAutonomyStore.getState().toggleLidar()}>Rays</Button></div>
       <div className="auto-row"><span>LiDAR min</span><strong>{lidar ? `${fmt(Math.min(...lidar.ranges))} m` : '—'}</strong></div>
       <div className="auto-row"><span>Map cells</span><strong>{mapCells || '—'}</strong></div>
 
       <div className="auto-sec">AUTONOMOUS EXPLORATION</div>
       <div className="auto-hint">Robot drives itself to map boundaries (frontiers), building the map until the space is fully explored. Then save it — that's the robot's memory of the place.</div>
       <div className="auto-btns">
-        <button className={exploring ? 'on' : 'primary'} onClick={toggleExplore}>{exploring ? 'Stop explore ■' : 'Explore ▶'}</button>
+        <Button size="sm" variant={exploring ? 'destructive' : 'default'} onClick={toggleExplore}>{exploring ? 'Stop explore ■' : 'Explore ▶'}</Button>
       </div>
       <div className="auto-btns">
-        <button onClick={saveMap}>Save map</button>
-        <button onClick={loadMap}>Load map</button>
+        <Button variant="outline" size="sm" onClick={saveMap}>Save map</Button>
+        <Button variant="outline" size="sm" onClick={loadMap}>Load map</Button>
       </div>
 
       <div className="auto-sec">MOTION PLANNING</div>
@@ -385,21 +386,21 @@ export default function AutonomyPanel() {
           <option value="prm">PRM</option>
           <option value="cartesian">Cartesian (line +X)</option>
         </select>
-        <button className={motion ? 'on' : 'primary'} onClick={planExecute}>
+        <Button size="sm" variant={motion ? 'outline' : 'default'} onClick={planExecute}>
           {motion ? `${motion.phase} ${Math.round(motion.progress * 100)}% ■` : 'Plan + Execute ▶'}
-        </button>
+        </Button>
       </div>
       {motion && <div className="auto-bar"><div className="auto-bar-fill" style={{ width: `${motion.progress * 100}%` }} /></div>}
-      <div className="auto-btns"><button onClick={planArm}>Legacy RRT (untimed)</button></div>
+      <div className="auto-btns"><Button variant="outline" size="sm" onClick={planArm}>Legacy RRT (untimed)</Button></div>
 
       <div className="auto-sec">REINFORCEMENT LEARNING</div>
       <div className="auto-hint">Evolution-Strategies trainer on a reach task (select a manipulator body).</div>
-      <div className="auto-btns"><button onClick={trainES}>Train policy</button></div>
+      <div className="auto-btns"><Button variant="outline" size="sm" onClick={trainES}>Train policy</Button></div>
       {train && <div className="auto-row"><span>Gen {train.gen}</span><strong>R {fmt(train.ret)} · best {fmt(train.best)}</strong></div>}
 
       <div className="auto-sec">BEHAVIOUR TREE</div>
       <div className="auto-hint">Patrol mission: pick → plan → navigate → scan, looping.</div>
-      <div className="auto-btns"><button className={btRunning ? 'on' : ''} onClick={runBehaviour}>{btRunning ? 'Stop mission ■' : 'Run mission ▶'}</button></div>
+      <div className="auto-btns"><Button size="sm" variant={btRunning ? 'destructive' : 'default'} onClick={runBehaviour}>{btRunning ? 'Stop mission ■' : 'Run mission ▶'}</Button></div>
 
       <div className="auto-sec">SENSORS</div>
       <div className="auto-row"><span>Encoders</span><strong>{movable} joints</strong></div>

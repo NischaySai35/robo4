@@ -35,9 +35,9 @@ export interface TopicStats {
   name: string;
   type: string;
   count: number;
-  /** exponential-moving-average publish rate, Hz */
+  /** messages per second over the last 2 s of real time */
   hz: number;
-  /** approx bytes/sec (EMA over JSON size) */
+  /** bytes per second over the same window (JSON size) */
   bps: number;
   lastT: number;
   latched: boolean;
@@ -56,9 +56,11 @@ interface Topic {
   hz: number;
   bps: number;
   lastT: number;
+  /** recent messages as [performance.now, bytes], for the rate */
+  window?: [number, number][];
 }
 
-const RATE_ALPHA = 0.3; // EMA smoothing for Hz/bandwidth
+const WINDOW_MS = 2000; // rate and bandwidth are measured over this much recent real time
 
 export class MessageBus {
   private _topics = new Map<string, Topic>();
@@ -79,18 +81,17 @@ export class MessageBus {
     const now = clock.now();
     const env: Envelope<T> = { topic: name, t: now, node, msg };
 
-    // rate + bandwidth EMA
-    if (t.lastT) {
-      const dt = (now - t.lastT) / 1000;
-      if (dt > 0) {
-        const inst = 1 / dt;
-        t.hz = t.hz === 0 ? inst : t.hz * (1 - RATE_ALPHA) + inst * RATE_ALPHA;
-      }
-    }
+    // rate and bandwidth over the last WINDOW_MS of real time, like `ros2 topic hz`: the runtime clock may follow a
+    // paused or scrubbed simulation, and a short average swings wildly after a stall or a burst
+    const wall = performance.now();
     let bytes = 0;
     try { bytes = JSON.stringify(msg).length; } catch { bytes = 0; }
-    const instBps = t.hz * bytes;
-    t.bps = t.bps === 0 ? instBps : t.bps * (1 - RATE_ALPHA) + instBps * RATE_ALPHA;
+    const w = (t.window ??= []);
+    w.push([wall, bytes]);
+    while (w.length > 1 && wall - w[0][0] > WINDOW_MS) w.shift();
+    const span = (wall - w[0][0]) / 1000;
+    t.hz = span > 0 ? (w.length - 1) / span : 0;
+    t.bps = span > 0 ? w.slice(1).reduce((a, x) => a + x[1], 0) / span : 0;
     t.lastT = now;
     t.count++;
     if (node) t.publishers.add(node);
@@ -123,12 +124,15 @@ export class MessageBus {
   }
 
   topics(): TopicStats[] {
+    const wall = performance.now();
+    // a topic that has gone quiet reads 0, not the last rate it had
+    const live = (t: Topic) => !!t.window?.length && wall - t.window[t.window.length - 1][0] <= WINDOW_MS;
     return [...this._topics.values()].map((t) => ({
       name: t.name,
       type: t.type,
       count: t.count,
-      hz: t.hz,
-      bps: t.bps,
+      hz: live(t) ? t.hz : 0,
+      bps: live(t) ? t.bps : 0,
       lastT: t.lastT,
       latched: t.latched,
       publishers: t.publishers.size,

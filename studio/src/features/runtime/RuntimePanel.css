@@ -23,6 +23,7 @@
 .rt-tname { font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--text-bright); }
 .rt-tmeta { display: flex; gap: 8px; align-items: center; }
 .rt-thz { font-size: 11px; color: var(--accent); font-weight: 700; }
+.rt-tbps { font-size: 11px; color: var(--muted-foreground); margin-left: 6px; }
 .rt-tcount { font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .rt-ttype { grid-column: 1 / -1; font-size: 10px; color: var(--text-dim); }
 
@@ -63,22 +64,10 @@
 .rt-diag-msg { font-size: 11px; color: var(--text-dim); margin-left: auto; }
 
 /* record */
-.rt-record { display: flex; flex-direction: column; gap: 10px; }
-.rt-rec-row { display: flex; align-items: center; gap: 10px; }
-.rt-btn {
-  padding: 6px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
-  background: var(--bg-card); color: var(--text-bright);
-  border: 1px solid var(--border); border-radius: 6px;
-}
-.rt-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-.rt-rec { color: #ef4444; border-color: #ef444455; }
-.rt-stop { color: #f59e0b; border-color: #f59e0b55; }
-.rt-recording { font-size: 12px; color: #ef4444; animation: rt-pulse 1s infinite alternate; }
 @keyframes rt-pulse { from { opacity: 0.5; } to { opacity: 1; } }
 
 .rt-player { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px; }
 .rt-player-head { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
-.rt-x { background: none; border: none; color: var(--text-dim); cursor: pointer; font-size: 13px; }
 .rt-transport { display: flex; align-items: center; gap: 8px; }
 .rt-scrub { flex: 1; }
 .rt-rate { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 2px 4px; font-size: 12px; }

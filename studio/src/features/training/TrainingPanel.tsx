@@ -17,6 +17,7 @@
  *   VLM goal parser — send natural-language instruction → 3D target (OpenAI / Anthropic)
  *   HuggingFace     — SmolVLA / Octo inference (planned)
  */
+import { Button } from '@/components/ui/button';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -1144,14 +1145,14 @@ print("  Then: Training page → Cloud tab → Import trained policy")
             </div>
             <div className="tr-sec">GOAL SHAPE</div>
             <div className="tr-btns">
-              <button className={assembleShape === 'chain' ? 'tr-primary' : ''} disabled={training}
+              <Button size="sm" variant={assembleShape === 'chain' ? 'default' : 'outline'} disabled={training}
                 onClick={() => setAssembleShape('chain')} title="Modules connect end-to-end: 0-1-2-3">
                 ⛓ Chain
-              </button>
-              <button className={assembleShape === 'star' ? 'tr-primary' : ''} disabled={training}
+              </Button>
+              <Button size="sm" variant={assembleShape === 'star' ? 'default' : 'outline'} disabled={training}
                 onClick={() => setAssembleShape('star')} title="Module 0 is a hub connected to every other module">
                 ✦ Star
-              </button>
+              </Button>
             </div>
             <div className="tr-hint">
               Chain vs. Star are topologically different goal shapes — same module count, different
@@ -1177,10 +1178,10 @@ print("  Then: Training page → Cloud tab → Import trained policy")
             <div className="tr-sec">REACH TARGET</div>
             <div className="tr-hint">Place a 3D target, then "Run to target" drives the trained brain to it live.</div>
             <div className="tr-btns">
-              <button className={picking ? 'tr-primary' : ''} onClick={() => useTrainingStore.getState().setPicking(!picking)}>
+              <Button size="sm" variant={picking ? 'default' : 'outline'} onClick={() => useTrainingStore.getState().setPicking(!picking)}>
                 {picking ? 'Click the scene…' : '◎ Pick in 3D'}
-              </button>
-              <button onClick={() => useTrainingStore.getState().setTarget(null)} disabled={!target}>Clear</button>
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => useTrainingStore.getState().setTarget(null)} disabled={!target}>Clear</Button>
             </div>
             <div className="tr-xyz">
               {(['X', 'Y', 'Z'] as const).map((ax, i) => (
@@ -1192,8 +1193,8 @@ print("  Then: Training page → Cloud tab → Import trained policy")
             </div>
             <div className="tr-btns">
               {!running
-                ? <button className="tr-primary" onClick={runToTarget} disabled={!target || !ready}>▶ Run to target</button>
-                : <button className="tr-stop" onClick={stopRun}>■ Stop</button>}
+                ? <Button size="sm" onClick={runToTarget} disabled={!target || !ready}>▶ Run to target</Button>
+                : <Button variant="destructive" size="sm" onClick={stopRun}>■ Stop</Button>}
             </div>
           </>
         )}
@@ -1308,17 +1309,17 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         <div className="tr-sec">RUN</div>
         <div className="tr-btns">
           {!training
-            ? <button className="tr-primary" onClick={startTraining} disabled={!ready}>▶ Train</button>
-            : <button className="tr-stop" onClick={stopTraining}>■ Stop</button>}
-          <button onClick={() => watch()} disabled={!getTrainedPolicy() || training}>Watch</button>
-          <button onClick={saveSkill} disabled={!getTrainedPolicy() || training}>Save</button>
+            ? <Button size="sm" onClick={startTraining} disabled={!ready}>▶ Train</Button>
+            : <Button variant="destructive" size="sm" onClick={stopTraining}>■ Stop</Button>}
+          <Button variant="outline" size="sm" onClick={() => watch()} disabled={!getTrainedPolicy() || training}>Watch</Button>
+          <Button variant="outline" size="sm" onClick={saveSkill} disabled={!getTrainedPolicy() || training}>Save</Button>
         </div>
         <div className="tr-btns">
-          <button onClick={() => pushDiag(diagnose('now'))} disabled={!getTrainedPolicy()}
+          <Button variant="outline" size="sm" onClick={() => pushDiag(diagnose('now'))} disabled={!getTrainedPolicy()}
             title="Replay one episode with the best policy and break the score into its reward terms.">
             🔍 Diagnose reward
-          </button>
-          {diag.length > 0 && <button onClick={() => setDiag([])} title="Clear the breakdown log">Clear</button>}
+          </Button>
+          {diag.length > 0 && <Button variant="outline" size="sm" onClick={() => setDiag([])} title="Clear the breakdown log">Clear</Button>}
         </div>
         {diag.length > 0 && (
           <div className="tr-diag">
@@ -1358,9 +1359,9 @@ print("  Then: Training page → Cloud tab → Import trained policy")
           <>
             <div className="tr-hint">Set a reach target (in Setup → Reach Target) then click Record.</div>
             <div className="tr-btns">
-              <button className="tr-primary" onClick={recordReachDemo} disabled={!tipId || !target}>
+              <Button size="sm" onClick={recordReachDemo} disabled={!tipId || !target}>
                 ◉ Record reach demo
-              </button>
+              </Button>
             </div>
           </>
         )}
@@ -1369,10 +1370,10 @@ print("  Then: Training page → Cloud tab → Import trained policy")
           <>
             <div className="tr-hint">Add waypoints (use 3D Pick in Setup), then generate a navigation demo.</div>
             <div className="tr-btns">
-              <button onClick={recordNavWaypoint} disabled={!target}>+ Add waypoint</button>
-              <button className="tr-primary" onClick={generateNavDemo} disabled={waypoints.length === 0}>
+              <Button variant="outline" size="sm" onClick={recordNavWaypoint} disabled={!target}>+ Add waypoint</Button>
+              <Button size="sm" onClick={generateNavDemo} disabled={waypoints.length === 0}>
                 ◉ Generate nav demo
-              </button>
+              </Button>
             </div>
             {waypoints.length > 0 && (
               <div className="tr-hint">{waypoints.length} waypoints queued: {waypoints.map(([x, y]) => `(${x.toFixed(1)},${y.toFixed(1)})`).join(' → ')}</div>
@@ -1395,7 +1396,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         ))}
         {demos.length > 0 && (
           <div className="tr-btns">
-            <button onClick={() => setDemos([])}>Clear all demos</button>
+            <Button variant="outline" size="sm" onClick={() => setDemos([])}>Clear all demos</Button>
           </div>
         )}
 
@@ -1404,9 +1405,9 @@ print("  Then: Training page → Cloud tab → Import trained policy")
           <div>Total pairs: <strong>{demos.reduce((s, d) => s + d.pairs.length, 0)}</strong></div>
           <div className="tr-hint">10–50 pairs: basic. 200+: good generalisation. 1000+: robust.</div>
           {demos.length >= 1 && (
-            <button className="tr-primary" style={{ marginTop: 6 }} onClick={() => { setAlgo('bc'); setTab('train'); }}>
+            <Button size="sm" style={{ marginTop: 6 }} onClick={() => { setAlgo('bc'); setTab('train'); }}>
               → Train BC now
-            </button>
+            </Button>
           )}
         </div>
         {log && <div className="tr-log">{log}</div>}
@@ -1433,13 +1434,13 @@ print("  Then: Training page → Cloud tab → Import trained policy")
               Policy: {s.policy.kind} [{s.policy.obsDim}→{(s.policy.hidden ?? []).join('×')}→{s.policy.actionDim}] · {s.policy.params.length} params
             </div>
             <div className="tr-btns" style={{ marginTop: 6 }}>
-              <button className="tr-primary" onClick={runSaved}>▶ Run</button>
-              <button onClick={() => {
+              <Button size="sm" onClick={runSaved}>▶ Run</Button>
+              <Button variant="outline" size="sm" onClick={() => {
                 const blob = new Blob([JSON.stringify(s, null, 2)], { type: 'application/json' });
                 const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
                 a.download = `skill-${s.name}.json`; a.click();
-              }}>⬇ Export</button>
-              <button onClick={deleteSaved}>✕ Delete</button>
+              }}>⬇ Export</Button>
+              <Button variant="outline" size="sm" onClick={deleteSaved}>✕ Delete</Button>
             </div>
           </div>
         )}
@@ -1447,8 +1448,8 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         <div className="tr-sec">EVAL</div>
         <div className="tr-hint">Watch the saved skill run on the robot in the 3D viewport.</div>
         <div className="tr-btns">
-          <button disabled={!s} onClick={runSaved}>▶ Run saved "{skillName}"</button>
-          <button onClick={() => stopAll()}>■ Stop</button>
+          <Button variant="outline" size="sm" disabled={!s} onClick={runSaved}>▶ Run saved "{skillName}"</Button>
+          <Button variant="outline" size="sm" onClick={() => stopAll()}>■ Stop</Button>
         </div>
         {log && <div className="tr-log">{log}</div>}
       </>
@@ -1504,12 +1505,12 @@ print("  Then: Training page → Cloud tab → Import trained policy")
             {effectiveModels.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
           {PROVIDER_FETCH_CAPABLE[apiProvider] && (
-            <button style={{ flexShrink: 0, fontSize: 11, padding: '3px 8px', cursor: 'pointer',
+            <Button variant="outline" size="sm" style={{ flexShrink: 0, fontSize: 11, padding: '3px 8px', cursor: 'pointer',
               background: 'var(--bg-card)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 5 }}
               disabled={!apiKey || fetchingModels}
               onClick={fetchAvailableModels}>
               {fetchingModels ? '…' : '↻'}
-            </button>
+            </Button>
           )}
         </div>
         {availableModels.length > 0 && (
@@ -1542,10 +1543,10 @@ print("  Then: Training page → Cloud tab → Import trained policy")
             onKeyDown={(e) => e.key === 'Enter' && parseVlmGoal()} />
         </div>
         <div className="tr-btns">
-          <button className="tr-primary" onClick={parseVlmGoal}
+          <Button size="sm" onClick={parseVlmGoal}
             disabled={vlmLoading || !apiKey || !vlmText}>
             {vlmLoading ? '⏳ Parsing…' : '✦ Parse goal → 3D target'}
-          </button>
+          </Button>
         </div>
 
         {/* ── Cloud Training ────────────────────────────────────────────────── */}
@@ -1555,12 +1556,12 @@ print("  Then: Training page → Cloud tab → Import trained policy")
           Import the trained policy back — it works with Watch and Run-saved exactly like browser-trained policies.
         </div>
         <div className="tr-btns">
-          <button className="tr-primary" onClick={exportToColab}>
+          <Button size="sm" onClick={exportToColab}>
             ⬆ Export to Colab (.ipynb)
-          </button>
-          <button onClick={() => importRef.current?.click()}>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => importRef.current?.click()}>
             ⬇ Import policy (.json)
-          </button>
+          </Button>
         </div>
         <div className="tr-hint" style={{ marginTop: 2 }}>
           Colab notebook embeds your robot config (joints, limits, task, rewards) + sep-CMA-ES training loop.
@@ -1594,11 +1595,11 @@ print("  Then: Training page → Cloud tab → Import trained policy")
                 color: '#818cf8', border: '1px solid #6366f144', fontWeight: 700, textTransform: 'uppercase' }}>
                 {badge}
               </span>
-              <button style={{ fontSize: 10, padding: '2px 7px', cursor: 'pointer',
+              <Button variant="outline" size="sm" style={{ fontSize: 10, padding: '2px 7px', cursor: 'pointer',
                 background: 'var(--bg)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 4 }}
                 onClick={() => setSelectedModel(id)}>
                 Use
-              </button>
+              </Button>
             </div>
           </div>
         ))}
@@ -1612,7 +1613,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
   }
 
   return (
-    <div className="tr-panel">
+    <div className="tr-panel" data-ui="a">
       {/* Tab bar */}
       <div className="tr-tabs">
         {(['setup', 'train', 'demos', 'skills', 'cloud'] as Tab[]).map((t) => (

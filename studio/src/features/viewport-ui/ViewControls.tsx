@@ -9,7 +9,10 @@ import { useEditModeStore } from '@/state/editModeStore';
 import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { useHardwareStore } from '@/state/hardwareStore';
 
-export default function ViewControls({ isConnOpen, onConnToggle, onHelpOpen }: any) {
+export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onHelpOpen: helpOpen }: any) {
+  // A page that passes no handlers (the MSRR canvas) still gets working KEYS and SYNC buttons: the shared commands.
+  const onHelpOpen = helpOpen ?? (() => runOperator('ui.help'));
+  const onConnToggle = connToggle ?? (() => runOperator('ui.connection'));
   const streaming = useHardwareStore((s) => s.streaming);
   const toggleSync = () => hardwareBridge.setStreaming(!streaming);
   const [wireframe, setWireframe] = useState(false);

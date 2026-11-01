@@ -3,6 +3,7 @@
  * (Phase 11). Works with any device: an MCU (ESP32) over USB serial, or a
  * networked device (Raspberry Pi / ROS bridge / sidecar) over WebSocket.
  */
+import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import './HardwarePanel.css';
 import { useHardwareStore, BOARDS, type BoardKind } from '@/state/hardwareStore';
@@ -128,7 +129,7 @@ function ServoMap() {
     <div className="hw-map">
       <div className="hw-map-head">
         <span className="hw-title">JOINT → SERVO</span>
-        <button className="hw-map-auto" onClick={autoAssign} title="Assign IDs 1…N in order">Auto 1…N</button>
+        <Button variant="outline" size="xs" onClick={autoAssign} title="Assign IDs 1…N in order">Auto 1…N</Button>
       </div>
       <div className="hw-map-list">
         {joints.map((j) => (
@@ -186,7 +187,7 @@ export default function HardwarePanel() {
   const disconnect = () => hardwareBridge.disconnect();
 
   return (
-    <div className="hw-panel">
+    <div className="hw-panel" data-ui="a">
       <div className="hw-head">
         <span className="hw-title">HARDWARE · {hw.boardName}</span>
         <span className={`hw-status hw-${status}`}>
@@ -223,8 +224,8 @@ export default function HardwarePanel() {
 
       <div className="hw-actions">
         {!connected
-          ? <button className="hw-connect" onClick={connect} disabled={busy}>{busy ? 'Connecting…' : 'Connect'}</button>
-          : <button className="hw-disconnect" onClick={disconnect}>Disconnect</button>}
+          ? <Button className="tw:flex-1" onClick={connect} disabled={busy}>{busy ? 'Connecting…' : 'Connect'}</Button>
+          : <Button className="tw:flex-1" variant="destructive" onClick={disconnect}>Disconnect</Button>}
       </div>
 
       <label className="hw-field">Poll rate (Hz)
@@ -239,7 +240,7 @@ export default function HardwarePanel() {
               onChange={(e) => hardwareBridge.setStreaming(e.target.checked)} />
             <span>Stream joints live</span>
           </label>
-          <button className="hw-send" onClick={() => hardwareBridge.sendJoints()}>Send once</button>
+          <Button variant="outline" size="sm" onClick={() => hardwareBridge.sendJoints()}>Send once</Button>
         </div>
       )}
 

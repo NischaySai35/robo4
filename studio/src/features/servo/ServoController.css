@@ -85,38 +85,9 @@
 
 /* ── Buttons ──────────────────────────────────────────────────────────────── */
 
-.sc-btn {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 13px;
-  background: var(--bg-card);
-  color: var(--text);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all .14s;
-  line-height: 1;
-  font-family: 'Rajdhani', Arial, sans-serif;
-  letter-spacing: 0.3px;
-}
-.sc-btn:hover  { background: var(--bg-card-hover); border-color: var(--border-bright); color: var(--text-bright); }
-.sc-btn:active { transform: translateY(1px); }
-.sc-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 
-.sc-btn-sm { padding: 5px 10px; font-size: 12px; border-radius: 7px; }
 
-.sc-btn-primary {
-  background: var(--bg-card);
-  border-color: var(--sc-accent, var(--accent));
-  color: var(--sc-accent, var(--accent));
-  font-weight: 700;
-}
-.sc-btn-primary:hover  { background: var(--sc-accent, var(--accent)); color: #fff; border-color: var(--sc-accent, var(--accent)); }
-.sc-btn-primary:disabled { background: var(--bg-card); color: var(--text-dim); border-color: var(--border); }
 
-.sc-btn-danger { background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
-.sc-btn-danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
-.sc-btn-danger:disabled { background: color-mix(in srgb, var(--danger) 8%, transparent); color: color-mix(in srgb, var(--danger) 55%, var(--text-dim)); border-color: color-mix(in srgb, var(--danger) 30%, transparent); }
 
 .sc-estop {
   background: linear-gradient(135deg, var(--danger), #ff4400);
@@ -153,12 +124,6 @@
 .sc-alert-bad  { background: color-mix(in srgb, var(--danger) 12%, transparent); border-color: color-mix(in srgb, var(--danger) 45%, transparent); color: var(--danger); }
 .sc-alert-icon { font-size: 14px; flex-shrink: 0; }
 .sc-alert-msg  { flex: 1; }
-.sc-alert-dismiss {
-  background: none; border: none; cursor: pointer; color: inherit;
-  opacity: 0.45; font-size: 18px; padding: 0 4px; line-height: 1;
-  font-family: inherit;
-}
-.sc-alert-dismiss:hover { opacity: 1; }
 
 /* ── Live status bar (replaces overview + sys strips) ─────────────────────── */
 
@@ -328,7 +293,6 @@
   font-weight: 700; color: var(--sc-accent, var(--accent));
 }
 
-.sc-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
 
 /* Stats grid */
 .sc-stats {
@@ -401,12 +365,6 @@
   background: var(--bg-panel); border: 1px solid var(--border);
   color: var(--text); font-family: 'Share Tech Mono', 'Courier New', monospace;
 }
-.sc-seq-del {
-  background: none; border: none; cursor: pointer; color: var(--danger);
-  opacity: 0.35; font-size: 15px; padding: 0 4px; margin-left: auto;
-  font-family: inherit;
-}
-.sc-seq-del:hover { opacity: 1; }
 
 /* ── Preset panel ─────────────────────────────────────────────────────────── */
 

@@ -5,6 +5,7 @@
  * verbs, each with its measured success probability and time; the total success is
  * their product. Risky steps (below 90% or within 10% of a limit) are red.
  */
+import { runOperator } from '@/core/ops/registry';
 import { useEffect, useRef, useState } from 'react';
 import { useV2Store, PRESETS } from '@/state/msrrV2Store';
 import { LIBRARY } from '@/robotics/msrr2/library';
@@ -14,6 +15,8 @@ import type { ShapeEntry, Config } from '@/robotics/msrr2/model';
 import { Section, Row } from '@/features/msrr/panelParts';
 import { MarginChips } from './MarginChips';
 import { toSimPlan, physicsFetch } from '@/robotics/msrr2/simScene';
+
+const op = (id: string, props?: any) => { const r = runOperator(id, props); if (!r.ok) alert(r.error); };
 
 export function PlanTab() {
   const config = useV2Store((s) => s.config);
@@ -136,10 +139,10 @@ export function PlanTab() {
                 (no gravity, no magnets, no wobble, lock rotor not drawn turning). To see it really happen, use <b>▶ Real physics: run this plan</b> at the top:
                 MuJoCo + the robot's own docking brain (stand-off, align, straight in, rotor turns 45°, straight out).</p>
               <div className="msrr-row-btns">
-                <button className="msrr-btn" data-testid="plan-play" onClick={playing ? pause : play}>{playing ? 'Pause sketch' : playStep >= plan.steps.length ? 'Replay sketch' : 'Play sketch (no physics)'}</button>
-                <button className="msrr-btn" onClick={() => seek(playStep - 1)}>◀</button>
-                <button className="msrr-btn" onClick={() => seek(playStep + 1)}>▶</button>
-                <button className="msrr-btn ghost" onClick={() => seek(0)}>Rewind</button>
+                <button className="msrr-btn" data-testid="plan-play" onClick={() => op('planner.sketch.play')}>{playing ? 'Pause sketch' : playStep >= plan.steps.length ? 'Replay sketch' : 'Play sketch (no physics)'}</button>
+                <button className="msrr-btn" onClick={() => op('planner.sketch.back')}>◀</button>
+                <button className="msrr-btn" onClick={() => op('planner.sketch.next')}>▶</button>
+                <button className="msrr-btn ghost" onClick={() => op('planner.sketch.rewind')}>Rewind</button>
               </div>
               <Row label={`Speed ${speed.toFixed(1)}x`}><input type="range" min={0.25} max={4} step={0.25} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} /></Row>
               <ol style={{ paddingLeft: 18, margin: '6px 0' }}>

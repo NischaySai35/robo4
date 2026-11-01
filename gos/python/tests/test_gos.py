@@ -251,6 +251,18 @@ def test_message_types_are_checked_and_generated(tmp_path):
     assert open(studio_ts, encoding='utf-8').read() == t.to_ts(), 'run: python -m gos interfaces ts studio/src/runtime/gosTypes.generated.ts'
 
 
+def test_studio_install_picks_the_right_installer_for_each_computer():
+    from gos.studio import pick_installer
+    assets = [{'name': n} for n in ['latest.yml', 'T-1.0.4-arm64.dmg', 'T-1.0.4-arm64.dmg.blockmap', 'T-1.0.4-x64.dmg', 'T-1.0.4-amd64.deb',
+                                    'T-1.0.4-x86_64.AppImage', 'T-Setup-1.0.4.exe', 'T-Setup-1.0.4.exe.blockmap']]
+    assert pick_installer(assets, 'Windows', 'AMD64')['name'] == 'T-Setup-1.0.4.exe'
+    assert pick_installer(assets, 'Darwin', 'arm64')['name'] == 'T-1.0.4-arm64.dmg'
+    assert pick_installer(assets, 'Darwin', 'x86_64')['name'] == 'T-1.0.4-x64.dmg'
+    assert pick_installer(assets, 'Linux', 'x86_64')['name'] == 'T-1.0.4-x86_64.AppImage'
+    with pytest.raises(gos.GosError, match='no installer for Windows'): pick_installer(assets[:2], 'Windows', 'AMD64')
+    with pytest.raises(gos.GosError, match='No TETROBOT app for Plan9'): pick_installer(assets, 'Plan9', 'x')
+
+
 def test_services_say_what_exists():
     with gos.App() as app:
         app.services.advertise('/add', lambda r: r['a'] + r['b'])

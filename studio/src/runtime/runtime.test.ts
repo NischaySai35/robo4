@@ -123,3 +123,20 @@ test('recorder + player: round-trip and seek snapshot', () => {
   player.unload();
   assert.equal(clock.source, 'wall');
 });
+
+test('topic rate stays right when messages arrive in bursts, whatever the simulation clock does', () => {
+  const bus = new MessageBus();
+  const real = performance.now;
+  let wall = 1000;
+  (performance as any).now = () => wall;
+  try {
+    // 20 per second on average, but arriving in pairs 1 ms apart, as over a network
+    for (let i = 0; i < 40; i++) { bus.publish('/burst', { i }); wall += i % 2 === 0 ? 1 : 99; }
+    const hz = bus.topics().find((x) => x.name === '/burst')!.hz;
+    assert.ok(hz > 10 && hz < 40, `read ${hz.toFixed(1)} Hz for 20 messages a second`);
+    wall += 3000;
+    assert.equal(bus.topics().find((x) => x.name === '/burst')!.hz, 0, 'a topic that went quiet reads 0');
+  } finally {
+    (performance as any).now = real;
+  }
+});

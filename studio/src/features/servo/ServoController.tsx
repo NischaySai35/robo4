@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
 import type { CSSProperties } from 'react';
 import type { Document } from '@/core/model/index';
@@ -337,7 +338,7 @@ function AlertBanner({ alerts, onDismiss }: any) {
         <div key={a.id} className={`sc-alert sc-alert-${a.kind}`}>
           <span className="sc-alert-icon">{a.kind === 'bad' ? '🔴' : '🟡'}</span>
           <span className="sc-alert-msg">{a.msg}</span>
-          <button className="sc-alert-dismiss" onClick={() => onDismiss(a.id)}>×</button>
+          <Button variant="ghost" size="icon-xs" onClick={() => onDismiss(a.id)}>×</Button>
         </div>
       ))}
     </div>
@@ -455,19 +456,19 @@ function ServoCard({ def, data, onCmd }: any) {
 
         {/* Buttons */}
         <div className="sc-btns">
-          <button className="sc-btn sc-btn-primary" onClick={go}>GO</button>
+          <Button size="sm" onClick={go}>GO</Button>
           {def.type === 'twist' && <>
-            <button className="sc-btn" onClick={() => onCmd(def.id, 'cw')}>CW</button>
-            <button className="sc-btn" onClick={() => onCmd(def.id, 'ccw')}>CCW</button>
-            <button className="sc-btn" onClick={() => onCmd(def.id, 'wave')}>WAVE</button>
+            <Button variant="outline" size="sm" onClick={() => onCmd(def.id, 'cw')}>CW</Button>
+            <Button variant="outline" size="sm" onClick={() => onCmd(def.id, 'ccw')}>CCW</Button>
+            <Button variant="outline" size="sm" onClick={() => onCmd(def.id, 'wave')}>WAVE</Button>
           </>}
-          <button className="sc-btn sc-btn-danger" onClick={() => onCmd(def.id, 'stop')}>
+          <Button variant="destructive" size="sm" onClick={() => onCmd(def.id, 'stop')}>
             ■ STOP
-          </button>
-          <button className="sc-btn" onClick={home}>180°</button>
-          <button className="sc-btn" onClick={() => onCmd(def.id, 'torqueToggle')}>
+          </Button>
+          <Button variant="outline" size="sm" onClick={home}>180°</Button>
+          <Button variant="outline" size="sm" onClick={() => onCmd(def.id, 'torqueToggle')}>
             {torqueOn ? '⟲ T.OFF' : '⟲ T.ON'}
-          </button>
+          </Button>
         </div>
 
         {/* Stats */}
@@ -518,22 +519,23 @@ function GroupControl({ defs, onCmd, onEstop }: any) {
 
   return (
     <div className="sc-group-strip">
-      <button className="sc-btn sc-btn-sm sc-btn-primary"
+      <Button size="xs"
         onClick={() => g('pos', { angle: 180, speed: 5, acc: 40 })}>
         Home All
-      </button>
-      <button className="sc-btn sc-btn-sm sc-btn-danger"
+      </Button>
+      {/* an emergency stop stays solid red, never a faint button */}
+      <Button size="xs" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold"
         onClick={onEstop}>
         ⚡ E-STOP
-      </button>
-      <button className="sc-btn sc-btn-sm"
+      </Button>
+      <Button variant="outline" size="xs"
         onClick={() => g('torqueon')}>
         Torque ON
-      </button>
-      <button className="sc-btn sc-btn-sm"
+      </Button>
+      <Button variant="outline" size="xs"
         onClick={() => g('torqueoff')}>
         Torque OFF
-      </button>
+      </Button>
     </div>
   );
 }
@@ -607,21 +609,21 @@ function SequenceRecorder({ defs, servos, onCmd }: any) {
         <span className="sc-seq-count">{frames.length} frame{frames.length !== 1 ? 's' : ''}</span>
       </div>
       <div className="sc-seq-controls">
-        <button className="sc-btn sc-btn-sm" onClick={capture}>+ Capture</button>
+        <Button variant="outline" size="xs" onClick={capture}>+ Capture</Button>
         {!playing
-          ? <button className="sc-btn sc-btn-sm sc-btn-primary" onClick={play}
-              disabled={frames.length === 0}>▶ Play</button>
-          : <button className="sc-btn sc-btn-sm sc-btn-danger" onClick={stopPlay}>■ Stop</button>
+          ? <Button size="xs" onClick={play}
+              disabled={frames.length === 0}>▶ Play</Button>
+          : <Button variant="destructive" size="xs" onClick={stopPlay}>■ Stop</Button>
         }
-        <button className="sc-btn sc-btn-sm" onClick={exportSeq} disabled={frames.length === 0}>
+        <Button variant="outline" size="xs" onClick={exportSeq} disabled={frames.length === 0}>
           ↓ Export
-        </button>
+        </Button>
         <label className="sc-btn sc-btn-sm sc-import-label">
           ↑ Import
           <input type="file" accept=".json" style={{ display: 'none' }} onChange={importSeq} />
         </label>
-        <button className="sc-btn sc-btn-sm sc-btn-danger" onClick={() => setFrames([])}
-          disabled={frames.length === 0}>Clear</button>
+        <Button variant="destructive" size="xs" onClick={() => setFrames([])}
+          disabled={frames.length === 0}>Clear</Button>
         <label className="sc-seq-delay-label">
           Delay
           <input className="sc-group-input" type="number" min="200" max="10000" step="100"
@@ -639,7 +641,7 @@ function SequenceRecorder({ defs, servos, onCmd }: any) {
                   {label} {Math.round(angle)}°
                 </span>
               ))}
-              <button className="sc-seq-del" onClick={() => removeFrame(i)}>×</button>
+              <Button variant="ghost" size="icon-xs" onClick={() => removeFrame(i)}>×</Button>
             </div>
           ))}
         </div>
@@ -703,9 +705,9 @@ function PresetPanel({ defs, servos, onApply }: any) {
           snapshots all {defs.length} servo angle{defs.length !== 1 ? 's' : ''}
         </span>
         <div style={{ flex: 1 }} />
-        <button className="sc-btn sc-btn-sm" onClick={exportPresets} disabled={presets.length === 0}>
+        <Button variant="outline" size="xs" onClick={exportPresets} disabled={presets.length === 0}>
           ↓ Export
-        </button>
+        </Button>
         <label className="sc-btn sc-btn-sm sc-import-label">
           ↑ Import
           <input type="file" accept=".json" style={{ display: 'none' }} onChange={importPresets} />
@@ -715,7 +717,7 @@ function PresetPanel({ defs, servos, onApply }: any) {
         <input className="sc-preset-name-input" placeholder="preset name…"
           value={nameInput} onChange={e => setNameInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && savePreset()} />
-        <button className="sc-btn sc-btn-sm" onClick={savePreset}>+ Save</button>
+        <Button variant="outline" size="xs" onClick={savePreset}>+ Save</Button>
         {presets.map(p => (
           <span key={p.name} className="sc-preset-chip">
             <span onClick={() => onApply(p.snapshot)}>{p.name}</span>
@@ -767,12 +769,9 @@ function DebugLog({ log, onClear }: any) {
           <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: 10 }}>
             {log.length} entries · real-time
           </span>
-          <button
-            onClick={onClear}
-            style={{ background:'var(--bg-card)', border:'1px solid var(--border)', borderRadius:5,
-              padding:'1px 7px', fontSize:10, cursor:'pointer', color:'var(--text-dim)' }}>
+          <Button variant="outline" size="xs" onClick={onClear} title="Clear the log">
             CLR
-          </button>
+          </Button>
         </span>
       </div>
       <div className="sc-log-body" style={{ maxHeight: 220 }}>
@@ -942,7 +941,7 @@ export default function ServoController() {
 
   // ── Render ──────────────────────────────────────────────────────────────────
   return (
-    <div className="sc-page">
+    <div className="sc-page" data-ui="a">
       <div className="sc-wrap">
 
         {/* ── Top bar ── */}
@@ -962,7 +961,7 @@ export default function ServoController() {
                 {nd.name}{nd.latencyMs != null ? ` · ${nd.latencyMs}ms` : ''}
               </div>
             ))}
-            <button className="sc-btn sc-btn-sm" onClick={() => addNode()} title="Add another module board">+ Board</button>
+            <Button variant="outline" size="xs" onClick={() => addNode()} title="Add another module board">+ Board</Button>
           </div>
           <div className="sc-topbar-sep" />
           <div className="sc-pill">

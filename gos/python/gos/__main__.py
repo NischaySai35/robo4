@@ -152,7 +152,7 @@ def _write_docs(out):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    builtin = {'certs', 'interfaces', 'run', 'graph', 'sim', 'topic', 'service', 'param', 'node', 'action', 'launch', 'pkg', 'path', 'doc', 'plugins'}
+    builtin = {'studio', 'certs', 'interfaces', 'run', 'graph', 'sim', 'topic', 'service', 'param', 'node', 'action', 'launch', 'pkg', 'path', 'doc', 'plugins'}
     first = next((x for x in argv if not x.startswith('-')), None)
     if first and first not in builtin and argv[0] == first:
         code = _external(first, argv[1:])
@@ -176,6 +176,7 @@ def main(argv=None):
     d = s.add_parser('doc', help='how to use GOS, from its own code'); d.add_argument('topic', nargs='?', default='gos'); d.add_argument('--html', metavar='DIR', help='write HTML pages for every module')
     it = s.add_parser('interfaces', help='message types: list them, or write TypeScript for the Studio'); it.add_argument('action', choices=['list', 'ts']); it.add_argument('out', nargs='?'); it.add_argument('--from', dest='folders', action='append', default=[], help='also load this folder')
     ce = s.add_parser('certs', help='certificates for encrypted links'); ce.add_argument('action', choices=['new']); ce.add_argument('folder'); ce.add_argument('names', nargs='+'); ce.add_argument('--host', action='append', help='address the programs use (default localhost and 127.0.0.1)')
+    st = s.add_parser('studio', help='the TETROBOT app: install downloads it for this computer'); st.add_argument('action', choices=['install', 'where']); st.add_argument('--dry', action='store_true', help='only say what would be downloaded'); st.add_argument('--to', help='folder to save it in (default Downloads)')
     s.add_parser('plugins', help='commands added by other packages or gos-NAME programs')
     a = p.parse_args(argv)
     need = lambda x, what: x if x is not None else (_ for _ in ()).throw(GosError(f'Give the {what}.'))
@@ -197,6 +198,14 @@ def main(argv=None):
             return _new_package(a.name)
         elif a.cmd == 'doc' and a.html:
             return _write_docs(a.html)
+        elif a.cmd == 'studio':
+            from .studio import find_app, install_app
+            if a.action == 'where':
+                print(find_app() or 'The TETROBOT app is not installed. Run: gos studio install')
+            else:
+                plan = install_app(a.to, dry=a.dry)
+                verb = 'Would download' if a.dry else 'Downloaded'
+                print(f"{verb} TETROBOT {plan['version']} ({plan['file']}, {plan['mb']} MB) to {plan['to']}." + ('' if a.dry else ' Open it to install the app.'))
         elif a.cmd == 'certs':
             from . import certs
             certs.new(a.folder, a.names, *( [a.host] if a.host else []))

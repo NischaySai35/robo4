@@ -4,11 +4,9 @@
  * all three; joints and connectors only get translate/rotate). One component
  * instead of one hand-copied JSX block per selection kind.
  *
- * Styling (.lp-mode-toggle / .lp-mode-btn / .lp-xform*) lives in LeftPanel.css —
- * those classes are already shared by LeftPanel's other toggle rows (Object/Edit,
- * Free Float/Rigid), so this component doesn't own a stylesheet of its own; it's
- * only ever rendered from within LeftPanel, which already loads that CSS.
+ * Built on the shared Button (P7). Unlike Segmented, no mode may be lit: the chosen one lights only while the gizmo shows.
  */
+import { Button } from '@/components/ui/button';
 
 export type GizmoModeId = 'translate' | 'rotate' | 'scale';
 export interface GizmoModeSpec { id: GizmoModeId; label: string; key: string }
@@ -30,15 +28,16 @@ export default function GizmoModeButtons({ modes, activeMode, active, onSelect }
   onSelect: (id: GizmoModeId) => void;
 }) {
   return (
-    <div className="lp-mode-toggle lp-xform">
-      {modes.map((m) => (
-        <button key={m.id}
-          className={`lp-mode-btn ${active && activeMode === m.id ? 'lp-mode-btn--on' : ''}`}
-          onClick={() => onSelect(m.id)}
-          title={`${m.label} (${m.key})`}>
-          {m.label} <kbd className="lp-xform-key">{m.key}</kbd>
-        </button>
-      ))}
+    <div className="tw:flex tw:gap-1">
+      {modes.map((m) => {
+        const on = active && activeMode === m.id;
+        return (
+          <Button key={m.id} size="sm" className="tw:flex-1" variant={on ? 'default' : 'outline'} aria-pressed={on}
+            onClick={() => onSelect(m.id)} title={`${m.label} (${m.key})`}>
+            {m.label} <kbd className="tw:text-[10px] tw:opacity-60">{m.key}</kbd>
+          </Button>
+        );
+      })}
     </div>
   );
 }

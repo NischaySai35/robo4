@@ -5,7 +5,7 @@
  *  - prefix(tw): classes are tw:flex, so the scanner can't match old class names like "hidden".
  *  - Tokens live under [data-ui="a"], because shadcn's --border would overwrite the app's own --border.
  * Migrated pieces opt in with data-ui="a" on a parent. Layers lose to unlayered CSS, so old rules still win. */
-@layer theme, utilities;
+@layer theme, base, utilities;  /* base: the app's old reset (index.css), below utilities so shared controls keep their padding */
 @import "tailwindcss/theme.css" layer(theme) prefix(tw);
 @import "tailwindcss/utilities.css" layer(utilities);
 

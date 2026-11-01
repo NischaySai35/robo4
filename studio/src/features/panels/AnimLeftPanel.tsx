@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import './AnimLeftPanel.css';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import ContextMenu, { ConnectorItems, MenuSep, MenuSection } from '@/features/common/ContextMenu';
@@ -609,7 +610,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   };
 
   return (
-    <aside className="anim-left-panel fade-in" style={style}>
+    <aside className="anim-left-panel fade-in" data-ui="a" style={style}>
 
       {/* ── Project Explorer ── */}
       <div className="alp-section">
@@ -623,23 +624,23 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
       {/* ── Rigid Mode (shared with Editor's BODY MODE) ── */}
       <div className="alp-section">
         {secTitle('rigid', 'RIGID MODE · shared with Editor')}
-        <button
-          className={`alp-toggle-btn${rigidMode ? ' alp-toggle-btn--on' : ''}`}
+        <Button size="sm" className="tw:w-full tw:justify-start" variant={rigidMode ? 'default' : 'outline'} aria-pressed={rigidMode}
+          
           onClick={() => setBodyModePreservingPose(rigidMode ? 'free' : 'rigid')}
           title="Rigid mode grounds one body as the fixed base; graph FK propagates outward. This is the SAME toggle as the Editor's Free Float / Rigid."
         >
           {rigidMode ? '⬤ Rigid Mode ON' : '○ Rigid Mode OFF'}
-        </button>
+        </Button>
         {rigidMode && (
           <>
-            <button
-              className={`alp-toggle-btn${autoBase ? ' alp-toggle-btn--on' : ''}`}
+            <Button size="sm" className="tw:w-full tw:justify-start" variant={autoBase ? 'default' : 'outline'} aria-pressed={autoBase}
+              
               onClick={() => setAutoBase(!autoBase)}
               title="Auto-ground: keep the base at the body nearest the center of mass, re-picking as the model moves (follows CoM while you drag). Turn off to pick the base manually."
               style={{ marginTop: 6 }}
             >
               {autoBase ? '⚖ Auto-ground: CoM' : '⚖ Auto-ground: OFF (manual)'}
-            </button>
+            </Button>
             <div className="alp-rigid-hint">
               {autoBase
                 ? <>Base auto-follows the <strong>center of mass</strong> as the model moves. Turn on <strong>Drag tip to move</strong> to drag a link.</>
@@ -677,13 +678,13 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
             Select a component above to scope the rotation. Currently rotates all bodies.
           </div>
         )}
-        <button
-          className={`alp-toggle-btn${globalRotateActive ? ' alp-toggle-btn--on' : ''}`}
+        <Button size="sm" className="tw:w-full tw:justify-start" variant={globalRotateActive ? 'default' : 'outline'} aria-pressed={globalRotateActive}
+          
           onClick={toggleGlobalRotate}
           title="Activate global rotate, then pick an axis and type an angle"
         >
           {globalRotateActive ? '⬤ Global Rotate ON' : '○ Global Rotate'}
-        </button>
+        </Button>
 
         {globalRotateActive && (
           <div className="alp-rotate-ui">
@@ -708,14 +709,14 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
               />
               <span className="alp-angle-unit">deg</span>
             </div>
-            <button
-              className="alp-apply-btn"
+            <Button size="sm" className="tw:w-full"
+              
               disabled={!globalRotateAxis}
               onClick={() => globalRotateAxis && applyGlobalRotate(globalRotateAxis)}
               title="Apply rotation"
             >
               Apply
-            </button>
+            </Button>
             <div className="alp-rotate-hint">
               Pick axis (X/Y/Z), set angle, then Apply. Or press X·Y·Z keys when active.
             </div>
@@ -730,9 +731,9 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
           Drag two modules' connectors close together (facing each other), then click Auto-Lock —
           it aligns them and adds a real joint linking the two modules.
         </div>
-        <button className="alp-apply-btn" onClick={autoSnapConnectors} title="Find the closest facing pair of connectors and join them">
+        <Button size="sm" className="tw:w-full" onClick={autoSnapConnectors} title="Find the closest facing pair of connectors and join them">
           ⚡ Auto-Lock Nearby Connectors
-        </button>
+        </Button>
         {snapStatus && <div className="alp-snap-status">{snapStatus}</div>}
       </div>
 
@@ -762,22 +763,22 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
 
         {/* Actions */}
         <div className="alp-mate-actions">
-          <button
-            className="alp-apply-btn"
+          <Button size="sm" className="tw:w-full"
+            
             disabled={!mateSlotA?.connectorId || !mateSlotB?.connectorId}
             onClick={snapMate}
             title="Lock component B so its connector aligns with connector A"
           >
             Lock
-          </button>
-          <button
-            className="alp-apply-btn alp-apply-btn--save"
+          </Button>
+          <Button size="sm" variant="outline" className="tw:w-full"
+            
             disabled={!mateSlotA?.connectorId || !mateSlotB?.connectorId}
             onClick={saveMate}
             title="Save this mate relationship for later re-application"
           >
             Save Lock
-          </button>
+          </Button>
           {(mateSlotA || mateSlotB) && (
             <button className="alp-link" onClick={clearMateSlots}>clear</button>
           )}
@@ -790,8 +791,8 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
               <div key={m.id} className="alp-mate-item">
                 <span className="alp-mate-label">{m.label}</span>
                 <div className="alp-mate-btns">
-                  <button title="Re-apply this mate (snap)" onClick={() => reapplyMate(m)}>↺</button>
-                  <button title="Delete mate" onClick={() => dispatch(commands.removeAssemblyMate(m.id))}>✕</button>
+                  <Button variant="outline" size="icon-xs" title="Re-apply this mate (snap)" onClick={() => reapplyMate(m)}>↺</Button>
+                  <Button variant="destructive" size="icon-xs" title="Delete mate" onClick={() => dispatch(commands.removeAssemblyMate(m.id))}>✕</Button>
                 </div>
               </div>
             ))}
@@ -802,13 +803,13 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
       {/* ── Center of Mass ── */}
       <div className="alp-section">
         {secTitle('com', 'CENTER OF MASS')}
-        <button
-          className={`alp-toggle-btn${gravityOn ? ' alp-toggle-btn--on' : ''}`}
+        <Button size="sm" className="tw:w-full tw:justify-start" variant={gravityOn ? 'default' : 'outline'} aria-pressed={gravityOn}
+          
           onClick={toggleGravity}
           title="Toggle gravity visualization"
         >
           {gravityOn ? '⬤ Gravity ON' : '○ Gravity OFF'}
-        </button>
+        </Button>
         <div className="alp-com-grid">
           <span className="alp-com-lbl">Total mass</span>
           <span className="alp-com-val">{(totalMass * 1000).toFixed(1)} g</span>

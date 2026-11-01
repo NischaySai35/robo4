@@ -97,16 +97,6 @@
 
 /* ── Buttons ─────────────────────────────────────────────────────────────────── */
 .tr-btns { display: flex; gap: 6px; flex-wrap: wrap; }
-.tr-btns button {
-  flex: 1; padding: 6px 8px; font-size: 12px; cursor: pointer; min-width: 60px;
-  background: var(--bg-card); color: var(--text); border: 1px solid var(--border);
-  border-radius: 6px; transition: border-color .15s, color .15s;
-}
-.tr-btns button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.tr-btns button:disabled { opacity: 0.4; cursor: not-allowed; }
-.tr-primary { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; font-weight: 700; }
-.tr-primary:hover:not(:disabled) { filter: brightness(1.1); color: #fff !important; }
-.tr-stop { color: #f59e0b !important; border-color: #f59e0b55 !important; }
 
 /* ── Stat row ────────────────────────────────────────────────────────────────── */
 .tr-stat-row {

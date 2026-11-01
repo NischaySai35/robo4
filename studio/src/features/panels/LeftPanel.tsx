@@ -1,3 +1,5 @@
+import { Segmented } from '@/components/ui/segmented';
+import { Button } from '@/components/ui/button';
 import './LeftPanel.css';
 import { useCallback, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
@@ -501,22 +503,15 @@ export default function LeftPanel({ style }: any) {
   };
 
   return (
-    <aside className="left-panel fade-in" style={style}>
+    <aside className="left-panel fade-in" data-ui="a" style={style}>
 
       {/* ── Mode (Object ↔ Edit) ── */}
       <div className="section">
         <div className="section-title">MODE</div>
-        <div className="lp-mode-toggle">
-          <button className={`lp-mode-btn ${!editActive ? 'lp-mode-btn--on' : ''}`}
-            onClick={() => useEditModeStore.getState().exit()}>Object</button>
-          <button
-            className={`lp-mode-btn ${editActive ? 'lp-mode-btn--on' : ''}`}
-            onClick={toggleEditMode}
-            disabled={!editActive && !isBodySelected}
-            title={isBodySelected || editActive ? 'Edit mesh vertices/edges/faces' : 'Select a body first'}>
-            Edit
-          </button>
-        </div>
+        <Segmented value={editActive ? 'edit' : 'object'}
+          onChange={(m) => { if (m === 'object') useEditModeStore.getState().exit(); else if (!editActive) toggleEditMode(); }}
+          options={[{ value: 'object', label: 'Object' },
+            { value: 'edit', label: 'Edit', disabled: !editActive && !isBodySelected, title: isBodySelected || editActive ? 'Edit mesh vertices/edges/faces' : 'Select a body first' }]} />
         {!isBodySelected && !editActive && (
           <p className="lp-mode-hint">Select a body to enter Edit Mode.</p>
         )}
@@ -534,20 +529,9 @@ export default function LeftPanel({ style }: any) {
       {/* ── Body Mode (Free Float ↔ Rigid) ── */}
       <div className="section">
         <div className="section-title">BODY MODE</div>
-        <div className="lp-mode-toggle">
-          <button
-            className={`lp-mode-btn ${bodyMode === 'free' ? 'lp-mode-btn--on' : ''}`}
-            onClick={() => setBodyModePreservingPose('free')}
-            title="Free Float — no grounded body; FK uses first-wins tree">
-            Free Float
-          </button>
-          <button
-            className={`lp-mode-btn lp-mode-btn--rigid ${bodyMode === 'rigid' ? 'lp-mode-btn--on' : ''}`}
-            onClick={() => setBodyModePreservingPose('rigid')}
-            title="Rigid — right-click any body to set it as the fixed base; graph FK propagates outward">
-            Rigid
-          </button>
-        </div>
+        <Segmented value={bodyMode} onChange={(m) => setBodyModePreservingPose(m)} options={[
+          { value: 'free', label: 'Free Float', title: 'Free Float — no grounded body; FK uses first-wins tree' },
+          { value: 'rigid', label: 'Rigid', title: 'Rigid — right-click any body to set it as the fixed base; graph FK propagates outward' }]} />
         {bodyMode === 'rigid' && (
           <div className="lp-rigid-hint">
             {activeBodyId
@@ -570,19 +554,8 @@ export default function LeftPanel({ style }: any) {
           {selIds.length > 1 && (
             <>
               <div className="lp-pivot-label">{selIds.length} bodies · pivot</div>
-              <div className="lp-mode-toggle lp-xform">
-                {[
-                  { id: 'median',     label: 'Median' },
-                  { id: 'individual', label: 'Individual' },
-                  { id: 'active',     label: 'Active' },
-                ].map((p) => (
-                  <button key={p.id}
-                    className={`lp-mode-btn ${pivotMode === p.id ? 'lp-mode-btn--on' : ''}`}
-                    onClick={() => setPivotMode(p.id as any)}>
-                    {p.label}
-                  </button>
-                ))}
-              </div>
+              <Segmented size="xs" value={pivotMode as string} onChange={(m) => setPivotMode(m as any)}
+                options={[{ value: 'median', label: 'Median' }, { value: 'individual', label: 'Individual' }, { value: 'active', label: 'Active' }]} />
             </>
           )}
         </div>
@@ -617,56 +590,52 @@ export default function LeftPanel({ style }: any) {
             {buildOpen && (
               <div className="lp-icon-row">
                 <div className="lp-add-wrap">
-                  <button
-                    className={`lp-icon-btn lp-icon-btn--accent${addOpen ? ' lp-icon-btn--active' : ''}`}
+                  <Button size="icon" aria-expanded={addOpen}
                     onClick={() => setAddOpen((v) => !v)}
-                    title="Add a primitive body">
+                    title="Add a module or a primitive body">
                     <I><path d="M10 4v12M4 10h12" /></I>
-                  </button>
+                  </Button>
                   {addOpen && (
                     <div className="lp-add-menu" onMouseLeave={() => setAddOpen(false)}>
                       <div className="lp-add-title">MODULE</div>
                       <div className="lp-add-grid">
-                        <button
-                          className="lp-add-item lp-add-item--module"
+                        <Button variant="ghost" size="sm" className="tw:justify-start" data-testid="add-module"
                           onClick={addModule}
                           title="Add a module: copies this project's module if it has one, otherwise the global default module. Placed offset so it never overlaps.">
                           ⛓ Add Module
-                        </button>
-                        <button
-                          className="lp-add-item"
+                        </Button>
+                        <Button variant="ghost" size="sm" className="tw:justify-start"
                           onClick={editDefaultModule}
                           title="Open the default module in the editor to change its geometry / connectors / joints, then Save as Default.">
                           ✎ Edit Default
-                        </button>
-                        <button
-                          className="lp-add-item"
+                        </Button>
+                        <Button variant="ghost" size="sm" className="tw:justify-start"
                           onClick={saveAsDefaultModule}
                           title="Save the current project as the default module — Add Module will use it in every project.">
                           ★ Save as Default
-                        </button>
+                        </Button>
                       </div>
                       <div className="lp-add-title">ADD MESH</div>
                       <div className="lp-add-grid">
                         {PRIMITIVES.map((p) => (
-                          <button key={p.type} className="lp-add-item" onClick={() => addPrimitive(p.type, p.params)}>
+                          <Button key={p.type} variant="ghost" size="sm" className="tw:justify-start" onClick={() => addPrimitive(p.type, p.params)}>
                             {p.label}
-                          </button>
+                          </Button>
                         ))}
                       </div>
                     </div>
                   )}
                 </div>
-                <button className="lp-icon-btn" onClick={createJoint} title="Create joint between two bodies">
+                <Button variant="outline" size="icon" onClick={createJoint} title="Create joint between two bodies">
                   <I><circle cx="4" cy="10" r="2" /><circle cx="16" cy="10" r="2" /><path d="M6 10h8" strokeDasharray="2 1.6" /></I>
-                </button>
-                <button className={`lp-icon-btn${mateMode ? ' lp-icon-btn--active' : ''}`} onClick={toggleMate} title="Mate faces">
+                </Button>
+                <Button variant={mateMode ? 'default' : 'outline'} size="icon" aria-pressed={mateMode} onClick={toggleMate} title="Mate faces">
                   <I><path d="M3 4v12M9 4v12M9 7h5l-2-2M9 13h5l-2 2" /></I>
-                </button>
-                <button className="lp-icon-btn lp-icon-btn--danger" onClick={deleteSelectedEntity}
+                </Button>
+                <Button variant="destructive" size="icon" onClick={deleteSelectedEntity}
                   disabled={!selectedId} title="Delete selected (Del / Backspace)">
                   <I><path d="M3 5h14M7 5V3h6v2M6 8v6M10 8v6M14 8v6M4 5l1 12h10l1-12" /></I>
-                </button>
+                </Button>
               </div>
             )}
           </div>
@@ -675,9 +644,9 @@ export default function LeftPanel({ style }: any) {
           <div className="section px-section">
             <div className="px-explorer-hdr">
               <div className="section-title" style={{ marginBottom: 0 }}>PROJECT EXPLORER</div>
-              <button className="px-comp-add-btn" title="New component" onClick={createComponent}>
+              <Button variant="outline" size="xs" title="New component" onClick={createComponent}>
                 + Comp
-              </button>
+              </Button>
             </div>
             <div className="px-search-wrap">
               <input
@@ -687,7 +656,7 @@ export default function LeftPanel({ style }: any) {
                 onChange={(e) => setSearchQ(e.target.value)}
               />
               {searchQ && (
-                <button className="px-search-clear" onClick={() => setSearchQ('')} title="Clear search">✕</button>
+                <Button variant="ghost" size="icon-xs" className="px-search-clear" onClick={() => setSearchQ('')} title="Clear search">✕</Button>
               )}
             </div>
             {!searchQ && targetCompId && (doc.components ?? {})[targetCompId] && (

@@ -4,6 +4,7 @@
  * and the Inspector). All edits go through the command bus, so undo/redo "just
  * works" via the buttons here or Ctrl+Z.
  */
+import { Button } from '@/components/ui/button';
 import './Outliner.css';
 import { useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
@@ -81,11 +82,11 @@ export default function Outliner() {
   };
 
   return (
-    <div className="ol-panel">
-      <button className="ol-import" onClick={() => importMesh()}>⬇ Import Mesh / Scene</button>
+    <div className="ol-panel" data-ui="a">
+      <Button variant="outline" size="sm" className="tw:w-full tw:justify-start" onClick={() => importMesh()}>⬇ Import Mesh / Scene</Button>
 
       {!macroForm
-        ? <button className="ol-import" onClick={() => setMacroForm({ segments: 3, length: 0.6 })}>⚙ Spawn Macro (parametric arm)</button>
+        ? <Button variant="outline" size="sm" className="tw:w-full tw:justify-start" onClick={() => setMacroForm({ segments: 3, length: 0.6 })}>⚙ Spawn Macro (parametric arm)</Button>
         : (
           <div className="ol-jointform">
             <label>Segments
@@ -97,14 +98,14 @@ export default function Outliner() {
                 onChange={(e) => setMacroForm({ ...macroForm, length: +e.target.value })} />
             </label>
             <div className="ol-jointform-actions">
-              <button className="ol-jf-create" onClick={spawnMacro}>Spawn</button>
-              <button className="ol-jf-cancel" onClick={() => setMacroForm(null)}>Cancel</button>
+              <Button size="sm" onClick={spawnMacro}>Spawn</Button>
+              <Button variant="ghost" size="sm" onClick={() => setMacroForm(null)}>Cancel</Button>
             </div>
           </div>
         )}
 
       {bodies.length >= 2 && !jointForm && (
-        <button className="ol-import" onClick={openJointForm}>＋ Joint (connect 2 bodies)</button>
+        <Button variant="outline" size="sm" className="tw:w-full tw:justify-start" onClick={openJointForm}>＋ Joint (connect 2 bodies)</Button>
       )}
       {jointForm && (
         <div className="ol-jointform">
@@ -124,8 +125,8 @@ export default function Outliner() {
             </select>
           </label>
           <div className="ol-jointform-actions">
-            <button className="ol-jf-create" disabled={jointForm.parent === jointForm.child} onClick={createJoint}>Create</button>
-            <button className="ol-jf-cancel" onClick={() => setJointForm(null)}>Cancel</button>
+            <Button size="sm" disabled={jointForm.parent === jointForm.child} onClick={createJoint}>Create</Button>
+            <Button variant="ghost" size="sm" onClick={() => setJointForm(null)}>Cancel</Button>
           </div>
         </div>
       )}
@@ -163,15 +164,15 @@ export default function Outliner() {
       </div>
 
       {selectedId && (
-        <button className="ol-delete" onClick={deleteSelected}>Delete selected</button>
+        <Button variant="destructive" size="sm" className="tw:w-full" onClick={deleteSelected}>Delete selected</Button>
       )}
 
       {bodies.length > 0 && (
         <div className="ol-export">
-          <button onClick={() => exportRobot('urdf')} title="Export URDF (ROS/Gazebo)">⬆ URDF</button>
-          <button onClick={() => exportRobot('sdf')} title="Export SDF (Gazebo/Ignition)">⬆ SDF</button>
-          <button onClick={() => exportRobot('mjcf')} title="Export MJCF (MuJoCo)">⬆ MJCF</button>
-          <button onClick={() => exportRobot('idl')} title="Export comms interface">⬆ IDL</button>
+          <Button variant="outline" size="xs" onClick={() => exportRobot('urdf')} title="Export URDF (ROS/Gazebo)">⬆ URDF</Button>
+          <Button variant="outline" size="xs" onClick={() => exportRobot('sdf')} title="Export SDF (Gazebo/Ignition)">⬆ SDF</Button>
+          <Button variant="outline" size="xs" onClick={() => exportRobot('mjcf')} title="Export MJCF (MuJoCo)">⬆ MJCF</Button>
+          <Button variant="outline" size="xs" onClick={() => exportRobot('idl')} title="Export comms interface">⬆ IDL</Button>
         </div>
       )}
     </div>

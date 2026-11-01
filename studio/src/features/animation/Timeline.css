@@ -5,29 +5,10 @@
 .tl-count { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
 
 .tl-controls { display: flex; gap: 6px; }
-.tl-controls button {
-  padding: 6px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg-card);
-  color: var(--text);
-  font-size: 13px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.tl-controls button:hover { border-color: var(--accent); color: var(--accent); }
-.tl-key { flex: 1; font-family: var(--font-mono); font-size: 11px; font-weight: 700; }
-.tl-key:disabled { opacity: 0.4; cursor: default; }
 
 /* ◆ Key split button: main "Key all" + a caret that opens the "what to key" menu. */
 .tl-key-split { position: relative; flex: 1; display: flex; }
-.tl-key-split .tl-key { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-.tl-key-caret {
-  padding: 0 7px; font-size: 10px;
-  border-top-left-radius: 0; border-bottom-left-radius: 0;
-  border-left: 1px solid color-mix(in srgb, var(--bg) 40%, transparent);
-}
-.tl-key-backdrop { position: fixed; inset: 0; z-index: 40; }
+.tl-key-split .tl-key-backdrop { position: fixed; inset: 0; z-index: 40; }
 .tl-key-menu {
   position: absolute; bottom: calc(100% + 4px); right: 0; z-index: 41;
   min-width: 240px; display: flex; flex-direction: column; gap: 1px;
@@ -52,12 +33,6 @@
   border: 1px solid var(--border); border-radius: 5px;
   background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 11px;
 }
-.tl-clear {
-  padding: 5px 10px; border: 1px solid var(--border); border-radius: 5px;
-  background: var(--bg); color: var(--text-dim); font-size: 11px; cursor: pointer;
-}
-.tl-clear:hover:not(:disabled) { border-color: var(--danger); color: var(--danger); }
-.tl-clear:disabled { opacity: 0.4; cursor: default; }
 
 .tl-keys { display: flex; flex-wrap: wrap; gap: 4px; }
 .tl-keychip {
@@ -224,8 +199,6 @@
 .tl-snap { flex-direction: row !important; align-items: center; gap: 6px !important; cursor: pointer; }
 .tl-row2 { display: flex; justify-content: space-between; font-size: 12px; width: 100%; }
 .tl-row2 strong { font-family: var(--font-mono); color: var(--text); }
-.tl-render { flex: 1; padding: 8px; font-size: 13px; font-weight: 700; background: var(--accent); color: #fff; border: none; border-radius: 7px; cursor: pointer; }
-.tl-render:disabled { opacity: 0.5; cursor: default; }
 
 /* Render tab extras */
 .tl-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-dim); width: 100%; }
@@ -238,56 +211,12 @@
 .tl-field-row { display: flex; gap: 8px; }
 .tl-field-row .tl-field { flex: 1; }
 
-.tl-toggle2, .tl-toggle3 {
-  display: flex; gap: 4px;
-}
-.tl-toggle2 button, .tl-toggle3 button {
-  flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 600;
-  border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg-card); color: var(--text-dim); cursor: pointer;
-  transition: all 0.13s;
-}
-.tl-toggle2 button.on, .tl-toggle3 button.on {
-  background: var(--accent); color: #fff; border-color: var(--accent);
-}
-.tl-toggle2 button:hover:not(.on), .tl-toggle3 button:hover:not(.on) {
-  border-color: var(--accent); color: var(--accent);
-}
 
 /* 4-button row (engines, fps) */
-.tl-toggle4 {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
-}
-.tl-toggle4 button {
-  padding: 5px 2px; font-size: 11px; font-weight: 600;
-  border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg-card); color: var(--text-dim); cursor: pointer;
-  transition: all 0.13s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.tl-toggle4 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-.tl-toggle4 button:hover:not(.on) { border-color: var(--accent); color: var(--accent); }
 
 /* 2×2 grid (resolutions) */
-.tl-toggle2x2 {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 4px;
-}
-.tl-toggle2x2 button {
-  padding: 5px 4px; font-size: 11px; font-weight: 600;
-  border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg-card); color: var(--text-dim); cursor: pointer;
-  transition: all 0.13s;
-}
-.tl-toggle2x2 button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-.tl-toggle2x2 button:hover:not(.on) { border-color: var(--accent); color: var(--accent); }
 
 .tl-render-row { display: flex; gap: 6px; align-items: stretch; }
-.tl-cancel {
-  padding: 8px 12px; font-size: 14px; font-weight: 700;
-  background: color-mix(in srgb, var(--danger) 14%, transparent);
-  border: 1px solid var(--danger); border-radius: 7px;
-  color: var(--danger); cursor: pointer;
-}
-.tl-cancel:hover { background: var(--danger); color: #fff; }
 
 .tl-progress {
   font-family: var(--font-mono); font-size: 11px; color: var(--accent);
@@ -313,18 +242,6 @@
 .tl-cycles-val {
   font-family: var(--font-mono); font-size: 12px; font-weight: 700;
   color: var(--accent);
-}
-.tl-cycles-compute {
-  display: flex; gap: 3px;
-}
-.tl-cycles-compute button {
-  font-size: 10px; font-weight: 700; padding: 2px 8px;
-  border-radius: 4px; border: 1px solid var(--border);
-  background: var(--surface); color: var(--text-dim); cursor: pointer;
-  letter-spacing: 0.06em;
-}
-.tl-cycles-compute button.on {
-  background: var(--accent); color: #fff; border-color: var(--accent);
 }
 .tl-cycles-note {
   font-size: 9px; color: var(--text-dim); opacity: 0.65;

@@ -6,6 +6,7 @@
  * playback transport (the .nischaybag rosbag analog), and a diagnostics summary.
  * Everything here READS the bus/tf/recorder/player — it owns no robot state.
  */
+import { Button } from '@/components/ui/button';
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -121,6 +122,7 @@ function TopicsTab() {
             <span className="rt-tname">{t.name}</span>
             <span className="rt-tmeta">
               <span className="rt-thz">{t.hz >= 0.1 ? `${t.hz.toFixed(1)} Hz` : '—'}</span>
+              <span className="rt-tbps" title="bytes per second">{t.bps >= 1 ? (t.bps >= 1024 ? `${(t.bps / 1024).toFixed(1)} kB/s` : `${Math.round(t.bps)} B/s`) : ''}</span>
               <span className="rt-tcount">{t.count}</span>
             </span>
             <span className="rt-ttype">{t.type} · {t.subscribers} sub</span>
@@ -249,25 +251,25 @@ function RecordTab() {
     <div className="rt-record">
       <div className="rt-rec-row">
         {!rec ? (
-          <button className="rt-btn rt-rec" onClick={() => recorder.start()} disabled={!!bag}>● Record</button>
+          <Button variant="destructive" size="xs" onClick={() => recorder.start()} disabled={!!bag}>● Record</Button>
         ) : (
-          <button className="rt-btn rt-stop" onClick={stopAndLoad}>■ Stop ({recorder.count})</button>
+          <Button variant="outline" size="xs" onClick={stopAndLoad}>■ Stop ({recorder.count})</Button>
         )}
         {rec && <span className="rt-recording">recording {recorder.count} msgs…</span>}
-        {!rec && <button className="rt-btn" onClick={openBag}>Open bag…</button>}
-        {bag && <button className="rt-btn" onClick={saveBag}>Save bag…</button>}
+        {!rec && <Button variant="outline" size="xs" onClick={openBag}>Open bag…</Button>}
+        {bag && <Button variant="outline" size="xs" onClick={saveBag}>Save bag…</Button>}
       </div>
 
       {bag && (
         <div className="rt-player">
           <div className="rt-player-head">
             Bag · {bag.messages.length} msgs · {fmt(bag.t1 - bag.t0)} · {bag.topics.length} topics
-            <button className="rt-x" onClick={() => player.unload()} title="Close bag">✕</button>
+            <Button variant="ghost" size="icon-xs" onClick={() => player.unload()} title="Close bag">✕</Button>
           </div>
           <div className="rt-transport">
             {player.playing
-              ? <button className="rt-btn" onClick={() => player.pause()}>❚❚</button>
-              : <button className="rt-btn" onClick={() => player.play()}>▶</button>}
+              ? <Button variant="outline" size="xs" onClick={() => player.pause()}>❚❚</Button>
+              : <Button variant="outline" size="xs" onClick={() => player.play()}>▶</Button>}
             <input
               className="rt-scrub" type="range" min={0} max={1} step={0.001} value={frac}
               onChange={(e) => { player.pause(); player.seek(parseFloat(e.target.value)); }}
@@ -294,7 +296,7 @@ function RecordTab() {
 export default function RuntimePanel() {
   const [tab, setTab] = useState<Tab>('topics');
   return (
-    <div className="rt-panel">
+    <div className="rt-panel" data-ui="a">
       <div className="rt-tabs">
         <button className={tab === 'topics' ? 'active' : ''} onClick={() => setTab('topics')}>Topics</button>
         <button className={tab === 'tf' ? 'active' : ''} onClick={() => setTab('tf')}>TF</button>

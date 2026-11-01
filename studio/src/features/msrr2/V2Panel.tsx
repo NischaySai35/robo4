@@ -9,6 +9,7 @@
  *   Run     execute a plan (DRY_RUN) with replanning
  *   Manual  drive the robot by hand in live real physics (joints, lock / unlock, connect two connectors)
  */
+import { runOperator } from '@/core/ops/registry';
 import { useState } from 'react';
 import { useV2Store, PRESETS, type V2Tab } from '@/state/msrrV2Store';
 import {
@@ -25,6 +26,8 @@ import { AskTab } from './AskTab';
 import { RunTab } from './RunTab';
 import { ManualTab } from './ManualTab';
 import type { PhysRun } from './physicsView';
+
+const op = (id: string, props?: any) => { const r = runOperator(id, props); if (!r.ok) alert(r.error); };
 
 const TABS: { id: V2Tab; label: string }[] = [
   { id: 'robot', label: 'Robot' },
@@ -127,7 +130,7 @@ function RobotTab() {
           </select>
         </Row>
         <div className="msrr-row-btns">
-          <button className="msrr-btn primary" data-testid="v2-check" onClick={check}>Check</button>
+          <button className="msrr-btn primary" data-testid="v2-check" onClick={() => op('planner.check')}>Check</button>
           <button className="msrr-btn" data-testid="v2-simcheck" disabled={simBusy} onClick={simCheck}>{simBusy ? 'Simulating…' : 'Check in MuJoCo'}</button>
           <button className="msrr-btn" onClick={addModule}>Add module</button>
         </div>
@@ -282,8 +285,8 @@ function GravityBar() {
   return (
     <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }} data-testid="gravity-bar">
       <button className={`msrr-btn ${physics ? 'danger' : 'primary'}`} data-testid="gravity" disabled={busy}
-        onClick={() => (physics ? off() : gravity(false))}>{busy ? 'Simulating…' : physics ? '■ Stop real physics' : '▶ Real physics (gravity)'}</button>
-      {plan?.ok && !physics && <button className="msrr-btn" data-testid="gravity-plan" disabled={busy} onClick={() => gravity(true)} title="run the loaded plan in MuJoCo the way the robot would: the real docking brain does every dock (stand-off, align, straight in, lock)">▶ Real physics: run this plan</button>}
+        onClick={() => op(physics ? 'planner.physics.stop' : 'planner.physics')}>{busy ? 'Simulating…' : physics ? '■ Stop real physics' : '▶ Real physics (gravity)'}</button>
+      {plan?.ok && !physics && <button className="msrr-btn" data-testid="gravity-plan" disabled={busy} onClick={() => op('planner.physics', { withPlan: true })} title="run the loaded plan in MuJoCo the way the robot would: the real docking brain does every dock (stand-off, align, straight in, lock)">▶ Real physics: run this plan</button>}
       {physics && <button className="msrr-btn small ghost" onClick={() => useV2Store.setState({ physics: { ...physics, t: 0, playing: true } })}>replay</button>}
       <label className="msrr-note" title="every robot slightly different: PLA flex, backlash, servo strength, masses, friction, magnets, floor tilt (the GPU runs' ranges)">
         <input type="checkbox" checked={random} onChange={(e) => setRandom(e.target.checked)} /> random robot

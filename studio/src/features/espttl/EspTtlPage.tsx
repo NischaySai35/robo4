@@ -125,7 +125,7 @@ function ControlTab() {
           <button className="ettl-btn" onClick={() => call('/api/torque?on=0', 'torque off')}>Torque OFF (limp)</button>
           <button className="ettl-btn" onClick={() => call('/api/home', 'home 180')}>Home → 180°</button>
           <button className="ettl-btn accent" onClick={() => call('/api/home/manual', 'manual home')}>Manual home</button>
-          <button className="ettl-btn" onClick={() => call('/api/home/set', 'set home')}>Set current as home</button>
+          <button className="ettl-btn" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</button>
           <button className="ettl-btn" onClick={() => call('/api/servo/tune', 're-tune')}>Re-tune hold</button>
         </div>
         <div className="ettl-row">

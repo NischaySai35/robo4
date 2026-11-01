@@ -46,6 +46,7 @@ TWIST_PREF = os.environ.get('TWIST_PREF', '0') == '1'   # OFF: tested 25 Oct - m
 # needs the arm still. -> settle tolerance 3 mm and a 60-frame (3.6 s) fallback. Old values: JUDGE_SETTLE=0.0015 JUDGE_WAIT=120.
 JUDGE_SETTLE = float(os.environ.get('JUDGE_SETTLE', '0.003')); JUDGE_WAIT = int(os.environ.get('JUDGE_WAIT', '60'))
 LAG_TOL = float(os.environ.get('LAG_TOL', '0.003'))   # rad: hover gate 'arm has caught up' (stretched poses jitter ~0.01 rad, use 0.015 there)
+COMPLY = float(os.environ.get('COMPLY_MM', '0')) / 1000   # compliant go-in: command at most this far ahead of the end (0 = off, old)
 PUSH_DEEPER = os.environ.get('PUSH_DEEPER', '1') == '1'   # judge sees the end LINED UP but short of the seat -> push in by what it measured (0 = old: back off)
 MID_CHECK = [] if os.environ.get('MID_CHECK', '1') == '0' else [0.012 + RX_TOP - RX_GAP, 0.005 + RX_TOP - RX_GAP]   # camera checks during the go-in: 21 and 14 mm out (12 / 5 mm before the 9 mm pads can touch)
 HOVER_FAR = float(os.environ.get('HOVER_FAR', '0'))   # m: first go to hover + HOVER_FAR*normal, then in (collision-free approach to side receivers)
@@ -124,6 +125,11 @@ class DockController:
                             if np.linalg.norm(lat) > 0.0008: self.shift = self.shift - lat; print('  judge (going in, %.0f mm out): %.1f mm off the axis -> correcting' % (self.appr * 1000, np.linalg.norm(lat) * 1000))
                         self.mid_done = getattr(self, 'mid_done', set()) | {mid[0]}; self.mid_wait = 0
                 else: self.appr = max(self.appr - APPR_STEP, -0.0004 - getattr(self, 'push_extra', 0.0))   # push_extra: lock-stall retry pushes deeper
+                if COMPLY > 0 and self.phase >= 1 and not getattr(self, 'lifting', False):
+                    # 1 Nov, end<->end onto a lying partner: blocked 7 mm short, the 7 mm command error pushed ~5 N and tilted the
+                    # partner's end 4 deg, so the pads caught. Keep the command at most COMPLY ahead of where the end is (the brain's
+                    # own estimate): it presses lightly, the magnets and chamfers pull it in.
+                    here = float((pm - self.seat - self.shift) @ z); self.appr = max(self.appr, here - COMPLY)
             far = HOVER_FAR * z if (self.phase == 0 and HOVER_FAR > 0 and not getattr(self, 'far_done', False)) else 0.0
             goal = (self.hover if self.phase == 0 else self.seat + self.appr * z) + self.shift + far
             if isinstance(far, np.ndarray) and np.linalg.norm(goal - pm) < 0.012: self.far_done = True   # reached the stand-off point, now go to the hover point

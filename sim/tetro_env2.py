@@ -12,6 +12,7 @@ TW_MARGIN = os.environ.get('TW_MARGIN', '1') == '1'   # IK keeps twist joints wi
 import numpy as np, mujoco, gymnasium as gym
 MAG_PULL_IN = __import__('os').environ.get('MAG_PULL_IN', '1') == '1'   # magnets always pull the end IN (old sign(ax) flipped when touching faces overlapped: pushed it OUT with full force). GPU A/B 26 Oct, 256 robots: old 81/82 first docks, new 103/103; seated gap 0.11 -> 0.00 mm. MAG_PULL_IN=0 = old behaviour.
 XML = tpath('sim/train_v2.xml')
+BL_DEADBAND = float(__import__('os').environ.get('BL_DEADBAND', '1e-4'))   # N.m: below this a backlash joint is unloaded
 ACT = ['J_T1_twist', 'J_B1_bend', 'J_B2_bend', 'J_T2_twist', 'J_B3_bend', 'J_B4_bend', 'J_T3_twist']
 DT_CTRL, SUB = 0.06, 60          # firmware FAST_MS = 60
 TAU = 2.7; VMAX = 4.3 * DT_CTRL
@@ -97,7 +98,7 @@ class TetroDockEnv(gym.Env):
         for _ in range(3):
             mujoco.mj_kinematics(m, dr); mujoco.mj_comPos(m, dr); mujoco.mj_rne(m, dr, 0, self._f)
             for j in self._sagj: dr.qpos[m.jnt_qposadr[j]] = -self._f[m.jnt_dofadr[j]] / self.nom['stiff'][j]
-            for j in self._blj: dr.qpos[m.jnt_qposadr[j]] = -np.sign(self._f[m.jnt_dofadr[j]]) * self.nom['rng'][j][1]
+            for j in self._blj: fj = self._f[m.jnt_dofadr[j]]; dr.qpos[m.jnt_qposadr[j]] = -np.sign(fj) * (abs(fj) > BL_DEADBAND) * self.nom['rng'][j][1]   # unloaded backlash sits in the middle (1 Nov: the side of a 1e-8 N.m load was rounding noise)
         mujoco.mj_kinematics(m, dr)
         R = dr.xmat[self.eb].reshape(3, 3); return dr.site_xpos[self.s_tip].copy(), R[:, 1].copy(), R[:, 0].copy()
     def _set_rx(self, origin, z, x):

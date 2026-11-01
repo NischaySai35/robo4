@@ -106,6 +106,8 @@ class PhysDockEnv:
         if not (w.disturb is not None and self.rng.random() < DIST.PACKET_LOSS):     # a lost packet: the servos keep the old command
             w.tgt[o:o + 7] = self.queue[0]
             w.tgt[o + 7] = math.radians(lockA_deg) * LOCK_SIGN['A']; w.tgt[o + 8] = math.radians(lockB_deg) * LOCK_SIGN['B']
+            pl = getattr(self, 'partner_lock', None)
+            if pl is not None: w.tgt[pl[0]] = w.tgt[pl[1]] * pl[2]   # end<->end: the partner end's rotor turns the other way with ours (1 Nov)
         ok = w.run(0.06, extra=extra_force)[1]
         self.t += 1; self.qhist.append(self._meas()); self._sync_rx()
         return self.status(ok)
@@ -203,7 +205,16 @@ def dock(env: PhysDockEnv, base_end: str, base_rx: str, target_rx: str, max_fram
         if judge == 'touch': C.max_retries = len(TouchJudge.SPIRAL)
         C.follow_base = not base_rx.startswith('F:')        # base in another module's receiver: it moves, targets must follow (walk.py BASE_FOLLOW)
         C.follow_target = not target_rx.startswith('F:')    # target on another module: it moves too (walk.py TARGET_FOLLOW)
+        RXt = env.world.rx[tj]
+        if RXt['kind'] == 'end':
+            # end<->end: both ends carry a lock rotor; one rotor alone stops at 5-20 deg against the other end's fins (1 Nov,
+            # seated ends: opposite turns reach 44.9 deg, one alone 8 deg). The partner (a robot too) turns its rotor the other way.
+            o = 9 * env.i; env.partner_lock = (9 * env.world.ids.index(RXt['mod']) + (7 if RXt['endt'] == 'A' else 8), o + (7 if mv == 'A' else 8),
+                                               -LOCK_SIGN[mv] * LOCK_SIGN[RXt['endt']])   # as phys_world.set_locks: the receiving end against its usual sign
         ran = W._run(C, locks, done, max_frames, f'dock End {mv} -> {target_rx}')
+        if getattr(env, 'partner_lock', None) is not None:
+            pl = env.partner_lock; env.partner_lock = None
+            if not ran: env.world.tgt[pl[0]] = 0.0                       # no lock: the partner opens its rotor again
     L.HOVER_FAR, L.LAG_TOL = saved
     # what did the docking module run into? (other modules' bodies; its target receiver excluded)
     m, d = env.m, env.d; mine = {i for i in range(m.nbody) if m.body(i).name.startswith(env.mid + '_')}

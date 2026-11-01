@@ -29,7 +29,7 @@ export function ManualTab() {
   const [mod, setMod] = useState('M1');
   const last = useRef(0);
   const st = man?.state as any;
-  const starts = [...MANUAL_PRESETS.filter((p) => (p.id !== 'stand_tested' || n === 2) && (n > 1 || (p.id !== 'chain' && p.id !== 'stand_chain' && p.id !== 'stand_lying'))), ...libraryStarts(n)];
+  const starts = [...MANUAL_PRESETS.filter((p) => ((p.id !== 'stand_tested' && p.id !== 'end_end_tested') || n === 2) && (n > 1 || (p.id !== 'chain' && p.id !== 'stand_chain' && p.id !== 'stand_lying'))), ...libraryStarts(n)];
   const start = () => manualStart(manualScene(n, preset), { seed, randomize, disturb, judge });
   const sendJoint = (j: string, v: number) => {
     const now = performance.now(); if (now - last.current < 80) return; last.current = now;      // the servos follow; don't flood the service

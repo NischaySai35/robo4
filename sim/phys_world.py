@@ -83,11 +83,50 @@ def _add_cad_colliders(spec, ids):
                 g.contype = 1; g.conaffinity = 7; g.group = 3; g.rgba = [0.6, 0.6, 0.6, 0.35]
 
 
+PAD_CLEAR_DEG = float(os.environ.get('PAD_CLEAR_DEG', '0.5'))
+
+
+def _pad_clearance(spec, deg=None):
+    """1 Nov: the CAD pads are 45.1 deg wide and their gaps 44.9 deg (sliced from the STL), so two ends interfere and an
+    end in a receiver has ~0.08 mm per side; in the sim end<->end always jammed ~7 mm out. Nischay pushed two real ends
+    together by hand: they go in fully and smoothly (printed pads come out narrower, PLA gives). So every pad slice is
+    narrowed by `deg` per side about its pad's centre (end A, end B and receiver pads alike): 0.5 deg ~ 0.25 mm at r 30 mm."""
+    deg = PAD_CLEAR_DEG if deg is None else deg
+    if deg <= 0: return
+    import re
+    pads = {}
+    for me in spec.meshes:
+        mt = re.search(r'(h_B|mA_A_B|h_rx)_pad(\d)_(lo|po|lip)_s\d$', me.name)   # all 3 pad layers: their sides slide past each other (pockets alone: still jammed 22 mm out)
+        if mt and len(me.uservert): pads.setdefault((me.name[:mt.start()] + mt.group(1), mt.group(2)), []).append(me)
+    for (fam, k), mes in pads.items():
+        V = np.concatenate([np.asarray(me.uservert).reshape(-1, 3) for me in mes])
+        ax = 2 if fam.endswith('h_rx') else 1
+        i, j = [c for c in range(3) if c != ax]
+        t = np.arctan2(V[:, j], V[:, i]); c0 = np.angle(np.exp(1j * t).mean()); dt = np.angle(np.exp(1j * (t - c0))); c = c0 + (dt.min() + dt.max()) / 2   # midpoint of the pad's span
+        kf = (22.55 - deg) / 22.55                                                     # pad half-width 22.55 deg (STL)
+        for me in mes:
+            v = np.asarray(me.uservert, float).reshape(-1, 3).copy(); r = np.hypot(v[:, i], v[:, j]); th = np.arctan2(v[:, j], v[:, i])
+            th = c + np.angle(np.exp(1j * (th - c))) * kf; v[:, i], v[:, j] = r * np.cos(th), r * np.sin(th); me.uservert = v.flatten()
+
+
+def _end_pockets(spec):
+    """1 Nov, a model bug: the end connectors' pad pocket layer (h_B / mA_A_B ..._po_) spanned r 25-35 mm, solid, while the
+    real STL (brain/meshes/EndB_LockModule.stl, sliced 3.5-5.5 mm below the pad tips) has pad material only from r 29 mm,
+    like the receiver pads (h_rx po: r 29-35). So another end's lock fins had nowhere to go: end<->end could never lock,
+    even exactly seated (rotor stopped at 3-5 deg). Cut the pocket: inner vertices of those slices out to r 29 mm."""
+    import re
+    for me in spec.meshes:
+        if not re.search(r'(h_B|mA_A_B)_pad\d_po_s\d$', me.name) or not len(me.uservert): continue
+        v = np.asarray(me.uservert, float).reshape(-1, 3).copy(); r = np.hypot(v[:, 0], v[:, 2])        # end axis = body y
+        k = r < 0.029; v[k, 0] *= 0.029 / r[k]; v[k, 2] *= 0.029 / r[k]; me.uservert = v.flatten()
+
+
 def load_model(xml):
     """An XML scene compiled with the same collision as PhysWorld (CAD_COLLIDE): multi_env / walk_env and so the GPU runners
     (gpu_walk, gpu_multi_dock) use it, so every sim path collides the same way (31 Oct)."""
-    if not CAD_COLLIDE: return mujoco.MjModel.from_xml_path(xml)
-    spec = mujoco.MjSpec.from_file(xml); _add_cad_colliders(spec, None); return spec.compile()
+    spec = mujoco.MjSpec.from_file(xml)
+    if CAD_COLLIDE: _add_cad_colliders(spec, None)
+    _end_pockets(spec); _pad_clearance(spec); return spec.compile()
 
 
 def lock_key(lk):
@@ -176,7 +215,8 @@ class PhysWorld:
                 st = sb.add_site(); st.name = f'{mid}_imu'; st.pos = list(IMU_POS)            # sensor axes = Spine2 body axes (mounting error: imu.py)
                 for typ, nm in ((mujoco.mjtSensor.mjSENS_ACCELEROMETER, 'acc'), (mujoco.mjtSensor.mjSENS_GYRO, 'gyro')):
                     sn = spec.add_sensor(); sn.type = typ; sn.objtype = mujoco.mjtObj.mjOBJ_SITE; sn.objname = st.name; sn.name = f'{mid}_imu_{nm}'
-        if CAD_COLLIDE: _add_cad_colliders(spec, self.ids)                        # module bodies collide as the real CAD parts
+        if CAD_COLLIDE: _add_cad_colliders(spec, self.ids)
+        _end_pockets(spec); _pad_clearance(spec)                                   # end pad pockets as the STL; real printed fit (1 Nov)                        # module bodies collide as the real CAD parts
         vis = os.environ.get('VISUAL_MESH') == '1'
         if vis: _add_visual_meshes(spec, self.ids)                                  # your real part meshes, for pictures only
         self.m = spec.compile(); self.d = mujoco.MjData(self.m); m = self.m
@@ -358,14 +398,17 @@ class PhysWorld:
 
     def set_locks(self, locks, snap=False):
         """locked ends turn their rotor 45 deg (A one way, B the other); open ends turn back to 0"""
-        closed = set()
+        closed = set(); flip = set()
         for lk in locks:
             # every END in the lock turns its rotor 45 deg (End A one way, End B the other); end<->end: both at once
             for pr in (lk['a'], lk['b']):
                 if 'module' in pr and pr['port'] in ('A', 'B'): closed.add((pr['module'], pr['port']))
+            # 1 Nov: end<->end, two facing rotors must turn the same way in the world, so the RECEIVING end (a) turns against
+            # its usual sign (seated B<->B: opposite signs reach 44.9 deg, the same sign stops at 3 deg; A<->B the same rule)
+            if 'module' in lk['a'] and lk['a']['port'] in ('A', 'B') and lk['b']['port'] in ('A', 'B'): flip.add((lk['a']['module'], lk['a']['port']))
         for i, mid in enumerate(self.ids):
             for e, off in (('A', 7), ('B', 8)):
-                ang = math.radians(45) * LOCK_SIGN[e] if (mid, e) in closed else 0.0
+                ang = math.radians(45) * LOCK_SIGN[e] * (-1 if (mid, e) in flip else 1) if (mid, e) in closed else 0.0
                 self.tgt[i * 9 + off] = ang
                 if snap: self.d.qpos[self.mod[mid]['lockq'][e]] = ang
         self.closed = closed

@@ -599,6 +599,48 @@ End tip vs receiver error (S2B checkpoint, 6 tags/end, 35 mm board tags):
 - **Connect (`manual.py`):** standing modules now run the check first (not possible -> says why and which receivers would work, at once), then the docking brain alone. The pre-shape is skipped for them: it bent B3 to its 88 deg stop and swung End B into M2's other receiver at 5.4 s, shoving M2 over.
 - **New Manual start "2 standing at a tested placement"** (the proven placement, PhysWorld round trip 0.0 mm). Connect M1.B -> M2.S1B: judge on **4/4** (0.01-0.05 mm, 15-18 s); blind **0/3** (right depth, 80-97 mm sideways: the touch search wanders). **Seen in the Studio:** robot 1 LOCKED, 0.01 mm, 19 s (screenshots `ui_tested_r1_*`, side view shows End B in M2's lower receiver).
 
+### 1 Nov: end<->end, why it never seats (measured)
+- **Placement:** a standing partner's end is a soft target (5 N push: 12.8 deg tilt, 75 mm). M2 lying with B4 = +85 deg (End B pointing up, floor-supported) is ~5x stiffer (5 N: 4.4 deg, 15 mm). `dock_check` finds 133/288 reachable spots for it.
+- **Physics, judge on, 4 spots:** all centred (0.06-0.33 mm) and correctly twisted (pads 44.9 deg apart, measured on pad centres) but stop 6.2-7.7 mm high, pad lips on pad lips, axes 2.5-3.8 deg apart.
+- **Cause: the CAD pads.** Sliced from brain/meshes/EndB_LockModule.stl: each pad spans **45.1 deg** (+-22.6, from 2 mm below the tip down; +-20.4 at the very tip), so the gaps are **44.9 deg**. Two ends interleaved: pad wider than gap by ~0.2 deg (~0.05 mm per side). Floor/spine receiver pads are +-22.3 deg: end into receiver has ~0.15 deg (~0.08 mm) per side. With any tilt, end<->end jams; the sim pads match the STL. The handoff's "+-20 deg" is the tip value.
+- **Tried:** compliant go-in (`COMPLY_MM`, laptop_controller, off by default): 1-2 mm command lead; tilt 3.8 -> 2.5 deg, still 6.2 mm high. Not a fix.
+- **Open, for Nischay:** whether two real ends push together by hand. If they do (PLA give, print tolerance), the sim needs that compliance; if not, the pads need ~2-3 deg of clearance (a CAD change, his decision).
+
+### 1 Nov: END<->END LOCKS (first time)
+- **Nischay:** two real ends push together fully and smoothly. So the sim was too tight.
+- **Fix 1, printed fit (`phys_world._pad_clearance`, `PAD_CLEAR_DEG` default 0.5):** every pad (end A, end B, receiver; all 3 layers) narrowed 0.55 deg per side about its centre (CAD 45.1 deg pads, 44.9 deg gaps). Seats: gap 0.03 mm, axes 0.0 deg.
+- **Fix 2, a model bug (`phys_world._end_pockets`):** the end pads' pocket layer was solid (r 25-35 mm); the STL has the pocket (material from r 29, like the receiver). Seated ends could not turn a lock at all (3-5 deg, with or without fix 1). Cut as in the STL: opposite turns reach 44.9 deg.
+- **Fix 3, both rotors (`phys_dock.dock`):** for an end target the partner's rotor turns the other way with the docking one (handoff: end<->end both rotors turn); one rotor alone stalls at 5-20 deg. The partner opens again if no lock.
+- **Results (M1 standing, M2 lying with B4 85 deg, End B up, tip 0.24 m away; judge on, room on):** robots 1, 2, 3 **3/3 LOCKED**, 12-26 s, gap 0.02-0.07 mm, rotors +45/-45. **Seen in the Studio** (new start "end to end: M1 standing, M2 lying with End B up"): robot 1 LOCKED, 0.02 mm, 12.9 s (`ui_ee_r1_*`).
+- **Re-checked with the new fit:** end->side tested placement 4/4 (was 3/4); cobra 4/4; GPU walking 2/2 docks (short run: setup 45 s).
+- Seated end<->end has ~50 contacts: physics ~3x slower than real time until the lock welds.
+
+### 1 Nov: side docks from the plain 'all standing' start: the target turns to face the docker
+- **`manual.Manual._turn_target`:** a target module standing in a floor receiver turns its base twist (T1 above End A / T3 above End B) to the middle of the widest range of angles where the brain's reach check passes; turns slowly, checks again on the real (sagging) module, else the next range. Used when the check fails, and once more (to another angle) when a dock fails.
+- **'All standing' start (M1 in F0, M2 in F1, 25 cm), judge on, room on, robots 1-2:** S2B 1/1, S1A 1/2, S2A 1/2, S1B 1/2 -> **4/7** (was ~1/4 and some ports refused). **Seen in the Studio:** S1B robot 1 - first dock failed, M2 turned to 90 deg, second try LOCKED 0.26 mm (`ui_turnS1B_*`).
+- Failures left: after turning, the real module sags and the check fails again; or the dock gets stuck 28-85 mm short.
+
+### 1 Nov: ring tried; GPU teacher step 1 (batched brain estimate)
+- **Ring (chain2, M1.A <- M2.B, judge on, robots 1-2):** pre-shape now lands 3 mm from the stand-off and lines up to 1.6 mm, but going in the error grows 3 -> 6 -> 13.5 mm: pushing slides the lying chain. `COMPLY_MM=1.5`: still 24-43 mm short. Open; idea: raise the target end first (floor-supported, like end<->end).
+- **`sim/gpu_brain.py` BatchedNOM:** the brain's sag-aware end estimate (`tetro_env2._fk`) for N robots at once on MuJoCo Warp (kinematics -> com_pos -> rne x3). Parity vs the CPU brain, 64 random poses: **0.0002 mm worst**, axis 0.025 deg. Speed: 4096 robots in 3.4 ms = **1.2 M estimates/s vs 4,900/s on the CPU (x240)**.
+- **Brain change found by the parity test (`tetro_env2.BL_DEADBAND`, 1e-4 N.m):** a backlash joint carrying ~1e-8 N.m used to take the side of rounding noise (27/64 poses differed by up to 9.5 mm between float32 and float64); now unloaded backlash sits in the middle, on CPU and GPU. Re-checked: end->side tested placement 4/4, GPU walking 25/25 docks.
+- **Next for the GPU teacher:** batched IK (damped least squares, numeric Jacobian = 8 batched estimates) and the DockController state machine as tensors.
+
+- **GPU teacher step 2 (`gpu_brain.BatchedIK`):** one damped-least-squares step of `DockController.step` for n robots (8 batched estimates per robot for the numeric Jacobian, LIMIT_GUARD weights). Parity vs the CPU formula on 64 robots aiming 45 +-3 deg off their pads (as docking): clipped step (what the controller sends) worst 0.010 deg, raw step median 0.003 deg. 512 robots: 5 ms per step. (A first test aimed exactly at the pads: slot error at the +-45 deg wrap, sign = rounding noise; a test artifact.)
+
+### 1 Nov: Connect rebuilt on Nischay's VSEPR method, with physics truth ("it's a sim, use the truth")
+- **Nischay's screenshots:** only the docking module moved, the target never helped; a lying chain did not just bend into a ring; long pauses with tiny moves; Home replayed 546 commands.
+- **`manual.Manual.coop_connect` (default; `MANUAL_CONNECT=brain` = old):** as Studio `connectorSnap.computeMateBend`: (1) the whole shape first: lying groups use the pre-shape plan, a standing docker the brain's seed IK, and ALL planned joints move together, commanded ahead of the joints with a growing correction to push through floor friction; (2) every 60 ms: residual from physics truth in the target's frame, damped least squares over every joint of the group with a Jacobian through the locks (`GroupFK`; mj_jac only saw the module holding each connector), joints near stops used less, VSEPR spread (sum 1/d) in the null space fading over the last 10 cm; (3) lined up within 6 mm / 4 deg at a 30 mm stand-off -> straight in -> lock.
+- **Roles:** end<->end: the end whose module stands in a floor receiver docks. A separate standing target only turns its base twist (its bends overloaded it). A free-lying separate target does not move.
+- **End<->end rotors (`phys_world.set_locks`, `phys_dock`):** the receiving end turns against its usual sign (A<->B and B<->B both).
+- **Results, robot 1, room on, backend:** 2-chain ring **LOCKED (9 s)**; lying end<->end **LOCKED (3.8 s)** (old brain 12-26 s); standing M2.B -> M1.S1A **LOCKED (10 s)**; tested side placement **LOCKED (11 s)**. Not yet: 3-chain ring (40 mm, 8 deg), 3-chain M3.B -> M2.S1B (10 mm, 2 deg).
+- **Home (`go_home`):** opens locks made since the start, one smooth move to the start angles, closes the start locks.
+
+### 1 Nov: DIK (dynamic IK) plan, and why the 3-module docks fail (measured)
+- **3-chain ring M1.A <- M3.B:** in the planned shape, then stuck 62 mm / 15 deg: **4 bends at their +-88 deg stops** (M1.B1, M1.B4, M2.B1, M2.B4); no module contacts, no servo over 85%. A joint-limit dead end: the bend went into a few joints instead of being spread with the twists.
+- **3-chain M3.B -> M2.S1B:** 10 mm / 2 deg, the docking end **pressing on the target receiver with 19 N**, M2.B1/B4 and M3.B2/B3 servos at 100%: it went in before it was lined up and hit the rim.
+- **Plan (sub-steps of DIK):** 3.2 DIK v1 on mink (QP differential IK on MuJoCo): whole locked group with a free base, locks as equality constraints, floor + module collision avoidance, joint and speed limits, connector goal (relative frame), VSEPR spread as a low-priority task. 3.3 servo-strength limits + balance. 3.4 restarts / predictive sampling when stuck. 3.5 test matrix on many robots + Studio screenshots. Then DIK is the teacher for the GPU/AI work.
+
 ## TODO (next session, in order)
 0. **Floor chains plan above (F1 → F7) comes first.** The list below is parked.
 1. ~~Camera as an optional add-on~~ **done as a measuring judge** (above). Open:

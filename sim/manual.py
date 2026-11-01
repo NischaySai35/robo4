@@ -17,7 +17,7 @@ import sys, os, io, math, time, json, queue, threading, contextlib, numpy as np,
 sys.path.insert(0, tpath('sim')); sys.path.insert(0, tpath('deploy'))
 from scipy.optimize import least_squares
 import disturb as DIST
-from phys_world import PhysWorld, lock_key, docking_of, SPINE_RX, C
+from phys_world import PhysWorld, lock_key, docking_of, SPINE_RX, C, VIEW_BODIES
 from tetro_env2 import RX_TOP, RX_GAP
 
 JN = ['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3']
@@ -244,7 +244,7 @@ class Manual:
         k = cmd['kind']
         if k in ('lock', 'unlock', 'connect', 'skill'): self.mark(f"{k} {cmd.get('name') or cmd.get('a', '') + ' ' + cmd.get('b', '')}")
         if k == 'back': return self.replay(self.marks[-1][0] if self.marks else 0, 'step back')
-        if k == 'home': return self.replay(0, 'home (the whole session backwards)')
+        if k == 'home': return self.go_home()
         if k == 'save': return self.save_slot()
         if k == 'restore': return self.restore_slot()
         if k == 'lock': self.lock(cmd['a'], cmd['b'])
@@ -321,7 +321,183 @@ class Manual:
         if key not in w.engaged: return self.log(f'{key} is not locked')
         w.release(L); self.cur = [x for x in self.cur if lock_key(x) != key]; w.set_locks(self.cur); self.log(f'unlocked {key} (rotors back)')
 
+    def _turn_target(self, dm, base_end, base_rx, target, avoid_now=False):
+        """1 Nov, dock from any placement: the TARGET module is a robot too. If it stands in a floor receiver, its base twist
+        (T1 above End A, T3 above End B) turns everything above its foot, so the receiver can face the docker instead of the
+        docker walking. Search that twist (brain's own reach check, no physics), turn it there slowly, return the angle (deg)."""
+        from phys_dock import PhysDockEnv, dock_check
+        w = self.w; d = w.d; tm = target.split('.')[0]
+        foot = next((x['b']['port'] for x in self.cur if 'floor' in x['a'] and x['b']['module'] == tm), None)
+        if foot is None or tm == dm: return None
+        k = 0 if foot == 'A' else 6; adr = w.mod[tm]['qa'][k]; q0 = float(d.qpos[adr]); qpos0 = d.qpos.copy(); best = None
+        oks = []
+        for deg in range(-150, 151, 10):
+            d.qpos[adr] = math.radians(deg); mujoco.mj_forward(w.m, d); w._refresh_rx()
+            with contextlib.redirect_stdout(io.StringIO()): c = dock_check(PhysDockEnv(w, dm, randomize=False), base_end, base_rx, target)
+            if c['ok']: oks.append(deg)
+        d.qpos[:] = qpos0; mujoco.mj_forward(w.m, d); w._refresh_rx()
+        # the middle of the widest run of passing angles: the real module sags, an angle at the edge of a run failed (1 Nov, S1A)
+        runs, cur_ = [], []
+        for deg in oks:
+            if cur_ and deg - cur_[-1] > 10: runs.append(cur_); cur_ = []
+            cur_.append(deg)
+        if cur_: runs.append(cur_)
+        runs.sort(key=lambda r: (-len(r), abs(math.radians((r[0] + r[-1]) / 2) - q0)))
+        if avoid_now: runs = [r for r in runs if not (r[0] - 10 <= math.degrees(q0) <= r[-1] + 10)]   # a dock from here failed: another angle
+        i = w.ids.index(tm)
+        for top in runs[:3]:                                         # turn, check again on the real (sagging) module, else the next run
+            best = int(round((top[0] + top[-1]) / 2 / 5) * 5)
+            self.log(f"  {tm} turns its base twist {'T1' if k == 0 else 'T3'} {math.degrees(float(d.qpos[adr])):.0f} -> {best} deg so {target} faces {dm}.{'B' if base_end == 'A' else 'A'}")
+            t0 = w.tgt[i * 9 + k]; n = max(1, int(abs(math.radians(best) - t0) / 0.05))
+            for s_ in range(1, n + 1): w.tgt[i * 9 + k] = t0 + (math.radians(best) - t0) * s_ / n; w.run(0.1)
+            for _ in range(30):
+                if abs(d.qpos[adr] - math.radians(best)) < math.radians(2): break
+                w.run(0.1)
+            w.run(1.0)
+            with contextlib.redirect_stdout(io.StringIO()): c = dock_check(PhysDockEnv(w, dm, randomize=False), base_end, base_rx, target)
+            if c['ok']: return best
+            self.log(f"    after turning: {c['why']} - next")
+        return None
+
+    def coop_connect(self, a, b):
+        """1 Nov, Nischay: "both should bend", "use my VSEPR theory", "it's a sim, use the truth". Every 60 ms: read where
+        the two connectors REALLY are, solve one damped least-squares step over EVERY joint of both groups (they meet in the
+        middle, as Studio connectorSnap.computeMateBend does), and in the leftover freedom push the bodies apart (the VSEPR
+        spread, sum 1/d, so the shape opens out instead of crumpling). Line up at a 30 mm stand-off, go straight in, lock.
+        Uses physics truth: fine in the sim; the real robot gets telemetry and the optional camera."""
+        from phys_dock import end_rel
+        w = self.w; m, d = w.m, w.d; L = canon(a, b); key = lock_key(L); conn_a, conn_b = a, b
+        if key in w.engaged: return self.log(f'{key} is already locked')
+        (dm, de), _ = docking_of(L); tname = ref_name(L['a'] if (L['b']['module'], L['b']['port']) == (dm, de) else L['b'])
+        other = L['a'] if (L['b']['module'], L['b']['port']) == (dm, de) else L['b']
+        if 'module' in other and other['port'] in ('A', 'B'):
+            # end<->end: either end can dock. The one whose module stands in a floor receiver reaches; a lying one cannot lift to a
+            # standing module's top end (1 Nov: 550 mm off with the lying end docking)
+            anch = lambda mid_: any('floor' in Lk['a'] and Lk['b']['module'] in group_of(w, self.cur, mid_) for Lk in self.cur)
+            if anch(other['module']) and not anch(dm): tname = f'{dm}.{de}'; dm, de = other['module'], other['port']
+        gd = set(group_of(w, self.cur, dm)); gt = set(group_of(w, self.cur, tname.split('.')[0])) if not tname.startswith('F:') else set()
+        anchored = lambda g: any('floor' in Lk['a'] and Lk['b']['module'] in g for Lk in self.cur)
+        # a separate target group helps only if it is anchored: a free-lying one just rolls when its joints move (1 Nov: 222 mm off)
+        mods = sorted(gd | (gt if (gt & gd or anchored(gt)) else set()))
+        dofs = np.array([dof for mid in mods for dof in w.mod[mid]['dofs']]); tix = np.array([w.ids.index(mid) * 9 + k for mid in mods for k in range(7)])
+        qadr = np.array([qa for mid in mods for qa in w.mod[mid]['qa']])
+        lo, hi = m.jnt_range[[m.dof_jntid[x] for x in dofs]].T * 0.97
+        bodies = [m.body(f'{mid}_{b}').id for mid in mods for b in VIEW_BODIES if 'Rotor' not in b]
+        E = w.mod[dm]['end'][de]; nv = m.nv; jp, jr = np.zeros((3, nv)), np.zeros((3, nv))
+        def jac(point, body):
+            mujoco.mj_jac(m, d, jp, jr, point, body); return jp[:, dofs].copy(), jr[:, dofs].copy()
+        self.log(f'connect {dm}.{de} -> {tname}: both sides bend ({", ".join(mods)}: {len(dofs)} joints), VSEPR spread, physics truth')
+        offset, phase, t0, best, stall = 0.03, 'line up', float(d.time), 1e9, 0
+        integ = np.zeros(7 * len(mods))
+        # a separate standing target turns to face the docker with its base twist; its bends barely help: bending it under its
+        # own weight overloaded its servos and it sagged far over (1 Nov, M2.B -> M1.S1A)
+        share = np.ones(7 * len(mods))
+        for c, mid in enumerate(mods):
+            if mid not in gd:
+                foot = next((Lk['b']['port'] for Lk in self.cur if 'floor' in Lk['a'] and Lk['b']['module'] == mid), None)
+                share[c * 7:c * 7 + 7] = 0.08; share[c * 7 + (0 if foot == 'A' else 6)] = 1.0
+        groups = {}
+        for mid in mods:
+            if any(mid in g.mods for g in groups.values()): continue
+            g = sorted(group_of(w, self.cur, mid)); fl = [Lk['b']['module'] for Lk in self.cur if 'floor' in Lk['a'] and Lk['b']['module'] in g]
+            groups[mid] = GroupFK(w, g, fl[0] if fl else g[0], self.cur)
+        gE = next(g for g in groups.values() if dm in g.mods); tmod = tname.split('.')[0] if not tname.startswith('F:') else None
+        gT = next((g for g in groups.values() if tmod in g.mods), None)
+        tip_local = m.site_pos[E['tip']].copy(); RXd = next(x for x in w.rx if x['name'] == tname)
+        def rel(qs):
+            """end tip / axis / pad twist in the target's frame, from the groups' kinematics (nominal, no sag)"""
+            PE = gE.poses({mid: qs[mid] for mid in gE.mods}); Rb, pb = GroupFK.body(PE, dm, E['body']); tp = pb + Rb @ tip_local
+            n_ = Rb[:, 1] if de == 'B' else -Rb[:, 1]
+            if gT is None: Rr, pr = d.xmat[RXd['bid']].reshape(3, 3), d.xpos[RXd['bid']]
+            else:
+                PT = PE if gT is gE else gT.poses({mid: qs[mid] for mid in gT.mods}); Rr, pr = GroupFK.body(PT, tmod, RXd['bid'])
+            seat, zz, RR = w.rx_frame(RXd, Rr, pr)
+            sl_ = math.radians(end_rel(tp, Rb, seat, zz, RR)['slot_deg'])
+            return np.r_[RR.T @ (tp - seat - offset * zz), RR.T @ n_ * 0.06, [sl_ * 0.06]]
+        # 1) the whole closed shape first (as the Studio solver does): from a straight chain small steps get stuck (1080 mm, 1 Nov)
+        try:
+            if anchored(gd):
+                # a standing docker: the brain's own start pose (IK to its stand-off, best of 6 seeds), as walking does
+                from phys_dock import PhysDockEnv
+                with contextlib.redirect_stdout(io.StringIO()):
+                    import walk as WK
+                    base_end = 'A' if de == 'B' else 'B'; base_rx = next(ref_name(Lk['a']) for Lk in self.cur if Lk['b'] == {'module': dm, 'port': base_end})
+                    env_ = PhysDockEnv(w, dm, randomize=False); Wk = WK.Walker(env_, base_end, env_.index(base_rx), 0, m.opt.gravity.copy(), log=lambda *x_: None)
+                    C_ = Wk._ctrl(env_.index(tname)); plan = {dm: Wk.nq(C_.seed)}
+                raise StopIteration
+            with contextlib.redirect_stdout(io.StringIO()): plan, _, now = preshape(w, self.cur, dm, de, tname, log=lambda *x_: None)
+        except StopIteration: pass
+        except Exception as ex:
+            plan = {}; self.log(f'  (no whole-shape plan: {ex})')
+        if plan:
+            self.log(f'  whole shape planned ({len(plan)} modules); all of them move into it together')
+            pix = np.array([w.ids.index(mid) * 9 + k for mid in plan for k in range(7)]); pq = np.array([qa for mid in plan for qa in w.mod[mid]['qa']])
+            goalq = np.concatenate([plan[mid] for mid in plan])
+            for _ in range(150):                                     # max 9 s; pushes through floor friction (command ahead of the joints)
+                qn = d.qpos[pq]; dd = goalq - qn
+                if np.abs(dd).max() < math.radians(3): break
+                mx = np.abs(dd).max(); step = dd * min(1.0, 0.035 / mx)
+                w.tgt[pix] = qn + step * 2.0; w.run(0.06)
+            self.log(f'  in the planned shape ({float(d.time) - t0:.1f} s): worst joint {math.degrees(np.abs(goalq - d.qpos[pq]).max()):.0f} deg off')
+        while float(d.time) - t0 < float(os.environ.get('COOP_SECONDS', '45')):
+            w._refresh_rx(); R = next(x for x in w.rx if x['name'] == tname); z = R['z']
+            Re = d.xmat[E['body']].reshape(3, 3); nE = Re[:, 1] if de == 'B' else -Re[:, 1]; tip = d.site_xpos[E['tip']].copy()
+            goal = R['seat'] + offset * z; ep = goal - tip
+            sl = math.radians(end_rel(tip, Re, R['seat'], z, R['R'])['slot_deg'])
+            er = np.cross(nE, -z) - sl * z
+            # residual in the TARGET's frame (independent of where the floating group sits): end tip vs goal, end axis vs -z,
+            # pad twist. Its Jacobian comes from the group's own kinematics THROUGH the locks (GroupFK), so every module's
+            # joints count - mj_jac only sees the module that holds each connector (each module is its own tree, locks are welds)
+            RT = R['R']; res = np.r_[RT.T @ (tip - goal), (RT.T @ nE + np.array([0, 0, 1.0])) * 0.06, [sl * 0.06]]
+            qcur = {mid: d.qpos[np.array(w.mod[mid]['qa'])].copy() for mid in mods}
+            f0 = rel(qcur); Jn = np.zeros((7, len(dofs))); h = 1e-3
+            for c, (mid, k) in enumerate([(mid, k) for mid in mods for k in range(7)]):
+                qq = {x: v.copy() for x, v in qcur.items()}; qq[mid][k] += h; Jn[:, c] = (rel(qq) - f0) / h
+            qn = d.qpos[qadr]; room = np.minimum(qn - lo, hi - qn); wj = np.clip((room - 0.02) / 0.2, 0.02, 1.0) * share   # joints near a stop are used less (the brain's LIMIT_GUARD)
+            J = Jn; Jw = J * wj; Jp = wj[:, None] * (Jw.T @ np.linalg.inv(Jw @ Jw.T + 1e-4 * np.eye(7)))
+            dq = -(Jp @ res)
+            # VSEPR: every body a charge repelling the others (Studio spreadFromPoints), only in the null space of the mate
+            P = d.xpos[bodies]; g = np.zeros(len(dofs)); Jb = []
+            for b in bodies: mujoco.mj_jacBody(m, d, jp, jr, b); Jb.append(jp[:, dofs].copy())
+            for i in range(len(bodies)):
+                for k in range(i + 2, len(bodies)):
+                    r = P[i] - P[k]; dist = np.linalg.norm(r) + 1e-3; g += -(r / dist) @ (Jb[i] - Jb[k]) / dist ** 2
+            dq += (np.eye(len(dofs)) - Jp @ J) @ (-0.002 * g * min(1.0, np.linalg.norm(ep) / 0.10))   # shape first, precision last: the spread fades over the last 10 cm
+            q = d.qpos[qadr]; mx = np.abs(dq).max(); dq = dq * (0.035 / mx) if mx > 0.035 else dq   # scale the whole step (direction kept), like the brain's vclip
+            if os.environ.get('COOP_DEBUG') and int((float(d.time) - t0) / 0.06) % 10 == 0: print(f'COOP t {float(d.time) - t0:5.1f} pos {np.linalg.norm(ep) * 1000:6.1f} mm ang {math.degrees(np.linalg.norm(np.cross(nE, -z))):5.1f} slot {math.degrees(sl):5.1f} |dq| {mx:.3f} q-tgt {np.abs(w.tgt[tix] - q).max():.3f}', file=sys.stderr, flush=True)
+            integ = np.clip(integ + 0.15 * dq, -0.12, 0.12)            # grows while a joint stays short (floor friction, servo droop): the brain's integral
+            w.tgt[tix] = np.clip(q + dq * 2.0 + integ, lo, hi)       # ahead of where the joints are, so the servos push through friction
+            w.run(0.06)
+            perr, aerr = np.linalg.norm(ep) * 1000, math.degrees(np.linalg.norm(np.cross(nE, -z)))
+            if phase == 'line up':
+                if perr < 6 and aerr < 4 and abs(math.degrees(sl)) < 4: phase = 'go in'   # as the brain's blind hover gate (6 mm): magnets and chamfers finish it; self.log(f'  lined up at the stand-off ({float(d.time) - t0:.1f} s): {perr:.1f} mm, {aerr:.1f} deg -> going in')
+            else:
+                offset = max(offset - 0.0015, -0.0006)
+                r = w.end_vs(dm, de, tname)
+                if offset <= -0.0006 and abs(r['axial_mm']) < 0.8 and r['radial_mm'] < 1.5:
+                    self.log(f'  seated ({float(d.time) - t0:.1f} s): gap {r["axial_mm"]:.2f} mm, side {r["radial_mm"]:.2f} mm -> lock')
+                    return self.lock(conn_a, conn_b)
+            if perr < best - 0.5: best, stall = perr, 0
+            else: stall += 1
+            if stall > 120: self.log(f'  NOT connected: no progress for 7 s ({perr:.0f} mm, {aerr:.0f} deg off; the joints cannot get closer from here)'); return False
+        self.log(f'  NOT connected in {float(d.time) - t0:.0f} s ({perr:.0f} mm, {aerr:.0f} deg off)'); return False
+
+    def go_home(self):
+        """1 Nov, Nischay: Home replayed 546 commands backwards ("idiotic"). Now: open the locks made since the start, move
+        every joint straight to its start angle in one smooth move, close the start locks again."""
+        if not self.traj: return self.log('home: nothing to undo')
+        w = self.w; t0_, tg0, lk0 = self.traj[0]
+        for k in {lock_key(L) for L in self.cur} - lk0: a_, b_ = k.split('|'); self.unlock(a_, b_)
+        start = w.tgt.copy(); n = 40
+        for s_ in range(1, n + 1):
+            for m_ in range(len(w.ids)): w.tgt[m_ * 9:m_ * 9 + 7] = start[m_ * 9:m_ * 9 + 7] + (tg0[m_ * 9:m_ * 9 + 7] - start[m_ * 9:m_ * 9 + 7]) * s_ / n
+            w.run(0.08)
+        w.run(1.0)
+        for k in lk0 - {lock_key(L) for L in self.cur}: a_, b_ = k.split('|'); self.lock(a_, b_)
+        self.traj = self.traj[:1]; self.marks = []; self.log(f'home: back at the start, locks {[lock_key(L) for L in self.cur]}')
+
     def connect(self, a, b):
+        if os.environ.get('MANUAL_CONNECT', 'coop') == 'coop': return self.coop_connect(a, b)
         """pick who docks, pre-shape the group, then the docking brain does the last part and the lock"""
         from phys_dock import PhysDockEnv, dock
         w = self.w; L = canon(a, b); key = lock_key(L)
@@ -347,6 +523,9 @@ class Manual:
             # whether this dock can work from where the module stands; the pre-shape is skipped: on M1.B -> M2.S1B it bent B3 to
             # its 88 deg stop and swung End B into M2's other receiver (5.4 s), shoving M2 over. The brain swings by itself.
             chk = dock_check(PhysDockEnv(w, dm, randomize=False), base_end, base_rx, target)
+            if not chk['ok']:
+                turned = self._turn_target(dm, base_end, base_rx, target)
+                if turned is not None: chk = dock_check(PhysDockEnv(w, dm, randomize=False), base_end, base_rx, target)
             if not chk['ok']:
                 alt = [f"{target.split('.')[0]}.{p}" for p in ('S1A', 'S1B', 'S2A', 'S2B') if not target.endswith(p)
                        and dock_check(PhysDockEnv(w, dm, randomize=False), base_end, base_rx, f"{target.split('.')[0]}.{p}")['ok']]
@@ -383,7 +562,15 @@ class Manual:
         judge = {'off': 'touch', 'truth': True}.get(self.judge, 'touch')   # blind = feel the hole + spiral search
         lying = not any('floor' in x['a'] for x in self.cur if x['b']['module'] in group_of(w, self.cur, dm))   # nothing of its group stands in a floor receiver
         if lying: self.log('  the docking module lies on the floor: brain estimate without hanging-arm sag')
-        bl = []; ok, info = dock(env, base_end, base_rx, target, judge=judge, log=bl.append, max_frames=1800, sag=not lying, hover_far=0.0 if lying else None)
+        bl = []; ok, info = dock(env, base_end, base_rx, target, judge=judge, log=bl.append, max_frames=int(os.environ.get('MANUAL_DOCK_FRAMES', '1800')), sag=not lying, hover_far=0.0 if lying else None)
+        if not ok and standing:
+            # 1 Nov: from the 'all standing' start M1.B -> M2.S1B passed the reach check but the arm got stuck 85 mm short (2/2).
+            # The target turns to another angle that passes, the docker straightens, one more try.
+            w.set_locks(self.cur); i_ = w.ids.index(dm); w.tgt[i_ * 9:i_ * 9 + 7] = 0.0; w.run(3.0)
+            if self._turn_target(dm, base_end, base_rx, target, avoid_now=True) is not None:
+                self.log('  dock failed from here: the target turned, trying again')
+                env = PhysDockEnv(w, dm, seed=self.seed * 7919 + len(self.lines) + 1, randomize=True)
+                bl += ['--- 2nd try ---']; ok, info = dock(env, base_end, base_rx, target, judge=judge, log=bl.append, max_frames=int(os.environ.get('MANUAL_DOCK_FRAMES', '1800')), sag=not lying, hover_far=0.0 if lying else None)
         info['log'] = bl + list(info.get('log', []))
         Lk = canon(f'{dm}.{de}', target)
         if ok: w.engage(Lk); self.cur.append(Lk); w.set_locks(self.cur)

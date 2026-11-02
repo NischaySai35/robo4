@@ -4,6 +4,8 @@
  * fps + snapping. RENDER tab: capture stills / settings for exporting the animation.
  * Playback is non-destructive (sampled pose via FK).
  */
+import { Input } from '@/components/ui/input';
+import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import { useState, useRef, useEffect } from 'react';
@@ -28,7 +30,7 @@ function CommitNumber({ value, onCommit, min, max, step, int }: {
     if (v !== value) onCommit(v);
   };
   return (
-    <input
+    <Input size="xs"
       type="number" min={min} max={max} step={step} value={buf}
       onFocus={() => setEditing(true)}
       onChange={(e) => setBuf(e.target.value)}
@@ -173,7 +175,7 @@ function GroupsPanel({ clips, groups, playingGroupId }: {
                         <span className="tl-entry-name">{clipName(entry.clipId)}</span>
                         <label className="tl-entry-delay" title="Delay before this clip starts (seconds)">
                           delay
-                          <input
+                          <Input size="xs"
                             type="number"
                             min={0}
                             step={0.1}
@@ -203,7 +205,7 @@ function GroupsPanel({ clips, groups, playingGroupId }: {
 
 function AnimationTab() {
   const a = useAnimationStore();
-  const nJoints = Object.keys(useModelStore((s) => s.doc).joints).length;
+  const nJoints = useModelStore((s) => Object.keys(s.doc.joints).length);
   const keyTimes = useAnimationStore((s) => s.keyTimes)();
   const [clipDragOver, setClipDragOver] = useState<number | null>(null);
 
@@ -558,7 +560,7 @@ function RenderTab() {
       <div className="tl-section">OUTPUT</div>
       <label className="tl-field">
         <span>Name</span>
-        <input className="tl-input" value={outputName} onChange={(e) => setOutputName(e.target.value)} />
+        <Input value={outputName} onChange={(e) => setOutputName(e.target.value)} />
       </label>
 
       {/* MODE */}
@@ -603,12 +605,12 @@ function RenderTab() {
           <div className="tl-field-row">
             <label className="tl-field">
               <span>Start (s)</span>
-              <input className="tl-input" type="number" min={0} max={animDuration} step={0.1}
+              <Input type="number" min={0} max={animDuration} step={0.1}
                 value={startTime} onChange={(e) => setStartTime(Math.max(0, parseFloat(e.target.value) || 0))} />
             </label>
             <label className="tl-field">
               <span>End (s)</span>
-              <input className="tl-input" type="number" min={0} max={animDuration} step={0.1}
+              <Input type="number" min={0} max={animDuration} step={0.1}
                 value={endTime} onChange={(e) => setEndTime(Math.min(animDuration, parseFloat(e.target.value) || animDuration))} />
             </label>
           </div>
@@ -650,11 +652,7 @@ export default function Timeline() {
   const [tab, setTab] = useState<'animation' | 'render'>('animation');
   return (
     <div className="tl-panel" data-ui="a">
-      <div className="tl-tabs">
-        {TABS.map((t) => (
-          <button key={t.id} className={tab === t.id ? 'active' : ''} onClick={() => setTab(t.id)}>{t.label}</button>
-        ))}
-      </div>
+      <TabBar value={tab} onChange={setTab} tabs={TABS.map((t) => ({ id: t.id, label: t.label }))} />
       {tab === 'animation' ? <AnimationTab /> : <RenderTab />}
     </div>
   );

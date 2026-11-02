@@ -219,18 +219,6 @@
 .alp-axis-btn:hover { opacity: 0.85; }
 
 .alp-angle-row { display: flex; align-items: center; gap: 6px; }
-.alp-angle-input {
-  flex: 1;
-  padding: 6px 9px;
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 14px;
-  font-weight: 700;
-  outline: none;
-}
 .alp-angle-unit { font-size: 12px; color: var(--text-dim); flex-shrink: 0; }
 
 

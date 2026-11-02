@@ -19,17 +19,6 @@
   font-size: 11px;
   color: var(--text-dim);
 }
-.ol-jointform select {
-  flex: 1;
-  max-width: 150px;
-  padding: 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
 .ol-jointform-actions { display: flex; gap: 6px; }
 
 .ol-scroll {

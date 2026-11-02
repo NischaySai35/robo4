@@ -16,8 +16,9 @@ ik = ["mink", "daqp"]
 network = ["eclipse-zenoh", "cryptography"]
 studio = ["websockets"]
 record = ["mcap"]
+ros = ["xacro"]
 sim = ["mujoco>=3.17", "scipy", "gymnasium", "pillow", "opencv-python-headless"]
-all = ["tetrobot-gos[ik,network,studio,record,sim]"]
+all = ["tetrobot-gos[ik,network,studio,record,sim,ros]"]
 
 [project.scripts]
 gos = "gos.__main__:main"

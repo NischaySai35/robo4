@@ -73,3 +73,18 @@ setModelPort({
   getDoc: () => useModelStore.getState().doc,
   applyTransient: (fn) => useModelStore.getState().applyTransient(fn),
 });
+
+/** What a tree or list shows: parts, joints, components, their names and grouping, hidden and locked state. Not joint values or poses. */
+function structureKey(doc: any): string {
+  let k = '';
+  for (const b of Object.values<any>(doc.bodies)) k += `${b.id}:${b.name}:${b.componentId ?? ''}:${b.meta?.hidden ? 'h' : ''}:${(b.meta?.connectors ?? []).length}|`;
+  for (const j of Object.values<any>(doc.joints)) k += `${j.id}:${j.name}:${j.type}:${j.componentId ?? ''}:${j.parentBodyId}:${j.childBodyId}:${j.state?.disabled ? 'd' : ''}|`;
+  for (const c of Object.values<any>(doc.components ?? {})) k += `${c.id}:${c.name}:${c.collapsed ? 'c' : ''}|`;
+  return k;
+}
+
+/** The document for trees and lists: re-renders when the structure changes, not on every pose during playback or physics (P8 measurement). */
+export function useDocStructure() {
+  useModelStore((s) => structureKey(s.doc));
+  return useModelStore.getState().doc;
+}

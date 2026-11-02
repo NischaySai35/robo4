@@ -1,3 +1,4 @@
+import { Textarea } from '@/components/ui/input';
 import './CopilotPanel.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
@@ -90,7 +91,7 @@ export default function CopilotPanel() {
   };
 
   return (
-    <div className="ai-panel">
+    <div className="ai-panel" data-ui="a">
       <div className="ai-head">
         <span className="ai-title">COPILOT</span>
         <span className="ai-pill">{backend}</span>
@@ -118,7 +119,7 @@ export default function CopilotPanel() {
       </div>
 
       <form className="ai-form" onSubmit={(e) => { e.preventDefault(); send(); }}>
-        <textarea
+        <Textarea className="tw:flex-1 tw:resize-none tw:min-h-[38px] tw:max-h-[120px]"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }}

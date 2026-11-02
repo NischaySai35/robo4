@@ -407,8 +407,11 @@ export default function SimCanvas() {
       setTimeout(() => vp.fitCamera?.(), 120);
       syncHistoryFlags();
     };
-    vp.undo = () => applyStep(history.undo());
-    vp.redo = () => applyStep(history.redo());
+    // An edit is recorded once the model has been still for 700 ms; undo right after an edit records it first,
+    // so Ctrl+Z always undoes the latest edit, however fast it is pressed.
+    const flushPending = () => { if (saveTimer) { clearTimeout(saveTimer); saveTimer = null; void doSave(); } };
+    vp.undo = () => { flushPending(); applyStep(history.undo()); };
+    vp.redo = () => { flushPending(); applyStep(history.redo()); };
 
     // ── Autosave + record undo history when the model/animation settles ──────────
 
@@ -432,6 +435,7 @@ export default function SimCanvas() {
     let saveTimer: any = null;
     let persisting = false;
     const doSave = async () => {
+      saveTimer = null;
       persisting = true;
       try {
         const project = serializeProject();
@@ -456,6 +460,8 @@ export default function SimCanvas() {
       if (persisting) return;
       clearTimeout(saveTimer);
       saveTimer = setTimeout(doSave, 700);
+      // a change waiting to be recorded can already be undone (undo records it first)
+      if (!useHistoryStore.getState().canUndo) useHistoryStore.getState().setFlags(true, history.canRedo);
     };
     // Mark path tracer dirty whenever the model geometry changes.
     const unsubModelPT = useModelStore.subscribe(() => sceneMgr.markPathTracerDirty());

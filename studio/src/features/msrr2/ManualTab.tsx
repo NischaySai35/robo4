@@ -7,10 +7,14 @@
  * Gravity, contact, friction, magnets, servo limits, a random robot and the room disturbances are ON by default.
  * Sync to the real robot and the camera come later (switches shown, not active yet).
  */
+import { Button } from '@/components/ui/button';
+import { runOperator } from '@/core/ops/registry';
 import { useEffect, useRef, useState } from 'react';
 import { useV2Store } from '@/state/msrrV2Store';
 import { manualScene, MANUAL_PRESETS, libraryStarts, type ManualPreset } from '@/robotics/msrr2/manualScenes';
 import { Section, Row } from '@/features/msrr/panelParts';
+
+const op = (id: string, props?: any) => { const r = runOperator(id, props); if (!r.ok) alert(r.error); };
 
 const JN = ['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3'];
 const LIMIT = (j: string) => (j.startsWith('T') ? 176 : 88);
@@ -58,8 +62,8 @@ export function ManualTab() {
           <label className="msrr-note dim"><input type="checkbox" disabled /> sync to the real robot · later</label>
         </div>
         <div className="msrr-row-btns">
-          <button className="msrr-btn small primary" data-testid="man-start" disabled={busy} onClick={start}>{man ? '↻ Restart' : '▶ Start'}</button>
-          {man && <button className="msrr-btn small" onClick={manualStop}>■ Stop</button>}
+          <Button size="xs" data-testid="man-start" disabled={busy} onClick={start}>{man ? '↻ Restart' : '▶ Start'}</Button>
+          {man && <Button variant="outline" size="xs" onClick={() => op('planner.manual.stop')}>■ Stop</Button>}
         </div>
         {err && <p className="msrr-note bad">{err}</p>}
       </Section>
@@ -69,13 +73,13 @@ export function ManualTab() {
             <SessionBar />
             <div className="msrr-row-btns">
               {(['move', 'lock', 'connect'] as const).map((m) => (
-                <button key={m} data-testid={`man-mode-${m}`} className={`msrr-btn small ${man.mode === m ? 'primary' : ''}`} onClick={() => manualSet({ mode: m, pick: [] })}>{m === 'move' ? 'Move joints' : m === 'lock' ? 'Lock mode' : 'Connect mode'}</button>
+                <Button size="xs" variant={man.mode === m ? 'default' : 'outline'} key={m} data-testid={`man-mode-${m}`} onClick={() => manualSet({ mode: m, pick: [] })}>{m === 'move' ? 'Move joints' : m === 'lock' ? 'Lock mode' : 'Connect mode'}</Button>
               ))}
             </div>
             <p className="msrr-note dim">{man.mode === 'connect' ? `click two connectors in the view${man.pick.length ? ` (first: ${man.pick[0]})` : ''}: the docking end's module bends, lines up and goes in`
               : man.mode === 'lock' ? 'hover a connector: lock it to one that touches it, or unlock it' : 'sliders below: servo targets (0 = straight); hover any connector for its menu'}</p>
             <p className="msrr-note">t {st?.t ?? 0} s · {st?.job ? <b>working: {st.job}</b> : 'idle'}{st?.queued ? ` · ${st.queued} queued` : ''}
-              {st?.job && <button className="msrr-btn small" style={{ marginLeft: 8 }} onClick={() => manualCmd({ kind: 'stop' })}>stop job</button>}</p>
+              {st?.job && <Button variant="outline" size="xs" style={{ marginLeft: 8 }} onClick={() => op('planner.manual', { kind: 'stop' })}>stop job</Button>}</p>
             {man.err && <p className="msrr-note bad">{man.err}</p>}
             {st?.locks?.length > 0 && <p className="msrr-note">locked: {st.locks.map((k: string) => (
               <span key={k} className="msrr-chip ok" style={{ marginRight: 4 }}>{k} <a style={{ cursor: 'pointer' }} onClick={() => { const [a, b] = k.split('|'); manualCmd({ kind: 'unlock', a, b }); }}>✕</a></span>))}</p>}
@@ -114,15 +118,15 @@ export function SessionBar() {
         {st?.job ? <b>⏳ working: {st.job}{st.queued ? ` (+${st.queued} queued)` : ''} — </b> : st?.paused ? <b>paused — </b> : <span className="dim">idle — </span>}{last.trim() || 'nothing done yet'}
       </p>
     <div className="msrr-row-btns">
-      <button className="msrr-btn small" data-testid="man-back" disabled={!!st?.job || !st?.steps} title="undo the last action: the robot plays its own commands backwards (locks it closed open again, locks it opened close again)"
-        onClick={() => manualCmd({ kind: 'back' })}>⟲ Step back{st?.steps ? ` (${st.steps})` : ''}</button>
-      <button className="msrr-btn small" data-testid="man-home" disabled={!!st?.job || !st?.steps} title="transform back to the start shape: the whole session played backwards, in real physics"
-        onClick={() => manualCmd({ kind: 'home' })}>⌂ Home (transform back)</button>
-      <button className="msrr-btn small" data-testid="man-reset" disabled={busy} title="instantly the start again (same setup, same random robot)"
-        onClick={() => manualStart(man.start.scene, man.start.opts)}>⟳ Reset</button>
-      <button className="msrr-btn small" data-testid="man-pause" onClick={() => manualCmd({ kind: 'pause', on: !st?.paused })}>{st?.paused ? '▶ Resume' : '❚❚ Pause'}</button>
-      <button className="msrr-btn small" disabled={!!st?.job} onClick={() => manualCmd({ kind: 'save' })}>Save state</button>
-      <button className="msrr-btn small" disabled={!!st?.job || !st?.saved} onClick={() => manualCmd({ kind: 'restore' })}>Restore state</button>
+      <Button variant="outline" size="xs" data-testid="man-back" disabled={!!st?.job || !st?.steps} title="undo the last action: the robot plays its own commands backwards (locks it closed open again, locks it opened close again)"
+        onClick={() => op('planner.manual', { kind: 'back' })}>⟲ Step back{st?.steps ? ` (${st.steps})` : ''}</Button>
+      <Button variant="outline" size="xs" data-testid="man-home" disabled={!!st?.job || !st?.steps} title="transform back to the start shape: the whole session played backwards, in real physics"
+        onClick={() => op('planner.manual', { kind: 'home' })}>⌂ Home (transform back)</Button>
+      <Button variant="outline" size="xs" data-testid="man-reset" disabled={busy} title="instantly the start again (same setup, same random robot)"
+        onClick={() => manualStart(man.start.scene, man.start.opts)}>⟳ Reset</Button>
+      <Button variant="outline" size="xs" data-testid="man-pause" onClick={() => op('planner.manual', { kind: 'pause', on: !st?.paused })}>{st?.paused ? '▶ Resume' : '❚❚ Pause'}</Button>
+      <Button variant="outline" size="xs" disabled={!!st?.job} onClick={() => op('planner.manual', { kind: 'save' })}>Save state</Button>
+      <Button variant="outline" size="xs" disabled={!!st?.job || !st?.saved} onClick={() => op('planner.manual', { kind: 'restore' })}>Restore state</Button>
     </div>
     </>
   );
@@ -151,8 +155,8 @@ export function ShapeButtons() {
         const why = s.needs(locks, n);
         return (
           <div key={s.name} className="msrr-row-btns" style={{ alignItems: 'center' }}>
-            <button className="msrr-btn small primary" data-testid={`man-shape-${s.name}`} disabled={!!why || !!st.job}
-              onClick={() => { manualCmd({ kind: 'skill', name: s.name }); pushLog(`become ${s.label}: the robot's own skill, live in real physics`); }}>{s.label}</button>
+            <Button size="xs" data-testid={`man-shape-${s.name}`} disabled={!!why || !!st.job}
+              onClick={() => { manualCmd({ kind: 'skill', name: s.name }); pushLog(`become ${s.label}: the robot's own skill, live in real physics`); }}>{s.label}</Button>
             <span className="msrr-note dim">{why ?? s.note}</span>
           </div>
         );
@@ -187,9 +191,9 @@ export function ManualPortMenu() {
       <a style={{ float: 'right', cursor: 'pointer' }} onClick={close}>✕</a>
       <div>{p.locked ? <>locked to <b>{p.locked}</b></> : 'free'}</div>
       <div className="msrr-row-btns" style={{ marginTop: 4 }}>
-        {p.locked && <button className="msrr-btn small" onClick={() => { manualCmd({ kind: 'unlock', a: p.id, b: p.locked }); close(); }}>Unlock ({p.kind === 'end' && p.locked.match(/\.(A|B)$/) ? 'both rotors' : 'end rotor'})</button>}
-        {near.map((q) => <button key={q.id} className="msrr-btn small" onClick={() => { manualCmd({ kind: 'lock', a: p.id, b: q.id }); close(); }}>Lock with {q.id}</button>)}
-        {!p.locked && <button className="msrr-btn small primary" onClick={() => { manualSet({ mode: 'connect', pick: [p.id], hover: null }); }}>Connect from here…</button>}
+        {p.locked && <Button variant="outline" size="xs" onClick={() => { manualCmd({ kind: 'unlock', a: p.id, b: p.locked }); close(); }}>Unlock ({p.kind === 'end' && p.locked.match(/\.(A|B)$/) ? 'both rotors' : 'end rotor'})</Button>}
+        {near.map((q) => <Button variant="outline" size="xs" key={q.id} onClick={() => { manualCmd({ kind: 'lock', a: p.id, b: q.id }); close(); }}>Lock with {q.id}</Button>)}
+        {!p.locked && <Button size="xs" onClick={() => { manualSet({ mode: 'connect', pick: [p.id], hover: null }); }}>Connect from here…</Button>}
       </div>
     </div>
   );

@@ -45,11 +45,29 @@ class LocalTransport:
         self._subs.clear()
 
 
+def access_rules(permissions):
+    """Zenoh access control from {user: {'publish': keys, 'subscribe': keys, 'call': keys}}: everything not listed is refused."""
+    rules, subjects, policies = [], [], []
+    for i, (user, p) in enumerate(permissions.items()):
+        unknown = set(p) - {'publish', 'subscribe', 'call'}
+        if unknown: raise ValueError(f'Permissions for {user}: unknown kind {", ".join(sorted(unknown))}. Kinds: publish, subscribe, call.')
+        mine = []
+        for kind, messages, flows in (('publish', ['put', 'delete', 'declare_subscriber'], ['ingress', 'egress']),  # egress: the listener's interest must reach the publisher
+                                      ('subscribe', ['put', 'delete', 'declare_subscriber'], ['egress', 'ingress']),
+                                      ('call', ['query', 'reply', 'declare_queryable'], ['ingress', 'egress'])):
+            keys = [k.strip('/') for k in p.get(kind, [])]
+            if keys:
+                rules.append({'id': f'r{i}{kind}', 'messages': messages, 'flows': flows, 'permission': 'allow', 'key_exprs': keys}); mine.append(f'r{i}{kind}')
+        subjects.append({'id': f's{i}', 'usernames': [user]})
+        if mine: policies.append({'rules': mine, 'subjects': [f's{i}']})
+    return {'enabled': True, 'default_permission': 'deny', 'rules': rules, 'subjects': subjects, 'policies': policies}
+
+
 class ZenohTransport:
     """Across processes and machines. Localhost-only by default, because this can move real motors."""
     name = 'zenoh'
 
-    def __init__(self, listen=None, connect=None, network=False, user=None, password=None, users_file=None, certs=None, cert_name=None):
+    def __init__(self, listen=None, connect=None, network=False, user=None, password=None, users_file=None, certs=None, cert_name=None, permissions=None):
         try:
             import zenoh
         except ImportError as e:
@@ -66,6 +84,8 @@ class ZenohTransport:
         if password: cfg.insert_json5('transport/auth/usrpwd/password', json.dumps(password))
         if users_file: cfg.insert_json5('transport/auth/usrpwd/dictionary_file', json.dumps(users_file))
         # Encryption: certs is a folder from `gos certs new`; endpoints then start with tls/ (see gos/certs.py)
+        # Per-user permissions (like SROS2's): {user: {'publish': [...], 'subscribe': [...], 'call': [...]}} as wired keys; the rest is refused
+        if permissions: cfg.insert_json5('access_control', json.dumps(access_rules(permissions)))
         if certs:
             from .certs import zenoh_tls
             for k, v in zenoh_tls(certs, cert_name or 'gos').items(): cfg.insert_json5(k, json.dumps(v))

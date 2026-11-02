@@ -6,6 +6,8 @@
  * playback transport (the .nischaybag rosbag analog), and a diagnostics summary.
  * Everything here READS the bus/tf/recorder/player — it owns no robot state.
  */
+import { NativeSelect } from '@/components/ui/input';
+import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
 import { useEffect, useRef, useState, type ReactElement } from 'react';
 import uPlot from 'uplot';
@@ -274,9 +276,9 @@ function RecordTab() {
               className="rt-scrub" type="range" min={0} max={1} step={0.001} value={frac}
               onChange={(e) => { player.pause(); player.seek(parseFloat(e.target.value)); }}
             />
-            <select className="rt-rate" defaultValue="1" onChange={(e) => player.setRate(parseFloat(e.target.value))}>
+            <NativeSelect size="xs" className="tw:w-auto" defaultValue="1" onChange={(e) => player.setRate(parseFloat(e.target.value))}>
               {['0.25', '0.5', '1', '2', '4'].map((r) => <option key={r} value={r}>{r}×</option>)}
-            </select>
+            </NativeSelect>
           </div>
           <div className="rt-clock">clock: {clock.source} · t={fmt(clock.now() - bag.t0)}</div>
         </div>
@@ -297,14 +299,8 @@ export default function RuntimePanel() {
   const [tab, setTab] = useState<Tab>('topics');
   return (
     <div className="rt-panel" data-ui="a">
-      <div className="rt-tabs">
-        <button className={tab === 'topics' ? 'active' : ''} onClick={() => setTab('topics')}>Topics</button>
-        <button className={tab === 'tf' ? 'active' : ''} onClick={() => setTab('tf')}>TF</button>
-        <button className={tab === 'nodes' ? 'active' : ''} onClick={() => setTab('nodes')}>Nodes</button>
-        <button className={tab === 'health' ? 'active' : ''} onClick={() => setTab('health')}>Health</button>
-        <button className={tab === 'record' ? 'active' : ''} onClick={() => setTab('record')}>Record</button>
-        <button className={tab === 'rtcore' ? 'active' : ''} onClick={() => setTab('rtcore')}>RT Core</button>
-      </div>
+      <TabBar size="sm" value={tab} onChange={setTab} tabs={[{ id: 'topics', label: 'Topics' }, { id: 'tf', label: 'TF' }, { id: 'nodes', label: 'Nodes' },
+        { id: 'health', label: 'Health' }, { id: 'record', label: 'Record' }, { id: 'rtcore', label: 'RT Core' }]} />
       <div className="rt-body">
         {tab === 'topics' && <TopicsTab />}
         {tab === 'tf' && <TfTab />}

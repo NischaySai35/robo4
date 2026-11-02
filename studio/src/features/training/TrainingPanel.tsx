@@ -17,6 +17,8 @@
  *   VLM goal parser — send natural-language instruction → 3D target (OpenAI / Anthropic)
  *   HuggingFace     — SmolVLA / Octo inference (planned)
  */
+import { Input, NativeSelect } from '@/components/ui/input';
+import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
 import { useEffect, useRef, useState, useCallback } from 'react';
 import uPlot from 'uplot';
@@ -1186,7 +1188,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
             <div className="tr-xyz">
               {(['X', 'Y', 'Z'] as const).map((ax, i) => (
                 <label key={ax}><span>{ax}</span>
-                  <input type="number" step={0.05} value={target ? +target[i].toFixed(3) : 0}
+                  <Input size="xs" type="number" step={0.05} value={target ? +target[i].toFixed(3) : 0}
                     onChange={(e) => setAxis(i, +e.target.value)} />
                 </label>
               ))}
@@ -1475,7 +1477,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         {/* Provider */}
         <div className="tr-row">
           <span>Provider</span>
-          <select value={apiProvider} style={{ maxWidth: 160 }} onChange={(e) => {
+          <NativeSelect size="xs" className="tw:w-auto" value={apiProvider} style={{ maxWidth: 160 }} onChange={(e) => {
             const p = e.target.value as Provider;
             setApiProvider(p);
             setAvailableModels([]);
@@ -1486,13 +1488,13 @@ print("  Then: Training page → Cloud tab → Import trained policy")
             <option value="anthropic">Anthropic (Claude)</option>
             <option value="gemini">Google Gemini</option>
             <option value="huggingface">HuggingFace</option>
-          </select>
+          </NativeSelect>
         </div>
 
         {/* API key */}
         <div className="tr-weight" style={{ gridTemplateColumns: '1fr', display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>API Key</span>
-          <input type="password" placeholder={PROVIDER_KEY_HINT[apiProvider]} value={apiKey}
+          <Input size="xs" type="password" placeholder={PROVIDER_KEY_HINT[apiProvider]} value={apiKey}
             style={inputStyle}
             onChange={(e) => { setApiKey(e.target.value); saveProviderPrefs(apiProvider, e.target.value); }} />
         </div>
@@ -1500,10 +1502,10 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         {/* Model selector */}
         <div className="tr-row" style={{ gap: 6 }}>
           <span style={{ flexShrink: 0 }}>Model</span>
-          <select value={effectiveModel} style={{ flex: 1, minWidth: 0 }}
+          <NativeSelect size="xs" className="tw:w-auto" value={effectiveModel} style={{ flex: 1, minWidth: 0 }}
             onChange={(e) => setSelectedModel(e.target.value)}>
             {effectiveModels.map((m) => <option key={m} value={m}>{m}</option>)}
-          </select>
+          </NativeSelect>
           {PROVIDER_FETCH_CAPABLE[apiProvider] && (
             <Button variant="outline" size="sm" style={{ flexShrink: 0, fontSize: 11, padding: '3px 8px', cursor: 'pointer',
               background: 'var(--bg-card)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 5 }}
@@ -1529,7 +1531,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         {apiProvider === 'huggingface' && (
           <div className="tr-weight" style={{ gridTemplateColumns: '1fr', display: 'flex', flexDirection: 'column', gap: 3 }}>
             <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Custom endpoint (optional, e.g. HF Spaces URL)</span>
-            <input type="text" placeholder="https://…hf.space/…" value={hfEndpoint}
+            <Input size="xs" type="text" placeholder="https://…hf.space/…" value={hfEndpoint}
               style={inputStyle} onChange={(e) => setHfEndpoint(e.target.value)} />
           </div>
         )}
@@ -1537,7 +1539,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         {/* Instruction + parse */}
         <div className="tr-weight" style={{ gridTemplateColumns: '1fr', display: 'flex', flexDirection: 'column', gap: 3 }}>
           <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Natural-language instruction</span>
-          <input type="text" placeholder='"Reach to the top shelf" / "Go to far left"'
+          <Input size="xs" type="text" placeholder='"Reach to the top shelf" / "Go to far left"'
             value={vlmText} onChange={(e) => setVlmText(e.target.value)}
             style={{ ...inputStyle, fontFamily: 'inherit' }}
             onKeyDown={(e) => e.key === 'Enter' && parseVlmGoal()} />
@@ -1615,14 +1617,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
   return (
     <div className="tr-panel" data-ui="a">
       {/* Tab bar */}
-      <div className="tr-tabs">
-        {(['setup', 'train', 'demos', 'skills', 'cloud'] as Tab[]).map((t) => (
-          <button key={t} className={`tr-tab${tab === t ? ' tr-tab--on' : ''}`}
-            onClick={() => setTab(t)}>
-            {tabLabels[t]}
-          </button>
-        ))}
-      </div>
+      <TabBar size="sm" value={tab} onChange={setTab} tabs={(['setup', 'train', 'demos', 'skills', 'cloud'] as Tab[]).map((t) => ({ id: t, label: tabLabels[t] }))} />
 
       <div className="tr-body">
         {tab === 'setup'  && renderSetup()}

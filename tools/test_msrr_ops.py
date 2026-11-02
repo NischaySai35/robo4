@@ -33,7 +33,7 @@ async def main():
         check('planning with no robot is refused with a reason', not r['ok'] and bool(r.get('error')), str(r)[:90])
         r = await run('msrr.play')
         check('playing with no plan is refused', not r['ok'])
-        await pg.locator('button.msrr-btn.primary:has-text("Build"):visible').first.click()
+        await pg.locator('button:has-text("Build 4 cubes"):visible').first.click()
         for _ in range(20):
             await pg.wait_for_timeout(300)
             if (await state())['built']: break

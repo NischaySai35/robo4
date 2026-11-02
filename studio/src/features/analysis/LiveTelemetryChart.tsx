@@ -1,6 +1,7 @@
 /**
  * LiveTelemetryChart — real-time multi-metric strip chart (Phase 8 "live plots").
  */
+import { NativeSelect } from '@/components/ui/input';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
@@ -391,14 +392,14 @@ export default function LiveTelemetryChart() {
   }
 
   return (
-    <div className="an-chart">
+    <div className="an-chart" data-ui="a">
       <div className="an-chart-head">
         <span className="an-chart-title">{selName ? `${selName} · % of limit` : 'Peak servo · % of limit'}</span>
-        <select className="an-chart-mode" value={mode} onChange={(e) => setMode(e.target.value as 'virtual' | 'real')}
+        <NativeSelect size="xs" className="tw:w-auto tw:rounded-full tw:font-semibold" value={mode} onChange={(e) => setMode(e.target.value as 'virtual' | 'real')}
           title="Virtual = computed from the model · Real = measured from hardware">
           <option value="virtual">Virtual</option>
           <option value="real">Real{connected ? '' : ' (offline)'}</option>
-        </select>
+        </NativeSelect>
       </div>
       <div className="an-chart-wrap">
         <div className="an-chart-host" ref={hostRef} />

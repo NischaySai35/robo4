@@ -2,7 +2,7 @@
 
 Run through the real physics and the real Rust core, nothing mocked. test_real_module uses your real CAD meshes.
 """
-import json, os, subprocess, sys, textwrap
+import json, math, os, subprocess, sys, textwrap
 import pytest
 import gos
 
@@ -261,6 +261,51 @@ def test_studio_install_picks_the_right_installer_for_each_computer():
     assert pick_installer(assets, 'Linux', 'x86_64')['name'] == 'T-1.0.4-x86_64.AppImage'
     with pytest.raises(gos.GosError, match='no installer for Windows'): pick_installer(assets[:2], 'Windows', 'AMD64')
     with pytest.raises(gos.GosError, match='No TETROBOT app for Plan9'): pick_installer(assets, 'Plan9', 'x')
+
+
+TWO_LINK_XACRO = """<?xml version="1.0"?>
+<robot name="twolink" xmlns:xacro="http://www.ros.org/wiki/xacro">
+  <xacro:property name="reach" value="0.3"/>
+  <xacro:macro name="bar" params="name">
+    <link name="${name}"><inertial><mass value="0.1"/><inertia ixx="1e-4" iyy="1e-4" izz="1e-4" ixy="0" ixz="0" iyz="0"/></inertial>
+      <collision><geometry><box size="${reach} 0.02 0.02"/></geometry></collision></link>
+  </xacro:macro>
+  <link name="base"/><xacro:bar name="l1"/><xacro:bar name="l2"/>
+  <joint name="j1" type="revolute"><parent link="base"/><child link="l1"/><axis xyz="0 0 1"/><limit lower="-2" upper="2" effort="1" velocity="1"/></joint>
+  <joint name="j2" type="revolute"><parent link="l1"/><child link="l2"/><origin xyz="${reach} 0 0"/><axis xyz="0 0 1"/><limit lower="-2" upper="2" effort="1" velocity="1"/></joint>
+</robot>"""
+
+
+def test_ros_robot_descriptions_load(tmp_path):
+    pytest.importorskip('xacro')
+    src = tmp_path / 'arm.urdf.xacro'; src.write_text(TWO_LINK_XACRO)
+    with gos.App() as app:
+        app.load(str(src))
+        assert set(app.robot.joints()) == {'j1', 'j2'}
+        app.set_joints(j1=0.5, j2=-0.5)
+        assert app.robot.body_position('l2')[0] == pytest.approx(0.3 * math.cos(0.5), abs=1e-6), 'the macro and property expanded'
+    import xacro
+    (tmp_path / 'arm.urdf').write_text(xacro.process_file(str(src)).toxml())
+    with gos.App() as app:
+        app.load(str(tmp_path / 'arm.urdf')); assert set(app.robot.joints()) == {'j1', 'j2'}
+    with pytest.raises(gos.GosError, match='.urdf or .xacro'):
+        bad = tmp_path / 'x.sdf'; bad.write_text('<sdf/>'); gos.App().load(str(bad))
+
+
+def test_doctor_and_workspace_build_and_test(tmp_path):
+    env = dict(os.environ, PYTHONPATH=PY)
+    r = subprocess.run([sys.executable, '-m', 'gos', 'doctor'], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and 'the Rust core loads' in r.stdout and 'port 7447' in r.stdout, r.stdout + r.stderr
+    src = tmp_path / 'ws' / 'src'; src.mkdir(parents=True)
+    for name in ('arm-driver', 'camera-part'):
+        assert subprocess.run([sys.executable, '-m', 'gos', 'pkg', 'new', name], cwd=src, env=env, capture_output=True, text=True, timeout=60).returncode == 0
+    r = subprocess.run([sys.executable, '-m', 'gos', 'ws', 'test', str(tmp_path / 'ws')], env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 0 and '2 of 2 packages passed' in r.stdout, r.stdout + r.stderr
+    (src / 'arm-driver' / 'test_arm_driver.py').write_text('def test_fails():\n    assert False\n')
+    r = subprocess.run([sys.executable, '-m', 'gos', 'ws', 'test', str(tmp_path / 'ws')], env=env, capture_output=True, text=True, timeout=120)
+    assert r.returncode == 1 and 'Failed: arm-driver' in r.stdout, r.stdout
+    r = subprocess.run([sys.executable, '-m', 'gos', 'ws', 'test', str(tmp_path)], env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 1 and 'gos pkg new' in r.stderr
 
 
 def test_services_say_what_exists():
@@ -784,6 +829,28 @@ def test_encrypted_links_refuse_programs_without_a_certificate(tmp_path):
     with pytest.raises(gos.GosError, match='gos certs new'): gos.App(transport='zenoh', certs=keys, cert_name='nobody')
 
 
+def test_permissions_let_each_user_do_only_what_is_listed(tmp_path):
+    pytest.importorskip('zenoh')
+    import time
+    users = tmp_path / 'users.txt'; users.write_text('viewer:v1\noperator:o1\n')
+    perms = {'viewer': {'subscribe': ['/arm/state']}, 'operator': {'subscribe': ['/arm/state'], 'publish': ['/arm/cmd'], 'call': ['/arm/home']}}
+    with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17498'], users_file=str(users), user='robot', password='r', permissions=perms) as robot:
+        cmds = []; robot.topic('/arm/cmd').subscribe(cmds.append)
+        robot.services.advertise('/arm/home', lambda r: 'homed')
+        link = dict(transport='zenoh', connect=['tcp/127.0.0.1:17498'])
+        with gos.App(**link, user='viewer', password='v1') as viewer, gos.App(**link, user='operator', password='o1') as op:
+            seen = []; viewer.topic('/arm/state').subscribe(seen.append)
+            time.sleep(0.8)
+            for _ in range(5):
+                viewer.topic('/arm/cmd').publish('from viewer'); op.topic('/arm/cmd').publish('from operator'); robot.topic('/arm/state').publish('state'); time.sleep(0.1)
+            time.sleep(0.5)
+            assert set(cmds) == {'from operator'}, cmds
+            assert seen, 'the viewer still sees the state it may read'
+            assert op.services.call('/arm/home', None, timeout=3) == 'homed'
+            with pytest.raises(LookupError): viewer.services.call('/arm/home', None, timeout=1)
+    with pytest.raises(ValueError, match='Kinds: publish'): gos.App(transport='zenoh', permissions={'x': {'write': ['/a']}})
+
+
 def test_programs_find_each_other_on_the_network_without_addresses():
     pytest.importorskip('zenoh')
     import time
@@ -832,3 +899,46 @@ def test_new_package_runs_and_passes_its_own_test(tmp_path):
     assert 'HELLO world' in r.stdout, r.stdout + r.stderr
     r = subprocess.run([sys.executable, '-m', 'gos', 'nosuch'], env=env, capture_output=True, text=True, timeout=60)
     assert r.returncode == 2 and 'invalid choice' in r.stderr
+
+
+ARM_WITH_POST = '''<mujoco><compiler angle="radian"/><option timestep="0.002"/><worldbody>
+<geom name="post" type="sphere" pos="0.45 0 0" size="0.05"/>
+<body name="l1"><joint name="J1" type="hinge" axis="0 0 1" range="-2 2" limited="true"/><geom type="capsule" fromto="0 0 0 0.3 0 0" size="0.02" mass="0.1"/>
+<body name="l2" pos="0.3 0 0"><joint name="J2" type="hinge" axis="0 0 1" range="-2.5 2.5" limited="true"/><geom type="capsule" fromto="0 0 0 0.3 0 0" size="0.02" mass="0.1"/></body></body>
+</worldbody></mujoco>'''
+
+
+def test_planner_goes_around_an_obstacle_and_the_controller_follows(tmp_path):
+    from gos import plan
+    from gos.control import joint_trajectory_controller
+    xml = tmp_path / 'arm.xml'; xml.write_text(ARM_WITH_POST)
+    with gos.App() as app:
+        app.load(str(xml)); app.set_joints(J1=-1.2, J2=0.0)
+        r = plan.joint_path(app, {'J1': 1.2, 'J2': 0.0})
+        assert r.ok and len(r.path) >= 3, r.message  # the straight swing hits the post, so the path must bend the elbow
+        mid = r.path[len(r.path) // 2]
+        assert abs(mid['J2']) > 0.3, r.path
+        goal = plan.trajectory(r.path, speed=4.0)
+        act = joint_trajectory_controller(app)
+        h = app.actions.send_goal(act, goal).wait(20)
+        assert h.status == 'succeeded' and app.robot.joints()['J1'] == pytest.approx(1.2, abs=1e-6)
+        assert not plan.joint_path(app, {'J1': 3.0, 'J2': 0}).ok, 'outside the limits is refused'
+        bad = plan.joint_path(app, {'J1': 0.0, 'J2': 0.0})
+        assert not bad.ok and 'goal pose collides' in bad.message
+
+
+def test_mobile_robot_drives_from_cmd_vel_and_reports_odom():
+    from gos.examples_mobile import MobileRobot
+    from gos.testing import collect
+    import math
+    with gos.App() as app:
+        bot = MobileRobot(app)
+        odom = collect(app, '/odom')
+        app.topic('/cmd_vel').publish({'linear': {'x': 0.2, 'y': 0, 'z': 0}, 'angular': {'x': 0, 'y': 0, 'z': 0}})
+        bot.run(2.0)
+        x, y, yaw = bot.pose()
+        assert 0.3 < x < 0.45 and abs(y) < 0.03, (x, y)  # about 0.2 m/s for 2 s, straight
+        assert odom and abs(odom[-1]['pose']['pose']['position']['x'] - x) < 0.02
+        app.topic('/cmd_vel').publish({'linear': {'x': 0, 'y': 0, 'z': 0}, 'angular': {'x': 0, 'y': 0, 'z': 1.0}})
+        bot.run(1.5)
+        assert 0.9 < abs(bot.pose()[2] - yaw) < 1.9, bot.pose()  # turned about 1.5 rad on the spot

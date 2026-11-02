@@ -37,7 +37,7 @@ async def open_page(pg, page):
     if page.startswith('msrr_'):
         await go(pg, 'MSRR Experiments'); await pg.wait_for_timeout(800)
         tab = next(t for t in MSRR_TABS if t.lower() == page[5:])
-        await pg.locator('.msrr-tab', has_text=tab).first.click(); await pg.wait_for_timeout(500)
+        await pg.get_by_role('tab', name=tab, exact=True).first.click(); await pg.wait_for_timeout(500)
     else:
         await go(pg, dict(PAGES)[page])
 

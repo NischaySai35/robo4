@@ -2,6 +2,7 @@
  * SpinControls — CW / Stop / CCW buttons (and optional rpm field) for a spinnable
  * motor joint. Reused by the joint Inspector and the body right-click context menu.
  */
+import { Input } from '@/components/ui/input';
 import './SpinControls.css';
 import { useEffect } from 'react';
 import { toggleSpin, stopSpin, useSpin, DEFAULT_SPIN_RPM } from './spinEngine';
@@ -24,7 +25,7 @@ export default function SpinControls({ jointId, showRpm = true, compact = false 
   const rpm = joint.meta?.spinRpm ?? DEFAULT_SPIN_RPM;
 
   return (
-    <div className={`spin-ctl${compact ? ' spin-ctl--compact' : ''}`}>
+    <div data-ui="a" className={`spin-ctl${compact ? ' spin-ctl--compact' : ''}`}>
       <div className="spin-btns">
         <button
           className={`spin-btn${dir === -1 ? ' spin-btn--on' : ''}`}
@@ -50,7 +51,7 @@ export default function SpinControls({ jointId, showRpm = true, compact = false 
       {showRpm && (
         <label className="spin-rpm">
           <span>Speed (rpm)</span>
-          <input type="number" min={0} step={1} value={rpm}
+          <Input size="xs" className="tw:w-[70px] tw:text-right" type="number" min={0} step={1} value={rpm}
             onChange={(e) => dispatch(commands.updateJoint(jointId, {
               meta: { ...joint.meta, spinRpm: Math.max(0, parseFloat(e.target.value) || 0) },
             }))} />

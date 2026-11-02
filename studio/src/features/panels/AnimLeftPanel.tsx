@@ -1,10 +1,11 @@
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import './AnimLeftPanel.css';
 import { useState, useRef, useCallback, useEffect } from 'react';
 import ContextMenu, { ConnectorItems, MenuSep, MenuSection } from '@/features/common/ContextMenu';
 import { beginDrag, usePersistedSize } from '@/features/common/drag';
 import * as THREE from 'three';
-import { useModelStore } from '@/state/modelStore';
+import { useModelStore, useDocStructure } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useAnimSceneStore } from '@/state/animSceneStore';
 import { useAnimationStore } from '@/state/animationStore';
@@ -118,7 +119,7 @@ function AxisBtn({ axis, active, onClick }: { axis: string; active: boolean; onC
 }
 
 export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }) {
-  const doc      = useModelStore((s) => s.doc);
+  const doc      = useDocStructure();  // the tree shows names and grouping, not poses
   const dispatch = useModelStore((s) => s.dispatch);
   const select        = useSelectionStore((s) => s.select);
   const selectedId    = useSelectionStore((s) => s.selectedId);
@@ -625,7 +626,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
       <div className="alp-section">
         {secTitle('rigid', 'RIGID MODE · shared with Editor')}
         <Button size="sm" className="tw:w-full tw:justify-start" variant={rigidMode ? 'default' : 'outline'} aria-pressed={rigidMode}
-          
           onClick={() => setBodyModePreservingPose(rigidMode ? 'free' : 'rigid')}
           title="Rigid mode grounds one body as the fixed base; graph FK propagates outward. This is the SAME toggle as the Editor's Free Float / Rigid."
         >
@@ -634,7 +634,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
         {rigidMode && (
           <>
             <Button size="sm" className="tw:w-full tw:justify-start" variant={autoBase ? 'default' : 'outline'} aria-pressed={autoBase}
-              
               onClick={() => setAutoBase(!autoBase)}
               title="Auto-ground: keep the base at the body nearest the center of mass, re-picking as the model moves (follows CoM while you drag). Turn off to pick the base manually."
               style={{ marginTop: 6 }}
@@ -679,7 +678,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
           </div>
         )}
         <Button size="sm" className="tw:w-full tw:justify-start" variant={globalRotateActive ? 'default' : 'outline'} aria-pressed={globalRotateActive}
-          
           onClick={toggleGlobalRotate}
           title="Activate global rotate, then pick an axis and type an angle"
         >
@@ -699,8 +697,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
               ))}
             </div>
             <div className="alp-angle-row">
-              <input
-                className="alp-angle-input"
+              <Input className="tw:flex-1"
                 type="number"
                 value={globalRotateAngle}
                 onChange={(e) => setGlobalRotateAngle(e.target.value)}
@@ -710,7 +707,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
               <span className="alp-angle-unit">deg</span>
             </div>
             <Button size="sm" className="tw:w-full"
-              
               disabled={!globalRotateAxis}
               onClick={() => globalRotateAxis && applyGlobalRotate(globalRotateAxis)}
               title="Apply rotation"
@@ -764,7 +760,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
         {/* Actions */}
         <div className="alp-mate-actions">
           <Button size="sm" className="tw:w-full"
-            
             disabled={!mateSlotA?.connectorId || !mateSlotB?.connectorId}
             onClick={snapMate}
             title="Lock component B so its connector aligns with connector A"
@@ -772,7 +767,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
             Lock
           </Button>
           <Button size="sm" variant="outline" className="tw:w-full"
-            
             disabled={!mateSlotA?.connectorId || !mateSlotB?.connectorId}
             onClick={saveMate}
             title="Save this mate relationship for later re-application"
@@ -804,7 +798,6 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
       <div className="alp-section">
         {secTitle('com', 'CENTER OF MASS')}
         <Button size="sm" className="tw:w-full tw:justify-start" variant={gravityOn ? 'default' : 'outline'} aria-pressed={gravityOn}
-          
           onClick={toggleGravity}
           title="Toggle gravity visualization"
         >

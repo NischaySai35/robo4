@@ -1,8 +1,9 @@
+import { Input } from '@/components/ui/input';
 import { Segmented } from '@/components/ui/segmented';
 import { Button } from '@/components/ui/button';
 import './LeftPanel.css';
 import { useCallback, useRef, useState } from 'react';
-import { useModelStore } from '@/state/modelStore';
+import { useModelStore, useDocStructure } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useEditModeStore } from '@/state/editModeStore';
@@ -39,7 +40,7 @@ const PRIMITIVES = [
 ];
 
 export default function LeftPanel({ style }: any) {
-  const doc      = useModelStore((s) => s.doc);
+  const doc      = useDocStructure();  // the tree shows names and grouping, not poses
   const dispatch = useModelStore((s) => s.dispatch);
   const select   = useSelectionStore((s) => s.select);
   const selectedId  = useSelectionStore((s) => s.selectedId);
@@ -649,8 +650,7 @@ export default function LeftPanel({ style }: any) {
               </Button>
             </div>
             <div className="px-search-wrap">
-              <input
-                className="px-search"
+              <Input className="tw:flex-1 tw:pr-7"
                 placeholder="Filter bodies &amp; joints…"
                 value={searchQ}
                 onChange={(e) => setSearchQ(e.target.value)}

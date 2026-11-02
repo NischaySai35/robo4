@@ -6,6 +6,7 @@
  *   • Learning     — Evolution-Strategies trainer on a reach task (watch it learn).
  *   • Behaviour    — a Behaviour-Tree mission (patrol: pick → plan → go → scan).
  */
+import { NativeSelect } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import './AutonomyPanel.css';
 import { useEffect, useRef, useState } from 'react';
@@ -380,12 +381,12 @@ export default function AutonomyPanel() {
       <div className="auto-sec">MOTION PLANNING</div>
       <div className="auto-hint">Select a tip body (e.g. a hand) → plan a collision-checked, time-parameterized trajectory (runs through the runtime /move_group action).</div>
       <div className="auto-btns">
-        <select value={planner} onChange={(e) => setPlanner(e.target.value as Planner)} title="Planner algorithm">
+        <NativeSelect className="tw:flex-1" value={planner} onChange={(e) => setPlanner(e.target.value as Planner)} title="Planner algorithm">
           <option value="rrtstar">RRT* (optimal)</option>
           <option value="rrt">RRT</option>
           <option value="prm">PRM</option>
           <option value="cartesian">Cartesian (line +X)</option>
-        </select>
+        </NativeSelect>
         <Button size="sm" variant={motion ? 'outline' : 'default'} onClick={planExecute}>
           {motion ? `${motion.phase} ${Math.round(motion.progress * 100)}% ■` : 'Plan + Execute ▶'}
         </Button>

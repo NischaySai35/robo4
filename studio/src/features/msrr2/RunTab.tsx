@@ -5,6 +5,8 @@
  * induced on chosen steps or drawn from the measured success rates; after a failure the
  * executor replans from the robot's TRUE state (in a worker) and carries on.
  */
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { useRef, useState } from 'react';
 import { useV2Store } from '@/state/msrrV2Store';
 import { executeDryRun, type ExecEvent, type ExecResult, LOCK_OPEN_DEG, LOCK_TURN_DEG } from '@/robotics/msrr2/executor';
@@ -61,12 +63,12 @@ export function RunTab() {
         <p className="msrr-note">Each step is compiled to the module ESPs' /api/batch calls with nominal angles (180 = straight; each ESP adds its own manual-home offsets). Lock rotors: {LOCK_OPEN_DEG}° = home (open); locking turns ±{LOCK_TURN_DEG}° (End A one way, End B the other; end↔end: both ends together).</p>
       }>
         <p className="msrr-note dim">Plan: {plan.steps.length} steps to {plan.target.name}, {(plan.totalP * 100).toFixed(1)}% expected.</p>
-        <Row label="Fail step(s) #"><input className="msrr-select" data-testid="run-induce" value={induce} onChange={(e) => setInduce(e.target.value)} placeholder="e.g. 2, 5" /></Row>
+        <Row label="Fail step(s) #"><Input data-testid="run-induce" value={induce} onChange={(e) => setInduce(e.target.value)} placeholder="e.g. 2, 5" /></Row>
         <Row label="Random failures"><input type="checkbox" checked={random} onChange={(e) => setRandom(e.target.checked)} /> <span className="msrr-note dim">at each step's measured failure rate</span></Row>
-        <Row label="Seed"><input className="msrr-select" type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} /></Row>
+        <Row label="Seed"><Input type="number" value={seed} onChange={(e) => setSeed(Number(e.target.value))} /></Row>
         <div className="msrr-row-btns">
-          <button className="msrr-btn primary" data-testid="run-dry" disabled={running} onClick={run}>{running ? 'Running…' : 'Dry run'}</button>
-          {startRef.current && !running && <button className="msrr-btn ghost" onClick={() => show(startRef.current!, true)}>Show start</button>}
+          <Button size="sm" data-testid="run-dry" disabled={running} onClick={run}>{running ? 'Running…' : 'Dry run'}</Button>
+          {startRef.current && !running && <Button variant="ghost" size="sm" onClick={() => show(startRef.current!, true)}>Show start</Button>}
         </div>
         {status && <p className="msrr-note dim">{status}</p>}
       </Section>

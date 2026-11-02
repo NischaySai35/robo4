@@ -19,6 +19,8 @@
  * placing a module on purpose is making a claim about what the hardware should
  * do, and refusing to draw it would defeat the whole point of the tab.
  */
+import { NativeSelect } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import React, { useMemo, useRef, useState } from 'react';
 
 import { useMsrrStore } from '@/state/msrrStore';
@@ -110,11 +112,10 @@ export function ComposeTab() {
         </div>
 
         <div className="msrr-row-btns">
-          <button className="msrr-btn primary" onClick={add}>
+          <Button size="sm" onClick={add}>
             {current ? `Add module: its ${ownEnd} on ${current.id}.${end}` : 'Add first module'}
-          </button>
-          <button
-            className="msrr-btn ghost"
+          </Button>
+          <Button variant="ghost" size="sm"
             disabled={!current}
             onClick={() => {
               if (!current) return;
@@ -123,37 +124,34 @@ export function ComposeTab() {
             }}
           >
             Delete {current?.id ?? ''}
-          </button>
-          <button
-            className="msrr-btn ghost"
+          </Button>
+          <Button variant="ghost" size="sm"
             disabled={!manual.modules.length}
             onClick={() => { edit(emptyManual()); select(null); }}
           >
             Clear
-          </button>
+          </Button>
         </div>
 
         {current && (
           <>
             <Row label="Weld the next one to">
-              <select
-                className="msrr-select"
+              <NativeSelect 
                 value={end}
                 onChange={(e) => setEnd(e.target.value as ConnectorEnd)}
               >
                 {ALL_ENDS.map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              </NativeSelect>
             </Row>
             <Row label="…by its own connector">
-              <select
-                className="msrr-select"
+              <NativeSelect 
                 value={ownEnd}
                 onChange={(e) => setOwnEnd(e.target.value as ConnectorEnd)}
               >
                 {/* side-to-side is not a weld (only ends have a lock rotor) */}
                 {ALL_ENDS.filter((c) => c === 'A' || c === 'B' || end === 'A' || end === 'B')
                   .map((c) => <option key={c} value={c}>{c}</option>)}
-              </select>
+              </NativeSelect>
             </Row>
             <Row label={`Its roll about that lock: ${roll * 90}°`}>
               <input
@@ -208,19 +206,19 @@ export function ComposeTab() {
             </Row>
           ))}
           <div className="msrr-row-btns">
-            <button className="msrr-btn ghost" onClick={() => {
+            <Button variant="ghost" size="sm" onClick={() => {
               let next = manual;
               for (const j of JOINTS) next = setAngle(next, current.id, j.index, 0);
               edit(next);
             }}>
               Straighten
-            </button>
+            </Button>
             {current.attach && (
-              <button className="msrr-btn ghost" onClick={() => edit(setRoll(
+              <Button variant="ghost" size="sm" onClick={() => edit(setRoll(
                 manual, current.id, ((current.attach!.roll + 1) % 4) as 0 | 1 | 2 | 3,
               ))}>
                 Roll 90°
-              </button>
+              </Button>
             )}
           </div>
         </Section>
@@ -237,12 +235,12 @@ export function ComposeTab() {
         </p>
       }>
         <div className="msrr-row-btns">
-          <button className="msrr-btn" disabled={!manual.modules.length} onClick={save}>
+          <Button variant="outline" size="sm" disabled={!manual.modules.length} onClick={save}>
             Save JSON
-          </button>
-          <button className="msrr-btn ghost" onClick={() => fileRef.current?.click()}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => fileRef.current?.click()}>
             Load JSON
-          </button>
+          </Button>
           <input
             ref={fileRef} type="file" accept="application/json" style={{ display: 'none' }}
             onChange={(e) => {
@@ -253,24 +251,24 @@ export function ComposeTab() {
           />
         </div>
         <div className="msrr-row-btns">
-          <button
-            className="msrr-btn ghost" disabled={!cells.length}
+          <Button variant="ghost" size="sm"
+            disabled={!cells.length}
             onClick={() => {
               setConfigCells(cells);
               pushLog(`${cells.length} cubes taken from the hand-built structure`);
             }}
           >
             Use as the shape
-          </button>
-          <button
-            className="msrr-btn ghost" disabled={!cells.length}
+          </Button>
+          <Button variant="ghost" size="sm"
+            disabled={!cells.length}
             onClick={() => {
               setTarget(cells);
               pushLog('target set from the hand-built structure');
             }}
           >
             Use as the target
-          </button>
+          </Button>
         </div>
       </Section>
 

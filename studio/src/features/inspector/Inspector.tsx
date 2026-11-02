@@ -6,6 +6,7 @@
  * This is the seed of the "every URDF tag is a GUI control" goal — Phase 5 grows
  * the joint side into the full tag set (dynamics, mimic, effort, etc.).
  */
+import { Input, NativeSelect } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import './Inspector.css';
 import type { Document, Connector } from '@/core/model/index';
@@ -43,7 +44,7 @@ function Num({ label, value, onChange, step = 0.1, scale = 1 }: any) {
   return (
     <label className="in-num">
       <span>{label}</span>
-      <input type="number" step={step} value={r3(value * scale)}
+      <Input type="number" step={step} value={r3(value * scale)}
         onChange={(e) => onChange((parseFloat(e.target.value) || 0) / scale)} />
     </label>
   );
@@ -57,7 +58,7 @@ function Vec3({ label, value, onChange, step = 0.1, scale = 1 }: any) {
         {['X', 'Y', 'Z'].map((ax, i) => (
           <label key={ax} className="in-axis">
             <span>{ax}</span>
-            <input type="number" step={step} value={r3((value[i] ?? 0) * scale)}
+            <Input type="number" step={step} value={r3((value[i] ?? 0) * scale)}
               onChange={(e) => {
                 const v = [...value];
                 v[i] = (parseFloat(e.target.value) || 0) / scale;
@@ -151,12 +152,12 @@ function DriverSection({ body, up }: { body: any; up: (patch: any) => void }) {
     <>
       <div className="in-group">DRIVER TYPE</div>
       <div className="in-driver-row">
-        <select className="in-text" value={driverType}
+        <NativeSelect value={driverType}
           onChange={(e) => upMeta({ driverType: e.target.value })}>
           {Object.entries(allDrivers).map(([k, d]) => (
             <option key={k} value={k}>{d.icon} {d.label}</option>
           ))}
-        </select>
+        </NativeSelect>
         <Button variant="outline" size="sm" onClick={applyDefaults} title="Apply this driver's default physics values">
           Apply defaults
         </Button>
@@ -180,7 +181,7 @@ function DriverSection({ body, up }: { body: any; up: (patch: any) => void }) {
             ) : (
               <label key={p.key} className="in-field">
                 <span>{p.label}{p.unit ? ` (${p.unit})` : ''}</span>
-                <input className="in-text" type="text"
+                <Input type="text"
                   value={String(driverProps[p.key] ?? p.default)}
                   onChange={(e) => upMeta({ driverProps: { ...driverProps, [p.key]: e.target.value } })} />
               </label>
@@ -190,7 +191,7 @@ function DriverSection({ body, up }: { body: any; up: (patch: any) => void }) {
       )}
 
       <div className="in-custom-driver">
-        <input className="in-text" placeholder="New driver name…" value={customName}
+        <Input placeholder="New driver name…" value={customName}
           onChange={(e) => setCustomName(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') addCustomDriver(); }} />
         <Button variant="outline" size="sm" onClick={addCustomDriver} disabled={!customName.trim()}>
@@ -232,7 +233,7 @@ function ConnectorsSection({ body, up }: { body: any; up: (patch: any) => void }
       {connectors.map((c, idx) => (
         <div key={c.id} className="in-connector">
           <div className="in-connector-hdr">
-            <input className="in-text in-connector-name" value={c.name}
+            <Input className="tw:flex-1 tw:font-bold" value={c.name}
               onChange={(e) => updateConnector(idx, { name: e.target.value })} />
             <Button variant="destructive" size="icon-xs" onClick={() => removeConnector(idx)} title="Remove connector">✕</Button>
           </div>
@@ -284,7 +285,7 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
     <>
       <label className="in-field">
         <span>Name</span>
-        <input className="in-text" value={body.name} onChange={(e) => up({ name: e.target.value })} />
+        <Input value={body.name} onChange={(e) => up({ name: e.target.value })} />
       </label>
 
       <div className="in-group">TRANSFORM</div>
@@ -358,16 +359,16 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
         <div className="in-ops-array">
           <div className="in-ops-array-row">
             <span>Count</span>
-            <input type="number" min={2} value={arrayCount}
+            <Input type="number" size="xs" className="tw:w-14" min={2} value={arrayCount}
               onChange={(e) => setArrayCount(Math.max(2, parseInt(e.target.value) || 2))} />
             <span>Axis</span>
-            <select value={arrayAxis} onChange={(e) => setArrayAxis(parseInt(e.target.value))}>
+            <NativeSelect size="xs" className="tw:w-auto" value={arrayAxis} onChange={(e) => setArrayAxis(parseInt(e.target.value))}>
               <option value={0}>X</option>
               <option value={1}>Y</option>
               <option value={2}>Z</option>
-            </select>
+            </NativeSelect>
             <span>Gap</span>
-            <input type="number" step={0.1} value={arrayGap}
+            <Input type="number" size="xs" className="tw:w-14" step={0.1} value={arrayGap}
               onChange={(e) => setArrayGap(parseFloat(e.target.value) || 1)} />
           </div>
           <Button size="sm" className="tw:mt-1 tw:w-full" onClick={() => {
@@ -413,26 +414,26 @@ function JointTypePanel({ joint, doc, dispatch }: { joint: any; doc: Document; d
       <div className="in-group">JOINT TYPE · shared actuator (edits sync to all of this type)</div>
       <label className="in-field">
         <span>Type</span>
-        <select className="in-text" value={joint.profileId ?? ''} onChange={(e) => assign(e.target.value || null)}>
+        <NativeSelect value={joint.profileId ?? ''} onChange={(e) => assign(e.target.value || null)}>
           <option value="">— none (per-joint) —</option>
           {profiles.map((p: any) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
+        </NativeSelect>
       </label>
 
       {profile ? (
         <>
           <label className="in-field">
             <span>Motor</span>
-            <select className="in-text" value={profile.motorType} onChange={(e) => editProfile({ motorType: e.target.value })}>
+            <NativeSelect value={profile.motorType} onChange={(e) => editProfile({ motorType: e.target.value })}>
               {MOTOR_IDS.map((m) => <option key={m} value={m}>{MOTOR_DB[m].name} ({MOTOR_DB[m].stallTorque} N·m)</option>)}
-            </select>
+            </NativeSelect>
           </label>
           <EntityProps entity={profile} defs={PROFILE_PROPS} up={editProfile} group="Actuator" />
           <div className="in-hint">{count} joint{count === 1 ? '' : 's'} share “{profile.name}”. Editing here updates all of them.</div>
         </>
       ) : (
         <div className="in-row2">
-          <input className="in-text" placeholder="New type name (e.g. Twist)" value={newName} onChange={(e) => setNewName(e.target.value)} />
+          <Input placeholder="New type name (e.g. Twist)" value={newName} onChange={(e) => setNewName(e.target.value)} />
           <Button variant="outline" size="sm" onClick={createProfile} title="Create a shared joint type from this joint and assign it">+ Create type</Button>
         </div>
       )}
@@ -546,13 +547,13 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
     <>
       <label className="in-field">
         <span>Name</span>
-        <input className="in-text" value={joint.name} onChange={(e) => up({ name: e.target.value })} />
+        <Input value={joint.name} onChange={(e) => up({ name: e.target.value })} />
       </label>
       <label className="in-field">
         <span>Type</span>
-        <select className="in-text" value={joint.type} onChange={(e) => up({ type: e.target.value })}>
+        <NativeSelect value={joint.type} onChange={(e) => up({ type: e.target.value })}>
           {Object.values(JointType).map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
+        </NativeSelect>
       </label>
 
       {!isFixed && <JointTypePanel joint={joint} doc={doc} dispatch={dispatch} />}
@@ -560,15 +561,15 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
       <div className="in-group">BODIES · connected pair (equal — not parent/child)</div>
       <label className="in-field">
         <span>Body 1</span>
-        <select className="in-text" value={joint.parentBodyId ?? ''} onChange={(e) => up({ parentBodyId: e.target.value })}>
+        <NativeSelect value={joint.parentBodyId ?? ''} onChange={(e) => up({ parentBodyId: e.target.value })}>
           {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
+        </NativeSelect>
       </label>
       <label className="in-field">
         <span>Body 2</span>
-        <select className="in-text" value={joint.childBodyId ?? ''} onChange={(e) => up({ childBodyId: e.target.value })}>
+        <NativeSelect value={joint.childBodyId ?? ''} onChange={(e) => up({ childBodyId: e.target.value })}>
           {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-        </select>
+        </NativeSelect>
       </label>
       {conflictJoint && (
         <div className="in-conflict">
@@ -675,9 +676,9 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
             <>
               <label className="in-field">
                 <span>Source joint</span>
-                <select className="in-text" value={mimic.jointId} onChange={(e) => up({ mimic: { ...mimic, jointId: e.target.value } })}>
+                <NativeSelect value={mimic.jointId} onChange={(e) => up({ mimic: { ...mimic, jointId: e.target.value } })}>
                   {otherJoints.map((j) => <option key={j.id} value={j.id}>{j.name}</option>)}
-                </select>
+                </NativeSelect>
               </label>
               <EntityProps entity={joint} defs={JOINT_PROPS} up={up} group="Mimic" />
             </>

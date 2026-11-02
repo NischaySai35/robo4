@@ -5,6 +5,8 @@
  * verbs, each with its measured success probability and time; the total success is
  * their product. Risky steps (below 90% or within 10% of a limit) are red.
  */
+import { NativeSelect } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { runOperator } from '@/core/ops/registry';
 import { useEffect, useRef, useState } from 'react';
 import { useV2Store, PRESETS } from '@/state/msrrV2Store';
@@ -94,7 +96,7 @@ export function PlanTab() {
         <Section title="Ready-made plans (computed by the planner)">
           {DEMO_PLANS.map((d, i) => (
             <div key={i} className="msrr-row-btns" style={{ alignItems: 'center' }}>
-              <button className="msrr-btn small" data-testid={`demo-${i}`} onClick={() => loadDemo(i)}>Load</button>
+              <Button variant="outline" size="xs" data-testid={`demo-${i}`} onClick={() => loadDemo(i)}>Load</Button>
               <span className="msrr-note">{d.title} — {(d.plan.totalP * 100).toFixed(1)}%, {d.plan.steps.length} steps</span>
             </div>
           ))}
@@ -109,19 +111,19 @@ export function PlanTab() {
       }>
         <p className="msrr-note dim">Robot now: {nActive} module(s), {config.edges.length} lock(s). Change it in the Robot or Shapes tab.</p>
         <Row label="Start from">
-          <select className="msrr-select" value="" onChange={(e) => { const p = PRESETS.find((x) => x.id === e.target.value); if (p) setConfig(p.config); }}>
+          <NativeSelect value="" onChange={(e) => { const p = PRESETS.find((x) => x.id === e.target.value); if (p) setConfig(p.config); }}>
             <option value="">— keep the current robot —</option>
             {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
+          </NativeSelect>
         </Row>
         <Row label="Target">
-          <select className="msrr-select" data-testid="plan-target" value={target?.id ?? ''} onChange={(e) => setTargetId(e.target.value)}>
+          <NativeSelect data-testid="plan-target" value={target?.id ?? ''} onChange={(e) => setTargetId(e.target.value)}>
             {targets.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-          </select>
+          </NativeSelect>
         </Row>
         <div className="msrr-row-btns">
-          <button className="msrr-btn primary" data-testid="plan-run" disabled={planning || !target} onClick={run}>{planning ? 'Planning…' : 'Plan'}</button>
-          {planning && <button className="msrr-btn danger" onClick={() => { workerRef.current?.terminate(); setPlanning(false); }}>Stop</button>}
+          <Button size="sm" data-testid="plan-run" disabled={planning || !target} onClick={run}>{planning ? 'Planning…' : 'Plan'}</Button>
+          {planning && <Button variant="destructive" size="sm" onClick={() => { workerRef.current?.terminate(); setPlanning(false); }}>Stop</Button>}
         </div>
         {planning && <pre className="msrr-note dim" style={{ whiteSpace: 'pre-wrap', fontSize: 10 }}>{progress.join('\n')}</pre>}
       </Section>
@@ -139,10 +141,10 @@ export function PlanTab() {
                 (no gravity, no magnets, no wobble, lock rotor not drawn turning). To see it really happen, use <b>▶ Real physics: run this plan</b> at the top:
                 MuJoCo + the robot's own docking brain (stand-off, align, straight in, rotor turns 45°, straight out).</p>
               <div className="msrr-row-btns">
-                <button className="msrr-btn" data-testid="plan-play" onClick={() => op('planner.sketch.play')}>{playing ? 'Pause sketch' : playStep >= plan.steps.length ? 'Replay sketch' : 'Play sketch (no physics)'}</button>
-                <button className="msrr-btn" onClick={() => op('planner.sketch.back')}>◀</button>
-                <button className="msrr-btn" onClick={() => op('planner.sketch.next')}>▶</button>
-                <button className="msrr-btn ghost" onClick={() => op('planner.sketch.rewind')}>Rewind</button>
+                <Button variant="outline" size="sm" data-testid="plan-play" onClick={() => op('planner.sketch.play')}>{playing ? 'Pause sketch' : playStep >= plan.steps.length ? 'Replay sketch' : 'Play sketch (no physics)'}</Button>
+                <Button variant="outline" size="sm" onClick={() => op('planner.sketch.back')}>◀</Button>
+                <Button variant="outline" size="sm" onClick={() => op('planner.sketch.next')}>▶</Button>
+                <Button variant="ghost" size="sm" onClick={() => op('planner.sketch.rewind')}>Rewind</Button>
               </div>
               <Row label={`Speed ${speed.toFixed(1)}x`}><input type="range" min={0.25} max={4} step={0.25} value={speed} onChange={(e) => setSpeed(Number(e.target.value))} /></Row>
               <ol style={{ paddingLeft: 18, margin: '6px 0' }}>
@@ -174,7 +176,7 @@ export function PlanTab() {
         }>
           <Row label={`Robots ${nRobots}`}><input type="range" min={8} max={256} step={8} value={nRobots} onChange={(e) => setNRobots(Number(e.target.value))} /></Row>
           <div className="msrr-row-btns">
-            <button className="msrr-btn" data-testid="plan-rehearse" disabled={rehearsing} onClick={rehearse}>{rehearsing ? 'Rehearsing…' : 'Rehearse in MuJoCo'}</button>
+            <Button variant="outline" size="sm" data-testid="plan-rehearse" disabled={rehearsing} onClick={rehearse}>{rehearsing ? 'Rehearsing…' : 'Rehearse in MuJoCo'}</Button>
           </div>
           {rehearsal?.error && <p className="msrr-note" style={{ color: '#d14b4b' }}>{rehearsal.error}</p>}
           {rehearsal && !rehearsal.error && (

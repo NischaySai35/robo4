@@ -1,6 +1,8 @@
 /**
  * EditorTools — precision controls: units, snapping, Fusion-style measurement, mate, gravity.
  */
+import { Input, NativeSelect } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import './EditorTools.css';
 import { useEditorStore, formatLen } from '@/state/editorStore';
 import type { MeasureResult2 } from '@/state/editorStore';
@@ -64,15 +66,15 @@ export default function EditorTools() {
   const hasBoth = !!(r2?.entityA && r2?.entityB);
 
   return (
-    <div className="et-panel">
+    <div className="et-panel" data-ui="a">
       {/* Units */}
       <div className="et-row">
         <span className="et-label">Units</span>
-        <select className="et-select" value={units} onChange={(e) => setUnits(e.target.value as 'm' | 'cm' | 'mm')}>
+        <NativeSelect className="tw:flex-1" value={units} onChange={(e) => setUnits(e.target.value as 'm' | 'cm' | 'mm')}>
           <option value="m">m</option>
           <option value="cm">cm</option>
           <option value="mm">mm</option>
-        </select>
+        </NativeSelect>
       </div>
 
       {/* Snap */}
@@ -81,18 +83,18 @@ export default function EditorTools() {
           <input type="checkbox" checked={snap.enabled} onChange={(e) => setSnap({ enabled: e.target.checked })} />
           <span>Snap</span>
         </label>
-        <input className="et-num" type="number" step="0.05" min="0.01" title="Move snap (units)"
+        <Input className="tw:w-16" type="number" step="0.05" min="0.01" title="Move snap (units)"
           value={snap.translate} onChange={(e) => setSnap({ translate: parseFloat(e.target.value) || 0.05 })} />
-        <input className="et-num" type="number" step="5" min="1" title="Rotate snap (deg)"
+        <Input className="tw:w-16" type="number" step="5" min="1" title="Rotate snap (deg)"
           value={snap.rotateDeg} onChange={(e) => setSnap({ rotateDeg: parseFloat(e.target.value) || 15 })} />
       </div>
 
       {/* Measure button */}
-      <button className={`et-measure ${measureMode ? 'et-measure--on' : ''}`} onClick={toggleMeasure}>
+      <Button className="tw:w-full" variant={measureMode ? 'default' : 'outline'} aria-pressed={measureMode} onClick={toggleMeasure}>
         📏 {measureMode
           ? (hasEntities ? (hasBoth ? 'Click to restart' : 'Click entity B…') : 'Click entity A…')
           : 'Measure'}
-      </button>
+      </Button>
 
       {/* Measurement results */}
       {measureMode && (
@@ -128,11 +130,11 @@ export default function EditorTools() {
       )}
 
       {/* Mate */}
-      <button className={`et-measure ${mateMode ? 'et-measure--on' : ''}`} onClick={toggleMate}>
+      <Button className="tw:w-full" variant={mateMode ? 'default' : 'outline'} aria-pressed={mateMode} onClick={toggleMate}>
         🧲 {mateMode
           ? (matePick === 0 ? 'Mate — click face FIXED' : 'Mate — click face to MOVE')
           : 'Mate faces (align parts)'}
-      </button>
+      </Button>
 
       {/* Gravity */}
       <div className="et-row et-gravity">
@@ -140,7 +142,7 @@ export default function EditorTools() {
           <input type="checkbox" checked={simRunning} onChange={toggleSim} />
           <span>Gravity</span>
         </label>
-        <input className="et-num" type="number" step="0.1" min="0" title="Gravity magnitude (m/s²)"
+        <Input className="tw:w-16" type="number" step="0.1" min="0" title="Gravity magnitude (m/s²)"
           value={gravity} onChange={(e) => setGravity(parseFloat(e.target.value))} />
         <span className="et-unit">m/s²</span>
       </div>

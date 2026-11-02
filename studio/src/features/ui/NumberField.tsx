@@ -6,6 +6,7 @@
  * number. Use this anywhere a raw number input would otherwise apply mid-typing.
  */
 import { useEffect, useRef, useState } from 'react';
+import { Input } from '@/components/ui/input';
 
 const fmt = (v: number) => (Number.isFinite(v) ? String(+v.toFixed(4)) : '');
 
@@ -33,7 +34,7 @@ export default function NumberField({
   };
 
   return (
-    <input
+    <Input
       type="number"
       className={className}
       value={text}

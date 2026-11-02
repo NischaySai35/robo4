@@ -34,6 +34,19 @@ test('a body mass is set in grams, stored in kilograms, and undone', () => {
   assert.equal(cmd.undo(after).bodies.b1.inertial.mass, 0.2);
 });
 
+test('any kind is renamed through the list, names must be new and not empty', async () => {
+  const { checkName } = await import('./entityTypes');
+  const d: any = { ...doc, components: { c1: { kind: 'component', id: 'c1', name: 'Module 1' }, c2: { kind: 'component', id: 'c2', name: 'Module 2' } } };
+  const f = findEntity(d, 'component', 'Module 1') as any;
+  assert.equal((checkName(d, f.type, f.entity, ' Arm ') as any).stored, 'Arm');
+  assert.match((checkName(d, f.type, f.entity, 'Module 2') as any).error, /already called "Module 2"/);
+  assert.match((checkName(d, f.type, f.entity, '  ') as any).error, /needs some text/);
+  const cmd = f.type.update('c1', { name: 'Arm' });
+  const after = cmd.redo(structuredClone(d));
+  assert.equal(after.components.c1.name, 'Arm');
+  assert.equal(cmd.undo(after).components.c1.name, 'Module 1');
+});
+
 test('limits are checked: roughness cannot pass 1, torque cannot go below 0', () => {
   const m = findEntity(doc, 'material', 'PLA') as any;
   assert.match((checkValue(m.entity, m.type.props, 'roughness', 1.5) as any).error, /above 1/);

@@ -16,6 +16,8 @@ A badge in the viewport says "Simulated pose, not saved", with Keep (Blender's A
 
 Physics still writes whole documents into the shown copy rather than a separate store of poses (the plan's `EvaluatedScene`), and panels subscribe to the whole store rather than notifiers. Those are bigger, and only worth it once a measurement shows they cost time.
 
+Measured 1 Nov 2026 (animation playback of the real module, real GPU, dev server): each pose update takes 0.15 ms on average and 0.7 ms at worst, 48 a second. Frames drop from 58 to 47 per second while playing, with about 106 ms of busy main thread in 3 s, which is drawing and panel updates, not the pose writes. So a separate `EvaluatedScene` would save under 1% of a frame and is not built. If playback smoothness matters, the next step is finding which panels update on every frame (notifiers), measured first. Done the same day: both project trees and the Timeline now re-render only when the structure changes (`useDocStructure` in `state/modelStore.ts`), and playback went from 47 to 54-55 frames per second.
+
 ## Rejected alternatives
 
 | Alternative | Why not |

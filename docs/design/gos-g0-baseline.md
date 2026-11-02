@@ -97,3 +97,7 @@ Measured from the header of the v1.0.4 build, `studio/release2/win-unpacked`. Th
 | Default module | **MuJoCo refuses to load it**: `mesh 'asset_...' not found`, because no `<asset>` section is written |
 
 The URDF exporter warns about dropped joints, but a pure ring also has no root there. Fix in GOS G1, whose "done when" already requires loops to survive export.
+
+## Studio link (G2, 2 Nov 2026)
+
+`tools/bench/g2_studio.py`, real GPU, dev server: round trip Python to Studio and back 0.38 ms median, 0.74 ms at 95%, 2.47 ms worst (200 messages). A 60 Hz joint stream (9 joints, JSON) is applied 58 times a second while the page draws 59 frames a second. With 10 modules (90 joints, `MODULES=10`): 0.37 ms median round trip, 57 poses a second at 60 frames a second. JSON stays within budget at that size.

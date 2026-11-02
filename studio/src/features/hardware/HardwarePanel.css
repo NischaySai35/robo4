@@ -9,16 +9,6 @@
 .hw-error { color: var(--danger); }
 
 .hw-row { display: flex; }
-.hw-select, .hw-field input {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
 .hw-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-dim); }
 
 .hw-actions { display: flex; }
@@ -54,17 +44,6 @@
 .hw-map-row { display: grid; grid-template-columns: 1fr auto auto 52px; align-items: center; gap: 6px; }
 .hw-map-name { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hw-map-deg { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
-.hw-map-type {
-  padding: 3px 5px; border: 1px solid var(--border); border-radius: 5px;
-  background: var(--bg-card); color: var(--text); font-family: var(--font-mono); font-size: 10px;
-  max-width: 110px;
-}
-.hw-map-type:focus { outline: none; border-color: var(--accent); }
-.hw-map-id {
-  width: 52px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg-card); color: var(--text); font-family: var(--font-mono); font-size: 12px; text-align: center;
-}
-.hw-map-id:focus { outline: none; border-color: var(--accent); }
 
 /* host / signal / peripherals (Motor Control page) */
 .hw-host { font-size: 11px; }
@@ -83,5 +62,5 @@
 .hw-periph-row > button { width: 20px; height: 20px; padding: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); cursor: pointer; }
 .hw-periph-row > button:hover { color: var(--danger); border-color: var(--danger); }
 .hw-periph-add { display: flex; gap: 5px; }
-.hw-periph-add select, .hw-periph-add input { flex: 1; min-width: 0; padding: 4px 6px; background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; font-size: 11px; }
+.hw-periph-add [data-slot] { flex: 1; }
 .hw-periph-add button { width: 28px; background: var(--accent); color: #fff; border: none; border-radius: 5px; cursor: pointer; }

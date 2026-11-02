@@ -8,6 +8,8 @@
  * When the brain needs the judge (you, until the camera exists) the robot simply holds and a question card appears.
  * Sim mode runs the identical loop against the MuJoCo robot so the whole flow can be rehearsed without hardware.
  */
+import { Input, NativeSelect } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import React, { useEffect, useRef, useState } from 'react';
 import { useEspTtlStore, ttlGet, ttlTry, startTtlPoll, stopTtlPoll, type TtlTelemetry } from '@/state/espTtlStore';
 
@@ -125,10 +127,10 @@ export default function WalkTab() {
         <h4>Brain</h4>
         <div className="ettl-row">
           <label className="ettl-lbl">brain server
-            <input value={url} onChange={e => setUrl(e.target.value)} style={{ width: 210 }} spellCheck={false} /></label>
+            <Input size="xs" className="tw:w-auto" value={url} onChange={e => setUrl(e.target.value)} style={{ width: 210 }} spellCheck={false} /></label>
           <span className={`ettl-dot ${brainOk ? 'on' : 'off'}`} />
           <span className="ettl-dim">{brainOk == null ? 'checking…' : brainOk ? 'connected' : 'not running — start it: python D:\\robo4\\brain\\brain_server.py'}</span>
-          <button className="ettl-btn" onClick={() => void check()}>Re-check</button>
+          <Button variant="outline" size="sm" onClick={() => void check()}>Re-check</Button>
         </div>
         {cfg && <div className="ettl-row ettl-dim">
           servo ids {Object.entries(cfg.servo_id).map(([k, v]) => `${k}=${v}`).join(' ')} · {cfg.calibrated ? 'calibrated (robot_config.json)' : 'NOT calibrated — defaults; run brain\\calibrate.py first'}
@@ -144,15 +146,15 @@ export default function WalkTab() {
               <tr key={i}>
                 <td className="l">{i}{i === 0 ? ' (start)' : ''}</td>
                 {(['x', 'y', 'yaw'] as const).map(k => (
-                  <td key={k}><input type="number" value={r[k]} disabled={i === 0 || running} style={{ width: 80 }}
+                  <td key={k}><Input size="xs" className="tw:w-auto" type="number" value={r[k]} disabled={i === 0 || running} style={{ width: 80 }}
                                      onChange={e => setR(i, k, +e.target.value)} /></td>))}
-                <td>{i > 0 && <button className="ettl-btn tiny danger" disabled={running} onClick={() => setRx(a => a.filter((_, j) => j !== i))}>remove</button>}</td>
+                <td>{i > 0 && <Button variant="destructive" size="xs" disabled={running} onClick={() => setRx(a => a.filter((_, j) => j !== i))}>remove</Button>}</td>
               </tr>))}
           </tbody>
         </table>
         <div className="ettl-row">
-          <button className="ettl-btn" disabled={running} onClick={() => setRx(a => [...a, { ...a[a.length - 1], x: a[a.length - 1].x + 250 }])}>+ connector</button>
-          <button className="ettl-btn" disabled={running} onClick={() => setRx(DEFAULT_RX)}>reset (4 in a row, 250 mm)</button>
+          <Button variant="outline" size="sm" disabled={running} onClick={() => setRx(a => [...a, { ...a[a.length - 1], x: a[a.length - 1].x + 250 }])}>+ connector</Button>
+          <Button variant="outline" size="sm" disabled={running} onClick={() => setRx(DEFAULT_RX)}>reset (4 in a row, 250 mm)</Button>
         </div>
       </div>
 
@@ -160,17 +162,17 @@ export default function WalkTab() {
         <h4>Run</h4>
         <div className="ettl-row">
           <label className="ettl-lbl">mode
-            <select value={opts.mode} disabled={running} onChange={e => setOpts(o => ({ ...o, mode: e.target.value as Mode }))}>
+            <NativeSelect size="xs" className="tw:w-auto" value={opts.mode} disabled={running} onChange={e => setOpts(o => ({ ...o, mode: e.target.value as Mode }))}>
               <option value="sim">Sim (MuJoCo robot)</option><option value="real">Real robot</option>
-            </select></label>
+            </NativeSelect></label>
           <label className="ettl-lbl" title="phone level app on the floor next to the module">floor tilt °
-            <input type="number" step={0.1} value={opts.tilt} disabled={running} style={{ width: 60 }} onChange={e => setOpts(o => ({ ...o, tilt: +e.target.value }))} /></label>
+            <Input size="xs" className="tw:w-auto" type="number" step={0.1} value={opts.tilt} disabled={running} style={{ width: 60 }} onChange={e => setOpts(o => ({ ...o, tilt: +e.target.value }))} /></label>
           <label className="ettl-lbl" title="downhill direction, from the board X arrow, counter-clockwise">toward °
-            <input type="number" value={opts.tiltDir} disabled={running} style={{ width: 60 }} onChange={e => setOpts(o => ({ ...o, tiltDir: +e.target.value }))} /></label>
+            <Input size="xs" className="tw:w-auto" type="number" value={opts.tiltDir} disabled={running} style={{ width: 60 }} onChange={e => setOpts(o => ({ ...o, tiltDir: +e.target.value }))} /></label>
           <label className="ettl-lbl" title="undock tilt: 4° is the smallest that releases flush magnets (sim); 0 = straight, needs magnets 1 mm deeper">peel °
-            <input type="number" value={opts.peel} disabled={running} style={{ width: 50 }} onChange={e => setOpts(o => ({ ...o, peel: +e.target.value }))} /></label>
+            <Input size="xs" className="tw:w-auto" type="number" value={opts.peel} disabled={running} style={{ width: 50 }} onChange={e => setOpts(o => ({ ...o, peel: +e.target.value }))} /></label>
           <label className="ettl-lbl" title="servo deadband while walking (real mode)">hold ±°
-            <input type="number" step={0.1} value={opts.band} disabled={running} style={{ width: 55 }} onChange={e => setOpts(o => ({ ...o, band: +e.target.value }))} /></label>
+            <Input size="xs" className="tw:w-auto" type="number" step={0.1} value={opts.band} disabled={running} style={{ width: 55 }} onChange={e => setOpts(o => ({ ...o, band: +e.target.value }))} /></label>
           {opts.mode === 'sim' && <>
             <label className="ettl-lbl"><input type="checkbox" checked={opts.humanJudgeInSim} disabled={running} onChange={e => setOpts(o => ({ ...o, humanJudgeInSim: e.target.checked }))} />I judge (practice)</label>
             <label className="ettl-lbl" title="also send the sim robot's commands to the real board"><input type="checkbox" checked={opts.mirror} disabled={running} onChange={e => setOpts(o => ({ ...o, mirror: e.target.checked }))} />mirror to robot</label>
@@ -178,9 +180,9 @@ export default function WalkTab() {
         </div>
         <div className="ettl-row">
           {!running
-            ? <button className="ettl-btn accent big" disabled={!brainOk} onClick={() => void run()}>▶ Start walk</button>
-            : <button className="ettl-btn big" onClick={() => void stop()}>■ Stop (hold)</button>}
-          <button className="ettl-btn danger big" onClick={() => void estop()}>E-STOP</button>
+            ? <Button size="lg" disabled={!brainOk} onClick={() => void run()}>▶ Start walk</Button>
+            : <Button variant="outline" size="lg" onClick={() => void stop()}>■ Stop (hold)</Button>}
+          <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold" onClick={() => void estop()}>E-STOP</Button>
           {reply && <span className="ettl-dim">
             {reply.stage} · frame {reply.frame} ({(reply.frame * DT_MS / 1000).toFixed(1)} s)
             {reply.joints_deg && <> · {JOINT_NAMES.map((n, i) => `${n} ${reply.joints_deg![i].toFixed(0)}°`).join('  ')}</>}
@@ -195,15 +197,15 @@ export default function WalkTab() {
           <div className="ettl-row">{q.text}</div>
           {q.stage === 'hover' ? (
             <div className="ettl-row">
-              <button className="ettl-btn accent big" onClick={() => void answer('')}>✓ Centred &amp; straight</button>
-              <input value={corr} onChange={e => setCorr(e.target.value)} placeholder="x+3 y-2 r+2" style={{ width: 160 }}
+              <Button size="lg" onClick={() => void answer('')}>✓ Centred &amp; straight</Button>
+              <Input size="xs" className="tw:w-auto" value={corr} onChange={e => setCorr(e.target.value)} placeholder="x+3 y-2 r+2" style={{ width: 160 }}
                      onKeyDown={e => { if (e.key === 'Enter') void answer(corr); }} />
-              <button className="ettl-btn" onClick={() => void answer(corr)}>Send correction</button>
+              <Button variant="outline" size="sm" onClick={() => void answer(corr)}>Send correction</Button>
             </div>
           ) : (
             <div className="ettl-row">
-              <button className="ettl-btn accent big" onClick={() => void answer('y')}>✓ Yes</button>
-              <button className="ettl-btn danger big" onClick={() => void answer('n')}>✗ No</button>
+              <Button size="lg" onClick={() => void answer('y')}>✓ Yes</Button>
+              <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold" onClick={() => void answer('n')}>✗ No</Button>
             </div>
           )}
         </div>

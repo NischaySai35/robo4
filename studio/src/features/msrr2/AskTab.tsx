@@ -6,6 +6,8 @@
  * use). Without any model, a keyword reader produces the same JSON. Shapes are ranked by their MEASURED tags and
  * margins; "Plan to this" hands the choice to the Plan tab. The model never outputs joint angles or moves.
  */
+import { Textarea } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { useEffect, useRef, useState } from 'react';
 import { useV2Store } from '@/state/msrrV2Store';
 import { LIBRARY } from '@/robotics/msrr2/library';
@@ -153,20 +155,20 @@ export function AskTab() {
           {busy && <p className="msrr-note dim">thinking…</p>}
           <div ref={endRef} />
         </div>
-        <textarea className="msrr-textarea" data-testid="ask-text" rows={2} value={text}
+        <Textarea className="tw:mb-2" data-testid="ask-text" rows={2} value={text}
           placeholder={history.length ? 'reply… (Enter = send, Shift+Enter = new line)' : 'e.g. make a bridge over a 25 cm gap'}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); } }} />
         <div className="msrr-row-btns">
-          <button className="msrr-btn primary" data-testid="ask-go" disabled={busy || !text.trim()} onClick={() => send()}>{busy ? 'Thinking…' : 'Send'}</button>
-          {busy && <button className="msrr-btn danger" data-testid="ask-stop" onClick={stop}>■ Stop</button>}
-          <button className="msrr-btn" data-testid="ask-retry" disabled={busy || !history.some((h) => h.role === 'user')} onClick={retry} title="ask again from your last message">↻ Retry</button>
-          <button className="msrr-btn ghost" data-testid="ask-new" disabled={!history.length} onClick={restart} title="forget this conversation">New conversation</button>
-          {intent && <button className="msrr-btn small ghost" onClick={() => setShowJson((x) => !x)}>{showJson ? 'hide' : 'show'} goal JSON</button>}
+          <Button size="sm" data-testid="ask-go" disabled={busy || !text.trim()} onClick={() => send()}>{busy ? 'Thinking…' : 'Send'}</Button>
+          {busy && <Button variant="destructive" size="sm" data-testid="ask-stop" onClick={stop}>■ Stop</Button>}
+          <Button variant="outline" size="sm" data-testid="ask-retry" disabled={busy || !history.some((h) => h.role === 'user')} onClick={retry} title="ask again from your last message">↻ Retry</Button>
+          <Button variant="ghost" size="sm" data-testid="ask-new" disabled={!history.length} onClick={restart} title="forget this conversation">New conversation</Button>
+          {intent && <Button variant="ghost" size="xs" onClick={() => setShowJson((x) => !x)}>{showJson ? 'hide' : 'show'} goal JSON</Button>}
         </div>
         {!history.length && (
           <div className="msrr-row-btns" style={{ flexWrap: 'wrap' }}>
-            {EXAMPLES.map((x) => <button key={x} className="msrr-btn small ghost" onClick={() => send(x)}>{x}</button>)}
+            {EXAMPLES.map((x) => <Button variant="ghost" size="xs" key={x} onClick={() => send(x)}>{x}</Button>)}
           </div>
         )}
         {showJson && intent && <pre className="msrr-note" data-testid="ask-intent" style={{ whiteSpace: 'pre-wrap', fontSize: 11 }}>{JSON.stringify(intent, null, 1)}</pre>}
@@ -181,7 +183,7 @@ export function AskTab() {
               <b>{g.name}</b> <span className="msrr-note dim">· fits {(fit * 100).toFixed(0)}% · measured: {g.measured}</span>
               {g.tags && <p className="msrr-note dim">height {g.tags.height_mm} mm · {g.tags.modules} modules · footprint {g.tags.footprint_cm2} cm² · {g.tags.locked}/{g.tags.of} locked</p>}
               {unmet.length > 0 && <p className="msrr-note dim">missing: {unmet.join('; ')}</p>}
-              <button className="msrr-btn small primary" disabled={physBusy} onClick={() => buildShape(g.shape)}>{physBusy ? '…' : 'Build & watch'}</button>
+              <Button size="xs" disabled={physBusy} onClick={() => buildShape(g.shape)}>{physBusy ? '…' : 'Build & watch'}</Button>
             </div>
           ))}
         </Section>
@@ -195,8 +197,8 @@ export function AskTab() {
               {r.unmet.length > 0 && <p className="msrr-note dim">missing: {r.unmet.join('; ')}</p>}
               <MarginChips m={r.entry.margins} />
               <div className="msrr-row-btns">
-                <button className="msrr-btn small" onClick={() => preview(r.entry)}>Show</button>
-                <button className="msrr-btn small primary" data-testid={`ask-plan-${i}`} onClick={() => { setPlanTargetId(r.entry.id); setTab('plan'); }}>Plan to this</button>
+                <Button variant="outline" size="xs" onClick={() => preview(r.entry)}>Show</Button>
+                <Button size="xs" data-testid={`ask-plan-${i}`} onClick={() => { setPlanTargetId(r.entry.id); setTab('plan'); }}>Plan to this</Button>
               </div>
             </div>
           ))}

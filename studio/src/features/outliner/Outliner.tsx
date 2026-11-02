@@ -4,6 +4,7 @@
  * and the Inspector). All edits go through the command bus, so undo/redo "just
  * works" via the buttons here or Ctrl+Z.
  */
+import { Input, NativeSelect } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import './Outliner.css';
 import { useState } from 'react';
@@ -90,11 +91,11 @@ export default function Outliner() {
         : (
           <div className="ol-jointform">
             <label>Segments
-              <input type="number" min={1} max={12} value={macroForm.segments}
+              <Input size="xs" className="tw:max-w-[150px]" type="number" min={1} max={12} value={macroForm.segments}
                 onChange={(e) => setMacroForm({ ...macroForm, segments: +e.target.value })} />
             </label>
             <label>Link length (m)
-              <input type="number" min={0.05} step={0.05} value={macroForm.length}
+              <Input size="xs" className="tw:max-w-[150px]" type="number" min={0.05} step={0.05} value={macroForm.length}
                 onChange={(e) => setMacroForm({ ...macroForm, length: +e.target.value })} />
             </label>
             <div className="ol-jointform-actions">
@@ -110,19 +111,19 @@ export default function Outliner() {
       {jointForm && (
         <div className="ol-jointform">
           <label>Body 1
-            <select value={jointForm.parent} onChange={(e) => setJointForm({ ...jointForm, parent: e.target.value })}>
+            <NativeSelect size="xs" className="tw:flex-1 tw:max-w-[150px]" value={jointForm.parent} onChange={(e) => setJointForm({ ...jointForm, parent: e.target.value })}>
               {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            </NativeSelect>
           </label>
           <label>Body 2
-            <select value={jointForm.child} onChange={(e) => setJointForm({ ...jointForm, child: e.target.value })}>
+            <NativeSelect size="xs" className="tw:flex-1 tw:max-w-[150px]" value={jointForm.child} onChange={(e) => setJointForm({ ...jointForm, child: e.target.value })}>
               {bodies.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            </NativeSelect>
           </label>
           <label>Type
-            <select value={jointForm.type} onChange={(e) => setJointForm({ ...jointForm, type: e.target.value })}>
+            <NativeSelect size="xs" className="tw:flex-1 tw:max-w-[150px]" value={jointForm.type} onChange={(e) => setJointForm({ ...jointForm, type: e.target.value })}>
               {Object.values(JointType).map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
+            </NativeSelect>
           </label>
           <div className="ol-jointform-actions">
             <Button size="sm" disabled={jointForm.parent === jointForm.child} onClick={createJoint}>Create</Button>

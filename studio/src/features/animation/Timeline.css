@@ -28,11 +28,7 @@
 
 .tl-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .tl-dur { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-dim); }
-.tl-dur input {
-  width: 60px; padding: 4px 6px;
-  border: 1px solid var(--border); border-radius: 5px;
-  background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 11px;
-}
+.tl-dur input { width: 60px; }
 
 .tl-keys { display: flex; flex-wrap: wrap; gap: 4px; }
 .tl-keychip {
@@ -43,13 +39,6 @@
 .tl-hint { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
 
 /* tabs */
-.tl-tabs { display: flex; gap: 2px; }
-.tl-tabs button {
-  flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 600;
-  background: transparent; color: var(--text-dim); border: none;
-  border-bottom: 2px solid transparent; cursor: pointer;
-}
-.tl-tabs button.active { color: var(--text-bright); border-bottom-color: var(--accent); }
 .tl-body { display: flex; flex-direction: column; gap: 8px; }
 
 .tl-section { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); margin-top: 4px; }
@@ -170,12 +159,7 @@
   display: flex; align-items: center; gap: 3px;
   font-size: 10.5px; color: var(--text-dim); flex-shrink: 0;
 }
-.tl-entry-delay input {
-  width: 44px; padding: 2px 5px;
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;
-  color: var(--text); font-family: var(--font-mono); font-size: 11px; text-align: right;
-}
-.tl-entry-delay input:focus { outline: none; border-color: var(--accent); }
+.tl-entry-delay input { width: 44px; text-align: right; }
 
 .tl-entry-remove {
   width: 18px; height: 18px; padding: 0; font-size: 10px;
@@ -195,19 +179,13 @@
 /* settings */
 .tl-settings { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .tl-settings label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--text-dim); }
-.tl-settings input[type="number"] { width: 64px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 5px; background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 12px; }
+.tl-settings input[type="number"] { width: 64px; }
 .tl-snap { flex-direction: row !important; align-items: center; gap: 6px !important; cursor: pointer; }
 .tl-row2 { display: flex; justify-content: space-between; font-size: 12px; width: 100%; }
 .tl-row2 strong { font-family: var(--font-mono); color: var(--text); }
 
 /* Render tab extras */
 .tl-field { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--text-dim); width: 100%; }
-.tl-input {
-  width: 100%; padding: 5px 7px; border: 1px solid var(--border); border-radius: 6px;
-  background: var(--bg); color: var(--text); font-family: var(--font-mono); font-size: 12px;
-  box-sizing: border-box;
-}
-.tl-input:focus { outline: none; border-color: var(--accent); }
 .tl-field-row { display: flex; gap: 8px; }
 .tl-field-row .tl-field { flex: 1; }
 

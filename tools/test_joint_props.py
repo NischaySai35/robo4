@@ -46,6 +46,14 @@ async def main():
         await pg.evaluate('document.activeElement.blur()')
         await pg.keyboard.press('Control+z'); await pg.wait_for_timeout(1200)
         check('undo takes the mass back', abs(await pg.evaluate(mass) - m0) < 1e-9)
+        comp = "async () => Object.values((await import('/src/state/modelStore.ts')).useModelStore.getState().doc.components)[0].name"
+        c0 = await pg.evaluate(comp)
+        r = await pg.evaluate("async (n) => window.tetrobotOps.run('entity.set', { kind: 'component', name: n, path: 'name', value: 'Left arm' })", c0); await pg.wait_for_timeout(400)
+        check('a script renames a module, and the tree shows it', r['ok'] and await pg.locator('.left-panel', has_text='Left arm').count() > 0, str(r)[:80])
+        await pg.evaluate('document.activeElement.blur()'); await pg.keyboard.press('Control+z'); await pg.wait_for_timeout(500)
+        check('undo restores the old name', await pg.evaluate(comp) == c0)
+        r = await pg.evaluate("window.tetrobotOps.run('entity.set', { kind: 'body', name: 'Spine1_B1B2', path: 'name', value: 'EndA_LockModule' })")
+        check('a name already used is refused', not r['ok'] and 'already called' in r['error'], r.get('error', '')[:80])
         await pg.wait_for_timeout(1500)
         await pg.evaluate('document.activeElement.blur()')  # out of the number box, as a user clicking the view
         await pg.keyboard.press('Control+z'); await pg.wait_for_timeout(1500)

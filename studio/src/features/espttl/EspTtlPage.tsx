@@ -6,6 +6,9 @@
  * the pose timeline, which only exists here because it needs memory the board does not
  * have. The board stays a thin executor; the thinking is on this side of the wire.
  */
+import { Input, NativeSelect } from '@/components/ui/input';
+import { TabBar } from '@/components/ui/tab-bar';
+import { Button } from '@/components/ui/button';
 import React, { useEffect, useRef, useState } from 'react';
 import { speak } from '@/features/voice/speech';
 import {
@@ -37,13 +40,13 @@ export default function EspTtlPage() {
   useEffect(() => { setDraftUrl(url); }, [url]);
 
   return (
-    <div className="ettl">
+    <div className="ettl" data-ui="a">
       <header className="ettl-head">
         <span className="ettl-title">ESP-TTL</span>
         <span className={`ettl-dot ${online ? 'on' : 'off'}`} />
         <span className="ettl-dim">{online ? 'connected' : (lastError || 'offline')}</span>
-        <input
-          className="ettl-url" value={draftUrl}
+        <Input size="xs" className="tw:w-[190px]"
+          value={draftUrl}
           onChange={e => setDraftUrl(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') setUrl(draftUrl); }}
           onBlur={() => draftUrl !== url && setUrl(draftUrl)}
@@ -61,15 +64,11 @@ export default function EspTtlPage() {
               ±{(tel as any).deadbandDeg}° band</span>}
         </>}
         <span style={{ flex: 1 }} />
-        <button className="ettl-btn danger big"
-                onClick={() => ttlTry('/api/command?servo=all&cmd=estop')}>E-STOP</button>
+        <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold"
+                onClick={() => ttlTry('/api/command?servo=all&cmd=estop')}>E-STOP</Button>
       </header>
 
-      <nav className="ettl-tabs">
-        {TABS.map(t => (
-          <button key={t.id} className={tab === t.id ? 'sel' : ''} onClick={() => setTab(t.id)}>{t.label}</button>
-        ))}
-      </nav>
+      <TabBar value={tab} onChange={setTab} tabs={TABS.map((t) => ({ id: t.id, label: t.label }))} />
 
       <div className="ettl-body">
         {tab === 'control'   && <ControlTab />}
@@ -116,28 +115,28 @@ function ControlTab() {
       <div className="ettl-card">
         <h4>All joints</h4>
         <div className="ettl-row">
-          <label className="ettl-lbl">speed<input type="number" min={1} max={10} value={speed}
+          <label className="ettl-lbl">speed<Input size="xs" className="tw:w-auto" type="number" min={1} max={10} value={speed}
                  onChange={e => setSpeed(+e.target.value)} style={{ width: 60 }} /></label>
-          <label className="ettl-lbl">acc<input type="number" min={1} max={100} value={acc}
+          <label className="ettl-lbl">acc<Input size="xs" className="tw:w-auto" type="number" min={1} max={100} value={acc}
                  onChange={e => setAcc(+e.target.value)} style={{ width: 60 }} /></label>
           <span className="ettl-sep" />
-          <button className="ettl-btn" onClick={() => call('/api/torque?on=1', 'torque on')}>Torque ON</button>
-          <button className="ettl-btn" onClick={() => call('/api/torque?on=0', 'torque off')}>Torque OFF (limp)</button>
-          <button className="ettl-btn" onClick={() => call('/api/home', 'home 180')}>Home → 180°</button>
-          <button className="ettl-btn accent" onClick={() => call('/api/home/manual', 'manual home')}>Manual home</button>
-          <button className="ettl-btn" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</button>
-          <button className="ettl-btn" onClick={() => call('/api/servo/tune', 're-tune')}>Re-tune hold</button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=1', 'torque on')}>Torque ON</Button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=0', 'torque off')}>Torque OFF (limp)</Button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/home', 'home 180')}>Home → 180°</Button>
+          <Button size="sm" onClick={() => call('/api/home/manual', 'manual home')}>Manual home</Button>
+          <Button variant="outline" size="sm" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</Button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/servo/tune', 're-tune')}>Re-tune hold</Button>
         </div>
         <div className="ettl-row">
           <label className="ettl-lbl" title="Error smaller than this is ignored by the servo — it stops correcting inside the band">
             hold freedom ±
-            <input type="number" min={0} max={17} step={0.1} value={band}
+            <Input size="xs" className="tw:w-auto" type="number" min={0} max={17} step={0.1} value={band}
                    onChange={e => setBand(e.target.value)} style={{ width: 70 }} />°
           </label>
-          <button className="ettl-btn accent" onClick={async () => {
+          <Button size="sm" onClick={async () => {
             const r = await call(`/api/servo/deadband?deg=${band}`, 'hold freedom');
             if (r.ok && r.data?.deg) setBand(String(r.data.deg));
-          }}>Apply to all servos</button>
+          }}>Apply to all servos</Button>
           <span className="ettl-dim">
             now ±{deadband}° · tighter holds more precisely but can hunt and heat; wider lets the joint sag
           </span>
@@ -172,13 +171,13 @@ function ControlTab() {
                   <td style={{ color: (s.tempC ?? 0) > 55 ? 'var(--danger)' : undefined }}>{s.tempC ?? '—'}</td>
                   <td>{s.mode}{s.torque ? '' : ' /off'}</td>
                   <td className="l">
-                    <button className="ettl-btn tiny" onClick={() => call(`/api/servo/home?id=${s.id}&to180=1`, '180')}>180</button>
-                    <button className="ettl-btn tiny" onClick={() => call(`/api/servo/home?id=${s.id}`, 'home')}>
+                    <Button variant="outline" size="xs" onClick={() => call(`/api/servo/home?id=${s.id}&to180=1`, '180')}>180</Button>
+                    <Button variant="outline" size="xs" onClick={() => call(`/api/servo/home?id=${s.id}`, 'home')}>
                       home {s.home != null ? `${(+s.home).toFixed(0)}°` : ''}
-                    </button>
-                    <button className="ettl-btn tiny" onClick={() => call(`/api/home/set?id=${s.id}`, 'set home')}>set</button>
-                    <button className="ettl-btn tiny" onClick={() => call(`/api/identify?id=${s.id}`, 'identify')}>identify</button>
-                    <button className="ettl-btn tiny danger" onClick={() => call(`/api/command?servo=${s.id}&cmd=stop`, 'stop')}>stop</button>
+                    </Button>
+                    <Button variant="outline" size="xs" onClick={() => call(`/api/home/set?id=${s.id}`, 'set home')}>set</Button>
+                    <Button variant="outline" size="xs" onClick={() => call(`/api/identify?id=${s.id}`, 'identify')}>identify</Button>
+                    <Button variant="destructive" size="xs" onClick={() => call(`/api/command?servo=${s.id}&cmd=stop`, 'stop')}>stop</Button>
                   </td>
                 </tr>
               ))}
@@ -256,7 +255,7 @@ function AngleCell(props: { s: TtlServo; onCommit: (v: number) => void }) {
 
   return (
     <div className="ettl-angle">
-      <button className="ettl-btn step" onClick={() => step(-1)} title="one degree down">−</button>
+      <Button variant="outline" size="sm" onClick={() => step(-1)} title="one degree down">−</Button>
       <input className="ettl-slider" type="range" min={s.min} max={s.max} step={0.5}
              value={shown}
              onPointerDown={() => { setDraft(live); setDragging(true); }}
@@ -264,8 +263,8 @@ function AngleCell(props: { s: TtlServo; onCommit: (v: number) => void }) {
              onMouseUp={e => release(+(e.target as HTMLInputElement).value)}
              onTouchEnd={e => release(+(e.target as HTMLInputElement).value)}
              onBlur={() => setDragging(false)} />
-      <button className="ettl-btn step" onClick={() => step(1)} title="one degree up">+</button>
-      <input className="ettl-num" type="number" step={0.5} min={s.min} max={s.max}
+      <Button variant="outline" size="sm" onClick={() => step(1)} title="one degree up">+</Button>
+      <Input size="xs" className="tw:w-[78px] tw:flex-none tw:text-right tw:tabular-nums" type="number" step={0.5} min={s.min} max={s.max}
              value={typed ?? shown.toFixed(1)}
              onChange={e => setTyped(e.target.value)}
              onKeyDown={e => { if (e.key === 'Enter') { commitTyped(); (e.target as HTMLInputElement).blur(); } }}
@@ -324,11 +323,11 @@ function ToolsTab() {
       <div className="ettl-card">
         <h4>Detect servos on the bus</h4>
         <div className="ettl-row">
-          <button className="ettl-btn accent" onClick={() => detect(false)} disabled={scanning}>
+          <Button size="sm" onClick={() => detect(false)} disabled={scanning}>
             {scanning ? `Detecting… id ${at}/253` : 'Detect (read-only)'}
-          </button>
-          <button className="ettl-btn" onClick={() => detect(true)} disabled={scanning}
-                  title="Scan and adopt the result as the board's servo list">Scan &amp; adopt</button>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => detect(true)} disabled={scanning}
+                  title="Scan and adopt the result as the board's servo list">Scan &amp; adopt</Button>
           <span className="ettl-sep" />
           <div className="ettl-leds">
             {scanning && <span className="ettl-led busy"><i />scanning</span>}
@@ -340,9 +339,9 @@ function ToolsTab() {
           <div className="ettl-warn">
             {found.length} servos answered. The write is addressed to one ID, so it is safe when
             IDs are unique — press Continue to type the old and new ID yourself.
-            <button className="ettl-btn" style={{ marginLeft: 10 }} onClick={() => { setManual(true); setOldId(String(found[0].id)); }}>
+            <Button variant="outline" size="sm" style={{ marginLeft: 10 }} onClick={() => { setManual(true); setOldId(String(found[0].id)); }}>
               Continue anyway
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -351,15 +350,15 @@ function ToolsTab() {
         <h4>Change a servo ID</h4>
         <div className="ettl-row">
           <label className="ettl-lbl">current ID
-            <input value={oldId} onChange={e => setOldId(e.target.value)}
+            <Input size="xs" className="tw:w-auto" value={oldId} onChange={e => setOldId(e.target.value)}
                    disabled={!(one || manual)} style={{ width: 70 }} placeholder="—" />
           </label>
           <label className="ettl-lbl">new ID
-            <input type="number" min={1} max={253} value={newId}
+            <Input size="xs" className="tw:w-auto" type="number" min={1} max={253} value={newId}
                    onChange={e => setNewId(e.target.value)}
                    disabled={!(one || manual)} style={{ width: 70 }} />
           </label>
-          <button className="ettl-btn accent" onClick={writeId} disabled={!(one || manual) || !oldId}>Send</button>
+          <Button size="sm" onClick={writeId} disabled={!(one || manual) || !oldId}>Send</Button>
         </div>
         <p className="ettl-hint">
           Detect first — Send unlocks only after it. A single servo fills the old ID in for you;
@@ -371,41 +370,41 @@ function ToolsTab() {
       <div className="ettl-card">
         <h4>Calibration</h4>
         <div className="ettl-row">
-          <label className="ettl-lbl">id<input id="calid" defaultValue="1" style={{ width: 60 }} /></label>
-          <button className="ettl-btn" onClick={() => call(
+          <label className="ettl-lbl">id<Input size="xs" className="tw:w-auto" id="calid" defaultValue="1" style={{ width: 60 }} /></label>
+          <Button variant="outline" size="sm" onClick={() => call(
             `/api/servo/center?id=${(document.getElementById('calid') as HTMLInputElement)?.value}`, 'centre')}>
             Set current position = centre
-          </button>
-          <button className="ettl-btn" onClick={() => call(
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => call(
             `/api/identify?id=${(document.getElementById('calid') as HTMLInputElement)?.value}`, 'identify')}>
             Identify (wiggle)
-          </button>
+          </Button>
         </div>
       </div>
 
       <div className="ettl-card">
         <h4>Raw register peek / poke</h4>
         <div className="ettl-row">
-          <label className="ettl-lbl">id<input value={reg.id} onChange={e => setReg({ ...reg, id: e.target.value })} style={{ width: 55 }} /></label>
-          <label className="ettl-lbl">addr<input value={reg.addr} onChange={e => setReg({ ...reg, addr: e.target.value })} style={{ width: 60 }} /></label>
+          <label className="ettl-lbl">id<Input size="xs" className="tw:w-auto" value={reg.id} onChange={e => setReg({ ...reg, id: e.target.value })} style={{ width: 55 }} /></label>
+          <label className="ettl-lbl">addr<Input size="xs" className="tw:w-auto" value={reg.addr} onChange={e => setReg({ ...reg, addr: e.target.value })} style={{ width: 60 }} /></label>
           <label className="ettl-lbl">width
-            <select value={reg.len} onChange={e => setReg({ ...reg, len: e.target.value })}>
+            <NativeSelect size="xs" className="tw:w-auto" value={reg.len} onChange={e => setReg({ ...reg, len: e.target.value })}>
               <option value="1">byte</option><option value="2">word</option>
-            </select>
+            </NativeSelect>
           </label>
-          <button className="ettl-btn" onClick={async () => {
+          <Button variant="outline" size="sm" onClick={async () => {
             const r = await ttlTry(`/api/servo/read?id=${reg.id}&addr=${reg.addr}&len=${reg.len}`);
             setRegOut(JSON.stringify(r.data ?? r.error, null, 1));
-          }}>Read</button>
-          <label className="ettl-lbl">value<input value={reg.val} onChange={e => setReg({ ...reg, val: e.target.value })} style={{ width: 70 }} /></label>
+          }}>Read</Button>
+          <label className="ettl-lbl">value<Input size="xs" className="tw:w-auto" value={reg.val} onChange={e => setReg({ ...reg, val: e.target.value })} style={{ width: 70 }} /></label>
           <label className="ettl-toggle">
             <input type="checkbox" checked={reg.unlock} onChange={e => setReg({ ...reg, unlock: e.target.checked })} />
             <span />unlock EPROM
           </label>
-          <button className="ettl-btn danger" onClick={async () => {
+          <Button variant="destructive" size="sm" onClick={async () => {
             const r = await ttlTry(`/api/servo/write?id=${reg.id}&addr=${reg.addr}&len=${reg.len}&val=${reg.val}&unlock=${reg.unlock ? 1 : 0}`);
             setRegOut(JSON.stringify(r.data ?? r.error, null, 1));
-          }}>Write</button>
+          }}>Write</Button>
         </div>
         <pre className="ettl-pre">{regOut || '—'}</pre>
         <p className="ettl-hint">
@@ -445,8 +444,8 @@ function ConfigTab() {
       <div className="ettl-card">
         <h4>Identity &amp; bus</h4>
         <div className="ettl-row">
-          <label className="ettl-lbl">mDNS host<input value={cfg.host} onChange={e => setCfg({ ...cfg, host: e.target.value })} style={{ width: 120 }} /></label>
-          <label className="ettl-lbl">bus baud<input type="number" value={cfg.baud} onChange={e => setCfg({ ...cfg, baud: +e.target.value })} style={{ width: 110 }} /></label>
+          <label className="ettl-lbl">mDNS host<Input size="xs" className="tw:w-auto" value={cfg.host} onChange={e => setCfg({ ...cfg, host: e.target.value })} style={{ width: 120 }} /></label>
+          <label className="ettl-lbl">bus baud<Input size="xs" className="tw:w-auto" type="number" value={cfg.baud} onChange={e => setCfg({ ...cfg, baud: +e.target.value })} style={{ width: 110 }} /></label>
 
         </div>
       </div>
@@ -457,20 +456,20 @@ function ConfigTab() {
           <tbody>
             {(cfg.servos || []).map((s: any, i: number) => (
               <tr key={i}>
-                <td><input type="number" value={s.id} onChange={e => patch(i, 'id', +e.target.value)} style={{ width: 60 }} /></td>
-                <td className="l"><input value={s.label} onChange={e => patch(i, 'label', e.target.value)} style={{ width: 90 }} /></td>
-                <td><input type="number" value={s.min} onChange={e => patch(i, 'min', +e.target.value)} style={{ width: 70 }} /></td>
-                <td><input type="number" value={s.max} onChange={e => patch(i, 'max', +e.target.value)} style={{ width: 70 }} /></td>
-                <td><button className="ettl-btn tiny danger"
-                    onClick={() => setCfg({ ...cfg, servos: cfg.servos.filter((_: any, k: number) => k !== i) })}>✕</button></td>
+                <td><Input size="xs" className="tw:w-auto" type="number" value={s.id} onChange={e => patch(i, 'id', +e.target.value)} style={{ width: 60 }} /></td>
+                <td className="l"><Input size="xs" className="tw:w-auto" value={s.label} onChange={e => patch(i, 'label', e.target.value)} style={{ width: 90 }} /></td>
+                <td><Input size="xs" className="tw:w-auto" type="number" value={s.min} onChange={e => patch(i, 'min', +e.target.value)} style={{ width: 70 }} /></td>
+                <td><Input size="xs" className="tw:w-auto" type="number" value={s.max} onChange={e => patch(i, 'max', +e.target.value)} style={{ width: 70 }} /></td>
+                <td><Button variant="destructive" size="xs"
+                    onClick={() => setCfg({ ...cfg, servos: cfg.servos.filter((_: any, k: number) => k !== i) })}>✕</Button></td>
               </tr>
             ))}
           </tbody>
         </table>
         <div className="ettl-row">
-          <button className="ettl-btn" onClick={() => setCfg({ ...cfg, servos: [...cfg.servos, { id: 1, label: 'J?', min: 0, max: 360 }] })}>+ add</button>
-          <button className="ettl-btn accent" onClick={save}>Save to board (NVS)</button>
-          <button className="ettl-btn" onClick={() => call('/api/reboot', 'reboot')}>Reboot board</button>
+          <Button variant="outline" size="sm" onClick={() => setCfg({ ...cfg, servos: [...cfg.servos, { id: 1, label: 'J?', min: 0, max: 360 }] })}>+ add</Button>
+          <Button size="sm" onClick={save}>Save to board (NVS)</Button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/reboot', 'reboot')}>Reboot board</Button>
         </div>
       </div>
       {msg && <div className="ettl-toast">{msg}</div>}
@@ -495,37 +494,37 @@ function WifiTab() {
         {(w?.slots ?? ['', '', '']).map((_: string, i: number) => (
           <div className="ettl-row" key={i}>
             <span className="ettl-lbl">slot {i}</span>
-            <input value={ssid[i] ?? ''} placeholder="ssid" onChange={e => setSsid({ ...ssid, [i]: e.target.value })} style={{ width: 170 }} />
-            <input type="password" placeholder="password (blank = keep)" value={pw[i] ?? ''}
+            <Input size="xs" className="tw:w-auto" value={ssid[i] ?? ''} placeholder="ssid" onChange={e => setSsid({ ...ssid, [i]: e.target.value })} style={{ width: 170 }} />
+            <Input size="xs" className="tw:w-auto" type="password" placeholder="password (blank = keep)" value={pw[i] ?? ''}
                    onChange={e => setPw({ ...pw, [i]: e.target.value })} style={{ width: 190 }} />
-            <button className="ettl-btn accent" onClick={async () => {
+            <Button size="sm" onClick={async () => {
               await call(`/api/wifi/set?slot=${i}&ssid=${encodeURIComponent(ssid[i] || '')}&pass=${encodeURIComponent(pw[i] || '')}`, 'saved');
               setPw({ ...pw, [i]: '' }); void load();
-            }}>Save</button>
-            <button className="ettl-btn danger" onClick={async () => {
+            }}>Save</Button>
+            <Button variant="destructive" size="sm" onClick={async () => {
               await call(`/api/wifi/set?slot=${i}&ssid=&pass=&force=1`, 'cleared'); void load();
-            }}>Clear</button>
+            }}>Clear</Button>
           </div>
         ))}
         <div className="ettl-row">
-          <button className="ettl-btn" onClick={() => call('/api/wifi/reconnect', 'reconnect')}>Reconnect now</button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/wifi/reconnect', 'reconnect')}>Reconnect now</Button>
           <span className="ettl-dim">{w ? `${w.drops} drops · AP ${w.apUp ? 'up' : 'down'} (${w.apName})` : ''}</span>
         </div>
       </div>
       <div className="ettl-card">
         <h4>Nearby networks</h4>
         <div className="ettl-row">
-          <button className="ettl-btn" onClick={async () => {
+          <Button variant="outline" size="sm" onClick={async () => {
             setNets(null); const r = await ttlTry('/api/wifi/scan', 15000);
             if (r.ok) setNets(r.data.nets); else say('scan failed: ' + r.error);
-          }}>Scan</button>
+          }}>Scan</Button>
         </div>
         {nets && (
           <table className="ettl-table">
             <thead><tr><th className="l">ssid</th><th>rssi</th><th>ch</th><th /></tr></thead>
             <tbody>{nets.map((n, i) => (
               <tr key={i}><td className="l">{n.ssid}</td><td>{n.rssi}</td><td>{n.ch}</td>
-                <td><button className="ettl-btn tiny" onClick={() => setSsid({ ...ssid, 0: n.ssid })}>use in slot 0</button></td></tr>
+                <td><Button variant="outline" size="xs" onClick={() => setSsid({ ...ssid, 0: n.ssid })}>use in slot 0</Button></td></tr>
             ))}</tbody>
           </table>
         )}
@@ -578,7 +577,7 @@ function OtaTab() {
       </div>
       <div className="ettl-row">
         <input type="file" accept=".bin" ref={fileRef} />
-        <button className="ettl-btn accent" onClick={upload} disabled={space === 0}>Upload &amp; reboot</button>
+        <Button size="sm" onClick={upload} disabled={space === 0}>Upload &amp; reboot</Button>
       </div>
       <div className="ettl-bar"><i style={{ width: `${pct}%` }} /></div>
       <div className={err ? 'ettl-warnline' : 'ettl-dim'}>{stat}</div>
@@ -608,7 +607,7 @@ function LogTab() {
     <div className="ettl-card">
       <h4>Device log</h4>
       <div className="ettl-row">
-        <button className="ettl-btn" onClick={load}>Refresh</button>
+        <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
         <label className="ettl-toggle"><input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /><span />auto</label>
       </div>
       <pre className="ettl-pre tall">{txt || '—'}</pre>

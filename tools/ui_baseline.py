@@ -74,7 +74,7 @@ async def main(out, only):
         if not only or 'msrr' in only:
             await go(pg, 'MSRR Experiments'); await pg.wait_for_timeout(1500)
             for t in MSRR_TABS:
-                await pg.locator('.msrr-tab', has_text=t).first.click(); await pg.wait_for_timeout(500)
+                await pg.get_by_role('tab', name=t, exact=True).first.click(); await pg.wait_for_timeout(500)
                 report['pages']['msrr_' + t.lower()] = await probe(pg, logs, out, 'msrr_' + t.lower())
         if not only or 'roundtrip' in only:
             report['roundtrip'] = await roundtrip(pg, logs, out, report)

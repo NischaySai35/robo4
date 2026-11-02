@@ -158,21 +158,7 @@
 .an-rigid-btn--on { border-color: var(--accent); color: var(--accent); background: var(--accent-glow); }
 /* Grounding controls (Analysis) — proper text pills, not the 26px icon squares. */
 .an-ground-hdr { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.an-ground-seg { display: flex; border: 1px solid var(--border); border-radius: 7px; overflow: hidden; flex-shrink: 0; }
-.an-ground-seg button {
-  padding: 4px 13px; font-size: 12px; font-weight: 600; letter-spacing: 0.02em;
-  background: transparent; border: none; color: var(--text-dim); cursor: pointer;
-}
-.an-ground-seg button + button { border-left: 1px solid var(--border); }
-.an-ground-seg button:hover { color: var(--accent); }
-.an-ground-seg button.on { background: var(--accent); color: #fff; }
 .an-ground-row { display: flex; align-items: center; gap: 8px; }
-.an-ground-btn {
-  padding: 5px 11px; font-size: 12px; font-weight: 600; white-space: nowrap; flex-shrink: 0;
-  background: transparent; border: 1px solid var(--border); border-radius: 7px; color: var(--text-dim); cursor: pointer;
-}
-.an-ground-btn:hover { border-color: var(--accent); color: var(--accent); }
-.an-ground-btn.on { background: var(--accent-glow); border-color: var(--accent); color: var(--accent); }
 .an-ground-base { font-size: 11.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-ground-base strong { color: var(--text-bright); font-weight: 700; }
 
@@ -193,11 +179,6 @@
 .an-chart { display: flex; flex-direction: column; gap: 8px; }
 .an-chart-head { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .an-chart-title { font-size: 12px; font-weight: 600; color: var(--text-bright); letter-spacing: 0.01em; }
-.an-chart-head select {
-  background: var(--bg-card); color: var(--text); border: 1px solid var(--border);
-  border-radius: 999px; font-size: 11px; font-weight: 600; padding: 3px 9px; cursor: pointer;
-}
-.an-chart-head select:hover { border-color: var(--accent); }
 .an-chart-wrap {
   position: relative; width: 100%;
   border: 1px solid var(--border); border-radius: 10px;

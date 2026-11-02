@@ -9,10 +9,6 @@
 .auto-row strong.bad { color: var(--danger); }
 .auto-hint { font-size: 11px; color: var(--text-dim); line-height: 1.4; }
 .auto-btns { display: flex; gap: 6px; }
-.auto-btns select {
-  flex: 1; padding: 6px 8px; font-size: 11px; cursor: pointer;
-  background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px;
-}
 .auto-bar { height: 6px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; margin-top: 2px; }
 .auto-bar-fill { height: 100%; background: var(--accent); transition: width 0.1s linear; }
 .auto-log { font-size: 11px; color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; line-height: 1.4; }

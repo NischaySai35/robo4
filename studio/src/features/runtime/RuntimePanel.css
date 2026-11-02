@@ -1,12 +1,5 @@
 .rt-panel { display: flex; flex-direction: column; height: 100%; font-family: var(--font-ui); color: var(--text); }
 
-.rt-tabs { display: flex; gap: 2px; padding: 6px 6px 0; flex-shrink: 0; }
-.rt-tabs button {
-  flex: 1; padding: 6px 4px; font-size: 12px; font-weight: 600;
-  background: transparent; color: var(--text-dim); border: none;
-  border-bottom: 2px solid transparent; cursor: pointer;
-}
-.rt-tabs button.active { color: var(--text-bright); border-bottom-color: var(--accent); }
 
 .rt-body { flex: 1; min-height: 0; overflow: auto; padding: 8px; }
 .rt-empty { color: var(--text-dim); font-size: 12px; padding: 12px 4px; }
@@ -70,6 +63,5 @@
 .rt-player-head { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-bottom: 8px; }
 .rt-transport { display: flex; align-items: center; gap: 8px; }
 .rt-scrub { flex: 1; }
-.rt-rate { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 5px; padding: 2px 4px; font-size: 12px; }
 .rt-clock { margin-top: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
 .rt-hint { font-size: 12px; color: var(--text-dim); line-height: 1.5; }

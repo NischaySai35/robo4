@@ -5,6 +5,7 @@
  * checker on that exact pose. "Show" draws it with the check overlay; "Use as robot"
  * makes it the current robot (the Plan tab plans FROM the current robot).
  */
+import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import { useV2Store } from '@/state/msrrV2Store';
 import { type ShapeEntry, type Config, type CapabilityTag } from '@/robotics/msrr2/model';
@@ -62,8 +63,8 @@ function Card({ e }: { e: ShapeEntry }) {
       <MarginChips m={e.margins} ok={pass} />
       {e.notes && <p className="msrr-note dim" style={{ margin: '2px 0' }}>{e.notes}</p>}
       <div className="msrr-row-btns">
-        <button className="msrr-btn small" data-testid={`show-${e.id}`} onClick={() => { show(entryConfig(e), true); pushLog(`showing ${e.name}`); }}>Show</button>
-        <button className="msrr-btn small" onClick={() => { setConfig(entryConfig(e)); pushLog(`robot is now: ${e.name}`); }}>Use as robot</button>
+        <Button variant="outline" size="xs" data-testid={`show-${e.id}`} onClick={() => { show(entryConfig(e), true); pushLog(`showing ${e.name}`); }}>Show</Button>
+        <Button variant="outline" size="xs" onClick={() => { setConfig(entryConfig(e)); pushLog(`robot is now: ${e.name}`); }}>Use as robot</Button>
       </div>
     </div>
   );
@@ -75,8 +76,8 @@ export function ShapesTab() {
     <>
       <PhysicsShapes />
       <div className="msrr-row-btns" style={{ margin: '6px 10px' }}>
-        <button className={`msrr-btn small ${which === 'library' ? 'primary' : ''}`} onClick={() => setWhich('library')}>Library ({LIBRARY.length})</button>
-        <button className={`msrr-btn small ${which === 'topo' ? 'primary' : ''}`} data-testid="topo-gallery" onClick={() => setWhich('topo')}>All 2-module topologies ({TOPOLOGY_GALLERY_N2.length})</button>
+        <Button size="xs" variant={which === 'library' ? 'default' : 'outline'} onClick={() => setWhich('library')}>Library ({LIBRARY.length})</Button>
+        <Button size="xs" variant={which === 'topo' ? 'default' : 'outline'} data-testid="topo-gallery" onClick={() => setWhich('topo')}>All 2-module topologies ({TOPOLOGY_GALLERY_N2.length})</Button>
       </div>
       {which === 'library' ? (
         <Section title="Shape library" info={
@@ -123,7 +124,7 @@ export function PhysicsShapes() {
   const best = (k: string) => (list ?? []).filter((x) => x.kind === k && x.clear !== false).slice(0, 3);
   return (
     <Section title="Built in physics (G6)" info={<p className="msrr-note">Upright modules on the floor-receiver board, each walker docking its End B into the centre module's spine receivers, only at placements the reach sweep found good. "Build &amp; watch" runs the robot's own docking brain in MuJoCo (magnets, rotors, servos, random errors) and plays it. Takes 1–8 minutes.</p>}>
-      {!list && <button className="msrr-btn small" data-testid="phys-shapes-load" onClick={load}>Load shapes</button>}
+      {!list && <Button variant="outline" size="xs" data-testid="phys-shapes-load" onClick={load}>Load shapes</Button>}
       {err && <p className="msrr-note bad">{err}</p>}
       {list && (
         <div data-testid="phys-transform">
@@ -132,9 +133,9 @@ export function PhysicsShapes() {
             receiver play, every magnet different; estimates).</p>
           {GALLERY.map((g) => (
             <div key={g.name} className="msrr-row-btns" style={{ alignItems: 'center' }}>
-              <button className="msrr-btn small primary" data-testid={`tf-watch-${g.name}`} disabled={busy} onClick={async () => setTf(await watchTransform(g.seed, g.name))}>{busy ? '…' : 'Watch'}</button>
-              {'live' in g && g.live && <button className="msrr-btn small" data-testid={`tf-live-${g.name}`} disabled={busy} title="do it now, live in real physics (same setup, the robot's own skill) - then step back / home / reset below"
-                onClick={async () => { await manualStart(manualScene(g.live.n, g.live.preset), { seed: g.seed, randomize: true, disturb: true, judge: 'off' }); manualCmd({ kind: 'skill', name: g.live.skill }); }}>▶ Live</button>}
+              <Button size="xs" data-testid={`tf-watch-${g.name}`} disabled={busy} onClick={async () => setTf(await watchTransform(g.seed, g.name))}>{busy ? '…' : 'Watch'}</Button>
+              {'live' in g && g.live && <Button variant="outline" size="xs" data-testid={`tf-live-${g.name}`} disabled={busy} title="do it now, live in real physics (same setup, the robot's own skill) - then step back / home / reset below"
+                onClick={async () => { await manualStart(manualScene(g.live.n, g.live.preset), { seed: g.seed, randomize: true, disturb: true, judge: 'off' }); manualCmd({ kind: 'skill', name: g.live.skill }); }}>▶ Live</Button>}
               <span className="msrr-note"><b>{g.title}</b> <span className="dim">· {g.note}</span></span>
             </div>
           ))}
@@ -149,7 +150,7 @@ export function PhysicsShapes() {
           <p className="msrr-note"><b>Grown shapes</b> — built module by module; each new module docks into a free spine receiver of the structure (physics-chosen)</p>
           {grown.map((g, gi) => (
             <div key={gi} className="msrr-row-btns" style={{ alignItems: 'center' }}>
-              <button className="msrr-btn small primary" data-testid={`phys-grown-${gi}`} disabled={busy} onClick={() => buildShape(g.shape)}>{busy ? '…' : 'Build & watch'}</button>
+              <Button size="xs" data-testid={`phys-grown-${gi}`} disabled={busy} onClick={() => buildShape(g.shape)}>{busy ? '…' : 'Build & watch'}</Button>
               <span className="msrr-note"><b>{g.name}</b> <span className="dim">· measured: {g.measured}</span></span>
             </div>
           ))}
@@ -160,7 +161,7 @@ export function PhysicsShapes() {
           <p className="msrr-note"><b>{k === 'star2' ? '3 modules' : k === 'star3' ? '4 modules' : '5 modules'}</b>: {k.slice(-1)} walkers dock into one upright module</p>
           {best(k).map((x) => (
             <div key={x.index} className="msrr-row-btns" style={{ alignItems: 'center' }}>
-              <button className="msrr-btn small" data-testid={`phys-build-${x.index}`} disabled={busy} onClick={async () => { const r = await buildShape(x.index); if (r) setResults((o) => ({ ...o, [x.index]: r })); }}>{busy ? '…' : 'Build & watch'}</button>
+              <Button variant="outline" size="xs" data-testid={`phys-build-${x.index}`} disabled={busy} onClick={async () => { const r = await buildShape(x.index); if (r) setResults((o) => ({ ...o, [x.index]: r })); }}>{busy ? '…' : 'Build & watch'}</Button>
               <span className="msrr-note dim">#{x.index} · root spot {x.root} · worst twist {x.worst_twist}°{x.clear === true ? ' · no collisions (static)' : ''}</span>
               {results[x.index] && <span className={`msrr-chip ${results[x.index].locked === results[x.index].of ? 'ok' : 'warn'}`}>{results[x.index].locked}/{results[x.index].of} locked</span>}
             </div>

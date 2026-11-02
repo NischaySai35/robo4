@@ -1,3 +1,4 @@
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useState, useEffect, useRef, useCallback, useMemo, useId } from 'react';
 import type { CSSProperties } from 'react';
@@ -626,7 +627,7 @@ function SequenceRecorder({ defs, servos, onCmd }: any) {
           disabled={frames.length === 0}>Clear</Button>
         <label className="sc-seq-delay-label">
           Delay
-          <input className="sc-group-input" type="number" min="200" max="10000" step="100"
+          <Input className="tw:w-16" type="number" min="200" max="10000" step="100"
             value={playDelay} onChange={e => setPlayDelay(Number(e.target.value))} />
           ms
         </label>
@@ -714,7 +715,7 @@ function PresetPanel({ defs, servos, onApply }: any) {
         </label>
       </div>
       <div className="sc-preset-row">
-        <input className="sc-preset-name-input" placeholder="preset name…"
+        <Input className="tw:w-auto" placeholder="preset name…"
           value={nameInput} onChange={e => setNameInput(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && savePreset()} />
         <Button variant="outline" size="xs" onClick={savePreset}>+ Save</Button>

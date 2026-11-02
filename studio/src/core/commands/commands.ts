@@ -334,6 +334,16 @@ export function removeComponentAndContents(componentId: string) {
   );
 }
 
+/** Shallow-merge a patch into a component (name, colour, collapsed); one undo step. */
+export function updateComponent(componentId: any, patch: any) {
+  let prev: any = null;
+  return command(
+    'Update component',
+    (doc: any) => { prev = (doc.components ?? {})[componentId]; return prev ? putEntity(doc, { ...prev, ...patch }) : doc; },
+    (doc: any) => (prev ? putEntity(doc, prev) : doc),
+  );
+}
+
 export function renameComponent(componentId: string, name: string) {
   let prev: any = null;
   return command(

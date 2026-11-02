@@ -35,7 +35,15 @@ export const ENTITY_TYPES: Record<string, EntityType> = {
   joint: { kind: 'joint', collection: 'joints', label: 'Joint', plural: 'Joints', props: JOINT_PROPS, update: commands.updateJoint },
   jointProfile: { kind: 'jointProfile', collection: 'jointProfiles', label: 'Joint type', plural: 'Joint types', props: PROFILE_PROPS, update: commands.updateJointProfile },
   material: { kind: 'material', collection: 'materials', label: 'Material', plural: 'Materials', props: MATERIAL_PROPS, update: commands.updateMaterial },
+  component: { kind: 'component', collection: 'components', label: 'Component', plural: 'Components', props: [], update: commands.updateComponent },
 };
+
+/** A new name for any entity: text, not empty, and not already used by another of the same kind. */
+export function checkName(doc: any, type: EntityType, entity: any, name: unknown): { ok: true; stored: string } | { ok: false; error: string } {
+  if (typeof name !== 'string' || !name.trim()) return { ok: false, error: 'A name needs some text.' };
+  const clash = Object.values<any>(doc[type.collection] ?? {}).find((e) => e.id !== entity.id && e.name === name.trim());
+  return clash ? { ok: false, error: `Another ${type.label.toLowerCase()} is already called "${name.trim()}".` } : { ok: true, stored: name.trim() };
+}
 
 /** The entity of this kind by id or name, or an error that lists what there is. */
 export function findEntity(doc: any, kind: string, idOrName: string): { ok: true; type: EntityType; entity: any } | { ok: false; error: string } {

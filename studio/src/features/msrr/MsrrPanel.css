@@ -13,28 +13,6 @@
 
 /* ── tabs ─────────────────────────────────────────────────────────────────── */
 
-.msrr-tabs {
-  display: flex;
-  flex: 0 0 auto;
-  border-bottom: 1px solid var(--border, #2c2f36);
-  overflow-x: auto;
-}
-.msrr-tab {
-  flex: 1 0 auto;
-  padding: 8px 10px;
-  background: transparent;
-  border: none;
-  border-bottom: 2px solid transparent;
-  color: var(--text-dim, #9aa0ab);
-  font: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.msrr-tab:hover { color: var(--text, #e6e8ec); }
-.msrr-tab.active {
-  color: var(--accent, #6ea8fe);
-  border-bottom-color: var(--accent, #6ea8fe);
-}
 
 /* ── structure readout ────────────────────────────────────────────────────── */
 
@@ -199,35 +177,9 @@
 }
 .msrr-toggle input { margin-top: 2px; }
 
-.msrr-select,
-.msrr-textarea {
-  width: 100%;
-  padding: 5px 6px;
-  background: var(--bg-card);
-  color: var(--text, #e6e8ec);
-  border: 1px solid var(--border, #2c2f36);
-  border-radius: 4px;
-  font: inherit;
-}
-.msrr-textarea { resize: vertical; margin-bottom: 8px; }
 
 .msrr-row-btns { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
 
-.msrr-btn {
-  padding: 5px 9px;
-  background: var(--bg-card);
-  color: var(--text, #e6e8ec);
-  border: 1px solid var(--border, #2c2f36);
-  border-radius: 4px;
-  font: inherit;
-  cursor: pointer;
-}
-.msrr-btn:hover:not(:disabled) { background: var(--bg-card-hover); }
-.msrr-btn:disabled { opacity: 0.45; cursor: not-allowed; }
-.msrr-btn.primary { background: var(--accent, #6ea8fe); border-color: var(--accent, #6ea8fe); color: #0d1117; font-weight: 600; }
-.msrr-btn.ghost   { background: transparent; }
-.msrr-btn.danger  { border-color: #8a3b3b; color: #e88b8b; }
-.msrr-btn.small   { padding: 3px 6px; font-size: 11px; }
 
 /* ── shape library ────────────────────────────────────────────────────────── */
 
@@ -237,7 +189,6 @@
   gap: 5px;
 }
 .msrr-shape-cell { display: flex; flex-direction: column; gap: 2px; }
-.msrr-shape-cell .msrr-btn { width: 100%; }
 
 /* ── module theme / pose library ──────────────────────────────────────────── */
 
@@ -365,10 +316,6 @@
 /* A library shape whose cubes ask for more welds than a module physically has.
    Outlined rather than disabled: the shape is still worth loading and looking
    at, it just will not fit as one connected robot. */
-.msrr-btn.warn-outline {
-  border-color: #8a6b2f;
-  color: #e0b45f;
-}
 
 /* ── action bar ───────────────────────────────────────────────────────────────
    One always-visible primary action, directly under the tabs. It is a flex

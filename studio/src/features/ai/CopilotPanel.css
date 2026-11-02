@@ -119,25 +119,7 @@
   border-top: 1px solid var(--border);
 }
 
-.ai-form textarea {
-  flex: 1;
-  resize: none;
-  min-height: 38px;
-  max-height: 120px;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-ui);
-  font-size: 13px;
-  outline: none;
-}
 
-.ai-form textarea:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-glow);
-}
 
 .ai-form button {
   height: 38px;

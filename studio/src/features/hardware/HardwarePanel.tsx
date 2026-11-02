@@ -3,6 +3,7 @@
  * (Phase 11). Works with any device: an MCU (ESP32) over USB serial, or a
  * networked device (Raspberry Pi / ROS bridge / sidecar) over WebSocket.
  */
+import { Input, NativeSelect } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { useState } from 'react';
 import './HardwarePanel.css';
@@ -47,13 +48,13 @@ function Peripherals() {
         </div>
       ))}
       <div className="hw-periph-add">
-        <select value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as any, type: (e.target.value === 'sensor' ? SENSORS : DRIVERS)[0] })}>
+        <NativeSelect size="xs" value={draft.kind} onChange={(e) => setDraft({ ...draft, kind: e.target.value as any, type: (e.target.value === 'sensor' ? SENSORS : DRIVERS)[0] })}>
           <option value="sensor">Sensor</option><option value="driver">Driver</option>
-        </select>
-        <select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
+        </NativeSelect>
+        <NativeSelect size="xs" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })}>
           {opts.map((o) => <option key={o} value={o}>{o}</option>)}
-        </select>
-        <input placeholder="pin/addr" value={draft.pin} onChange={(e) => setDraft({ ...draft, pin: e.target.value })} />
+        </NativeSelect>
+        <Input size="xs" placeholder="pin/addr" value={draft.pin} onChange={(e) => setDraft({ ...draft, pin: e.target.value })} />
         <button onClick={() => { add({ name: draft.type, kind: draft.kind, type: draft.type, pin: draft.pin || undefined }); setDraft({ ...draft, pin: '' }); }}>＋</button>
       </div>
     </div>
@@ -136,17 +137,15 @@ function ServoMap() {
           <div key={j.id} className="hw-map-row">
             <span className="hw-map-name" title={j.name}>{j.name}</span>
             <span className="hw-map-deg">{jointServoDegrees(j)}°</span>
-            <select
-              className="hw-map-type"
+            <NativeSelect size="xs" className="tw:w-auto tw:max-w-[110px]"
               value={String(j.meta?.motorType ?? '')}
               onChange={(e) => setMotorType(j, e.target.value)}
               title="Motor type"
             >
               <option value="">— motor —</option>
               {MOTOR_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-            </select>
-            <input
-              className="hw-map-id"
+            </NativeSelect>
+            <Input size="xs" className="tw:w-[52px] tw:text-center"
               type="number"
               min="0"
               placeholder="—"
@@ -196,28 +195,28 @@ export default function HardwarePanel() {
       </div>
 
       <div className="hw-row">
-        <select className="hw-select" value={board} disabled={connected || busy}
+        <NativeSelect value={board} disabled={connected || busy}
           onChange={(e) => hw.setBoard(e.target.value as BoardKind)} title="Controller board">
           {(Object.keys(BOARDS) as BoardKind[]).map((b) => <option key={b} value={b}>{BOARDS[b].name}</option>)}
-        </select>
+        </NativeSelect>
       </div>
 
       <div className="hw-row">
-        <select className="hw-select" value={type} disabled={connected || busy}
+        <NativeSelect value={type} disabled={connected || busy}
           onChange={(e) => hw.setType(e.target.value as 'serial' | 'websocket')}>
           <option value="serial">USB Serial (MCU / ESP32 / Arduino)</option>
           <option value="websocket">WebSocket (Pi / ROS / network)</option>
-        </select>
+        </NativeSelect>
       </div>
 
       {type === 'serial' ? (
         <label className="hw-field">Baud
-          <input type="number" value={baud} disabled={connected || busy}
+          <Input size="xs" type="number" value={baud} disabled={connected || busy}
             onChange={(e) => hw.setBaud(parseInt(e.target.value, 10) || 115200)} />
         </label>
       ) : (
         <label className="hw-field">URL
-          <input type="text" value={url} disabled={connected || busy}
+          <Input size="xs" type="text" value={url} disabled={connected || busy}
             onChange={(e) => hw.setUrl(e.target.value)} />
         </label>
       )}
@@ -229,7 +228,7 @@ export default function HardwarePanel() {
       </div>
 
       <label className="hw-field">Poll rate (Hz)
-        <input type="number" min={1} max={200} value={pollHz}
+        <Input size="xs" type="number" min={1} max={200} value={pollHz}
           onChange={(e) => hw.setPollHz(parseInt(e.target.value, 10) || 20)} />
       </label>
 

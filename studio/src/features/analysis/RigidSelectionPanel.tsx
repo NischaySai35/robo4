@@ -10,6 +10,8 @@
  * depends on — so mass/CoM/FoS/stress recompute live as you drag.
  */
 import './AnalysisPanel.css';
+import { Button } from '@/components/ui/button';
+import { Segmented } from '@/components/ui/segmented';
 import { useModelStore } from '@/state/modelStore';
 import { useSelectionStore } from '@/state/selectionStore';
 import { useWorkspaceStore } from '@/state/workspaceStore';
@@ -29,19 +31,18 @@ function GroundingControls() {
   const rigid = bodyMode === 'rigid';
   useAutoGround();
   return (
-    <div className="an-rigid an-ground">
+    <div className="an-rigid an-ground" data-ui="a">
       <div className="an-ground-hdr">
         <span className="an-rigid-label">Grounding</span>
-        <div className="an-ground-seg">
-          <button className={!rigid ? 'on' : ''} onClick={() => setBodyModePreservingPose('free')} title="Free float — no fixed base">Free</button>
-          <button className={rigid ? 'on' : ''} onClick={() => setBodyModePreservingPose('rigid')} title="Rigid — ground a base body (right-click one in 3D)">Rigid</button>
-        </div>
+        <Segmented size="xs" className="tw:shrink-0" value={rigid ? 'rigid' : 'free'} onChange={(v) => setBodyModePreservingPose(v as 'free' | 'rigid')} options={[
+          { value: 'free', label: 'Free', title: 'Free float — no fixed base' },
+          { value: 'rigid', label: 'Rigid', title: 'Rigid — ground a base body (right-click one in 3D)' }]} />
       </div>
       {rigid && (
         <div className="an-ground-row">
-          <button className={`an-ground-btn${autoBase ? ' on' : ''}`} onClick={() => setAutoBase(!autoBase)} title="Auto-ground the body nearest the center of mass, updating as the model moves">
+          <Button size="sm" variant={autoBase ? 'default' : 'outline'} aria-pressed={autoBase} onClick={() => setAutoBase(!autoBase)} title="Auto-ground the body nearest the center of mass, updating as the model moves">
             ⚖ Auto-ground
-          </button>
+          </Button>
           <span className="an-ground-base">Base: <strong>{activeBodyId ? (doc.bodies[activeBodyId]?.name ?? '—') : 'right-click a body'}</strong></span>
         </div>
       )}

@@ -11,6 +11,7 @@
  * Cycles / Raycast) are presentational — there is no GPU path tracer here — but
  * Export produces a real PNG/JPEG of the current frame.
  */
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Segmented } from '@/components/ui/segmented';
 import './CameraPanel.css';
@@ -169,7 +170,7 @@ export default function CameraPanel() {
 
       <div className="cam-field">
         <span>Output name</span>
-        <input className="cam-text" value={outputName}
+        <Input size="xs" className="tw:flex-1 tw:max-w-[60%]" value={outputName}
           onChange={(e) => setOutputName(e.target.value)} placeholder="filename" />
       </div>
 
@@ -189,7 +190,7 @@ export default function CameraPanel() {
           <div className="cam-compute-row">
             <span className="cam-sublabel" style={{ margin: 0 }}>MAX SAMPLES</span>
             <NumberField
-              value={maxSamples} min={1} max={1024} step={1}
+              className="tw:w-20" value={maxSamples} min={1} max={1024} step={1}
               onCommit={changeMaxSamples}
             />
           </div>

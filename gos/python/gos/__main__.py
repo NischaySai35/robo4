@@ -119,6 +119,50 @@ def _new_package(name):
     return 0
 
 
+def doctor():
+    """Check this computer for what GOS needs, like `ros2 doctor`. Returns (lines, problems); each line says what to do."""
+    import importlib, platform, socket
+    lines, problems = [], 0
+    def say(ok, what, fix=''):
+        nonlocal problems
+        lines.append(('ok   ' if ok else 'WARN ') + what + ('' if ok else f'  ->  {fix}'))
+        problems += 0 if ok else 1
+    say(sys.version_info >= (3, 12), f'Python {platform.python_version()}', 'GOS needs Python 3.12 or newer')
+    try:
+        from . import _core; _core.compile_graph({'bodies': [], 'joints': [], 'roots': []}); say(True, 'the Rust core loads')
+    except Exception as e: say(False, f'the Rust core does not load ({e})', 'reinstall: pip install --force-reinstall tetrobot-gos')
+    for mod, extra, what in (('mujoco', 'sim', 'physics'), ('zenoh', 'network', 'programs talking to each other'), ('mink', 'ik', 'arm IK'),
+                             ('websockets', 'studio', 'the Studio link'), ('mcap', 'record', 'recordings'), ('xacro', 'ros', 'reading .xacro')):
+        try:
+            m = importlib.import_module(mod); say(True, f'{what}: {mod} {getattr(m, "__version__", "")}'.rstrip())
+        except ImportError: say(False, f'{what}: {mod} is not installed', f'pip install "tetrobot-gos[{extra}]" if you need it')
+    gpu = shutil.which('nvidia-smi')
+    say(bool(gpu), 'NVIDIA graphics card found' if gpu else 'no NVIDIA graphics card found', 'many-robot runs on the GPU need one; everything else works without')
+    from .studio import find_app
+    app = find_app(); say(bool(app), f'TETROBOT app: {app}' if app else 'TETROBOT app is not installed', 'gos studio install')
+    for port, who in ((7447, 'GOS network default'), (8771, 'physics service'), (8772, 'Studio link')):
+        s = socket.socket(); s.settimeout(0.3); used = s.connect_ex(('127.0.0.1', port)) == 0; s.close()
+        lines.append(f'info port {port} ({who}): ' + ('in use, something is listening' if used else 'free'))
+    return lines, problems
+
+
+def _workspace(action, folder):
+    """`gos ws build` installs every package under folder/src (or folder) into this Python, editable; `gos ws test` runs each one's tests. Like colcon."""
+    base = os.path.join(folder, 'src') if os.path.isdir(os.path.join(folder, 'src')) else folder
+    pkgs = sorted(d for d in (os.path.join(base, n) for n in os.listdir(base)) if os.path.isfile(os.path.join(d, 'pyproject.toml')))
+    if not pkgs: raise GosError(f'No packages in {base}: a package is a folder with a pyproject.toml. Make one with: gos pkg new NAME')
+    failed = []
+    for p in pkgs:
+        name = os.path.basename(p)
+        cmd = [sys.executable, '-m', 'pip', 'install', '-q', '-e', p] if action == 'build' else [sys.executable, '-m', 'pytest', '-q', '-p', 'no:cacheprovider', p]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        tail = (r.stdout + r.stderr).strip().splitlines()[-1:] or ['']
+        print(f"{'ok  ' if r.returncode == 0 else 'FAIL'} {name}: {tail[0][:120]}", flush=True)
+        if r.returncode: failed.append(name)
+    print(f"{len(pkgs) - len(failed)} of {len(pkgs)} packages {'built' if action == 'build' else 'passed'}." + (f" Failed: {', '.join(failed)}." if failed else ''))
+    return 1 if failed else 0
+
+
 def _plugins():
     """Commands other packages add: an entry point in the group "gos.commands" (name = command, value = function(argv) -> exit code)."""
     from importlib.metadata import entry_points
@@ -152,7 +196,7 @@ def _write_docs(out):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    builtin = {'studio', 'certs', 'interfaces', 'run', 'graph', 'sim', 'topic', 'service', 'param', 'node', 'action', 'launch', 'pkg', 'path', 'doc', 'plugins'}
+    builtin = {'doctor', 'ws', 'studio', 'certs', 'interfaces', 'run', 'graph', 'sim', 'topic', 'service', 'param', 'node', 'action', 'launch', 'pkg', 'path', 'doc', 'plugins'}
     first = next((x for x in argv if not x.startswith('-')), None)
     if first and first not in builtin and argv[0] == first:
         code = _external(first, argv[1:])
@@ -177,6 +221,8 @@ def main(argv=None):
     it = s.add_parser('interfaces', help='message types: list them, or write TypeScript for the Studio'); it.add_argument('action', choices=['list', 'ts']); it.add_argument('out', nargs='?'); it.add_argument('--from', dest='folders', action='append', default=[], help='also load this folder')
     ce = s.add_parser('certs', help='certificates for encrypted links'); ce.add_argument('action', choices=['new']); ce.add_argument('folder'); ce.add_argument('names', nargs='+'); ce.add_argument('--host', action='append', help='address the programs use (default localhost and 127.0.0.1)')
     st = s.add_parser('studio', help='the TETROBOT app: install downloads it for this computer'); st.add_argument('action', choices=['install', 'where']); st.add_argument('--dry', action='store_true', help='only say what would be downloaded'); st.add_argument('--to', help='folder to save it in (default Downloads)')
+    s.add_parser('doctor', help='check this computer for what GOS needs')
+    w = s.add_parser('ws', help='build or test every package in a workspace (like colcon)'); w.add_argument('action', choices=['build', 'test']); w.add_argument('folder', nargs='?', default='.')
     s.add_parser('plugins', help='commands added by other packages or gos-NAME programs')
     a = p.parse_args(argv)
     need = lambda x, what: x if x is not None else (_ for _ in ()).throw(GosError(f'Give the {what}.'))
@@ -198,6 +244,11 @@ def main(argv=None):
             return _new_package(a.name)
         elif a.cmd == 'doc' and a.html:
             return _write_docs(a.html)
+        elif a.cmd == 'doctor':
+            lines, problems = doctor()
+            print('\n'.join(lines)); print(f'{problems} thing(s) to look at.' if problems else 'All good.')
+        elif a.cmd == 'ws':
+            return _workspace(a.action, a.folder)
         elif a.cmd == 'studio':
             from .studio import find_app, install_app
             if a.action == 'where':

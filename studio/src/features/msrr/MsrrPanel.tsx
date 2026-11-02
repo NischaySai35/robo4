@@ -32,6 +32,9 @@
  * them; that choice is gone and the cube reading with it. The cubes on screen
  * are a shape DIAGRAM, and Build is what turns the diagram into modules.
  */
+import { NativeSelect, Textarea } from '@/components/ui/input';
+import { TabBar } from '@/components/ui/tab-bar';
+import { Button } from '@/components/ui/button';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './MsrrPanel.css';
 import V2Panel from '@/features/msrr2/V2Panel';
@@ -73,12 +76,9 @@ export default function MsrrPanel() {
   const mode = useV2Store((s) => s.mode);
   const setMode = useV2Store((s) => s.setMode);
   const switcher = (
-    <div className="msrr-tabs" style={{ borderBottom: '2px solid #2a2f36' }}>
-      <button className={`msrr-tab ${mode === 'v2' ? 'active' : ''}`} data-testid="mode-v2" onClick={() => setMode('v2')}>Planner v2</button>
-      <button className={`msrr-tab ${mode === 'legacy' ? 'active' : ''}`} data-testid="mode-legacy" onClick={() => setMode('legacy')}>Legacy (cubes)</button>
-    </div>
+    <TabBar value={mode} onChange={setMode} tabs={[{ id: 'v2', label: 'Planner v2', testId: 'mode-v2' }, { id: 'legacy', label: 'Legacy (cubes)', testId: 'mode-legacy' }]} />
   );
-  if (mode === 'v2') return <div className="msrr-panel">{switcher}<V2Panel /></div>;
+  if (mode === 'v2') return <div className="msrr-panel" data-ui="a">{switcher}<V2Panel /></div>;
   return <LegacyPanel switcher={switcher} />;
 }
 
@@ -87,19 +87,9 @@ function LegacyPanel({ switcher }: { switcher: React.ReactNode }) {
   const setTab = useMsrrStore((s) => s.setTab);
 
   return (
-    <div className="msrr-panel">
+    <div className="msrr-panel" data-ui="a">
       {switcher}
-      <div className="msrr-tabs">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={`msrr-tab ${tab === t.id ? 'active' : ''}`}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <TabBar size="sm" value={tab} onChange={setTab} tabs={TABS.map((t) => ({ id: t.id, label: t.label }))} />
 
       <ActionBar />
       <StructureBar />
@@ -244,21 +234,20 @@ function ActionBar() {
   return (
     <div className="msrr-actionbar">
       <div className="msrr-action-main">
-        <button
-          className={`msrr-action-primary ${next.busy ? 'busy' : ''}`}
+        <Button size="lg" className="tw:w-full"
           disabled={next.disabled || next.busy}
           onClick={next.run}
         >
           {next.label}
-        </button>
+        </Button>
         <span className="msrr-action-hint">{next.hint}</span>
       </div>
       {next.side && next.side.length > 0 && (
         <div className="msrr-action-side">
           {next.side.map((b) => (
-            <button key={b.label} className={`msrr-btn small ${b.danger ? 'danger' : ''}`} onClick={b.run}>
+            <Button size="xs" variant={b.danger ? 'destructive' : 'outline'} key={b.label} onClick={b.run}>
               {b.label}
-            </button>
+            </Button>
           ))}
         </div>
       )}
@@ -423,34 +412,33 @@ function BuildTab() {
           {SHAPES.map((s) => {
             const q = shapeQualityAt(s.id, budget, scale);
             return (
-              <button key={s.id}
-                      className={`msrr-btn ${q.buildable ? '' : 'warn-outline'}`}
+              <Button variant="outline" size="sm" className={q.buildable ? '' : 'tw:border-amber-500 tw:text-amber-400'} key={s.id}
                       title={q.buildable ? q.summary : `⚠ ${q.summary}`}
                       onClick={() => apply(s.id)}>
                 {s.label}{q.buildable ? '' : ' ⚠'}
-              </button>
+              </Button>
             );
           })}
         </div>
         <ShapeQualityNote />
         <div className="msrr-row-btns">
-          <button className="msrr-btn" disabled={!canUndo} onClick={() => run('msrr.shape.undo')} title="Undo the last manual edit">
+          <Button variant="outline" size="sm" disabled={!canUndo} onClick={() => run('msrr.shape.undo')} title="Undo the last manual edit">
             ↶ Undo
-          </button>
-          <button className="msrr-btn" disabled={!canRedo} onClick={() => run('msrr.shape.redo')} title="Redo">
+          </Button>
+          <Button variant="outline" size="sm" disabled={!canRedo} onClick={() => run('msrr.shape.redo')} title="Redo">
             ↷ Redo
-          </button>
-          <button className="msrr-btn" disabled={!count} onClick={exportShape}
+          </Button>
+          <Button variant="outline" size="sm" disabled={!count} onClick={exportShape}
                   title="Save these cubes as a .json file, so the same shape can be loaded back without placing it again">
             ⭳ Export
-          </button>
-          <button className="msrr-btn" onClick={importShape}
+          </Button>
+          <Button variant="outline" size="sm" onClick={importShape}
                   title="Load a shape from a .json file. Replaces the cubes on screen; the build is cleared so it can be re-fitted.">
             ⭱ Import
-          </button>
-          <button className="msrr-btn danger" disabled={!count} onClick={() => run('msrr.shape.clear')}>
+          </Button>
+          <Button variant="destructive" size="sm" disabled={!count} onClick={() => run('msrr.shape.clear')}>
             Clear cubes
-          </button>
+          </Button>
         </div>
       </Step>
 
@@ -469,20 +457,20 @@ function BuildTab() {
             }>
         <div className="msrr-shape-grid">
           {SHAPES.map((s) => (
-            <button key={s.id} className="msrr-btn ghost" disabled={targetLocked}
-                    onClick={() => applyTarget(s.id)}>{s.label}</button>
+            <Button variant="ghost" size="sm" key={s.id} disabled={targetLocked}
+                    onClick={() => applyTarget(s.id)}>{s.label}</Button>
           ))}
         </div>
         <div className="msrr-row-btns">
-          <button className="msrr-btn" disabled={targetLocked} onClick={() => setTarget(cellsOf(config))}>
+          <Button variant="outline" size="sm" disabled={targetLocked} onClick={() => setTarget(cellsOf(config))}>
             Use current shape as target
-          </button>
-          <button className="msrr-btn" disabled={targetLocked || !target.length} onClick={swapWithTarget}>
+          </Button>
+          <Button variant="outline" size="sm" disabled={targetLocked || !target.length} onClick={swapWithTarget}>
             Swap shape ⇄ target
-          </button>
-          <button className="msrr-btn ghost" onClick={clearTarget} disabled={!target.length}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={clearTarget} disabled={!target.length}>
             Clear target
-          </button>
+          </Button>
         </div>
 
       </Step>
@@ -496,7 +484,7 @@ function BuildTab() {
         </p>
       }>
         <div className="msrr-row-btns">
-          <button className="msrr-btn danger" onClick={resetSandbox}>Reset entire sandbox</button>
+          <Button variant="destructive" size="sm" onClick={resetSandbox}>Reset entire sandbox</Button>
         </div>
       </Section>
     </>
@@ -637,15 +625,14 @@ function TextTab() {
           </p>
         </>
       }>
-        <textarea
-          className="msrr-textarea"
+        <Textarea className="tw:mb-2"
           rows={3}
           value={text}
           onChange={(e) => setText(e.target.value)}
           placeholder="become a car / make a tall tower / a small chair with 18 modules"
         />
         <Row label="Backend">
-          <select className="msrr-select" value={backend} onChange={(e) => setBackend(e.target.value as AiBackend)}>
+          <NativeSelect value={backend} onChange={(e) => setBackend(e.target.value as AiBackend)}>
             <option value="auto">Auto (local first, then cloud, then rules)</option>
             <option value="ollama" disabled={!backends.ollama}>
               Ollama (local){backends.ollama ? '' : ' — not reachable'}
@@ -654,19 +641,19 @@ function TextTab() {
               Anthropic API{backends.anthropic ? '' : ' — no key configured'}
             </option>
             <option value="rules">Rules only (offline baseline)</option>
-          </select>
+          </NativeSelect>
         </Row>
         <Row label={`Cubes: ${count}`}>
           <input type="range" min={4} max={120} value={count}
                  onChange={(e) => setBudgetOverride(+e.target.value)} />
         </Row>
         <div className="msrr-row-btns">
-          <button className="msrr-btn primary" disabled={busy || !text.trim()} onClick={() => generate('target')}>
+          <Button size="sm" disabled={busy || !text.trim()} onClick={() => generate('target')}>
             {busy ? 'Thinking…' : 'Generate → target'}
-          </button>
-          <button className="msrr-btn" disabled={busy || !text.trim()} onClick={() => generate('current')}>
+          </Button>
+          <Button variant="outline" size="sm" disabled={busy || !text.trim()} onClick={() => generate('current')}>
             Generate → current
-          </button>
+          </Button>
         </div>
       </Section>
 
@@ -675,9 +662,9 @@ function TextTab() {
           <p className="msrr-note">{result.note}</p>
           {result.raw && (
             <>
-              <button className="msrr-btn ghost small" onClick={() => setShowRaw((v) => !v)}>
+              <Button variant="ghost" size="xs" onClick={() => setShowRaw((v) => !v)}>
                 {showRaw ? 'Hide' : 'Show'} raw model output
-              </button>
+              </Button>
               {showRaw && <pre className="msrr-pre">{result.raw}</pre>}
             </>
           )}
@@ -764,12 +751,12 @@ function DrawTab() {
         </p>
       }>
         <div className="msrr-row-btns">
-          <button className={`msrr-btn small ${plane === 'xy' ? 'primary' : ''}`} onClick={() => setPlane('xy')}>
+          <Button size="xs" variant={plane === 'xy' ? 'default' : 'outline'} onClick={() => setPlane('xy')}>
             Front (X/Y)
-          </button>
-          <button className={`msrr-btn small ${plane === 'xz' ? 'primary' : ''}`} onClick={() => setPlane('xz')}>
+          </Button>
+          <Button size="xs" variant={plane === 'xz' ? 'default' : 'outline'} onClick={() => setPlane('xz')}>
             Top (X/Z)
-          </button>
+          </Button>
         </div>
 
         <svg ref={svgRef} className="msrr-pad" viewBox="0 0 100 100" onClick={onClick}>
@@ -806,30 +793,30 @@ function DrawTab() {
 
         <p className="msrr-note">{preview.note}</p>
         <div className="msrr-row-btns">
-          <button className="msrr-btn" onClick={() => draw.getState().undoPoint()} disabled={!current.length}>
+          <Button variant="outline" size="sm" onClick={() => draw.getState().undoPoint()} disabled={!current.length}>
             Delete last point
-          </button>
-          <button className="msrr-btn" onClick={() => draw.getState().endStroke()} disabled={current.length < 2}>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => draw.getState().endStroke()} disabled={current.length < 2}>
             Finish stroke
-          </button>
-          <button className="msrr-btn ghost" onClick={() => draw.getState().undoStroke()} disabled={!strokes.length}>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => draw.getState().undoStroke()} disabled={!strokes.length}>
             Undo stroke
-          </button>
-          <button className="msrr-btn danger" onClick={() => draw.getState().clearStrokes()}
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => draw.getState().clearStrokes()}
                   disabled={!strokes.length && !current.length}>
             Clear pad
-          </button>
+          </Button>
         </div>
         <Toggle label="Clear pad automatically after use"
                 hint="Starts a fresh pad every time you commit to current/target, instead of leaving the drawn strokes sitting there."
                 value={autoClear} onChange={setAutoClear} />
         <div className="msrr-row-btns">
-          <button className="msrr-btn primary" disabled={!preview.cells.length} onClick={() => commit('target')}>
+          <Button size="sm" disabled={!preview.cells.length} onClick={() => commit('target')}>
             Use as target
-          </button>
-          <button className="msrr-btn" disabled={!preview.cells.length} onClick={() => commit('current')}>
+          </Button>
+          <Button variant="outline" size="sm" disabled={!preview.cells.length} onClick={() => commit('current')}>
             Use as current
-          </button>
+          </Button>
         </div>
       </Section>
     </>
@@ -942,10 +929,10 @@ function TransformSection() {
       )}
 
       <div className="msrr-row-btns">
-        <button className="msrr-btn primary" disabled={busy || !built || !target.length} onClick={() => run('msrr.plan')}>
+        <Button size="sm" disabled={busy || !built || !target.length} onClick={() => run('msrr.plan')}>
           {busy ? 'Searching for a route…' : 'Plan transformation'}
-        </button>
-        {tr && <button className="msrr-btn ghost" onClick={() => run('msrr.plan.clear')}>Clear</button>}
+        </Button>
+        {tr && <Button variant="ghost" size="sm" onClick={() => run('msrr.plan.clear')}>Clear</Button>}
       </div>
       {busy && <SearchProgressReadout progress={progress} />}
 
@@ -980,16 +967,16 @@ function TransformSection() {
           {tr.moves.length > 0 ? (
             <>
               <div className="msrr-row-btns">
-                <button className="msrr-btn primary" onClick={() => run('msrr.play')}>
+                <Button size="sm" onClick={() => run('msrr.play')}>
                   {playing ? 'Pause' : step >= tr.moves.length ? 'Replay' : 'Play'}
-                </button>
-                <button className="msrr-btn" onClick={() => run('msrr.step.back')} disabled={step <= 0}>
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => run('msrr.step.back')} disabled={step <= 0}>
                   ◀ step
-                </button>
-                <button className="msrr-btn" onClick={() => run('msrr.step.next')} disabled={step >= tr.moves.length}>
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => run('msrr.step.next')} disabled={step >= tr.moves.length}>
                   step ▶
-                </button>
-                <button className="msrr-btn ghost" onClick={() => run('msrr.rewind')}>Rewind</button>
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => run('msrr.rewind')}>Rewind</Button>
               </div>
               <Row label={`Speed: ${speed.toFixed(2)}x`}>
                 <input type="range" min={0.1} max={3} step={0.1} value={speed}
@@ -1077,10 +1064,10 @@ function BridgeTab() {
                  onChange={(e) => setCellSize(+e.target.value)} />
         </Row>
         <div className="msrr-row-btns">
-          <button className={`msrr-btn ${mirror ? 'danger' : 'primary'}`} disabled={busy} onClick={toggleMirror}>
+          <Button size="sm" variant={mirror ? 'destructive' : 'default'} disabled={busy} onClick={toggleMirror}>
             {mirror ? 'Stop mirroring' : `Mirror ${config.occ.size} modules to scene`}
-          </button>
-          <button className="msrr-btn ghost" onClick={() => setCellSize(DEFAULT_CELL_SIZE)}>Reset scale</button>
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setCellSize(DEFAULT_CELL_SIZE)}>Reset scale</Button>
         </div>
       </Section>
 
@@ -1092,12 +1079,12 @@ function BridgeTab() {
         </p>
       }>
         <div className="msrr-row-btns">
-          <button className="msrr-btn" disabled={!config.occ.size} onClick={() => {
+          <Button variant="outline" size="sm" disabled={!config.occ.size} onClick={() => {
             const n = materializeCurrent();
             pushLog(`materialized ${n} modules into the project document`);
           }}>
             Materialize {config.occ.size} modules into the document
-          </button>
+          </Button>
         </div>
       </Section>
 
@@ -1118,7 +1105,7 @@ function LogStrip() {
     <div className="msrr-log">
       <div className="msrr-log-head">
         <span>Log</span>
-        <button className="msrr-btn ghost small" onClick={clearLog} disabled={!log.length}>Clear</button>
+        <Button variant="ghost" size="xs" onClick={clearLog} disabled={!log.length}>Clear</Button>
       </div>
       <div className="msrr-log-body" ref={ref}>
         {log.length === 0
@@ -1148,10 +1135,10 @@ function BuildSection() {
   return (
     <>
       <div className="msrr-row-btns">
-        <button className="msrr-btn primary" disabled={building || !cubes} onClick={() => run('msrr.build')}>
+        <Button size="sm" disabled={building || !cubes} onClick={() => run('msrr.build')}>
           {building ? 'Fitting modules…' : built ? 'Rebuild' : `Build ${cubes} cubes`}
-        </button>
-        {built && <button className="msrr-btn ghost" onClick={() => run('msrr.build.clear')}>Clear build</button>}
+        </Button>
+        {built && <Button variant="ghost" size="sm" onClick={() => run('msrr.build.clear')}>Clear build</Button>}
       </div>
 
       {built && (
@@ -1242,9 +1229,9 @@ function ModulinkSection() {
       </>
     }>
       <div className="msrr-row-btns">
-        <button className="msrr-btn small ghost" onClick={() => setShowPoses((v) => !v)}>
+        <Button variant="ghost" size="xs" onClick={() => setShowPoses((v) => !v)}>
           {showPoses ? 'Hide' : 'Show'} poses ({theme.poses.length})
-        </button>
+        </Button>
       </div>
       {showPoses && (
         <div className="msrr-poses">
@@ -1293,13 +1280,13 @@ function ReachTableSection() {
     <>
       {!summary ? (
         <div className="msrr-row-btns">
-          <button className="msrr-btn small" disabled={busy} onClick={compute}
+          <Button variant="outline" size="xs" disabled={busy} onClick={compute}
                   title={'Anchored by one end, a module folds and swings its free end onto a target '
                     + 'connector, then releases the old anchor. The move set is every place that free '
                     + 'end can land — enumerated ahead of time, so a plan can never contain a reach '
                     + 'the arm turns out not to have.'}>
             {busy ? 'Sweeping joint space…' : 'Compute move set'}
-          </button>
+          </Button>
         </div>
       ) : (
         <>

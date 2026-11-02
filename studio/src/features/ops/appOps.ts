@@ -26,7 +26,7 @@ import { resetLayout } from '@/features/shell/layouts';
 import { addModule, homePose } from '@/features/ops/moduleOps';
 import { useEditorStore } from '@/state/editorStore';
 import { checkValue, patchFor } from '@/core/props/props';
-import { findEntity } from '@/core/props/entityTypes';
+import { findEntity, checkName } from '@/core/props/entityTypes';
 
 /** Copy selected bodies to the clipboard. If the selection is exactly every body
  *  of one Component, copy that whole component (with its joints) as a unit. */
@@ -155,9 +155,15 @@ defineOperator({ id: 'pose.revert', label: 'Back to the design pose', group: 'Ed
 
 // Scripts and GOS set joint numbers by name and path in shown units, e.g. { joint: 'J_B1_bend', path: 'limit.lower', value: -45 }.
 // Any kind in core/props/entityTypes.ts the same way: { kind: 'body', name: 'Spine1_B1B2', path: 'inertial.mass', value: 250 }.
-const setEntity = (kind: string, name: string, path: string, value: number) => {
+const setEntity = (kind: string, name: string, path: string, value: any) => {
   const f = findEntity(useModelStore.getState().doc, kind, name);
   if (!f.ok) throw new Error(f.error);
+  if (path === 'name') {  // every kind can be renamed by the same command
+    const n = checkName(useModelStore.getState().doc, f.type, f.entity, value);
+    if (!n.ok) throw new Error(n.error);
+    useModelStore.getState().dispatch(f.type.update(f.entity.id, { name: n.stored }));
+    return n.stored;
+  }
   const r = checkValue(f.entity, f.type.props, path, Number(value));
   if (!r.ok) throw new Error(r.error);
   useModelStore.getState().dispatch(f.type.update(f.entity.id, patchFor(f.entity, path, r.stored)));

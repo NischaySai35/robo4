@@ -40,6 +40,12 @@ export default function StartupProjects({ onClose }: { onClose: () => void }) {
 
   const onNew = () => { newProject({ confirm: false }); onClose(); };
   const onContinue = () => onClose();
+  // Esc continues with the current scene, like the ✕ and a click outside.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   const onOpen = async (e: LibraryEntry) => { if (await openFromLibrary(e.id, e.name)) onClose(); };
   const onDelete = async (e: React.MouseEvent, id: string) => { e.stopPropagation(); await removeProject(id); refresh(); };
   const onSaveCurrent = () => { saveCurrentToLibrary(); refresh(); };

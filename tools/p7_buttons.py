@@ -1,11 +1,15 @@
-"""P7 helper: convert <button> tags in one .tsx file to the shared <Button> (studio/src/components/ui/button.tsx).
+"""P7 helper: convert plain tags in one .tsx file to the shared controls in studio/src/components/ui/.
 
-usage: py -3.12 tools/p7_buttons.py FILE.tsx MAP.json   (MAP: {"exact className attribute text": "new attributes", ..., "__plain__": "attrs for buttons with no className", "__optin__": "<tag start to add data-ui to>"})
-A className value not in MAP leaves that button untouched. Prints what it did and what it left.
+usage: py -3.12 tools/p7_buttons.py FILE.tsx MAP.json [TAG]   (MAP: {"exact className attribute text": "new attributes", ..., "__plain__": "attrs for tags with no className", "__optin__": "<tag start to add data-ui to>"})
+TAG is button (default) -> Button, input -> Input (text and number boxes only; sliders, ticks, colour wells stay),
+select -> NativeSelect, textarea -> Textarea. A className value not in MAP leaves that tag untouched. Prints what it did and what it left.
 """
 import json, re, sys
 
 path, mapping = sys.argv[1], json.load(open(sys.argv[2], encoding='utf-8'))
+TAG = sys.argv[3] if len(sys.argv) > 3 else 'button'
+NEW, MODULE = {'button': ('Button', 'button'), 'input': ('Input', 'input'), 'select': ('NativeSelect', 'input'), 'textarea': ('Textarea', 'input')}[TAG]
+NOT_BOXES = re.compile(r'type=["{\']+(?:range|checkbox|radio|color|file|hidden)')
 s = open(path, encoding='utf-8', newline='').read(); nl = '\r\n' if '\r\n' in s else '\n'; s = s.replace('\r\n', '\n')
 
 
@@ -25,18 +29,20 @@ def tag_end(i):
 
 
 edits, kinds, left = [], {}, []
-for m in re.finditer(r'<button\b', s):
+for m in re.finditer(r'<' + TAG + r'\b', s):
     end = tag_end(m.start())
     tag = s[m.start():end]
+    if TAG == 'input' and NOT_BOXES.search(tag): continue
     cm = re.search(r'className=("[^"]*"|\{(?:[^{}]|\{[^{}]*\})*\})', tag)
     key = cm.group(1) if cm else None
     if key is None and '__plain__' in mapping: new = mapping['__plain__']
     elif key in mapping: new = mapping[key]
     else:
         left.append((key or '(none)')[:70]); continue
-    body = tag[len('<button'):]
+    body = tag[len('<' + TAG):]
     if cm: body = body.replace(' className=' + key, '', 1).replace('\n' + re.match(r'\s*', body).group(0) + 'className=' + key, '', 1) if (' className=' + key) in body else body.replace('className=' + key, '', 1)
-    edits.append((m.start(), end, '<Button ' + new + body))
+    body = re.sub(r'\n[ \t]*(?=\n)', '', body)  # the line that held className, now empty
+    edits.append((m.start(), end, '<' + NEW + ' ' + new + body))
     kinds[key or '(plain)'] = kinds.get(key or '(plain)', 0) + 1
 
 # apply, then retarget the matching closing tags
@@ -45,17 +51,21 @@ for a, b, t in edits:
     out.append(s[last:a]); starts.add(len(''.join(out))); out.append(t); last = b
 s = ''.join(out) + s[last:]
 stack, res, last = [], [], 0
-for m in re.finditer(r'<Button\b|<button\b|</button>', s):
-    if m.group(0) == '</button>':
-        k = stack.pop() if stack else 'button'
-        res.append(s[last:m.start()]); res.append('</Button>' if k == 'B' else '</button>'); last = m.end()
+for m in re.finditer(r'<' + NEW + r'\b|<' + TAG + r'\b|</' + TAG + '>', s):
+    if m.group(0) == '</' + TAG + '>':
+        k = stack.pop() if stack else TAG
+        res.append(s[last:m.start()]); res.append('</' + NEW + '>' if k == 'B' else '</' + TAG + '>'); last = m.end()
     else:
         # a self-closing tag never gets a closing tag
         if s[m.start():tag_end(m.start())].endswith('/>'): continue
-        stack.append('B' if m.group(0) == '<Button' else 'b')
+        stack.append('B' if m.group(0) == '<' + NEW else 'b')
 s = ''.join(res) + s[last:]
-if edits and "from '@/components/ui/button'" not in s:
-    mm = re.search(r"^import .*\n", s, re.M); s = s[:mm.start()] + "import { Button } from '@/components/ui/button';\n" + s[mm.start():]
+if edits:
+    imp = re.search(r"^import \{([^}]*)\} from '@/components/ui/" + MODULE + "';\n", s, re.M)
+    if not imp:
+        mm = re.search(r"^import .*\n", s, re.M); s = s[:mm.start()] + "import { " + NEW + " } from '@/components/ui/" + MODULE + "';\n" + s[mm.start():]
+    elif NEW not in [x.strip() for x in imp.group(1).split(',')]:
+        s = s[:imp.start(1)] + imp.group(1).rstrip() + ', ' + NEW + ' ' + s[imp.end(1):]
 opt = mapping.get('__optin__')
 if opt:
     assert opt in s, 'opt-in tag not found: ' + opt

@@ -13,6 +13,48 @@ from gos import tf
 PIXI = os.path.expanduser(os.path.join('~', 'AppData', 'Local', 'pixi', 'bin', 'pixi.exe')) if os.name == 'nt' else 'pixi'
 ROS = os.path.join(ROOT, 'ros2')
 PORT = 'tcp/127.0.0.1:17449'
+
+
+def mobile():
+    """--mobile (A18): a stock ROS 2 program drives the GOS mobile robot with Twist on /cmd_vel and reads Odometry on /odom,
+    like ROS's TurtleBot demo. Separate from the main run, which is near the two-minute limit on its own."""
+    from gos.examples_mobile import MobileRobot
+    driver = textwrap.dedent('''
+        import rclpy, time
+        from rclpy.node import Node
+        from geometry_msgs.msg import Twist
+        from nav_msgs.msg import Odometry
+        rclpy.init(); n = Node('ros_driver'); odom = []
+        n.create_subscription(Odometry, '/odom', odom.append, 10)
+        pub = n.create_publisher(Twist, '/cmd_vel', 10)
+        t = time.time()
+        while not odom and time.time() - t < 40: rclpy.spin_once(n, timeout_sec=0.1)
+        x0 = odom[-1].pose.pose.position.x if odom else None
+        t = time.time()
+        while time.time() - t < 6:
+            m = Twist(); m.linear.x = 0.2; pub.publish(m); rclpy.spin_once(n, timeout_sec=0.05)
+        print('ODOM', x0, odom[-1].pose.pose.position.x if odom else None, len(odom), flush=True)
+        rclpy.shutdown()
+    ''')
+    with gos.App(transport='zenoh', listen=[PORT]) as app:
+        bot = MobileRobot(app)
+        bridge = subprocess.Popen([PIXI, 'run', 'python', os.path.join(ROOT, 'gos', 'ros2_bridge', 'gos_ros2_bridge.py'), '--connect', PORT,
+                                   '--from-ros', '/cmd_vel=/cmd_vel:geometry_msgs/msg/Twist', '--to-ros', '/odom=/odom:nav_msgs/msg/Odometry'],
+                                  cwd=ROS, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        ros = subprocess.Popen([PIXI, 'run', 'python', '-c', driver], cwd=ROS, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        t = time.time()
+        while ros.poll() is None and time.time() - t < 100:
+            bot.run(0.05); time.sleep(0.03)  # roughly real time
+        out = ros.communicate(timeout=10)[0] if ros.poll() is not None else 'the ROS program was still running'
+        bridge.kill()
+    line = next((l for l in out.splitlines() if l.startswith('ODOM')), '')
+    parts = line.split()
+    ok = len(parts) == 4 and parts[1] != 'None' and float(parts[2]) - float(parts[1]) > 0.3
+    print(('ok   ' if ok else 'FAIL ') + 'a ROS 2 program drives the GOS mobile robot and reads its odometry: ' + (line or out[-300:]))
+    sys.exit(0 if ok else 1)
+
+
+if '--mobile' in sys.argv: mobile()
 ros_node = textwrap.dedent('''
     import rclpy, time
     from rclpy.node import Node

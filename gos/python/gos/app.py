@@ -57,6 +57,10 @@ class App:
         self.seed = seed
         random.seed(seed)
         self.name = name
+        if transport_options.get('permissions'):
+            # topic names as the programs use them, turned into the wire names (domain, namespace) the transport sees
+            names = NamedBus(None, namespace, remap, domain)
+            transport_options['permissions'] = {u: {k: [names._wire(n) for n in v] for k, v in p.items()} for u, p in transport_options['permissions'].items()}
         self.bus = NamedBus(open_transport(transport, **transport_options), namespace, remap, domain)
         from .execution import Executor, Tracer
         from .bigdata import SharedArrays
@@ -96,18 +100,27 @@ class App:
 
     # ── loading ──────────────────────────────────────────────────────────────
     def load(self, path):
-        """Load a robot: a document as .json, or plain MuJoCo .xml."""
+        """Load a robot: a Studio document (.json), MuJoCo (.xml), or a ROS description (.urdf, .xacro)."""
         if not os.path.exists(path):
             raise GosError(f'No file at {path}.')
         ext = os.path.splitext(path)[1].lower()
-        if ext == '.xml':
-            return self._open_xml(path, None, None)
+        if ext in ('.xml', '.urdf'):
+            return self._open_xml(path, None, None)  # MuJoCo reads URDF itself; package:// mesh paths need the meshes beside the file
+        if ext == '.xacro':
+            try:
+                import xacro
+            except ImportError as e:
+                raise GosError('Reading .xacro needs: py -3.12 -m pip install "tetrobot-gos[ros]"') from e
+            self._dir = self._dir or tempfile.mkdtemp(prefix='gos_')
+            urdf = os.path.join(self._dir, os.path.basename(path)[:-len('.xacro')].removesuffix('.urdf') + '.urdf')
+            with open(urdf, 'w', encoding='utf-8') as f: f.write(xacro.process_file(path).toxml())
+            return self._open_xml(urdf, None, None)
         if ext == '.json':
             with open(path, encoding='utf-8') as f: raw = json.load(f)
             return self.load_document(raw.get('model') if 'model' in raw and 'bodies' not in raw else raw)
         if ext == '.nischay':
             raise GosError('.nischay files are encrypted. In the Studio use File > Export > JSON model, then load that, or give GOS an .xml.')
-        raise GosError(f'GOS can load .json or .xml, not {ext}.')
+        raise GosError(f'GOS can load .json, .xml, .urdf or .xacro, not {ext}.')
 
     def load_document(self, doc):
         """Load a Studio document (dict). The Rust core writes the MJCF, the same code as the Studio's export."""

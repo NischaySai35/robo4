@@ -5,6 +5,8 @@
  * "go to these angles". That is what makes undo, drag-reorder and import/export possible at
  * all — none of it would fit in the ESP32's RAM, and none of it needs to.
  */
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import React, { useRef, useState } from 'react';
 import { useEspTtlStore, currentPose, ttlTry } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
@@ -119,15 +121,15 @@ export default function AnimationTab() {
       <div className="ettl-card">
         <h4>Global control</h4>
         <div className="ettl-row">
-          <button className="ettl-btn danger big" onClick={() => call('/api/command?servo=all&cmd=estop', 'E-STOP')}>
+          <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold" onClick={() => call('/api/command?servo=all&cmd=estop', 'E-STOP')}>
             E-STOP ALL
-          </button>
-          <button className="ettl-btn" onClick={() => call('/api/torque?on=1', 'torque on')}>Torque ON</button>
-          <button className="ettl-btn" onClick={() => call('/api/torque?on=0', 'torque off')}>Torque OFF (limp)</button>
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=1', 'torque on')}>Torque ON</Button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=0', 'torque off')}>Torque OFF (limp)</Button>
           <span className="ettl-sep" />
-          <button className="ettl-btn" onClick={() => call('/api/home', 'home 180')}>Home all → 180°</button>
-          <button className="ettl-btn accent" onClick={() => call('/api/home/manual', 'manual home')}>Go to manual home</button>
-          <button className="ettl-btn" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</button>
+          <Button variant="outline" size="sm" onClick={() => call('/api/home', 'home 180')}>Home all → 180°</Button>
+          <Button size="sm" onClick={() => call('/api/home/manual', 'manual home')}>Go to manual home</Button>
+          <Button variant="outline" size="sm" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</Button>
         </div>
         <div className="ettl-row">
           <label className="ettl-lbl">speed
@@ -142,11 +144,11 @@ export default function AnimationTab() {
             <span />Auto time
           </label>
           <label className="ettl-lbl" style={{ opacity: t.globalDelayMs === 0 ? 0.45 : 1 }}>move time
-            <input type="number" min={0} step={100} value={t.globalDelayMs} disabled={t.globalDelayMs === 0}
+            <Input size="xs" className="tw:w-auto" type="number" min={0} step={100} value={t.globalDelayMs} disabled={t.globalDelayMs === 0}
                    onChange={e => t.setGlobalDelay(+e.target.value)} /> ms
           </label>
           <label className="ettl-lbl" title="Pause after the joints have arrived, before the next frame">pause
-            <input type="number" min={0} step={100} value={t.globalHoldMs}
+            <Input size="xs" className="tw:w-auto" type="number" min={0} step={100} value={t.globalHoldMs}
                    onChange={e => t.setGlobalHold(+e.target.value)} /> ms
           </label>
           <label className={`ettl-toggle ${t.sine ? 'on' : ''}`} title="Ease in and out instead of a flat run">
@@ -190,7 +192,7 @@ export default function AnimationTab() {
               <div key={s.id} className="ettl-saved" onClick={() => renaming !== s.id && loadSaved(s)}
                    title="click to load onto the timeline">
                 {renaming === s.id ? (
-                  <input autoFocus value={renameVal} maxLength={60}
+                  <Input size="xs" className="tw:w-auto" autoFocus value={renameVal} maxLength={60}
                          onClick={e => e.stopPropagation()}
                          onChange={e => setRenameVal(e.target.value)}
                          onKeyDown={e => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setRenaming(null); }}
@@ -202,13 +204,13 @@ export default function AnimationTab() {
                   {s.data.frames.length} frame{s.data.frames.length === 1 ? '' : 's'} · {new Date(s.savedAt).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
                 </div>
                 <div className="ettl-saved-btns" onClick={e => e.stopPropagation()}>
-                  <button className="ettl-btn tiny accent" onClick={() => loadSaved(s)}>Load</button>
-                  <button className="ettl-btn tiny" disabled={!online || sending}
-                          onClick={() => void sendSaved(s)} title="Load onto the timeline and send to the board">Send</button>
-                  <button className="ettl-btn tiny" onClick={() => { setRenaming(s.id); setRenameVal(s.name); }}>Rename</button>
-                  <button className="ettl-btn tiny danger" onClick={() => {
+                  <Button size="xs" onClick={() => loadSaved(s)}>Load</Button>
+                  <Button variant="outline" size="xs" disabled={!online || sending}
+                          onClick={() => void sendSaved(s)} title="Load onto the timeline and send to the board">Send</Button>
+                  <Button variant="outline" size="xs" onClick={() => { setRenaming(s.id); setRenameVal(s.name); }}>Rename</Button>
+                  <Button variant="destructive" size="xs" onClick={() => {
                     if (confirm(`Delete saved animation “${s.name}”?`)) saved.remove(s.id);
-                  }}>✕</button>
+                  }}>✕</Button>
                 </div>
               </div>
             ))}
@@ -220,45 +222,45 @@ export default function AnimationTab() {
       <div className="ettl-card">
         <h4>Timeline · {t.frames.length} frame{t.frames.length === 1 ? '' : 's'}</h4>
         <div className="ettl-row">
-          <button className="ettl-btn rec" onClick={record} disabled={!online}>● Record pose</button>
-          <button className="ettl-btn accent" onClick={send}
+          <Button variant="destructive" size="sm" onClick={record} disabled={!online}>● Record pose</Button>
+          <Button size="sm" onClick={send}
                   disabled={!t.frames.length || !online || sending}>
             {sending ? 'Sending…' : `⇪ Send to board (${t.frames.length})`}
-          </button>
-          <button className="ettl-btn danger" onClick={() => { void stopOnBoard(); stopPlayback(); }}>■ Stop</button>
+          </Button>
+          <Button variant="destructive" size="sm" onClick={() => { void stopOnBoard(); stopPlayback(); }}>■ Stop</Button>
           {t.playing
-            ? <button className="ettl-btn" onClick={stopPlayback}>stop streaming</button>
-            : <button className="ettl-btn" onClick={() => playTimeline(0, say)}
+            ? <Button variant="outline" size="sm" onClick={stopPlayback}>stop streaming</Button>
+            : <Button variant="outline" size="sm" onClick={() => playTimeline(0, say)}
                       disabled={!t.frames.length || !online}
                       title="Play from the laptop instead — every frame boundary goes over Wi-Fi">
                 ▶ Stream from laptop
-              </button>}
+              </Button>}
           <span className="ettl-sep" />
-          <button className="ettl-btn" onClick={t.undo} disabled={!t.canUndo()} title="Undo">↶ Undo</button>
-          <button className="ettl-btn" onClick={t.redo} disabled={!t.canRedo()} title="Redo">↷ Redo</button>
+          <Button variant="outline" size="sm" onClick={t.undo} disabled={!t.canUndo()} title="Undo">↶ Undo</Button>
+          <Button variant="outline" size="sm" onClick={t.redo} disabled={!t.canRedo()} title="Redo">↷ Redo</Button>
           <span className="ettl-sep" />
-          <button className="ettl-btn accent" onClick={() => setNaming(v => !v)} disabled={!t.frames.length}
-                  title="Keep this timeline inside TETROBOT (see Saved animations above)">💾 Save to local</button>
-          <button className="ettl-btn" onClick={exportFile} disabled={!t.frames.length}>Export .json</button>
-          <button className="ettl-btn" onClick={() => fileRef.current?.click()}>Import</button>
+          <Button size="sm" onClick={() => setNaming(v => !v)} disabled={!t.frames.length}
+                  title="Keep this timeline inside TETROBOT (see Saved animations above)">💾 Save to local</Button>
+          <Button variant="outline" size="sm" onClick={exportFile} disabled={!t.frames.length}>Export .json</Button>
+          <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>Import</Button>
           <input ref={fileRef} type="file" accept=".json,.txt,application/json,text/plain"
                  style={{ display: 'none' }}
                  onChange={e => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />
-          <button className="ettl-btn danger" onClick={() => {
+          <Button variant="destructive" size="sm" onClick={() => {
             if (t.frames.length && confirm(`Delete all ${t.frames.length} frames? Undo can bring them back.`)) t.clearAll();
-          }} disabled={!t.frames.length}>Clear</button>
+          }} disabled={!t.frames.length}>Clear</Button>
         </div>
 
         {naming && (
           <div className="ettl-row">
             <label className="ettl-lbl">name
-              <input autoFocus value={saveName} maxLength={60} style={{ width: 220 }}
+              <Input size="xs" className="tw:w-auto" autoFocus value={saveName} maxLength={60} style={{ width: 220 }}
                      placeholder="optional — blank = automatic name"
                      onChange={e => setSaveName(e.target.value)}
                      onKeyDown={e => { if (e.key === 'Enter') commitSave(); if (e.key === 'Escape') setNaming(false); }} />
             </label>
-            <button className="ettl-btn accent" onClick={commitSave}>Save</button>
-            <button className="ettl-btn" onClick={() => setNaming(false)}>Cancel</button>
+            <Button size="sm" onClick={commitSave}>Save</Button>
+            <Button variant="outline" size="sm" onClick={() => setNaming(false)}>Cancel</Button>
           </div>
         )}
 
@@ -298,17 +300,17 @@ export default function AnimationTab() {
           <h4>Edit · {sel.name}</h4>
           <div className="ettl-row">
             <label className="ettl-lbl">name
-              <input value={sel.name} style={{ width: 160 }}
+              <Input size="xs" className="tw:w-auto" value={sel.name} style={{ width: 160 }}
                      onChange={e => t.updateFrame(sel.id, { name: e.target.value })} />
             </label>
             <label className="ettl-lbl">speed
-              <input type="number" min={1} max={10} placeholder={String(t.globalSpeed)}
+              <Input size="xs" className="tw:w-auto" type="number" min={1} max={10} placeholder={String(t.globalSpeed)}
                      value={sel.speed ?? ''} style={{ width: 70 }}
                      onChange={e => t.updateFrame(sel.id, { speed: e.target.value === '' ? null : +e.target.value })} />
               <span className="ettl-dim">{sel.speed == null ? `global (${t.globalSpeed})` : 'override'}</span>
             </label>
             <label className="ettl-lbl">move time
-              <input type="number" min={0} step={100} placeholder={t.globalDelayMs === 0 ? 'auto' : String(t.globalDelayMs)}
+              <Input size="xs" className="tw:w-auto" type="number" min={0} step={100} placeholder={t.globalDelayMs === 0 ? 'auto' : String(t.globalDelayMs)}
                      value={sel.delayMs ?? ''} style={{ width: 90 }}
                      onChange={e => t.updateFrame(sel.id, { delayMs: e.target.value === '' ? null : +e.target.value })} />
               <span className="ettl-dim">
@@ -318,16 +320,16 @@ export default function AnimationTab() {
               </span>
             </label>
             <label className="ettl-lbl">pause after
-              <input type="number" min={0} step={100} placeholder={String(t.globalHoldMs)}
+              <Input size="xs" className="tw:w-auto" type="number" min={0} step={100} placeholder={String(t.globalHoldMs)}
                      value={sel.holdMs ?? ''} style={{ width: 80 }}
                      onChange={e => t.updateFrame(sel.id, { holdMs: e.target.value === '' ? null : +e.target.value })} /> ms
             </label>
-            <button className="ettl-btn" onClick={() => {
+            <Button variant="outline" size="sm" onClick={() => {
               const pose = currentPose();
               if (!Object.keys(pose).length) { say('no live angles to capture'); return; }
               t.updateFrame(sel.id, { pose });
               say('frame updated from the live arm');
-            }} disabled={!online}>Re-capture from arm</button>
+            }} disabled={!online}>Re-capture from arm</Button>
           </div>
 
           <table className="ettl-table">
@@ -346,8 +348,8 @@ export default function AnimationTab() {
                       />
                     </td>
                     <td className="ettl-dim">{live?.currentAngle?.toFixed(1) ?? '—'}°</td>
-                    <td><button className="ettl-btn tiny danger"
-                                onClick={() => t.removeJoint(sel.id, id)}>drop</button></td>
+                    <td><Button variant="destructive" size="xs"
+                                onClick={() => t.removeJoint(sel.id, id)}>drop</Button></td>
                   </tr>
                 );
               })}
@@ -357,10 +359,10 @@ export default function AnimationTab() {
             <div className="ettl-row">
               <span className="ettl-dim">not in this frame:</span>
               {servos.filter(s => sel.pose[s.id] === undefined).map(s => (
-                <button key={s.id} className="ettl-btn tiny"
+                <Button variant="outline" size="xs" key={s.id}
                         onClick={() => t.setJoint(sel.id, s.id, s.currentAngle ?? 180)}>
                   + {s.label}
-                </button>
+                </Button>
               ))}
             </div>
           )}
@@ -390,11 +392,11 @@ function JointRow(props: { min: number; max: number; value: number; onChange: (v
   };
   return (
     <div className="ettl-angle">
-      <button className="ettl-btn step" onClick={() => step(-1)}>−</button>
+      <Button variant="outline" size="sm" onClick={() => step(-1)}>−</Button>
       <input className="ettl-slider" type="range" min={props.min} max={props.max} step={0.5}
              value={props.value} onChange={e => props.onChange(+e.target.value)} />
-      <button className="ettl-btn step" onClick={() => step(1)}>+</button>
-      <input className="ettl-num" type="number" step={0.5}
+      <Button variant="outline" size="sm" onClick={() => step(1)}>+</Button>
+      <Input size="xs" className="tw:w-[78px] tw:flex-none tw:text-right tw:tabular-nums" type="number" step={0.5}
              value={typed ?? props.value.toFixed(1)}
              onChange={e => setTyped(e.target.value)}
              onKeyDown={e => { if (e.key === 'Enter') { commit(); (e.target as HTMLInputElement).blur(); } }}
@@ -444,10 +446,10 @@ function FrameCard(props: {
         {(f.holdMs ?? props.globalHold) > 0 && <span className={f.holdMs != null ? 'ov' : ''}>+{f.holdMs ?? props.globalHold} pause</span>}
       </div>
       <div className="ettl-frame-btns" onClick={e => e.stopPropagation()}>
-        <button className="ettl-btn tiny" onClick={props.onGo} title="send the arm to this pose">go</button>
-        <button className="ettl-btn tiny" onClick={props.onPlayFrom} title="play from here">▶</button>
-        <button className="ettl-btn tiny" onClick={props.onDup} title="duplicate">⧉</button>
-        <button className="ettl-btn tiny danger" onClick={props.onDel} title="delete">✕</button>
+        <Button variant="outline" size="xs" onClick={props.onGo} title="send the arm to this pose">go</Button>
+        <Button variant="outline" size="xs" onClick={props.onPlayFrom} title="play from here">▶</Button>
+        <Button variant="outline" size="xs" onClick={props.onDup} title="duplicate">⧉</Button>
+        <Button variant="destructive" size="xs" onClick={props.onDel} title="delete">✕</Button>
       </div>
     </div>
   );

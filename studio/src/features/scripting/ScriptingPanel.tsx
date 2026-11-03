@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import './ScriptingPanel.css';
 import { useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
@@ -43,10 +44,10 @@ export default function ScriptingPanel() {
   };
 
   return (
-    <div className="scpt-panel">
+    <div className="scpt-panel" data-ui="a">
       <div className="scpt-head">
         <span>JS MACROS</span>
-        <button onClick={() => setCode(defaultScript)} title="Reset script">Reset</button>
+        <Button variant="outline" size="xs" onClick={() => setCode(defaultScript)} title="Reset script">Reset</Button>
       </div>
 
       <textarea
@@ -57,11 +58,11 @@ export default function ScriptingPanel() {
       />
 
       <div className="scpt-actions">
-        <button className="scpt-run" onClick={run} disabled={busy || !code.trim()}>
+        <Button size="sm" onClick={run} disabled={busy || !code.trim()}>
           {busy ? 'Running' : 'Run'}
-        </button>
+        </Button>
         {snippets.map((s) => (
-          <button key={s.label} onClick={() => setCode(s.code)}>{s.label}</button>
+          <Button key={s.label} variant="outline" size="sm" onClick={() => setCode(s.code)}>{s.label}</Button>
         ))}
       </div>
 

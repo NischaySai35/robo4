@@ -67,21 +67,3 @@
 }
 
 /* ── Cancel button ──────────────────────────────────────────── */
-.loadbar-cancel {
-  flex-shrink: 0;
-  padding: 1px 7px;
-  font-size: 10px;
-  font-weight: 600;
-  color: var(--text-dim, #8aa0be);
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 3px;
-  cursor: pointer;
-  line-height: 16px;
-  transition: background 0.15s, color 0.15s;
-}
-.loadbar-cancel:hover {
-  background: rgba(220, 60, 60, 0.22);
-  border-color: rgba(220, 60, 60, 0.4);
-  color: #ff7070;
-}

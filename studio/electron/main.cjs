@@ -85,6 +85,9 @@ const { ensureGpuWatcher, stopGpuWatcher, gpuPercentFor } = require('../tools/gp
 app.on('before-quit', stopGpuWatcher);
 let stopPhysics = () => {};
 app.on('before-quit', () => stopPhysics());
+// The modules' Wi-Fi network (ROBO4-NET), shared with the dev server: see tools/robo4Net.cjs.
+let stopRobo4Net = () => {};
+app.on('before-quit', () => stopRobo4Net());
 
 ipcMain.handle('metrics:sample', () => {
   const { ramBytes, cpuPercent, pids } = appRamAndCpu();
@@ -146,9 +149,18 @@ function createWindow() {
 // Spoken feedback fires from timers/polls, not clicks; without this Chromium blocks audio
 // until the user has interacted with the page.
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+// Laptops with two graphics chips otherwise draw on the weak built-in one: on Nischay's laptop that gave 0.8 s
+// stalls while dragging a 100-body robot (tools/bench/editor_drag.py). Ask Windows/macOS for the fast one.
+app.commandLine.appendSwitch('force_high_performance_gpu');
 
 app.whenReady().then(() => {
   if (app.isPackaged) stopPhysics = require('./physicsService.cjs').startPhysicsService({ resourcesPath: process.resourcesPath, userData: app.getPath('userData') });
+  // Installed: the script ships in resources/. Dev (electron:dev): the repo's tools/ — the dev
+  // server usually has it running already, and the one-copy lock makes this one wait.
+  stopRobo4Net = require('../tools/robo4Net.cjs').startRobo4Net({
+    script: app.isPackaged ? path.join(process.resourcesPath, 'robo4-net.ps1') : path.join(__dirname, '..', '..', 'tools', 'robo4-net.ps1'),
+    logDir: path.join(app.getPath('userData'), 'data', 'logs'),
+  });
   createWindow();
   // (The renderer runs a quiet check shortly after launch via window.tetrobot —
   // it only prompts if an update is actually available.)

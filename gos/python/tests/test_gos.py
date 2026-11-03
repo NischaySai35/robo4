@@ -93,6 +93,27 @@ def test_real_module_from_your_cad():
         assert app.closure_error() == 0
 
 
+def test_the_real_module_weighs_what_the_cad_says_and_its_servos_hold_and_move():
+    with open(MODULE, encoding='utf-8') as f: raw = json.load(f)
+    doc = raw.get('model', raw)
+    cad = sum(b['inertial']['mass'] for b in doc['bodies'].values())
+    with gos.App() as app:
+        app.load_document(doc)
+        assert float(app.model.body_mass.sum()) == pytest.approx(cad, rel=1e-4), 'every part carries its CAD mass'
+        rotor = [i for i in range(app.model.nbody) if app.model.body(i).name == 'L1_LockRotor_A'][0]
+        assert float(app.model.body_mass[rotor]) == pytest.approx(0.00953, rel=1e-3)
+        assert len(app.servos()) == 9 and float(app.model.actuator_forcerange[0, 1]) == pytest.approx(2.7)
+        app.set_joints(J_B3_bend=0.2)
+        app.run(seconds=0.5)
+        assert app.robot.joints()['J_L2_lock'] == pytest.approx(0, abs=0.02), 'a light lock rotor stays put (motor inertia)'
+        app.set_targets(J_T2_twist=0.5)
+        app.run(seconds=1.0)
+        assert app.robot.joints()['J_T2_twist'] == pytest.approx(0.5, abs=0.035), 'the servo turns the joint to its target'
+        with pytest.raises(gos.GosError, match='no servo'): app.set_targets(nothing=1)
+    with gos.App() as app:
+        app.load_document(CHAIN); assert app.servos() == [], 'joints without a motor profile stay free'
+
+
 def test_ik_reports_both_errors_and_holds_a_ring():
     pytest.importorskip('mink')
     with gos.App() as app:
@@ -402,6 +423,75 @@ def test_a_service_is_called_from_another_process(tmp_path):
         p.kill()
 
 
+def test_three_programs_talk_over_plain_tcp_with_no_add_ons(tmp_path):
+    """Hub, a second program and this one: topics both ways and program to program, a latched value for a late
+    subscriber, bytes, services in every direction, and discovery that forgets a program when it stops."""
+    import time
+    from gos.testing import wait_until
+    addr = '127.0.0.1:17460'
+    hub = tmp_path / 'hub.py'; hub.write_text(textwrap.dedent(f'''
+        import sys, time, gos
+        with gos.App(transport='tcp', address='{addr}', name='hub') as app:
+            assert app.bus.raw.hub
+            got = []
+            app.topic('/to/hub').subscribe(lambda m: got.append(m))
+            app.services.advertise('/hub/add', lambda r: r['a'] + r['b'])
+            print('READY', flush=True)
+            for line in sys.stdin:
+                if line.startswith('call'): print('CALLED', app.services.call('/me/shout', 'hi'), flush=True)
+                if line.startswith('got'): print('GOT', [m['n'] for m in got], flush=True)
+                if line.startswith('pub'): app.topic('/from/hub').publish({{'n': 5}}); print('PUBBED', flush=True)
+                if line.startswith('zenoh'): print('ZENOH', 'zenoh' in sys.modules, flush=True)
+    '''))
+    other = tmp_path / 'other.py'; other.write_text(textwrap.dedent(f'''
+        import sys, time, gos
+        with gos.App(transport='tcp', address='{addr}', name='other') as app:
+            app.bus.publish('/state', {{'mode': 'walk'}}, latched=True)
+            app.bus.announce('node', '/other')
+            app.services.advertise('/other/double', lambda r: r * 2)
+            seen = []
+            app.topic('/to/other').subscribe(seen.append)
+            print('READY', flush=True)
+            for line in sys.stdin:
+                if line.startswith('seen'): print('SEEN', seen, flush=True)
+    '''))
+    env = dict(os.environ, PYTHONPATH=PY)
+    procs = [subprocess.Popen([sys.executable, str(f)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) for f in (hub,)]
+    try:
+        assert procs[0].stdout.readline().strip() == 'READY'
+        procs.append(subprocess.Popen([sys.executable, str(other)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True))
+        assert procs[1].stdout.readline().strip() == 'READY'
+        ask = lambda i, cmd: (procs[i].stdin.write(cmd + '\n'), procs[i].stdin.flush(), procs[i].stdout.readline())[2]
+        with gos.App(transport='tcp', address=addr, name='me') as app:
+            assert not app.bus.raw.hub
+            late = []
+            app.topic('/state').subscribe(late.append)
+            wait_until(lambda: late == [{'mode': 'walk'}], 'the latched value', 3)
+            app.services.advertise('/me/shout', lambda r: r.upper())
+            heard, raw = [], []
+            app.topic('/from/hub').subscribe(heard.append)
+            app.bus.raw.subscribe('/d0/blob', raw.append)
+            time.sleep(0.2)
+            for n in range(3): app.topic('/to/hub').publish({'n': n})
+            app.topic('/to/other').publish({'x': 1})
+            app.bus.raw.publish('/d0/blob', b'\x00\xffraw')
+            ask(0, 'pub')
+            wait_until(lambda: heard == [{'n': 5}], 'the hub message', 3)
+            wait_until(lambda: raw == [b'\x00\xffraw'], 'the bytes', 3)
+            assert ask(0, 'got').strip() == 'GOT [0, 1, 2]'
+            assert ask(1, 'seen').strip() == "SEEN [{'x': 1}]", 'program to program through the hub'
+            assert app.services.call('/hub/add', {'a': 2, 'b': 40}) == 42
+            assert app.services.call('/other/double', 21) == 42
+            assert ask(0, 'call').strip() == 'CALLED HI', 'the hub calls a service this program offers'
+            with pytest.raises(LookupError, match='answered'): app.services.call('/nobody', {}, timeout=1)
+            assert '/other' in app.bus.discover('node')
+            procs[1].kill(); procs[1].wait()
+            wait_until(lambda: '/other' not in app.bus.discover('node'), 'a stopped program to be forgotten', 3)
+            assert ask(0, 'zenoh').strip() == 'ZENOH False', 'nothing beyond the core install is used'
+    finally:
+        for p in procs: p.kill()
+
+
 def test_tf_over_time_interpolates_streams_and_reports_gaps():
     from gos import tf
     from gos.testing import wait_until
@@ -468,7 +558,7 @@ def test_rust_graph_ik_holds_a_ring_and_reaches_on_the_real_module():
 
 class FakeBoard:
     """Answers like firmware/esp32_multi's web API, records every command, moves nothing."""
-    def __init__(self, n=9):
+    def __init__(self, n=9, live=False):
         import http.server, threading
         self.angles = {i + 1: 180.0 for i in range(n)}
         self.homes = {i + 1: 180.0 + i for i in range(n)}
@@ -481,8 +571,10 @@ class FakeBoard:
                 from urllib.parse import urlparse, parse_qs
                 u = urlparse(self.path); q = {k: v[0] for k, v in parse_qs(u.query).items()}
                 board.calls.append((u.path, q))
-                if u.path == '/api/telemetry':
-                    body = {'servos': [{'id': i, 'currentAngle': board.angles[i], 'home': board.homes[i]} for i in board.angles]}
+                if u.path == '/api/health':
+                    body = {'ok': True, 'device': 'ROBO4-ESP32', 'ip': '127.0.0.1', **({'live': board.live_port} if live else {})}
+                elif u.path == '/api/telemetry':
+                    body = {'servos': [{'id': i, 'label': f'J{i}', 'min': 80, 'max': 280, 'currentAngle': board.angles[i], 'home': board.homes[i]} for i in board.angles]}
                 else:
                     if u.path == '/api/batch':
                         for k, v in q.items():
@@ -493,6 +585,18 @@ class FakeBoard:
         self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
         self.url = f'http://127.0.0.1:{self.server.server_address[1]}'
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        if live:  # like the firmware's live mode: while asked (R4LV), push angles every 60 ms
+            import socket, time
+            u = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); u.bind(('127.0.0.1', 0)); self.live_port = u.getsockname()[1]; u.settimeout(0.06)
+            def push():
+                to, until = None, 0
+                while True:
+                    try:
+                        b, a = u.recvfrom(16)
+                        if b == b'R4LV': to, until = a, time.time() + 1.5
+                    except OSError: pass
+                    if to and time.time() < until: u.sendto(json.dumps({'a': [[i, v] for i, v in board.angles.items()]}).encode(), to)
+            threading.Thread(target=push, daemon=True).start()
 
     def batches(self): return [q for p, q in self.calls if p == '/api/batch']
 
@@ -526,6 +630,72 @@ def test_real_robot_is_safe_by_default_and_follows_the_same_script():
         assert app.stop().ok and not robot.armed
         assert board.calls[-1] == ('/api/command', {'servo': 'all', 'cmd': 'estop'})
         assert not robot.move({names[2]: 0}).ok, 'stop disarms'
+
+
+def test_a_module_served_on_the_network_is_safe_and_follows_commands():
+    import math, time
+    from gos.hardware import Esp32Robot, serve_robot
+    board = FakeBoard()
+    robot = Esp32Robot.from_board(board.url)
+    assert robot.joints[:2] == ['J1', 'J2'] and robot.ids['J3'] == 3, 'names and IDs come from the board'
+    assert robot.limits['J3'] == pytest.approx((math.radians(80 - 182), math.radians(280 - 182))), 'limits around its home'
+    with gos.App(name='driver') as app:
+        stop = serve_robot(app, robot, 'mod1', rate=50)
+        states, status = [], []
+        app.topic('/mod1/joint_states').subscribe(states.append)
+        app.topic('/mod1/status').subscribe(status.append)
+        time.sleep(0.15)
+        assert states and states[-1]['name'][0] == 'J1' and states[-1]['position'][0] == pytest.approx(0), 'angles from the encoders'
+        app.topic('/mod1/joint_commands').publish({'name': ['J3'], 'position': [0.2]})
+        assert not board.batches() and 'not armed' in status[-1]['error'].lower(), 'nothing moves before arm'
+        assert app.services.call('/mod1/arm', None)['ok']
+        app.topic('/mod1/joint_commands').publish({'name': ['J3'], 'position': [0.2]})
+        assert float(board.batches()[-1]['3']) == pytest.approx(182 + math.degrees(0.2), abs=0.01)
+        time.sleep(0.1)
+        assert states[-1]['position'][2] == pytest.approx(0.2, abs=1e-3), 'the state follows the robot'
+        app.topic('/mod1/joint_commands').publish({'name': ['J3', 'J4'], 'position': [0.1]})
+        assert 'one position per name' in status[-1]['error']
+        assert app.services.call('/mod1/stop', None)['ok'] and ('/api/command', {'servo': 'all', 'cmd': 'estop'}) in board.calls
+        assert not robot.armed, 'stop disarms'
+        stop()
+
+
+def test_live_mode_streams_angles_instead_of_asking_every_time():
+    import math, time
+    from gos.hardware import Esp32Robot
+    old = Esp32Robot.from_board(FakeBoard().url)
+    assert not old.live(), 'a board without live mode keeps working the old way'
+    board = FakeBoard(live=True)
+    robot = Esp32Robot.from_board(board.url)
+    assert robot.live()
+    time.sleep(0.3)
+    n = len(board.calls)
+    for _ in range(20): q = robot.read()
+    assert len(board.calls) - n <= 1, 'reads come from the stream, not one web request each'
+    board.angles[3] = board.homes[3] + 10
+    time.sleep(0.2)
+    assert robot.read()['J3'] == pytest.approx(math.radians(10)), 'the stream follows the robot'
+    robot.close(); time.sleep(0.7)
+    n = len(board.calls); robot.read()
+    assert len(board.calls) - n == 1, 'after close, reads go back to the web request'
+
+
+def test_downloads_show_a_progress_bar_in_a_terminal_and_lines_in_a_log():
+    import io
+    from gos.progress import Progress
+    class Tty(io.StringIO):
+        encoding = 'cp1252'  # an old Windows console: plain characters
+        def isatty(self): return True
+    t = Tty(); p = Progress('Downloading', 1000, stream=t)
+    for _ in range(10): p.update(100)
+    p.finish()
+    out = t.getvalue()
+    assert '\r' in out and '100%' in out and '[####################]' in out and 'done' in out, 'one line redrawn in place'
+    log = io.StringIO(); p = Progress('Downloading', 1000, stream=log)
+    for _ in range(100): p.update(10)
+    p.finish()
+    lines = log.getvalue().splitlines()
+    assert '\r' not in log.getvalue() and 10 <= len(lines) <= 12, 'a log gets about one line per 10%, no redrawing'
 
 
 def test_an_unreachable_robot_says_what_to_check():
@@ -874,6 +1044,17 @@ def test_rate_keeps_time_and_reports_jitter():
     assert 0.45 < took < 0.6 and j['median_ms'] < 1.0
 
 
+def test_realtime_asks_the_system_and_says_what_it_got():
+    # in its own process, so the test run itself keeps its normal priority
+    code = 'import gos, json; print(json.dumps(gos.realtime()))'
+    r = subprocess.run([sys.executable, '-c', code], env=dict(os.environ, PYTHONPATH=PY), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    got = json.loads(r.stdout)
+    assert got['gc'] == 'frozen' and got['system'] in ('Windows', 'Linux', 'Darwin') and 'priority' in got
+    if got['system'] == 'Windows': assert got['priority'] == 'high', 'a normal user may raise its own priority on Windows'
+    if got['system'] == 'Linux': assert 'kernel' in got
+
+
 def test_new_package_runs_and_passes_its_own_test(tmp_path):
     env = dict(os.environ, PYTHONPATH=PY)
     r = subprocess.run([sys.executable, '-m', 'gos', 'pkg', 'new', 'arm-driver'], cwd=tmp_path, env=env, capture_output=True, text=True, timeout=60)
@@ -925,6 +1106,132 @@ def test_planner_goes_around_an_obstacle_and_the_controller_follows(tmp_path):
         assert not plan.joint_path(app, {'J1': 3.0, 'J2': 0}).ok, 'outside the limits is refused'
         bad = plan.joint_path(app, {'J1': 0.0, 'J2': 0.0})
         assert not bad.ok and 'goal pose collides' in bad.message
+
+
+ARM_WITH_HAND = ARM_WITH_POST.replace('size="0.02" mass="0.1"/></body></body>', 'size="0.02" mass="0.1"/><body name="hand" pos="0.3 0 0"><geom type="sphere" size="0.005" mass="0.01"/></body></body></body>')
+PENTAGON_AT = {'A': (0, 0), 'B': (.2, 0), 'C': (.26, .19), 'D': (.1, .31), 'E': (-.06, .19)}
+PENTAGON = {'name': 'pentagon', 'bodies': by([body(n, *xy) for n, xy in PENTAGON_AT.items()]),
+            'joints': by([joint(a + b, 'revolute', a, b, PENTAGON_AT[b][0] - PENTAGON_AT[a][0], PENTAGON_AT[b][1] - PENTAGON_AT[a][1]) for a, b in ('AB', 'BC', 'CD', 'DE', 'EA')])}
+
+
+def off_line(p, a, b):
+    ux, uy = b[0] - a[0], b[1] - a[1]
+    return abs((p[0] - a[0]) * uy - (p[1] - a[1]) * ux) / math.hypot(ux, uy)
+
+
+def test_hand_moves_in_a_straight_line_and_stops_where_it_must(tmp_path):
+    from gos import plan
+    xml = tmp_path / 'arm.xml'; xml.write_text(ARM_WITH_HAND)
+    with gos.App() as app:
+        app.load(str(xml)); app.set_joints(J1=0.9, J2=-0.9)
+        start = app.robot.body_position('hand')
+        end = [start[0] - 0.1, start[1] + 0.05, start[2]]
+        r = plan.cartesian_path(app, 'hand', end)
+        assert r.ok and r.reached == 1.0, r.message
+        for q in r.path:  # every waypoint really is on the line
+            app.set_joints(**q); assert off_line(app.robot.body_position('hand'), start, end) < 0.0015
+        assert math.dist(app.robot.body_position('hand'), end) < 0.0015
+        app.set_joints(J1=0.9, J2=-0.9)
+        far = plan.cartesian_path(app, 'hand', [start[0] + 5, start[1], start[2]])
+        assert not far.ok and 0 < far.reached < 1 and 'cannot follow' in far.message and len(far.path) > 1, far.message
+        app.set_joints(J1=0.9, J2=-0.9)
+        hit = plan.cartesian_path(app, 'hand', [start[0], -start[1], start[2]])
+        assert not hit.ok and 'hit something' in hit.message and 0 < hit.reached < 1, hit.message
+        with pytest.raises(gos.GosError, match='No body named'): plan.cartesian_path(app, 'nope', end)
+
+
+def test_the_hand_keeps_its_angle_along_the_line_when_asked(tmp_path):
+    import mujoco
+    import numpy as np
+    from gos import plan
+    three = ARM_WITH_HAND.replace('<body name="hand" pos="0.3 0 0">', '<body name="hand" pos="0.3 0 0"><joint name="J3" type="hinge" axis="0 0 1" range="-3 3" limited="true"/>').replace('<geom type="sphere" size="0.005" mass="0.01"/>', '<geom type="capsule" fromto="0 0 0 0.05 0 0" size="0.005" mass="0.01"/>')
+    xml = tmp_path / 'arm.xml'; xml.write_text(three)
+    with gos.App() as app:
+        app.load(str(xml)); app.set_joints(J1=0.9, J2=-0.9, J3=0.3)
+        start = app.robot.body_position('hand'); end = [start[0] - 0.1, start[1] + 0.05, start[2]]
+        hand = mujoco.mj_name2id(app.model, mujoco.mjtObj.mjOBJ_BODY, 'hand')
+        q0 = app.data.xquat[hand].copy()
+        r = plan.cartesian_path(app, 'hand', end, keep_angle=True)
+        assert r.ok, r.message
+        for q in r.path:
+            app.set_joints(**q); turn = np.zeros(3); mujoco.mju_subQuat(turn, q0, app.data.xquat[hand])
+            assert np.linalg.norm(turn) < 0.01 and off_line(app.robot.body_position('hand'), start, end) < 0.0015
+        moved = plan.cartesian_path(app, 'hand', start)
+        assert moved.ok
+    two = tmp_path / 'two.xml'; two.write_text(ARM_WITH_HAND)
+    with gos.App() as app:  # two joints cannot move the hand and also hold its angle
+        app.load(str(two)); app.set_joints(J1=0.9, J2=-0.9)
+        s = app.robot.body_position('hand')
+        r = plan.cartesian_path(app, 'hand', [s[0] - 0.1, s[1] + 0.05, s[2]], keep_angle=True)
+        assert not r.ok and ('hold its angle' in r.message or 'cannot follow' in r.message), r.message
+
+
+def test_planners_work_on_the_real_module_whose_parts_overlap_at_rest():
+    from gos import plan
+    with open(MODULE, encoding='utf-8') as f: raw = json.load(f)
+    with gos.App() as app:
+        app.load_document(raw.get('model', raw))
+        r = plan.joint_path(app, {'J_B1_bend': 0.3, 'J_B3_bend': -0.3})
+        assert r.ok, r.message
+        tip = 'L2_LockRotor_B'; p = app.robot.body_position(tip); end = [p[0] - 0.02, p[1], p[2] + 0.03]
+        line = plan.cartesian_path(app, tip, end)
+        assert line.ok, line.message
+        app.set_joints(**line.path[-1])
+        assert math.dist(app.robot.body_position(tip), end) < 0.0015
+
+
+def two_real_modules(gap):
+    """Two copies of the real module side by side, each anchored at one end, as two modules lying on the floor."""
+    import copy
+    with open(MODULE, encoding='utf-8') as f: raw = json.load(f)
+    doc = copy.deepcopy(raw.get('model', raw)); second = copy.deepcopy(raw.get('model', raw))
+    for b in second['bodies'].values():
+        b['id'], b['name'] = 'M2_' + b['id'], 'M2_' + b['name']; b['transform']['position'][1] += gap
+    for j in second['joints'].values():
+        j['id'], j['name'] = 'M2_' + j['id'], 'M2_' + j['name']; j['parentBodyId'] = 'M2_' + j['parentBodyId']; j['childBodyId'] = 'M2_' + j['childBodyId']
+    doc['bodies'].update({b['id']: b for b in second['bodies'].values()}); doc['joints'].update({j['id']: j for j in second['joints'].values()})
+    for k in ('components', 'connectors'):
+        if isinstance(doc.get(k), dict) and k in second: doc[k].update({'M2_' + i: v for i, v in second[k].items()})
+    return doc
+
+
+def test_a_joint_to_a_missing_body_is_refused():
+    import copy
+    bad = copy.deepcopy(CHAIN); bad['joints']['BC']['parentBodyId'] = 'nobody'
+    with gos.App() as app:
+        with pytest.raises(gos.GosError, match='Joint "BC" connects to body "nobody"'): app.load_document(bad)
+
+
+def test_an_arch_of_two_real_modules_moves_in_a_line_with_its_lock_shut():
+    from gos import plan
+    with gos.App() as app:
+        app.load_document(two_real_modules(0.15))
+        assert app.lock('EndB_LockModule', 'M2_EndB_LockModule').ok
+        body = 'Spine2_B3B4'; p = app.robot.body_position(body); end = [p[0] - 0.02, p[1], p[2]]
+        r = plan.cartesian_path(app, body, end, keep_angle=True)
+        assert r.ok, r.message
+        for q in r.path:
+            app.set_joints(**q); assert app.closure_error() < 0.0005, 'the lock opened'
+        assert math.dist(app.robot.body_position(body), end) < 0.001
+
+
+def test_a_ring_stays_closed_on_a_straight_line_or_says_it_cannot():
+    from gos import plan
+    with gos.App() as app:
+        app.load_document(PENTAGON)
+        c = app.robot.body_position('D'); end = [c[0] + 0.02, c[1] - 0.01, c[2]]  # the corner away from the fixed pivots: it can move two ways
+        r = plan.cartesian_path(app, 'D', end)
+        assert r.ok, r.message
+        for q in r.path:
+            app.set_joints(**q)
+            assert app.closure_error() < 0.002, 'the ring opened'
+            assert off_line(app.robot.body_position('D'), c, end) < 0.0015
+        assert math.dist(app.robot.body_position('D'), end) < 0.0015
+    with gos.App() as app:  # four sides move only one way: its corner follows a curve, so a straight line is refused
+        app.load_document(SQUARE)
+        c = app.robot.body_position('C')
+        r = plan.cartesian_path(app, 'C', [c[0] - 0.03, c[1] + 0.01, c[2]])
+        assert not r.ok and 'cannot follow' in r.message, r.message
 
 
 def test_mobile_robot_drives_from_cmd_vel_and_reports_odom():

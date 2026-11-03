@@ -23,6 +23,7 @@
  */
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
+import { buildConnectorMarker, orientConnectorMarker, CONNECTOR_COLOR, CONNECTOR_SEL_COLOR } from '@/viewport/renderers/ConnectorRenderer';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import floorReceiverUrl from '@/assets/msrr/floor_receiver.stl?url';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -42,12 +43,14 @@ import ViewportStats from '@/features/canvas/ViewportStats';
 import NavigationGizmo from '@/features/viewport-ui/NavigationGizmo';
 import ViewControls from '@/features/viewport-ui/ViewControls';
 import HomeButton from '@/features/viewport-ui/HomeButton';
+import IkIndicator from '@/features/viewport-ui/IkIndicator';
 import { UNITS_PER_M } from '@/robotics/msrr/modulink';
 import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
 import { toView } from '@/features/msrr2/v2View';
 import { ManualPortMenu } from '@/features/msrr2/ManualTab';
 import { CUBES_PER_METRE } from '@/features/msrr/moduleMeshes';
 import { scheduleFrame, cancelFrame } from '@/runtime/frameScheduler';
+import { useEditorStore } from '@/state/editorStore';
 
 const CELL = 1; // the sandbox draws in unit lattice space; metres are the mirror's job
 
@@ -88,6 +91,9 @@ export default function MsrrCanvas() {
     };
 
     vp.getBodyCentres = () => stateRef.current?.bodyCentres ?? [];
+    // Smart orbit pivot: the whole MSRR root. SceneManager keeps only visible solids (it skips
+    // the grid lines, the invisible pick floor, labels and the on-top port / CoM balls).
+    vp.getModelGroup = () => scene;
 
     const grid = new THREE.GridHelper(40, 40);   // the cube lattice (Legacy tab only; v2 uses the Studio grid)
     // Lattice cell centres are integers, so the grid LINES must fall on half
@@ -213,6 +219,7 @@ export default function MsrrCanvas() {
       partSig: '',
       /** what the VSEPR score measures: every body drawn, in metres */
       bodyCentres: [] as [number, number, number][],
+      limitsFor: -1,
       cubePool: [] as THREE.Group[],
       ghostPool: [] as THREE.LineSegments[],
       /** translucent cubes showing where a click/drag would place */
@@ -256,6 +263,8 @@ export default function MsrrCanvas() {
       const before = st.partSig;
       syncScene(st);
       if (st.partSig !== before) sm.requestRender(2);
+      // zoom limits follow the robot's size, like the Editor's (else min distance stays 10 cm = one module)
+      if (st.bodyCentres.length !== st.limitsFor) { st.limitsFor = st.bodyCentres.length; sm.updateCameraLimits(); }
       grid.visible = useV2Store.getState().mode !== 'v2';
       if (sm.shouldRender()) sm.render();
     };
@@ -392,8 +401,8 @@ export default function MsrrCanvas() {
       const st = stateRef.current;
       if (!st?.portGroup || !useV2Store.getState().manual) return null;
       aimRay(ev);
-      const hit = st.raycaster.intersectObjects(st.portGroup.children, false).find((h: any) => h.object.userData.port);
-      return hit ? hit.object.userData.port : null;
+      const hit = st.raycaster.intersectObjects(st.portGroup.children, true).map((h: any) => { let o = h.object; while (o && !o.userData.port) o = o.parent; return o; }).find(Boolean);
+      return hit ? hit.userData.port : null;
     };
 
     const onDown = (ev: PointerEvent) => {
@@ -401,6 +410,14 @@ export default function MsrrCanvas() {
       if (!st) return;
       if (ev.button === 0 && useV2Store.getState().manual) {
         const id = pickPort(ev);
+        const man = useV2Store.getState().manual!;
+        // the shared Drag tip switch (IkIndicator, editorStore.ikDrag): grab an end connector, the sim's DIK + VSEPR move it
+        if (id && useEditorStore.getState().ikDrag && man.mode === 'move' && man.ports.find((q) => q.id === id)?.kind === 'end') {
+          const node = st.portNodes.get(id)?.node; if (!node) return;
+          const at = node.getWorldPosition(new THREE.Vector3());
+          st.tipDrag = { id, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(st.camera.getWorldDirection(new THREE.Vector3()), at), last: 0 };
+          st.controls.enableRotate = false; canvas.setPointerCapture?.(ev.pointerId); return;
+        }
         if (id) { useV2Store.getState().manualPick(id); return; }
       }
       if (ev.button === 2) { st.rightDown = { x: ev.clientX, y: ev.clientY }; return; }
@@ -417,6 +434,13 @@ export default function MsrrCanvas() {
       const st = stateRef.current;
       if (!st) return;
       const man = useV2Store.getState().manual;
+      if (man && st.tipDrag) {                                   // dragging a tip: the mouse on a plane facing the camera -> the sim
+        const now = performance.now(); if (now - st.tipDrag.last < 80) return; st.tipDrag.last = now;
+        aimRay(ev); const hit = st.raycaster.ray.intersectPlane(st.tipDrag.plane, new THREE.Vector3()); if (!hit) return;
+        const v = st.portGroup.worldToLocal(hit);              // view units -> Studio metres (inverse of v2View.toView)
+        useV2Store.getState().manualCmd({ kind: 'drag', end: st.tipDrag.id, p: [v.x / CUBES_PER_METRE, (v.y + 0.5) / CUBES_PER_METRE, v.z / CUBES_PER_METRE] });
+        return;
+      }
       if (man) {
         const id = pickPort(ev);
         const rect = canvas.getBoundingClientRect(), x = ev.clientX - rect.left, y = ev.clientY - rect.top;
@@ -436,6 +460,10 @@ export default function MsrrCanvas() {
 
     const onUp = (ev: PointerEvent) => {
       const st = stateRef.current;
+      if (st?.tipDrag) {                                         // let go: the sim stops steering the tip
+        useV2Store.getState().manualCmd({ kind: 'drag', end: st.tipDrag.id, p: null });
+        st.tipDrag = null; st.controls.enableRotate = true; canvas.releasePointerCapture?.(ev.pointerId); return;
+      }
       if (!st?.drag) return;
       const cells = runCells(st.drag.from, st.drag.normal, st.drag.count);
       if (cells.length) useMsrrStore.getState().addCells(cells);
@@ -487,7 +515,7 @@ export default function MsrrCanvas() {
     <div className="msrr-canvas-wrap">
       <canvas ref={canvasRef} className="msrr-canvas" />
       {/* the same viewport overlays as the Editor's (they talk to this viewport through the bridge while it is open) */}
-      <div className="top-center-cluster"><HomeButton /></div>
+      <div className="top-center-cluster"><HomeButton /><IkIndicator /></div>
       <div className="top-right-cluster"><NavigationGizmo /><ViewControls /></div>
       <div className="vp-hud-stack"><SpreadHud source="viewport" /><ViewportStats /></div>
       {v2Mode && <ManualPortMenu />}
@@ -560,7 +588,7 @@ function syncScene(st: any) {
   const cells = v2On ? [] : cellsOf(baseConfig);
   syncV2Overlay(st, v2On ? v2.view.overlay : null);
   syncReceivers(st, v2On ? v2.receivers : null);
-  syncPorts(st, v2On ? v2.manual : null);
+  syncPorts(st, v2On && v2.manual && v2.physics?.live?.manual && v2.physics.live.id === v2.manual.id ? v2.manual : null);   // dots only while that live session is what is drawn (3 Nov: stopped physics left the old session's dots over another robot)
 
   // Grow the pool as needed; extras are hidden rather than destroyed.
   while (st.cubePool.length < cells.length) {
@@ -877,25 +905,30 @@ function syncReceivers(st: any, list: import('@/features/msrr2/physicsView').Rec
   }
 }
 
-/** MANUAL tab: every connector of the live session as a small ball you can hover (menu) and click (connect mode).
- *  End A dark blue, End B orange, spine receivers grey, floor receivers cyan; locked = green, picked = yellow. */
+/** MANUAL tab: every connector of the live session, drawn with the SAME marker as every other viewport (ConnectorRenderer's
+ *  buildConnectorMarker: dot, crosshair, outward arrow); hover it for its menu, click it in connect mode. Locked = green,
+ *  picked / hovered = yellow. Markers are kept and only moved each frame; rebuilt when their colour changes. */
 function syncPorts(st: any, man: ManualState | null) {
   const key = man ? man.ports : null;
-  if (!st.portGroup) { st.portGroup = new THREE.Group(); st.scene.add(st.portGroup); st.portGeo = new THREE.SphereGeometry(0.014 * CUBES_PER_METRE, 12, 10); }
-  const g: THREE.Group = st.portGroup;
+  if (!st.portGroup) { st.portGroup = new THREE.Group(); st.scene.add(st.portGroup); st.portNodes = new Map(); }
+  const g: THREE.Group = st.portGroup; const nodes: Map<string, { node: THREE.Group; col: number }> = st.portNodes;
   const sig = man ? `${man.pick.join(',')}|${man.hover?.id ?? ''}|${man.mode}` : '';
   if (st.portSrc === key && st.portSig === sig) return;
   st.portSrc = key; st.portSig = sig;
-  for (const c of [...g.children]) { g.remove(c); (c as any).material?.dispose?.(); }
   g.visible = !st.portsHidden;
-  if (!man) return;
-  for (const p of man.ports) {
-    const col = man.pick.includes(p.id) ? 0xffd34d : p.locked ? 0x2ecc71 : p.kind === 'floor' ? 0x22c1d6 : p.kind === 'side' ? 0xa0a8b8 : p.id.endsWith('.A') ? 0x1f3fbf : 0xff8c1a;
-    const mesh = new THREE.Mesh(st.portGeo, new THREE.MeshBasicMaterial({ color: col, transparent: true, opacity: man.hover?.id === p.id ? 1 : 0.85, depthTest: false }));
-    const v = toView([p.p[0], p.p[1], p.p[2]]); mesh.position.set(v[0], v[1], v[2]); mesh.renderOrder = 12; mesh.userData.port = p.id;
-    if (man.hover?.id === p.id) mesh.scale.setScalar(1.6);
-    g.add(mesh);
+  const drop = (id: string) => { const n = nodes.get(id)!; g.remove(n.node); n.node.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); }); nodes.delete(id); };
+  const seen = new Set<string>();
+  for (const p of man?.ports ?? []) {
+    const col = man!.pick.includes(p.id) || man!.hover?.id === p.id ? CONNECTOR_SEL_COLOR : p.locked ? 0x2ecc71 : CONNECTOR_COLOR;
+    const v = toView([p.p[0], p.p[1], p.p[2]]), w = toView([p.p[0] + p.n[0], p.p[1] + p.n[1], p.p[2] + p.n[2]]);
+    const pose = { position: new THREE.Vector3(v[0], v[1], v[2]), normal: new THREE.Vector3(w[0] - v[0], w[1] - v[1], w[2] - v[2]).normalize() };
+    seen.add(p.id); const had = nodes.get(p.id);
+    if (had && had.col === col) { had.node.position.copy(pose.position); orientConnectorMarker(had.node, pose); continue; }
+    if (had) drop(p.id);
+    const node = buildConnectorMarker(pose, 0.08 * CUBES_PER_METRE, col); node.userData.port = p.id;
+    nodes.set(p.id, { node, col }); g.add(node);
   }
+  for (const id of [...nodes.keys()]) if (!seen.has(id)) drop(id);
 }
 
 /** a label that always faces the camera and is drawn on top; the canvas is sized to the text so nothing is cut off */

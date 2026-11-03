@@ -7,13 +7,18 @@
 import './HomeButton.css';
 import { useEditorStore } from '@/state/editorStore';
 import { useModelStore } from '@/state/modelStore';
+import { usePageStore } from '@/state/pageStore';
+import { useV2Store } from '@/state/msrrV2Store';
 
 export default function IkIndicator() {
   const ikDrag = useEditorStore((s) => s.ikDrag);
+  const page = usePageStore((s) => s.page);
+  // MSRR: the Manual tab's live robot (MsrrCanvas drags its end connectors; the sim's DIK + VSEPR move them)
+  const msrrLive = useV2Store((s) => !!s.manual);
   const hasMovable = useModelStore(
     (s) => Object.values(s.doc.joints).some((j) => j.type !== 'fixed'),
   );
-  if (!hasMovable) return null;
+  if (page === 'msrr' ? !msrrLive : !hasMovable) return null;
   return (
     <button
       className={`canvas-ik-btn ${ikDrag ? 'on' : 'off'}`}

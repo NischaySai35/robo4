@@ -1,5 +1,5 @@
 """How messages travel, behind one small interface like ROS's rmw: the same calls work inside one process or across processes."""
-import fnmatch, json, time
+import base64, fnmatch, json, os, time
 
 
 class LocalTransport:
@@ -164,6 +164,188 @@ class ZenohTransport:
         self._z.close()
 
 
+class TcpTransport:
+    """Across processes or machines with nothing to install: JSON lines over TCP, Python's standard library only.
+    The first program to open the address becomes the hub (like ROS 1's master); the others connect to it. The hub
+    passes messages on, keeps latched values, routes service calls and knows who is alive. If the hub program stops,
+    the others lose each other: start the hub first, or use Zenoh where no single program may be the centre."""
+    name = 'tcp'
+
+    def __init__(self, address='127.0.0.1:7450'):
+        import socket, threading
+        host, port = address.rsplit(':', 1)
+        self._lock, self._local, self._latched = threading.RLock(), LocalTransport(), {}
+        self._services, self._waiting, self._seen, self._peers, self._late, self._closed = {}, {}, {}, [], {}, False
+        self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        # Linux and macOS keep a closed hub's port for a minute, so a restarted hub could not take it back. On Windows
+        # this option would let another program share the port, so it stays off there.
+        if os.name != 'nt': self._srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            self._srv.bind((host, int(port))); self._srv.listen(); self.hub = True
+            threading.Thread(target=self._accept, daemon=True).start()
+        except OSError:  # someone already holds the address: they are the hub
+            self._srv.close(); self._srv, self.hub = None, False
+            s = socket.create_connection((host, int(port)), timeout=5); s.settimeout(None)
+            self._up = self._peer(s)
+
+    # ── wire ──
+    def _peer(self, sock):
+        import threading
+        p = {'sock': sock, 'file': sock.makefile('r', encoding='utf-8'), 'send': threading.Lock(), 'seen': {}, 'serves': set()}
+        threading.Thread(target=self._read, args=(p,), daemon=True).start()
+        return p
+
+    def _send(self, p, frame):
+        try:
+            with p['send']: p['sock'].sendall((json.dumps(frame) + '\n').encode())
+        except OSError: pass
+
+    def _accept(self):
+        while not self._closed:
+            try: s, _ = self._srv.accept()
+            except OSError: return
+            with self._lock: self._peers.append(self._peer(s))
+
+    def _read(self, p):
+        try:
+            for line in p['file']:
+                try: self._on(p, json.loads(line))
+                except Exception: pass
+        except OSError: pass  # a killed program resets the connection instead of closing it
+        with self._lock:  # gone: like a liveliness token, what it offered disappears with it
+            if p in self._peers: self._peers.remove(p)
+            for key, c in p['seen'].items(): self._seen[key] = self._seen.get(key, c) - c
+            for name in p['serves']: self._services.pop(name, None)
+
+    @staticmethod
+    def _pack(msg): return {'b': base64.b64encode(bytes(msg)).decode()} if isinstance(msg, (bytes, bytearray)) else {'j': msg}
+
+    @staticmethod
+    def _unpack(m): return base64.b64decode(m['b']) if 'b' in m else m['j']
+
+    def _on(self, p, f):
+        op = f['op']
+        if op == 'pub':
+            if self.hub:
+                if f.get('l'): self._latched[f['t']] = f['m']
+                for q in list(self._peers):
+                    if q is not p: self._send(q, f)
+            self._local.publish(f['t'], self._unpack(f['m']))
+        elif op == 'sub':  # the hub replays latched values to a late subscriber, to it alone
+            for t, m in list(self._latched.items()):
+                if fnmatch.fnmatch(t, f['t']): self._send(p, {'op': 'latched', 'id': f['id'], 'm': m})
+        elif op == 'latched':
+            fn = self._late.get(f['id'])
+            if fn: fn(self._unpack(f['m']))
+        elif op == 'serve':
+            with self._lock: self._services[f['n']] = p; p['serves'].add(f['n'])
+        elif op == 'req':
+            owner = self._services.get(f['n'])
+            if self.hub and owner is not None and owner != 'me' and owner is not p:
+                with self._lock: self._waiting[f['id']] = p if p is not None else 'me'
+                self._send(owner, f)
+            elif owner == 'me' or (not self.hub and f['n'] in self._mine()):
+                self._send(p, self._answer(f))
+            else:
+                self._send(p, {'op': 'rep', 'id': f['id'], 'ok': False, 'missing': True})
+        elif op == 'rep':
+            back = self._waiting.pop(f['id'], None)
+            if back is not None and back != 'me': self._send(back, f)
+            elif back == 'me' or not self.hub:
+                ev = self._waiting.get(('event', f['id']))
+                if ev: self._waiting[('reply', f['id'])] = f; ev.set()
+        elif op == 'ann':
+            with self._lock:
+                key = (f['k'], f['n'])
+                self._seen[key] = self._seen.get(key, 0) + (1 if f['on'] else -1)
+                p['seen'][key] = p['seen'].get(key, 0) + (1 if f['on'] else -1)
+        elif op == 'disc':
+            self._send(p, {'op': 'rep', 'id': f['id'], 'ok': True, 'v': self._known(f['k'])})
+
+    def _mine(self): return getattr(self, '_own', {})
+
+    def _answer(self, f):
+        try: return {'op': 'rep', 'id': f['id'], 'ok': True, 'v': self._mine()[f['n']](f['p'])}
+        except Exception as e: return {'op': 'rep', 'id': f['id'], 'ok': False, 'e': f'{type(e).__name__}: {e}'}
+
+    def _known(self, kind): return sorted({n for (k, n), c in self._seen.items() if k == kind and c > 0})
+
+    def _ask(self, frame, timeout):
+        import threading, uuid
+        frame['id'] = uuid.uuid4().hex; ev = threading.Event()
+        self._waiting[('event', frame['id'])] = ev
+        if self.hub: self._waiting[frame['id']] = 'me'
+        try:
+            if self.hub: self._on(None, frame)
+            else: self._send(self._up, frame)
+            if not ev.wait(timeout): return None
+            return self._waiting.pop(('reply', frame['id']))
+        finally:
+            self._waiting.pop(('event', frame['id']), None)
+
+    def _out(self, frame):
+        if self.hub:
+            for q in list(self._peers): self._send(q, frame)
+        else: self._send(self._up, frame)
+
+    # ── the transport interface ──
+    def publish(self, topic, msg, latched=False, reliable=True):  # TCP is always reliable
+        m = self._pack(msg)
+        if self.hub and latched: self._latched[topic] = m
+        self._out({'op': 'pub', 't': topic, 'm': m, 'l': latched})
+        self._local.publish(topic, msg)
+
+    def subscribe(self, topic, fn):
+        off = self._local.subscribe(topic, fn)
+        if self.hub:
+            for t, m in list(self._latched.items()):
+                if fnmatch.fnmatch(t, topic): fn(self._unpack(m))
+        else:
+            import uuid
+            token = uuid.uuid4().hex; self._late[token] = fn
+            self._send(self._up, {'op': 'sub', 't': topic, 'id': token})
+        return off
+
+    def topics(self): return sorted(set(self._local.topics()) | set(self._latched))
+
+    def serve(self, name, fn):
+        self._own = self._mine(); self._own[name] = fn
+        if self.hub: self._services[name] = 'me'
+        else: self._send(self._up, {'op': 'serve', 'n': name})
+        return lambda: self._own.pop(name, None)
+
+    def request(self, name, payload, timeout=5.0):
+        if name in self._mine():
+            return self._mine()[name](payload)
+        r = self._ask({'op': 'req', 'n': name, 'p': payload}, timeout)
+        if r is None or r.get('missing'):
+            raise LookupError(f'No service named {name} answered within {timeout} s. Is the process that offers it running and connected?')
+        if r['ok']: return r['v']
+        raise RuntimeError(f'Service {name} failed: {r["e"]}')
+
+    def announce(self, kind, name):
+        key = (kind, name)
+        if self.hub:
+            with self._lock: self._seen[key] = self._seen.get(key, 0) + 1
+            def off():
+                with self._lock: self._seen[key] = self._seen.get(key, 1) - 1
+            return off
+        self._send(self._up, {'op': 'ann', 'k': kind, 'n': name, 'on': True})
+        return lambda: self._send(self._up, {'op': 'ann', 'k': kind, 'n': name, 'on': False})
+
+    def discover(self, kind, timeout=1.0):
+        if self.hub: return self._known(kind)
+        r = self._ask({'op': 'disc', 'k': kind}, timeout)
+        return r['v'] if r else []
+
+    def close(self):
+        self._closed = True
+        for s in [self._srv] + [p['sock'] for p in self._peers] + ([self._up['sock']] if not self.hub else []):
+            try:
+                if s: s.close()
+            except OSError: pass
+
+
 class NamedBus:
     """Names, like ROS: namespaces, remapping and domains, applied in one place so every part obeys them.
 
@@ -241,4 +423,5 @@ class NamedBus:
 def open_transport(kind='local', **options):
     if kind == 'local': return LocalTransport()
     if kind == 'zenoh': return ZenohTransport(**options)
-    raise ValueError(f'Unknown transport "{kind}". Use "local" or "zenoh".')
+    if kind == 'tcp': return TcpTransport(**options)
+    raise ValueError(f'Unknown transport "{kind}". Use "local", "tcp" or "zenoh".')

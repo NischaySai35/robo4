@@ -14,7 +14,8 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
   const onHelpOpen = helpOpen ?? (() => runOperator('ui.help'));
   const onConnToggle = connToggle ?? (() => runOperator('ui.connection'));
   const streaming = useHardwareStore((s) => s.streaming);
-  const toggleSync = () => hardwareBridge.setStreaming(!streaming);
+  // ONE switch (Nischay 3 Nov: a SYNC word plus an ON/OFF pill inside it made no sense): on = stream + show what is sent
+  const toggleSync = () => { hardwareBridge.setStreaming(!streaming); if (!streaming && !isConnOpen) onConnToggle(); };
   const [wireframe, setWireframe] = useState(false);
   const [connectorsVisible, setConnectorsVisible] = useState(true);
 
@@ -145,15 +146,14 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
         <span className="view-btn-label">KEYS</span>
       </button>
 
-      {/* Sync control: the word/icon opens the connection panel; the ON/OFF pill
-          toggles real-time streaming of joint values to the connected hardware. */}
-      <div className={`view-btn view-btn--sync${isConnOpen ? ' view-btn--active' : ''}`}>
-        <span
-          className="view-sync-word"
-          onClick={onConnToggle}
-          title="Open the connection panel"
-          role="button"
-        >
+      {/* Sync: one switch. On = the sim's joint values stream to the robot and the SIM → ESP panel shows every angle sent
+          (or that would be sent, when no board answers); off = nothing is sent. */}
+      <button
+        className={`view-btn view-btn--sync${streaming ? ' view-btn--active' : ''}`}
+        onClick={toggleSync}
+        title={streaming ? 'Sync ON: joint values stream to the robot. Click to stop.' : 'Sync OFF: click to stream joint values to the robot (shows what is sent, also offline)'}
+      >
+        <span className="view-sync-word">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
             <path d="M1.5 5.5C1.5 3.3 3.3 1.5 5.5 1.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
             <path d="M1.5 9C1.5 5.4 4.2 2.5 7.5 2" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" opacity="0.5"/>
@@ -163,15 +163,8 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
           </svg>
           <span className="view-btn-label">SYNC</span>
         </span>
-        <span
-          className={`view-sync-state${streaming ? ' view-sync-state--on' : ''}`}
-          onClick={toggleSync}
-          title={streaming ? 'Real-time sync ON — click to stop streaming to the motors' : 'Click to start streaming live joint values to the connected motors'}
-          role="button"
-        >
-          {streaming ? 'ON' : 'OFF'}
-        </span>
-      </div>
+        <span className={`view-sync-state${streaming ? ' view-sync-state--on' : ''}`}>{streaming ? 'ON' : 'OFF'}</span>
+      </button>
     </div>
   );
 }

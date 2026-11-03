@@ -21,6 +21,8 @@ class Engine:
     def joint_values(self): raise NotImplementedError
     def set_joint(self, name, value): raise NotImplementedError
     def body_position(self, name): raise NotImplementedError
+    def motors(self): return []  # joint names that have a servo
+    def set_target(self, name, value): raise GosError(f'The {self.name} engine has no servos.')
     def snapshot(self): raise NotImplementedError
     def restore(self, state): raise NotImplementedError
     def close(self): pass
@@ -39,7 +41,7 @@ class MujocoEngine(Engine):
         try:
             import mujoco
         except ImportError as e:
-            raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install "tetrobot-gos[sim]"') from e
+            raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install "gos-robotics[sim]"') from e
         self.mj = mujoco
         self.spec = self.model = self.data = None
 
@@ -49,9 +51,23 @@ class MujocoEngine(Engine):
         self.data = self.mj.MjData(self.model)
         self.mj.mj_forward(self.model, self.data)
 
+    def adopt(self, spec, model=None):
+        """Run a robot assembled in code (an MjSpec) instead of one read from a file; `model` if it is compiled already."""
+        self.spec = spec
+        self.model = model if model is not None else spec.compile()
+        self.data = self.mj.MjData(self.model)
+        self.mj.mj_forward(self.model, self.data)
+
     def recompile(self):
         self.model, self.data = self.spec.recompile(self.model, self.data)
         self.mj.mj_forward(self.model, self.data)
+
+    def motors(self): return list(_servos(self.mj, self.model))
+
+    def set_target(self, name, value):
+        servos = _servos(self.mj, self.model)
+        if name not in servos: raise GosError(f'Joint "{name}" has no servo. Servos: {", ".join(servos) or "none"}.')
+        self.data.ctrl[servos[name]] = value
 
     @property
     def timestep(self): return float(self.model.opt.timestep)
@@ -115,6 +131,7 @@ class NewtonEngine(Engine):
         if self.model.joint_coord_count < ref.nq: raise GosError(f'Newton read {self.model.joint_coord_count} joint coordinates where the file has {ref.nq}, so joint names would not line up.')  # more is fine: ring-closing joints come last
         self._joints = {self.mj.mj_id2name(ref, self.mj.mjtObj.mjOBJ_JOINT, i): int(ref.jnt_qposadr[i]) for i in range(ref.njnt)}
         self._bodies = {str(n).split('/')[-1]: i for i, n in enumerate(self.model.body_label)}
+        self._servos = _servos(self.mj, ref)
         self.s0, self.s1, self.ctl = self.model.state(), self.model.state(), self.model.control()
         self.newton.eval_fk(self.model, self.s0.joint_q, self.s0.joint_qd, self.s0)
 
@@ -136,6 +153,14 @@ class NewtonEngine(Engine):
         if name not in self._joints: raise self._no_joint(name)
         q = self.s0.joint_q.numpy(); q[self._joints[name]] = value; self.s0.joint_q.assign(q)
 
+    def motors(self): return list(self._servos)
+
+    def set_target(self, name, value):
+        if name not in self._servos: raise GosError(f'Joint "{name}" has no servo. Servos: {", ".join(self._servos) or "none"}.')
+        # Newton's MuJoCo solver reads both: the actuator input, and joint_target_q (which starts at 0)
+        c = self.ctl.mujoco.ctrl.numpy(); c[self._servos[name]] = value; self.ctl.mujoco.ctrl.assign(c)
+        t = self.ctl.joint_target_q.numpy(); t[self._joints[name]] = value; self.ctl.joint_target_q.assign(t)
+
     def body_position(self, name):
         if name not in self._bodies: raise self._no_body(name, list(self._bodies))
         return [float(v) for v in self.s0.body_q.numpy()[self._bodies[name]][:3]]
@@ -147,6 +172,12 @@ class NewtonEngine(Engine):
     def restore(self, st):
         s = self.s0; self.time = st['t']
         s.joint_q.assign(st['joint_q']); s.joint_qd.assign(st['joint_qd']); s.body_q.assign(st['body_q']); s.body_qd.assign(st['body_qd'])
+
+
+def _servos(mj, m):
+    """{joint name: actuator index} for each actuator that drives one joint."""
+    return {mj.mj_id2name(m, mj.mjtObj.mjOBJ_JOINT, int(m.actuator_trnid[a, 0])): a
+            for a in range(m.nu) if m.actuator_trntype[a] == mj.mjtTrn.mjTRN_JOINT}
 
 
 class Cache:

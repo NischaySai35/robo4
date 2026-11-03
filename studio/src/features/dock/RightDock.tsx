@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { useEffect, useRef, useState } from 'react';
 import './RightDock.css';
 import { useDockStore } from '@/state/dockStore';
@@ -153,7 +154,7 @@ export default function RightDock() {
           </select>
         ) : <span className="rdock-panel-title">{def?.title}</span>}
         {onClose && (
-          <button className="rdock-panel-close" onClick={onClose} title="Collapse panel"><CloseIcon /></button>
+          <Button variant="ghost" size="icon-xs" onClick={onClose} title="Collapse panel"><CloseIcon /></Button>
         )}
       </div>
       <div className="rdock-panel-body">{def && <def.Component />}</div>

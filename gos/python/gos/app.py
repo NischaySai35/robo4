@@ -25,7 +25,7 @@ def _physics():
         import mujoco
         return mujoco
     except ImportError as e:
-        raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install "tetrobot-gos[sim]"') from e
+        raise GosError('Simulation needs MuJoCo: py -3.12 -m pip install "gos-robotics[sim]"') from e
 
 
 class Robot:
@@ -48,6 +48,27 @@ class Robot:
     def ik(self, body, position, steps=800, keep_closed=True, tolerance=0.002):
         """Move a body toward a position, holding any closed loops shut. The result always reports both errors."""
         return self.app._ik(body, position, steps, keep_closed, tolerance)
+
+
+# The ST3215 as the simulator models it (sim/physics_params.json, calibrated): it holds within about 2 degrees up to stall,
+# 2.7 N*m / 0.035 rad = 80 N*m/rad. The rotor's inertia through the 345:1 gearbox (armature) is part of it: without it a
+# stiff servo on a light part, like a lock rotor, shakes itself apart between steps. The torque limit comes from each joint's motor profile.
+SERVO_KP, SERVO_KV, SERVO_ARMATURE = 80.0, 1.0, 0.012
+
+
+def _with_servos(xml, doc):
+    """A position servo for every joint whose motor profile names a motor, limited to the profile's torque."""
+    profiles = doc.get('jointProfiles') or {}
+    import re
+    lines = []
+    for j in (doc.get('joints') or {}).values():
+        prof = profiles.get(j.get('profileId') or '') or {}
+        if not prof.get('motorType') or j.get('type') not in ('revolute', 'continuous', 'prismatic'): continue
+        tau = float(prof.get('torqueLimit') or (j.get('limit') or {}).get('effort') or 1.0)
+        lines.append(f'  <position name="servo_{j["name"]}" joint="{j["name"]}" kp="{SERVO_KP}" kv="{SERVO_KV}" forcerange="-{tau} {tau}"/>')
+        xml = re.sub(r'(<joint\b[^>]*\bname="' + re.escape(j['name']) + r'")(?![^>]*armature=)', r'\g<1> armature="' + str(SERVO_ARMATURE) + '"', xml, count=1)
+    if not lines: return xml
+    return xml.replace('</mujoco>', '<actuator>\n' + '\n'.join(lines) + '\n</actuator>\n</mujoco>', 1)
 
 
 class App:
@@ -110,7 +131,7 @@ class App:
             try:
                 import xacro
             except ImportError as e:
-                raise GosError('Reading .xacro needs: py -3.12 -m pip install "tetrobot-gos[ros]"') from e
+                raise GosError('Reading .xacro needs: py -3.12 -m pip install "gos-robotics[ros]"') from e
             self._dir = self._dir or tempfile.mkdtemp(prefix='gos_')
             urdf = os.path.join(self._dir, os.path.basename(path)[:-len('.xacro')].removesuffix('.urdf') + '.urdf')
             with open(urdf, 'w', encoding='utf-8') as f: f.write(xacro.process_file(path).toxml())
@@ -126,6 +147,11 @@ class App:
         """Load a Studio document (dict). The Rust core writes the MJCF, the same code as the Studio's export."""
         if not doc or not doc.get('bodies'):
             raise GosError('This document has no bodies, so there is no robot to load.')
+        # The export leaves out a joint whose body is missing; a robot loaded that way would quietly lack the joint.
+        for j in (doc.get('joints') or {}).values():
+            for side in ('parentBodyId', 'childBodyId'):
+                if j.get(side) and j[side] not in doc['bodies']:
+                    raise GosError(f'Joint "{j.get("name", j.get("id"))}" connects to body "{j[side]}", which is not in this document.')
         name = doc.get('name') or 'robot'
         export = _core.export_mjcf(doc, name)
         self._dir = self._dir or tempfile.mkdtemp(prefix='gos_')
@@ -136,7 +162,7 @@ class App:
                 raise GosError(f'Mesh {m["assetId"]} has no embedded data in this document.')
             with open(os.path.join(self._dir, m['file']), 'wb') as f: f.write(base64.b64decode(asset['data']))
         scene = os.path.join(self._dir, 'scene.xml')
-        with open(scene, 'w', encoding='utf-8') as f: f.write(export['xml'])
+        with open(scene, 'w', encoding='utf-8') as f: f.write(_with_servos(export['xml'], doc))
         self._doc = doc
         return self._open_xml(scene, doc, export)
 
@@ -219,10 +245,23 @@ class App:
 
     # ── running ──────────────────────────────────────────────────────────────
     def set_joints(self, **values):
-        """Set joint positions by name, then settle the kinematics. Works without any motor."""
+        """Set joint positions by name, then settle the kinematics. A joint with a servo is also told to hold there."""
         self._need_robot()
-        for name, v in values.items(): self.engine.set_joint(name, v)
+        servos = set(self.engine.motors())
+        for name, v in values.items():
+            self.engine.set_joint(name, v)
+            if name in servos: self.engine.set_target(name, v)
         self.engine.forward(); self.cache.clear()
+
+    def set_targets(self, **values):
+        """Tell servos where to go, by joint name. The robot moves there as the simulation runs, as fast as the servos can."""
+        self._need_robot()
+        for name, v in values.items(): self.engine.set_target(name, v)
+
+    def servos(self):
+        """Joints that have a servo (from a motor profile in the document)."""
+        self._need_robot()
+        return self.engine.motors()
 
     def run(self, seconds=None, steps=None, publish_every=10, cache=False, cache_every=10):
         """Step the physics, publishing /joints. Stops by itself. cache=True keeps frames for app.seek."""

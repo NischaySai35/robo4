@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { useEffect } from 'react';
 import './KeyboardHelp.css';
 import { listOperators } from '@/core/ops/registry';
@@ -57,7 +58,7 @@ export default function KeyboardHelp({ onClose }: { onClose: () => void }) {
       <div className="kh-modal" onClick={(e) => e.stopPropagation()}>
         <div className="kh-header">
           <span className="kh-title">KEYBOARD SHORTCUTS</span>
-          <button className="kh-close" onClick={onClose}>✕</button>
+          <Button variant="ghost" size="icon-xs" title="Close" onClick={onClose}>✕</Button>
         </div>
         <div className="kh-grid">
           {[...MOUSE, ...keySections()].map((sec) => (

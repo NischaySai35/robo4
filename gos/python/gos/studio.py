@@ -161,9 +161,8 @@ def install_app(folder=None, dry=False):
     plan = {'version': rel.get('tag_name'), 'file': asset['name'], 'mb': round(asset.get('size', 0) / 1e6), 'to': path}
     if dry: return plan
     os.makedirs(folder, exist_ok=True)
-    tmp = path + '.part'
-    urllib.request.urlretrieve(asset['browser_download_url'], tmp)
-    os.replace(tmp, path)
+    from .progress import download
+    download(asset['browser_download_url'], path, f"Downloading TETROBOT {plan['version']}")
     return plan
 
 

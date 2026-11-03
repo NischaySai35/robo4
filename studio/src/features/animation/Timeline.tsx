@@ -76,7 +76,7 @@ function GroupsPanel({ clips, groups, playingGroupId }: {
     <div className="tl-groups-wrap">
       <div className="tl-section tl-groups-hdr">
         GROUPS
-        <button className="tl-addclip tl-addclip--inline" onClick={() => { store().addGroup(); }}>＋ New</button>
+        <Button variant="outline" size="xs" className="tw:ml-auto" onClick={() => { store().addGroup(); }}>＋ New</Button>
       </div>
 
       {groups.length === 0 && (
@@ -99,16 +99,16 @@ function GroupsPanel({ clips, groups, playingGroupId }: {
               </span>
               <span className="tl-group-meta">{g.entries.length} clip{g.entries.length !== 1 ? 's' : ''}</span>
               <div className="tl-group-ops">
-                <button title="Rename group" onClick={() => renameGroup(g)}>✎</button>
-                <button
+                <Button variant="outline" size="icon-xs" title="Rename group" onClick={() => renameGroup(g)}>✎</Button>
+                <Button variant="outline" size="icon-xs"
                   title={isPlaying ? 'Playing…' : 'Play this group'}
-                  className={isPlaying ? 'tl-group-playing-btn' : ''}
+                  className={isPlaying ? 'tw:border-primary tw:text-primary' : ''}
                   onClick={() => store().playGroup(g.id)}
                   disabled={g.entries.length === 0}
                 >
                   {isPlaying ? '⏸' : '▶'}
-                </button>
-                <button title="Delete group" onClick={() => store().deleteGroup(g.id)}>✕</button>
+                </Button>
+                <Button variant="outline" size="icon-xs" title="Delete group" onClick={() => store().deleteGroup(g.id)}>✕</Button>
               </div>
             </div>
 
@@ -242,8 +242,8 @@ function AnimationTab() {
             <span className="tl-clip-name" onDoubleClick={() => rename(c.id, c.name)} title="Double-click to rename">{c.name}</span>
             <span className="tl-clip-meta">{Object.keys(c.tracks).length ? `${new Set(Object.values(c.tracks).flatMap((k) => k.map((x) => x.t))).size}k · ${c.duration}s` : 'empty'}</span>
             <span className="tl-clip-ops">
-              <button onClick={(e) => { e.stopPropagation(); rename(c.id, c.name); }} title="Rename clip">✎</button>
-              <button onClick={(e) => { e.stopPropagation(); a.deleteClip(c.id); }} disabled={a.clips.length <= 1} title="Delete clip">✕</button>
+              <Button variant="outline" size="icon-xs" onClick={(e) => { e.stopPropagation(); rename(c.id, c.name); }} title="Rename clip">✎</Button>
+              <Button variant="outline" size="icon-xs" onClick={(e) => { e.stopPropagation(); a.deleteClip(c.id); }} disabled={a.clips.length <= 1} title="Delete clip">✕</Button>
             </span>
           </div>
         ))}

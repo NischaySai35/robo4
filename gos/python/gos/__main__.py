@@ -55,7 +55,7 @@ def _launch(path):
 
 
 PKG = {
-    'pyproject.toml': '[project]\nname = "{name}"\nversion = "0.1.0"\nrequires-python = ">=3.12"\ndependencies = ["tetrobot-gos"]\n\n[tool.setuptools]\npy-modules = ["{mod}"]\n',
+    'pyproject.toml': '[project]\nname = "{name}"\nversion = "0.1.0"\nrequires-python = ">=3.12"\ndependencies = ["gos-robotics"]\n\n[tool.setuptools]\npy-modules = ["{mod}"]\n',
     '{mod}.py': '"""{name}: a GOS part. start(app) is called once; return anything the tests want to see."""\n\n\ndef start(app):\n    log = app.logger("{name}")\n    app.topic("/{mod}/hello").subscribe(lambda m: log.info(f"got {{m}}"))\n    return log\n',
     'launch.json': '{{"compose": ["{mod}.py"], "name": "{mod}_container"}}\n',
     'test_{mod}.py': 'import os, sys\nsys.path.insert(0, os.path.dirname(__file__))\nimport gos, {mod}\n\n\ndef test_starts():\n    with gos.App() as app:\n        assert {mod}.start(app) is not None\n',
@@ -130,12 +130,12 @@ def doctor():
     say(sys.version_info >= (3, 12), f'Python {platform.python_version()}', 'GOS needs Python 3.12 or newer')
     try:
         from . import _core; _core.compile_graph({'bodies': [], 'joints': [], 'roots': []}); say(True, 'the Rust core loads')
-    except Exception as e: say(False, f'the Rust core does not load ({e})', 'reinstall: pip install --force-reinstall tetrobot-gos')
+    except Exception as e: say(False, f'the Rust core does not load ({e})', 'reinstall: pip install --force-reinstall gos-robotics')
     for mod, extra, what in (('mujoco', 'sim', 'physics'), ('zenoh', 'network', 'programs talking to each other'), ('mink', 'ik', 'arm IK'),
                              ('websockets', 'studio', 'the Studio link'), ('mcap', 'record', 'recordings'), ('xacro', 'ros', 'reading .xacro')):
         try:
             m = importlib.import_module(mod); say(True, f'{what}: {mod} {getattr(m, "__version__", "")}'.rstrip())
-        except ImportError: say(False, f'{what}: {mod} is not installed', f'pip install "tetrobot-gos[{extra}]" if you need it')
+        except ImportError: say(False, f'{what}: {mod} is not installed', f'pip install "gos-robotics[{extra}]" if you need it')
     gpu = shutil.which('nvidia-smi')
     say(bool(gpu), 'NVIDIA graphics card found' if gpu else 'no NVIDIA graphics card found', 'many-robot runs on the GPU need one; everything else works without')
     from .studio import find_app
@@ -196,7 +196,7 @@ def _write_docs(out):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    builtin = {'doctor', 'ws', 'studio', 'certs', 'interfaces', 'run', 'graph', 'sim', 'topic', 'service', 'param', 'node', 'action', 'launch', 'pkg', 'path', 'doc', 'plugins'}
+    builtin = {'doctor', 'ws', 'studio', 'certs', 'interfaces', 'run', 'graph', 'sim', 'topic', 'service', 'param', 'node', 'action', 'launch', 'pkg', 'path', 'doc', 'plugins', 'robot'}
     first = next((x for x in argv if not x.startswith('-')), None)
     if first and first not in builtin and argv[0] == first:
         code = _external(first, argv[1:])
@@ -220,10 +220,11 @@ def main(argv=None):
     d = s.add_parser('doc', help='how to use GOS, from its own code'); d.add_argument('topic', nargs='?', default='gos'); d.add_argument('--html', metavar='DIR', help='write HTML pages for every module')
     it = s.add_parser('interfaces', help='message types: list them, or write TypeScript for the Studio'); it.add_argument('action', choices=['list', 'ts']); it.add_argument('out', nargs='?'); it.add_argument('--from', dest='folders', action='append', default=[], help='also load this folder')
     ce = s.add_parser('certs', help='certificates for encrypted links'); ce.add_argument('action', choices=['new']); ce.add_argument('folder'); ce.add_argument('names', nargs='+'); ce.add_argument('--host', action='append', help='address the programs use (default localhost and 127.0.0.1)')
-    st = s.add_parser('studio', help='the TETROBOT app: install downloads it for this computer'); st.add_argument('action', choices=['install', 'where']); st.add_argument('--dry', action='store_true', help='only say what would be downloaded'); st.add_argument('--to', help='folder to save it in (default Downloads)')
+    st = s.add_parser('studio', help='the TETROBOT app: open starts it, install downloads it for this computer'); st.add_argument('action', choices=['open', 'install', 'where']); st.add_argument('--dry', action='store_true', help='only say what would be downloaded'); st.add_argument('--to', help='folder to save it in (default Downloads)')
     s.add_parser('doctor', help='check this computer for what GOS needs')
     w = s.add_parser('ws', help='build or test every package in a workspace (like colcon)'); w.add_argument('action', choices=['build', 'test']); w.add_argument('folder', nargs='?', default='.')
     s.add_parser('plugins', help='commands added by other packages or gos-NAME programs')
+    rb = s.add_parser('robot', help='put a real module on the GOS network (its board keeps its own firmware)'); rb.add_argument('action', choices=['serve', 'list']); rb.add_argument('address', nargs='?', help='serve: the board, e.g. mod1.local or 192.168.1.40'); rb.add_argument('--name', help='topic prefix (default: the board name, e.g. mod1)'); rb.add_argument('--rate', type=float, default=20, help='joint states per second')
     a = p.parse_args(argv)
     need = lambda x, what: x if x is not None else (_ for _ in ()).throw(GosError(f'Give the {what}.'))
     try:
@@ -251,7 +252,13 @@ def main(argv=None):
             return _workspace(a.action, a.folder)
         elif a.cmd == 'studio':
             from .studio import find_app, install_app
-            if a.action == 'where':
+            if a.action == 'open':
+                import subprocess
+                exe = find_app()
+                if not exe: raise GosError('The TETROBOT app is not installed. Run: gos studio install')
+                subprocess.Popen([exe], env={k: v for k, v in os.environ.items() if k != 'ELECTRON_RUN_AS_NODE'})  # set inside VS Code terminals; it stops the window opening
+                print(f'Opened {exe}')
+            elif a.action == 'where':
                 print(find_app() or 'The TETROBOT app is not installed. Run: gos studio install')
             else:
                 plan = install_app(a.to, dry=a.dry)
@@ -273,6 +280,27 @@ def main(argv=None):
         elif a.cmd == 'doc':
             import pydoc
             print(pydoc.render_doc(a.topic, renderer=pydoc.plaintext))
+        elif a.cmd == 'robot' and a.action == 'list':
+            from .hardware import find_modules
+            found = find_modules()
+            print('\n'.join(f"{m['name']:8s} {m['ip']:16s} firmware {m['fw']}" for m in found) or 'No modules found. Are they powered and on the same Wi-Fi as this computer?')
+            print(f'{len(found)} module(s).')
+        elif a.cmd == 'robot':
+            from .hardware import Esp32Robot, serve_robot
+            need(a.address, 'board address, e.g. mod1.local')
+            url = a.address if '://' in a.address else 'http://' + a.address
+            host = a.address.split('://')[-1].split(':')[0]
+            if not a.name and host.replace('.', '').isdigit(): raise GosError(f'Give the module a name for its topics, e.g. gos robot serve {a.address} --name mod1')
+            name = a.name or host.split('.')[0]
+            robot = Esp32Robot.from_board(url)
+            # this program hosts the meeting point the other gos commands connect to (--connect)
+            with App(headless=True, transport='zenoh', listen=[a.connect], domain=a.domain, name=f'{name}_driver') as app:
+                serve_robot(app, robot, name, a.rate)
+                print(f'Serving {url} as /{name}: {len(robot.joints)} joints ({", ".join(robot.joints)}). Not armed: call /{name}/arm to allow motion. Ctrl+C stops serving.', flush=True)
+                try:
+                    while True: time.sleep(1)
+                except KeyboardInterrupt:
+                    robot.disarm()  # stop accepting commands; the servos hold where they are
         else:
             with _live(a) as app:
                 if a.cmd in ('node', 'action'):
@@ -306,7 +334,7 @@ def main(argv=None):
                     if a.action == 'list': print(json.dumps(rp.list(), indent=2))
                     elif a.action == 'get': print(json.dumps(rp.get(need(a.name, 'parameter name'))))
                     else: rp.set(need(a.name, 'parameter name'), json.loads(need(a.value, 'value as JSON'))); print('set')
-    except (GosError, ValueError, OSError, LookupError, RuntimeError, TypeError, KeyError) as e:
+    except (GosError, ValueError, OSError, LookupError, RuntimeError, TypeError, KeyError, ImportError) as e:
         print(f'gos: {e}', file=sys.stderr)
         return 1
     return 0

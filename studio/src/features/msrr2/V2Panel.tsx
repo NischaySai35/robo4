@@ -9,6 +9,7 @@
  *   Run     execute a plan (DRY_RUN) with replanning
  *   Manual  drive the robot by hand in live real physics (joints, lock / unlock, connect two connectors)
  */
+import { NativeSelect, Input } from '@/components/ui/input';
 import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
 import { runOperator } from '@/core/ops/registry';
@@ -122,10 +123,10 @@ function RobotTab() {
         </>
       }>
         <Row label="Load a preset">
-          <select className="msrr-select" data-testid="v2-preset" value="" onChange={(e) => { const p = PRESETS.find((x) => x.id === e.target.value); if (p) setConfig(p.config); }}>
+          <NativeSelect size="xs" data-testid="v2-preset" value="" onChange={(e) => { const p = PRESETS.find((x) => x.id === e.target.value); if (p) setConfig(p.config); }}>
             <option value="">— choose —</option>
             {PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
+          </NativeSelect>
         </Row>
         <div className="msrr-row-btns">
           <Button size="sm" data-testid="v2-check" onClick={() => op('planner.check')}>Check</Button>
@@ -194,10 +195,10 @@ function RobotTab() {
           );
         })}
         <Row label="New lock from">
-          <select className="msrr-select" value={ea} onChange={(e) => setEa(e.target.value)}>{refOptions.map((o) => <option key={o}>{o}</option>)}</select>
+          <NativeSelect size="xs" value={ea} onChange={(e) => setEa(e.target.value)}>{refOptions.map((o) => <option key={o}>{o}</option>)}</NativeSelect>
         </Row>
         <Row label="to">
-          <select className="msrr-select" value={eb} onChange={(e) => setEb(e.target.value)}>{refOptions.filter((o) => !o.startsWith('floor')).map((o) => <option key={o}>{o}</option>)}</select>
+          <NativeSelect size="xs" value={eb} onChange={(e) => setEb(e.target.value)}>{refOptions.filter((o) => !o.startsWith('floor')).map((o) => <option key={o}>{o}</option>)}</NativeSelect>
         </Row>
         <Row label={`slot (key orientation): ${slot * 90}°`}>
           <input type="range" min={0} max={3} value={slot} onChange={(e) => setSlot(Number(e.target.value) as 0 | 1 | 2 | 3)} />
@@ -210,9 +211,9 @@ function RobotTab() {
 
       <Section title="Joint angles">
         <Row label="Module">
-          <select className="msrr-select" value={selected} onChange={(e) => setSel(e.target.value)}>
+          <NativeSelect size="xs" value={selected} onChange={(e) => setSel(e.target.value)}>
             {config.modules.map((m) => <option key={m}>{m}</option>)}
-          </select>
+          </NativeSelect>
         </Row>
         {selected && JOINTS.map((j) => {
           const v = config.pose[selected][j as keyof ModulePose];
@@ -281,7 +282,7 @@ function GravityBar() {
   const off = useV2Store((s) => s.gravityOff);
   const ev = physics?.pp.run.events ?? [];
   return (
-    <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }} data-testid="gravity-bar">
+    <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', flexShrink: 0 }} data-testid="gravity-bar">
       <Button size="sm" variant={physics ? 'destructive' : 'default'} data-testid="gravity" disabled={busy}
         onClick={() => op(physics ? 'planner.physics.stop' : 'planner.physics')}>{busy ? 'Simulating…' : physics ? '■ Stop real physics' : '▶ Real physics (gravity)'}</Button>
       {plan?.ok && !physics && <Button variant="outline" size="sm" data-testid="gravity-plan" disabled={busy} onClick={() => op('planner.physics', { withPlan: true })} title="run the loaded plan in MuJoCo the way the robot would: the real docking brain does every dock (stand-off, align, straight in, lock)">▶ Real physics: run this plan</Button>}
@@ -289,7 +290,7 @@ function GravityBar() {
       <label className="msrr-note" title="every robot slightly different: PLA flex, backlash, servo strength, masses, friction, magnets, floor tilt (the GPU runs' ranges)">
         <input type="checkbox" checked={random} onChange={(e) => setRandom(e.target.checked)} /> random robot
       </label>
-      {random && <input className="msrr-select" type="number" style={{ width: 56 }} value={seed} onChange={(e) => setSeed(Number(e.target.value))} title="which random robot" />}
+      {random && <Input size="xs" type="number" style={{ width: 56 }} value={seed} onChange={(e) => setSeed(Number(e.target.value))} title="which random robot" />}
       {physics && <span className="msrr-note dim" data-testid="phys-caption">{physics.live
         // live: one clock (physics keeps running until you stop it); warn only if the picture falls behind the physics
         ? <>● live · {physics.t.toFixed(0)} s{(physics.pp.run.frames.at(-1)?.t ?? 0) - physics.t > 1.5 ? ' · picture behind the physics' : ''}</>

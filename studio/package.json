@@ -77,9 +77,14 @@
       "dist/**/*",
       "electron/**/*",
       "tools/gpuWatcher.cjs",
-      "tools/psStream.cjs"
+      "tools/psStream.cjs",
+      "tools/robo4Net.cjs"
     ],
     "extraResources": [
+      {
+        "from": "../tools/robo4-net.ps1",
+        "to": "robo4-net.ps1"
+      },
       {
         "from": "../gos/runtime_dist",
         "to": "gos",

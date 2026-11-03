@@ -1,7 +1,11 @@
 """Build the GOS core and place it where Python and the Studio load it.
 
-usage: py -3.12 gos/build.py     (needs Rust with the wasm32-unknown-unknown target)
+usage: py -3.12 gos/build.py [--all]     (needs Rust with the wasm32-unknown-unknown target)
 The WebAssembly copy is embedded as text so the Studio builds and tests need no Rust toolchain.
+--all also builds the Linux and macOS libraries from this computer (cross-compiling), with zig as the linker:
+  py -3.12 -m pip install ziglang cargo-zigbuild
+  rustup target add x86_64-unknown-linux-gnu aarch64-apple-darwin x86_64-apple-darwin
+The macOS library is not signed: on Apple-chip Macs sign it once with `codesign -s - libgos_core.dylib`.
 """
 import base64, os, shutil, subprocess, sys
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -19,4 +23,19 @@ name = names.get(sys.platform, 'libgos_core.so')
 lib = os.path.join(ROOT, 'python', 'gos', '_native')
 os.makedirs(lib, exist_ok=True)
 shutil.copy2(os.path.join(ROOT, 'target', 'release', name), os.path.join(lib, name))
-print(f'wasm {len(wasm) // 1024} KB, native {name}')
+built = [name]
+if '--all' in sys.argv:
+    zb = shutil.which('cargo-zigbuild')
+    if not zb: sys.exit('--all needs: py -3.12 -m pip install ziglang cargo-zigbuild')
+    env = dict(os.environ, CARGO_ZIGBUILD_CACHE_DIR=os.path.join(ROOT, 'target', 'zigcache'))  # its helper scripts break on spaces in the user folder
+    if 'CARGO_ZIGBUILD_ZIG_PATH' not in env:
+        try:
+            import ziglang; env['CARGO_ZIGBUILD_ZIG_PATH'] = os.path.join(os.path.dirname(ziglang.__file__), 'zig.exe' if os.name == 'nt' else 'zig')
+        except ImportError: pass
+    # glibc 2.17: runs on any Linux from 2014 on
+    for target, file in (('x86_64-unknown-linux-gnu.2.17', 'libgos_core.so'), ('universal2-apple-darwin', 'libgos_core.dylib')):
+        if file == name: continue
+        subprocess.run([zb, 'zigbuild', '--release', '--target', target], cwd=ROOT, env=env, check=True)
+        shutil.copy2(os.path.join(ROOT, 'target', target.split('.')[0], 'release', file), os.path.join(lib, file))
+        built.append(file)
+print(f'wasm {len(wasm) // 1024} KB, native {", ".join(built)}')

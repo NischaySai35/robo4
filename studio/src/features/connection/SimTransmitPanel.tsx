@@ -1,27 +1,26 @@
 /**
- * SimTransmitPanel
+ * SimTransmitPanel — what Sync sends to the robot, live.
  *
- * Dual-role component:
- *   1. Logic: samples armStore.jointAngles every 500ms and queues angle changes
- *      to integrationStore (which ServoController drains → sends to ESP32).
- *   2. UI: small debug panel overlaid on the Page 1 canvas showing live
- *      transmission log, connection status, and stats.
- *
- * Positioning: absolute right-side overlay inside .canvas-wrapper.
+ * Sync ON (the viewport's SYNC switch, hardwareStore.streaming) samples the sim every 50 ms:
+ *   - Editor / Animation: the model's movable joints (180 + jointServoDegrees) -> integrationStore.queueAngles, which
+ *     ServoController relays to each joint's module board (sendServoBatch).
+ *   - MSRR live robot: the physics service sends the corrected angles itself (sim/real_sync.py); this panel shows them,
+ *     switches that sender on / off with Sync, and holds the board addresses and the emergency stop.
+ * With no board online every change is still listed, as "would send" (Nischay 3 Nov).
  */
 
 import './SimTransmitPanel.css';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useEffect, useRef } from 'react';
-import { useArmStore, ROD_IDS } from '@/state/armStore';
 import { useIntegrationStore } from '@/state/integrationStore';
+import { useHardwareStore } from '@/state/hardwareStore';
+import { useModelStore } from '@/state/modelStore';
+import { usePageStore } from '@/state/pageStore';
+import { useV2Store } from '@/state/msrrV2Store';
+import { jointServoDegrees } from '@/hardware/protocol';
 
 const INTERVAL_MS = 50;
-
-// Map joint radian (-π…+π for twist, -100°…+100° for bend) to servo degrees.
-// Neutral (0 rad) → 180° center. Linear mapping clamped to 0–360°.
-function jointToServoDeg(rad: any) {
-  return Math.max(0, Math.min(360, 180 + (rad * 180 / Math.PI)));
-}
 
 const LEVEL_COLOR = {
   queued:  '#8b5cf6',
@@ -37,53 +36,47 @@ const SRC_COLOR = {
   OFF: '#f97316',
 };
 
+/** the MSRR live session's sender state (sim/real_sync.py), when that is what the viewport shows */
+const msrrSync = (): any => (usePageStore.getState().page === 'msrr' ? (useV2Store.getState().manual?.state as any)?.sync ?? null : null);
+
 export default function SimTransmitPanel() {
   const queueAngles = useIntegrationStore(s => s.queueAngles);
+  const noteAngles  = useIntegrationStore(s => s.noteAngles);
   const simLog      = useIntegrationStore(s => s.simLog);
-  const connected   = useIntegrationStore(s => s.connected);
+  const espOnline   = useIntegrationStore(s => s.connected);
   const latencyMs   = useIntegrationStore(s => s.latencyMs);
   const stats       = useIntegrationStore(s => s.stats);
   const clearSimLog = useIntegrationStore(s => s.clearSimLog);
   const resetStats  = useIntegrationStore(s => s.resetStats);
   const espUrl      = useIntegrationStore(s => s.espUrl);
-
-  const anglesRef  = useRef([0, 0, 0, 0, 0, 0]);
-  const rootIdRef  = useRef('R1');
+  const streaming   = useHardwareStore(s => s.streaming);
+  const page        = usePageStore(s => s.page);
+  const sync        = useV2Store(s => (page === 'msrr' ? (s.manual?.state as any)?.sync ?? null : null));
   const logBodyRef = useRef<any>(null);
 
-  // Subscribe to armStore changes without causing a re-render
+  // MSRR: the service's sender follows the Sync switch
+  const haveSync = !!sync;
   useEffect(() => {
-    const unsub = useArmStore.subscribe(state => {
-      anglesRef.current = state.jointAngles;
-      rootIdRef.current = state.activeRootId;
-    });
-    return unsub;
-  }, []);
+    if (haveSync) useV2Store.getState().manualCmd({ kind: 'sync', op: streaming ? 'on' : 'off' });
+  }, [streaming, haveSync]);
 
-  // Servo IDs that are physically mounted in reverse (lo↔hi swapped on the robot).
-  // Reversal: reversed = lo + hi - deg.  For id=2 (bend, lo=80, hi=280): 80+280-deg = 360-deg.
-  const REVERSED_SERVOS = new Set([2]);
-
-  // Transmit interval — samples current angles and queues if changed
   useEffect(() => {
     const id = setInterval(() => {
-      // Apply the same sign correction LeftPanel uses: joints "behind" the active
-      // root are stored with a flipped sign in armStore, so we must un-flip them
-      // before mapping to physical servo degrees.
-      const rootIdx = ROD_IDS.indexOf(rootIdRef.current);
-      const sg = (i: any) => rootIdx > i ? -1 : 1;
-
-      const mapped: Record<string, any> = {};
-      anglesRef.current.forEach((rad, i) => {
-        const servoId = i + 1;
-        let deg = jointToServoDeg(rad * sg(i));
-        if (REVERSED_SERVOS.has(servoId)) deg = 360 - deg;
-        mapped[servoId] = deg;
-      });
-      queueAngles(mapped);
+      if (!useHardwareStore.getState().streaming) return;
+      const ms = msrrSync();
+      if (ms) {
+        const angles: Record<string, number> = {}, labels: Record<string, string> = {};
+        for (const [mid, m] of Object.entries<any>(ms.modules)) for (const j of m.joints) if (j.send != null) { angles[`${mid}.${j.j}`] = j.send; labels[`${mid}.${j.j}`] = `${mid}.${j.id}`; }
+        noteAngles(angles, labels, Object.values<any>(ms.modules).some((m) => m.online && !m.held));
+        return;
+      }
+      const doc = useModelStore.getState().doc;
+      const angles: Record<string, number> = {}, labels: Record<string, string> = {};
+      for (const j of Object.values(doc.joints)) if (j.type !== 'fixed') { angles[j.id] = 180 + jointServoDegrees(j); labels[j.id] = j.name ?? j.id; }
+      queueAngles(angles, labels);
     }, INTERVAL_MS);
     return () => clearInterval(id);
-  }, [queueAngles]);
+  }, [queueAngles, noteAngles]);
 
   // Auto-scroll log to bottom
   useEffect(() => {
@@ -92,10 +85,12 @@ export default function SimTransmitPanel() {
   }, [simLog]);
 
   const recent = simLog.slice(-40);
-  const hostname = (() => { try { return new URL(espUrl).hostname; } catch { return espUrl; } })();
+  const hostname = sync ? Object.values<any>(sync.modules).map((m) => m.host).join(', ') : (() => { try { return new URL(espUrl).hostname; } catch { return espUrl; } })();
+  const connected = sync ? Object.values<any>(sync.modules).some((m) => m.online) : espOnline;
+  const cmd = (op: string, extra?: Record<string, any>) => useV2Store.getState().manualCmd({ kind: 'sync', op, ...extra });
 
   return (
-    <div className="stp-panel">
+    <div className="stp-panel" data-ui="a">
 
       {/* ── Header ── */}
       <div className="stp-header">
@@ -108,8 +103,8 @@ export default function SimTransmitPanel() {
         </div>
         <div className="stp-header-right">
           {latencyMs != null && <span className="stp-lat">{latencyMs} ms</span>}
-          <button className="stp-btn" onClick={clearSimLog} title="Clear log">CLR</button>
-          <button className="stp-btn stp-btn-reset" onClick={resetStats} title="Reset counters">RST</button>
+          <Button variant="outline" size="xs" onClick={clearSimLog} title="Clear log">CLR</Button>
+          <Button variant="outline" size="xs" onClick={resetStats} title="Reset counters">RST</Button>
         </div>
       </div>
 
@@ -119,6 +114,24 @@ export default function SimTransmitPanel() {
         <span className="stp-target-url">{hostname}</span>
         <span className="stp-target-interval">@{INTERVAL_MS}ms</span>
       </div>
+
+      {/* ── MSRR live robot: each module's board, its address, the emergency stop ── */}
+      {sync && (
+        <div className="stp-target" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
+          {Object.entries<any>(sync.modules).map(([mid, m]) => (
+            <div key={mid} style={{ display: 'flex', alignItems: 'center', gap: 6 }} data-testid={`sync-status-${mid}`}>
+              <span className={`stp-dot ${m.online && !m.held ? 'stp-dot-ok' : 'stp-dot-off'}`} />
+              <span style={{ width: 26 }}>{mid}</span>
+              <Input size="xs" className="tw:flex-1 tw:min-w-0" defaultValue={m.host} aria-label={`${mid} address`}
+                onBlur={(e) => { if (e.target.value !== m.host) cmd('hosts', { hosts: { [mid]: e.target.value } }); }} />
+              <span style={{ color: m.held ? '#ef4444' : m.online ? '#22c55e' : '#f97316' }} title={m.error || undefined}>{m.held ? 'HOLD' : m.online ? 'online' : 'offline'}</span>
+            </div>
+          ))}
+          {Object.values<any>(sync.modules).find((m) => m.held) && <div style={{ color: '#ef4444' }}>{Object.values<any>(sync.modules).find((m) => m.held).held}</div>}
+          {streaming && !sync.signs_checked && <div style={{ color: '#ef4444' }}>joint directions not checked yet: keep a hand on E-STOP</div>}
+          <Button size="sm" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/80" data-testid="sync-estop" onClick={() => cmd('stop')} title="the boards' emergency stop on every module">■ E-STOP ALL</Button>
+        </div>
+      )}
 
       {/* ── Stats row ── */}
       <div className="stp-stats">
@@ -149,7 +162,7 @@ export default function SimTransmitPanel() {
       </div>
       <div className="stp-log-body" ref={logBodyRef}>
         {recent.length === 0 && (
-          <div className="stp-empty">drag a joint to start transmitting</div>
+          <div className="stp-empty">{streaming ? 'move the robot in the sim: every angle sent shows here' : 'SYNC is off: press SYNC to start'}</div>
         )}
         {recent.map(e => (
           <div key={e.id} className="stp-entry">

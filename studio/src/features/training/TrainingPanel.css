@@ -20,15 +20,6 @@
 
 /* ── Task selector grid ──────────────────────────────────────────────────────── */
 .tr-task-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-.tr-task-btn {
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-  padding: 8px 6px; border-radius: 7px; border: 1px solid var(--border);
-  background: var(--bg-card); color: var(--text-dim); cursor: pointer;
-  font-size: 11px; transition: border-color .15s, color .15s, background .15s;
-}
-.tr-task-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
-.tr-task-btn--on { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--bg-card)); }
-.tr-task-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 .tr-task-icon { font-size: 16px; }
 
 /* ── Algorithm selector ──────────────────────────────────────────────────────── */
@@ -48,15 +39,6 @@
 .tr-algo-desc { font-size: 11px; color: var(--text-dim); margin-top: 5px; line-height: 1.4; }
 
 /* ── Architecture grid ───────────────────────────────────────────────────────── */
-.tr-arch-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
-.tr-arch-btn {
-  padding: 5px 3px; border-radius: 5px; border: 1px solid var(--border);
-  background: var(--bg-card); color: var(--text-dim); cursor: pointer;
-  font-size: 10px; text-align: center; transition: border-color .15s, color .15s;
-}
-.tr-arch-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
-.tr-arch-btn--on { border-color: var(--accent); color: var(--accent); }
-.tr-arch-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* ── Reward weight sliders ───────────────────────────────────────────────────── */
 .tr-weight {
@@ -119,12 +101,6 @@
 }
 .tr-demo-name { font-size: 12px; font-weight: 600; color: var(--text-bright); }
 .tr-demo-meta { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
-.tr-demo-del {
-  position: absolute; top: 6px; right: 6px; background: none; border: none;
-  color: var(--text-dim); cursor: pointer; font-size: 13px; padding: 2px 4px;
-  border-radius: 4px;
-}
-.tr-demo-del:hover { color: #f87171; background: #f871711a; }
 
 .tr-demos-stat {
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
@@ -147,11 +123,6 @@
   font-size: 11px; color: var(--text-dim); display: flex; align-items: center; gap: 8px;
 }
 .tr-saved-banner strong { color: var(--accent); }
-.tr-saved-run {
-  margin-left: auto; background: var(--accent); color: #fff; border: none;
-  border-radius: 5px; padding: 3px 10px; font-size: 11px; cursor: pointer; font-weight: 700;
-}
-.tr-saved-run:hover { filter: brightness(1.1); }
 
 /* ── Enhancer checkboxes (ObsNorm / Curriculum / TopoObs) ───────────────────── */
 .tr-enhancers { display: flex; gap: 6px; flex-wrap: wrap; }

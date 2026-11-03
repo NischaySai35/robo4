@@ -24,7 +24,7 @@ export interface ManualPort { id: string; kind: 'floor' | 'side' | 'end'; p: num
 export interface ManualState {
   id: string; ports: ManualPort[]; state: Record<string, any> | null;
   /** what it was started with (Reset = the same start again, instantly) */
-  start: { scene: Record<string, any>; opts: { seed: number; randomize: boolean; disturb: boolean; judge: string } };
+  start: { scene: Record<string, any>; opts: { seed: number; randomize: boolean; disturb: boolean; judge: string; ideal?: boolean } };
   mode: 'move' | 'lock' | 'connect'; pick: string[]; hover: { id: string; x: number; y: number } | null; err: string;
 }
 export type V2Tab = 'robot' | 'shapes' | 'plan' | 'ask' | 'run' | 'manual';
@@ -128,7 +128,7 @@ interface V2State {
   physics: { pp: PhysPrepared; t: number; playing: boolean; withPlan: boolean; live?: { id: string; fetching: boolean; manual?: boolean } } | null;
   // ── MANUAL tab: a live physics session driven by hand (C:\TETROBOT\sim\manual.py) ──
   manual: ManualState | null;
-  manualStart: (scene: Record<string, any>, opts: { seed: number; randomize: boolean; disturb: boolean; judge: string }) => Promise<void>;
+  manualStart: (scene: Record<string, any>, opts: { seed: number; randomize: boolean; disturb: boolean; judge: string; ideal?: boolean }) => Promise<void>;
   manualCmd: (cmd: Record<string, any>) => Promise<Record<string, any> | null>;
   manualStop: () => void;
   manualSet: (patch: Partial<ManualState>) => void;
@@ -304,7 +304,7 @@ export const useV2Store = create<V2State>((set, get) => ({
       const pp = prepareRaw(run, assemblyToFitted(assemble(PRESETS.find((p) => p.id === 'standing')!.config))[0]);
       set({ physics: { pp, t: 0, playing: true, withPlan: false, live: { id: st.id, fetching: false, manual: true } }, physBusy: false, receivers: receiverMarks(st.receivers),
             manual: { id: st.id, ports: st.ports, state: st.state, mode: 'move', pick: [], hover: null, err: '', start: { scene, opts } } });
-      get().pushLog(`manual session: ${scene.modules.length} module(s), real physics (${opts.randomize ? `random robot #${opts.seed}` : 'nominal robot'}${opts.disturb ? ', room disturbances on' : ''})`);
+      get().pushLog(`manual session: ${scene.modules.length} module(s), real physics (${opts.ideal ? 'IDEAL robot: no errors, no randomness, no room' : `${opts.randomize ? `random robot #${opts.seed}` : 'nominal robot'}${opts.disturb ? ', room disturbances on' : ''}`})`);
     } catch (e) {
       set({ physBusy: false, physErr: `the physics service could not start (see data/logs/verify_service_console.log) (${(e as Error).message})` });
     }
@@ -405,7 +405,8 @@ export const useV2Store = create<V2State>((set, get) => ({
 }));
 
 // gravity playback: real time, then hold the last frame
-const rxShown: { run: PhysRun | null; k: number } = { run: null, k: -1 };      // which receivers_at entry is on screen
+const rxShown: { run: PhysRun | null; k: number } = { run: null, k: -1 };
+const portsShown = { k: -1 };                                                      // which frame's connector dots are on screen      // which receivers_at entry is on screen
 useV2Store.setState((st) => ({ tickers: [...st.tickers, (dt: number) => {
   const s = useV2Store.getState();
   const ph = s.physics;
@@ -433,16 +434,28 @@ useV2Store.setState((st) => ({ tickers: [...st.tickers, (dt: number) => {
               const old: string[] = m.state?.log ?? []; const nu: string[] = j.state.log ?? [];
               const k = old.length ? nu.lastIndexOf(old[old.length - 1]) : -1;
               for (const line of nu.slice(k + 1)) useV2Store.getState().pushLog(line.trim());
-              useV2Store.setState({ manual: { ...m, ports: j.ports, state: j.state } });
+              // the dots' positions come from the frame on screen (below), not from 'now': keep them, take the rest (locked, kind)
+              const ports = (j.ports ?? m.ports).map((q: ManualPort, i: number) => ({ ...q, p: m.ports[i]?.id === q.id ? m.ports[i].p : q.p }));
+              useV2Store.setState({ manual: { ...m, ports, state: j.state } });
             }
           }
         })
         .catch(() => useV2Store.setState({ physErr: 'live physics stopped (service?)' }))
         .finally(() => { live.fetching = false; });
     }
-    // real time, smooth: the clock runs with the wall clock, never ahead of the physics and at most 0.6 s behind it
-    const t = Math.min(have, Math.max(ph.t + dt * s.playSpeed, ph.live.manual ? have - 0.6 : -Infinity));
-    useV2Store.setState({ physics: { ...ph, t }, view: { modules: physFrame(ph.pp, t), overlay: null, sig: ++sig } });
+    // smooth: the clock runs at the physics' own pace - slower while the buffer of frames ahead is short - so a sim slower than real
+    // time plays as smooth slow motion instead of run-stop bursts (3 Nov: the ideal sim runs ~0.6x, it looked like 2 fps)
+    const pace = ph.live.manual ? Math.max(0, Math.min(2, 1 + (have - ph.t - 0.6) / 0.6)) : 1;
+    const t = Math.min(have, Math.max(ph.t + dt * s.playSpeed * pace, ph.live.manual ? have - 3 : -Infinity));
+    // the connector dots of the frame on screen (2 Nov: taken from 'now' they ran ~0.6 s ahead of the drawn robot, and at the start
+    // they fell before it did)
+    const man = s.manual, fr = ph.pp.run.frames;
+    let dots = {};
+    if (ph.live.manual && man && fr.length) {
+      const k = Math.max(0, Math.min(fr.length - 1, Math.round(t * ph.pp.run.fps))), x = fr[k].x;
+      if (x && x.length === man.ports.length && portsShown.k !== k) { portsShown.k = k; dots = { manual: { ...man, ports: man.ports.map((q, i) => ({ ...q, p: x[i] })) } }; }
+    }
+    useV2Store.setState({ physics: { ...ph, t }, view: { modules: physFrame(ph.pp, t), overlay: null, sig: ++sig }, ...dots });
     return;
   }
   const t = Math.min(physDuration(ph.pp), ph.t + dt * s.playSpeed);

@@ -144,6 +144,7 @@ export class SceneManager {
     this.controls.enablePan = true;
     this.controls.screenSpacePanning = true;       // pan along camera view plane
     this.controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN; // middle-drag = pan (scroll wheel still zooms)
+    this.controls.zoomToCursor = true;             // wheel zooms toward what's under the cursor (Fusion / Blender)
     this.controls.target.set(3, 0, 0);
 
     // Reset Cycles accumulation whenever the camera changes.
@@ -170,40 +171,111 @@ export class SceneManager {
     // pinned on screen with ZERO jump. Pan/zoom stay with OrbitControls.
     //
     // Pivot P is chosen like Fusion: (1) the geometry under the cursor, else (2) the
-    // model's bounding-box centre when the whole model is on-screen, else (3) the
-    // nearest geometry to the camera. A small green dot marks P while you orbit.
+    // geometry NEAR the cursor (within NEAR_PX on screen), else (3) the centre of the
+    // model's solids when the whole model is on-screen, else the nearest geometry ahead.
+    // "Model" = viewport.getModelGroup() — every canvas (Editor, Animation, MSRR) lists
+    // its own. A small green dot marks P while you orbit.
     this.controls.enableRotate = false;
     const _UP = new THREE.Vector3(0, 1, 0);
     const _ray = new THREE.Raycaster();
     const _tmpV = new THREE.Vector3();
     const _fwd = new THREE.Vector3();
-    let _orbit: { px: number; py: number; P: THREE.Vector3; active: boolean } | null = null;
+    let _orbit: { px: number; py: number; ndc: THREE.Vector2; P: THREE.Vector3 | null; active: boolean } | null = null;
 
-    const ndcOf = (e: PointerEvent) => {
+    const ndcOf = (e: MouseEvent) => {
       const r = canvas.getBoundingClientRect();
       return { x: ((e.clientX - r.left) / r.width) * 2 - 1, y: -((e.clientY - r.top) / r.height) * 2 + 1 } as THREE.Vector2;
     };
-    const modelHit = (ndc: THREE.Vector2): THREE.Vector3 | null => {
-      const grp = this.viewport.getModelGroup?.();
-      if (!grp) return null;
-      _ray.setFromCamera(ndc, this.camera);
-      for (const h of _ray.intersectObjects([grp], true)) {
-        const o = h.object as any;
-        if (o.visible && o.isMesh && !(o.material && o.material.depthTest === false)) return h.point.clone();
-      }
-      return null;
+    // A "solid" = a mesh you can see and that is part of the model: not an overlay drawn on
+    // top (depthTest off: labels, port balls, CoM ball), not an invisible pick plane, and
+    // not inside a hidden parent.
+    const isSolid = (o: any, root: THREE.Object3D): boolean => {
+      if (!o.isMesh) return false;
+      const m = Array.isArray(o.material) ? o.material[0] : o.material;
+      if (!m || m.visible === false || m.depthTest === false || (m.transparent && m.opacity < 0.05)) return false;
+      for (let p = o; p && p !== root.parent; p = p.parent) if (!p.visible) return false;
+      return true;
     };
+    const solids = (): THREE.Mesh[] => {
+      const grp = this.viewport.getModelGroup?.() as THREE.Object3D | null | undefined;
+      const out: THREE.Mesh[] = [];
+      if (grp) { grp.updateMatrixWorld(true); grp.traverse((o: any) => { if (isSolid(o, grp)) out.push(o); }); }
+      return out;
+    };
+    const worldBox = (o: THREE.Mesh, b = new THREE.Box3()) => {
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      return b.copy(o.geometry.boundingBox!).applyMatrix4(o.matrixWorld);
+    };
+    const firstHit = (ndc: THREE.Vector2, objs: THREE.Object3D[]): THREE.Vector3 | null => {
+      _ray.setFromCamera(ndc, this.camera);
+      const h = _ray.intersectObjects(objs, false)[0];
+      return h ? h.point.clone() : null;
+    };
+    // FIT frames these points: every solid's box corners (tight for long / diagonal robots),
+    // else the Viewport's own fit box.
+    this._fitPoints = (): THREE.Vector3[] | null => {
+      const meshes = solids(), pts: THREE.Vector3[] = [], b = new THREE.Box3();
+      const corners = (bx: THREE.Box3) => { for (let i = 0; i < 8; i++) pts.push(new THREE.Vector3(i & 1 ? bx.max.x : bx.min.x, i & 2 ? bx.max.y : bx.min.y, i & 4 ? bx.max.z : bx.min.z)); };
+      if (meshes.length) for (const o of meshes) corners(worldBox(o, b));
+      else { const fb = this.viewport.getFitBox?.() as THREE.Box3 | null | undefined; if (fb && !fb.isEmpty()) corners(fb); }
+      return pts.length ? pts : null;
+    };
+    const NEAR_PX = 56;   // Fusion-like "near the model" reach around the cursor
     const pickPivot = (ndc: THREE.Vector2): THREE.Vector3 => {
-      const hit = modelHit(ndc);                              // 1) geometry under cursor
-      if (hit) return hit;
-      const box = this.viewport.getFitBox?.() as THREE.Box3 | null | undefined;
+      const meshes = solids();
+      if (meshes.length) {
+        const hit = firstHit(ndc, meshes);                    // 1) geometry under the cursor
+        if (hit) return hit;
+        // 2) geometry NEAR the cursor: the parts whose screen rectangle is within NEAR_PX,
+        //    then rays in growing rings around the cursor — the first ring that touches a
+        //    part gives the surface point closest (on screen) to where you grabbed.
+        const W = canvas.clientWidth || 1, H = canvas.clientHeight || 1;
+        const cx = (ndc.x + 1) * 0.5 * W, cy = (1 - ndc.y) * 0.5 * H;
+        const b = new THREE.Box3(), c = new THREE.Vector3();
+        const near: { o: THREE.Mesh; d: number }[] = [];
+        for (const o of meshes) {
+          worldBox(o, b);
+          if (b.containsPoint(this.camera.position)) continue;
+          let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = false;
+          for (let i = 0; i < 8; i++) {
+            c.set(i & 1 ? b.max.x : b.min.x, i & 2 ? b.max.y : b.min.y, i & 4 ? b.max.z : b.min.z).project(this.camera);
+            if (c.z > 1) { behind = true; break; }
+            const sx = (c.x + 1) * 0.5 * W, sy = (1 - c.y) * 0.5 * H;
+            x0 = Math.min(x0, sx); x1 = Math.max(x1, sx); y0 = Math.min(y0, sy); y1 = Math.max(y1, sy);
+          }
+          if (behind) continue;
+          const d = Math.hypot(Math.max(x0 - cx, 0, cx - x1), Math.max(y0 - cy, 0, cy - y1));
+          if (d <= NEAR_PX) near.push({ o, d });
+        }
+        if (near.length) {
+          near.sort((a, z) => a.d - z.d);
+          const cand = near.slice(0, 6).map((n) => n.o);
+          const p = new THREE.Vector2();
+          for (let r = 6; r <= NEAR_PX; r += 6) {
+            let best: THREE.Vector3 | null = null, bestD = Infinity;
+            for (let k = 0; k < 16; k++) {
+              const a = (k / 16) * Math.PI * 2;
+              p.set(((cx + r * Math.cos(a)) / W) * 2 - 1, -((cy + r * Math.sin(a)) / H) * 2 + 1);
+              const h = firstHit(p, cand);
+              const dd = h ? h.distanceTo(this.camera.position) : Infinity;
+              if (dd < bestD) { best = h; bestD = dd; }
+            }
+            if (best) return best;
+          }
+        }
+      }
+      // 3) nothing near: the centre of the model's solids (labels, arrows and helper balls
+      //    don't count), or the Viewport's own fit box when it lists no model group.
+      let box: THREE.Box3 | null | undefined = null;
+      if (meshes.length) { box = new THREE.Box3(); const b = new THREE.Box3(); for (const o of meshes) box.union(worldBox(o, b)); }
+      else box = this.viewport.getFitBox?.() as THREE.Box3 | null | undefined;
       if (!box || box.isEmpty()) return this.controls.target.clone();
       this.camera.updateMatrixWorld();
       const frustum = new THREE.Frustum().setFromProjectionMatrix(
         new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse));
       if (frustum.containsPoint(box.min) && frustum.containsPoint(box.max))
-        return box.getCenter(new THREE.Vector3());           // 2) whole model on-screen → centre
-      return modelHit({ x: 0, y: 0 } as THREE.Vector2)       // 3a) nearest geometry ahead
+        return box.getCenter(new THREE.Vector3());           // whole model on-screen → its centre
+      return (meshes.length ? firstHit({ x: 0, y: 0 } as THREE.Vector2, meshes) : null) // 3a) nearest geometry ahead
         ?? box.clampPoint(this.camera.position, new THREE.Vector3()); // 3b) nearest bbox point
     };
     const rotateRig = (q: THREE.Quaternion, P: THREE.Vector3) => {
@@ -217,7 +289,8 @@ export class SceneManager {
 
     this._onOrbitDown = (e: PointerEvent) => {
       if (e.button !== 0 || !this.controls.enabled) return;
-      _orbit = { px: e.clientX, py: e.clientY, P: pickPivot(ndcOf(e)), active: false };
+      // The pivot is picked when the drag starts (a plain click never pays for the search).
+      _orbit = { px: e.clientX, py: e.clientY, ndc: ndcOf(e), P: null, active: false };
     };
     this._onOrbitMove = (e: PointerEvent) => {
       if (!_orbit) return;
@@ -228,6 +301,7 @@ export class SceneManager {
       if (!_orbit.active) {
         if (Math.hypot(e.clientX - _orbit.px, e.clientY - _orbit.py) < 4) return; // still a click
         _orbit.active = true;
+        _orbit.P = pickPivot(_orbit.ndc);
         this._showPivotDot(_orbit.P);
         canvas.setPointerCapture?.(e.pointerId);
       }
@@ -236,7 +310,7 @@ export class SceneManager {
       const right = _tmpV.setFromMatrixColumn(this.camera.matrix, 0).normalize();
       const q = new THREE.Quaternion().setFromAxisAngle(_UP, az)
         .multiply(new THREE.Quaternion().setFromAxisAngle(right, pol));
-      rotateRig(q, _orbit.P);
+      rotateRig(q, _orbit.P!);
       _orbit.px = e.clientX; _orbit.py = e.clientY;
     };
     this._onOrbitUp = (e: PointerEvent) => {
@@ -246,6 +320,29 @@ export class SceneManager {
     canvas.addEventListener('pointerdown', this._onOrbitDown);
     canvas.addEventListener('pointermove', this._onOrbitMove);
     window.addEventListener('pointerup', this._onOrbitUp);
+
+    // ── Zoom onto the surface under the cursor (Fusion / Blender "zoom to mouse") ──
+    // OrbitControls' wheel step is a fraction of the camera→target distance, so a target left
+    // behind by an orbit/pan makes zoom stall short of the model (or fly through it). Before each
+    // wheel step, put the target at the depth of the surface under the cursor: zoom then slows
+    // as you near the surface and stops at minDistance from it. Capture on the parent so this
+    // runs before OrbitControls' own wheel listener on the canvas. One ray per ~100 ms at most.
+    let _lastAim = 0;
+    this._onAimWheel = (e: WheelEvent) => {
+      if (e.target !== canvas || !this.controls.enabled || !this.controls.enableZoom) return;
+      const now = performance.now();
+      if (now - _lastAim < 100) return;
+      _lastAim = now;
+      const meshes = solids();
+      if (!meshes.length) return;
+      const hit = firstHit(ndcOf(e), meshes);
+      if (!hit) return;
+      this.camera.getWorldDirection(_fwd);
+      const depth = _tmpV.copy(hit).sub(this.camera.position).dot(_fwd);
+      if (depth > 1e-5) this.controls.target.copy(this.camera.position).addScaledVector(_fwd, depth);
+    };
+    this._aimHost = canvas.parentElement;
+    this._aimHost?.addEventListener('wheel', this._onAimWheel, { capture: true, passive: true });
 
     // ── Post-processing ───────────────────────────────────────────────────────
     this._buildPostProcessing(w, h);
@@ -662,15 +759,35 @@ export class SceneManager {
    * No content → no-op.
    */
   fitCamera() {
-    const box = this.viewport.getFitBox ? this.viewport.getFitBox() : null;
-    if (!box || box.isEmpty()) return;
+    const pts = this._fitPoints?.() as THREE.Vector3[] | null;
+    if (!pts) return;
+    const box = new THREE.Box3().setFromPoints(pts);
     const center = box.getCenter(new THREE.Vector3());
-    // Bounding-sphere radius of the content (no hard floor → tiny parts frame closely).
     const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.05);
 
-    // Distance so the content fills ~70% of the viewport, scaled purely by its size.
-    const halfFov = THREE.MathUtils.degToRad(this.camera.fov / 2);
-    const fitDist  = (radius * 1.45) / Math.tan(halfFov);
+    // View direction: keep the azimuth (horizontal angle), clamp elevation to 20°–80°.
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const sp = new THREE.Spherical().setFromVector3(offset);
+    sp.phi = Math.max(0.35, Math.min(Math.PI * 0.44, sp.phi));
+    sp.radius = 1;
+    const back = new THREE.Vector3().setFromSpherical(sp);          // centre → camera, unit
+    const fwd = back.clone().negate();
+    const right = new THREE.Vector3().crossVectors(fwd, this.camera.up).normalize();
+    const up = new THREE.Vector3().crossVectors(right, fwd);
+
+    // Fusion-style tight fit: the closest distance at which every part's corner is inside
+    // both the vertical AND horizontal field of view, filling ~85% of the smaller one.
+    const FILL = 0.85;
+    const tanV = Math.tan(THREE.MathUtils.degToRad(this.camera.fov / 2)) * FILL;
+    const tanH = tanV * this.camera.aspect;
+    let fitDist = 0;
+    const v = new THREE.Vector3();
+    for (const p of pts) {
+      v.subVectors(p, center);
+      const z = v.dot(fwd);                                          // further away = +
+      fitDist = Math.max(fitDist, Math.abs(v.dot(right)) / tanH - z, Math.abs(v.dot(up)) / tanV - z);
+    }
+    fitDist = Math.max(fitDist, radius * 0.5);
 
     // Apply the same wide limits as updateCameraLimits() so you can freely
     // zoom to 0.2% in or 300× out after fitting.
@@ -680,15 +797,7 @@ export class SceneManager {
     this.camera.far  = Math.max(this.controls.maxDistance * 4, 1000);
     this.camera.updateProjectionMatrix();
 
-    // Preserve azimuth (horizontal angle), set elevation to a clean ~25°
-    const offset = this.camera.position.clone().sub(this.controls.target);
-    const sp = new THREE.Spherical().setFromVector3(offset);
-    sp.radius = fitDist;
-    sp.phi = Math.max(0.35, Math.min(Math.PI * 0.44, sp.phi)); // 20°–80° elevation
-
-    offset.setFromSpherical(sp);
-    const newPos = center.clone().add(offset);
-
+    const newPos = center.clone().addScaledVector(back, fitDist);
     this.animateCameraTo(
       { x: newPos.x, y: newPos.y, z: newPos.z },
       { x: center.x, y: center.y, z: center.z }
@@ -782,6 +891,7 @@ export class SceneManager {
     releaseViewport(this.viewport);
     this._resizeObserver.disconnect();
     if (this._onOrbitDown) this.canvas.removeEventListener('pointerdown', this._onOrbitDown);
+    if (this._onAimWheel) this._aimHost?.removeEventListener('wheel', this._onAimWheel, { capture: true });
     if (this._onOrbitMove) this.canvas.removeEventListener('pointermove', this._onOrbitMove);
     if (this._onOrbitUp) window.removeEventListener('pointerup', this._onOrbitUp);
     this._pivotDot?.geometry?.dispose?.();

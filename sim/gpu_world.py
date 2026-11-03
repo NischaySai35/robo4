@@ -23,7 +23,10 @@ class GPUWorld:
     def __init__(self, pw, N, seed=11, randomize=True):
         import torch, warp as wp, mujoco_warp as mjw
         self.torch, self.wp, self.mjw, self.pw = torch, wp, mjw, pw
-        dev = self.dev = 'cuda'; m = self.m = pw.m; self.N = N
+        import copy
+        # its OWN model: the option changes below (noslip, timestep, iterations) must never touch the CPU world's model (1 Nov:
+        # building the look-ahead switched the live Manual world's friction solver mid-session)
+        dev = self.dev = 'cuda'; m = self.m = copy.deepcopy(pw.m); self.N = N
         wp.init(); self.tstream = torch.cuda.Stream(); torch.cuda.set_stream(self.tstream); self.stream = wp.stream_from_torch(self.tstream)
         g = self.g = torch.Generator(device=dev); g.manual_seed(seed)
         T = self.T = lambda x, dt=torch.float32: torch.as_tensor(np.asarray(x), dtype=dt, device=dev); Lg = torch.long
@@ -210,6 +213,23 @@ class GPUWorld:
 
     def frame(self, n=1):
         for _ in range(n): self.graph.replay()
+
+    # ------------------------------------------------------------------ look-ahead (Nischay 1 Nov: "ask the sim itself")
+    def load_from(self, pw):
+        """every world = an exact copy of the CPU world NOW: pose, speeds, servo setpoints, closed locks, and THIS robot's own
+        servo speed / battery / magnets (build with randomize=False from the same PhysWorld). The room noise differs per world."""
+        torch, T = self.torch, self.T; d = pw.d
+        self.qpos[:] = T(d.qpos)[None]; self.qvel[:] = T(d.qvel)[None]; self.time.fill_(float(d.time))
+        self.tgt[:] = T(pw.tgt)[None]; self.sp[:] = T(pw.sp)[None]; self.spv[:] = T(pw.spv)[None]; self.ctrl[:, self.all_act] = self.sp
+        self.amax[:] = T(pw.amax)[None]; self.volt[:] = T(pw.volt)[None]; self.w0[:] = T(pw.w0)[None]; self.fr0[:] = T(pw.fr0)[None]
+        self.magk.fill_(float(pw.magk)); self.mag_gap.fill_(float(pw.mag_gap))
+        for k, i in self.eq_index.items():
+            self.eq_active[:, i] = bool(d.eq_active[i]); self.P['eq_data'][:, i] = T(pw.m.eq_data[i])[None]
+        self.mjw.forward(self.mm, self.d); self._rx_update()
+
+    def try_targets(self, cands, frames=4):
+        """cands: (N, nA) servo targets, one per world; run `frames` controller frames; returns state() rows (numpy)"""
+        self.tgt[:] = self.T(cands); self.frame(frames); return self.state()
 
     # ------------------------------------------------------------------ locks (between frames)
     def engage(self, worlds, lk):

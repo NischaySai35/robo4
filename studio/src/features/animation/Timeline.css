@@ -58,12 +58,6 @@
 .tl-clip-name { font-size: 13px; font-weight: 600; color: var(--text-bright); }
 .tl-clip-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
 .tl-clip-ops { display: flex; gap: 2px; }
-.tl-clip-ops button { width: 20px; height: 20px; padding: 0; font-size: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); cursor: pointer; }
-.tl-clip-ops button:hover:not(:disabled) { color: var(--accent); border-color: var(--accent); }
-.tl-clip-ops button:disabled { opacity: 0.3; cursor: default; }
-.tl-addclip { padding: 6px; font-size: 12px; background: var(--bg); border: 1px dashed var(--border); border-radius: 7px; color: var(--text-dim); cursor: pointer; }
-.tl-addclip:hover { color: var(--accent); border-color: var(--accent); }
-.tl-addclip--inline { padding: 2px 8px; font-size: 11px; margin-left: auto; }
 
 /* ── Clip Groups ──────────────────────────────────────────────────────────────── */
 .tl-groups-wrap { display: flex; flex-direction: column; gap: 2px; }
@@ -107,14 +101,6 @@
 }
 .tl-group-meta { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); flex-shrink: 0; }
 .tl-group-ops { display: flex; gap: 3px; flex-shrink: 0; }
-.tl-group-ops button {
-  width: 22px; height: 22px; padding: 0; font-size: 11px;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
-  color: var(--text-dim); cursor: pointer;
-}
-.tl-group-ops button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
-.tl-group-ops button:disabled { opacity: 0.35; cursor: default; }
-.tl-group-playing-btn { color: var(--accent) !important; border-color: var(--accent) !important; }
 
 .tl-group-dropzone {
   padding: 0 8px;

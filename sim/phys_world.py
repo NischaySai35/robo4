@@ -16,6 +16,7 @@ floor anchor = gap floor (seat), x at a GAP. Studio -> MuJoCo frame via v2_calib
 import os, json, math, numpy as np, mujoco
 from tetro_env2 import ACT, ACC_RAD, W0_12V, KT, MAG_F0, MAG_D0, MAG_CUT, RX_GAP, RX_TOP
 import disturb as DIST
+from engine import world_engine
 HERE = os.path.dirname(os.path.abspath(__file__))
 TEMPLATE = os.path.join(HERE, 'multi_train.xml')
 CAL = json.load(open(os.path.join(HERE, 'v2_calib_fit.json')))
@@ -62,6 +63,7 @@ def _place_visual_meshes(m):
         if '_vis_' in n and n.split('_vis_')[1] in ref: m.geom_pos[g], m.geom_quat[g] = ref[n.split('_vis_')[1]]
 
 
+COARSE_ADD = ('_srx', 'LockRotor', 'EndA_LockModule', 'EndB_LockModule')   # parts with no DIK collision box of their own (connector zones), 3 Nov: given one sized to the part
 CAD_COLLIDE = os.environ.get('CAD_COLLIDE', '1') == '1'   # default on since 31 Oct (cobra 8/8, A->B 2/2); 0 = the old coarse boxes
 
 
@@ -83,6 +85,7 @@ def _add_cad_colliders(spec, ids):
                 g.contype = 1; g.conaffinity = 7; g.group = 3; g.rgba = [0.6, 0.6, 0.6, 0.35]
 
 
+LOCK_WELD = os.environ.get('LOCK_WELD', '0') == '1'   # 1 = closed locks as a weld (old shortcut); 0 = held by the fins' contact
 PAD_CLEAR_DEG = float(os.environ.get('PAD_CLEAR_DEG', '0.5'))
 
 
@@ -159,8 +162,8 @@ def mat2q(R):
 
 
 class PhysWorld:
-    def __init__(self, module_ids, anchors, randomize=False, seed=1, locks=()):
-        self._args = dict(module_ids=list(module_ids), anchors=[dict(a) for a in anchors], randomize=randomize, seed=seed, locks=[dict(l) for l in locks])
+    def __init__(self, module_ids, anchors, randomize=False, seed=1, locks=(), rigid=False):
+        self._args = dict(module_ids=list(module_ids), anchors=[dict(a) for a in anchors], randomize=randomize, seed=seed, locks=[dict(l) for l in locks], rigid=rigid)
         self.ids = list(module_ids); self.rng = np.random.default_rng(seed)
         spec = mujoco.MjSpec.from_file(TEMPLATE)
         tpl = mujoco.MjSpec.from_file(TEMPLATE)
@@ -216,10 +219,31 @@ class PhysWorld:
                 for typ, nm in ((mujoco.mjtSensor.mjSENS_ACCELEROMETER, 'acc'), (mujoco.mjtSensor.mjSENS_GYRO, 'gyro')):
                     sn = spec.add_sensor(); sn.type = typ; sn.objtype = mujoco.mjtObj.mjOBJ_SITE; sn.objname = st.name; sn.name = f'{mid}_imu_{nm}'
         if CAD_COLLIDE: _add_cad_colliders(spec, self.ids)
-        _end_pockets(spec); _pad_clearance(spec)                                   # end pad pockets as the STL; real printed fit (1 Nov)                        # module bodies collide as the real CAD parts
+        _end_pockets(spec); _pad_clearance(spec)                                   # end pad pockets as the STL; real printed fit (1 Nov)
+        for b in [b for b in spec.bodies if any(k_ in b.name for k_ in COARSE_ADD)]:                    # a coarse box for each spine receiver housing too: DIK's
+            g = b.add_geom(); g.name = f'{b.name}_coarse'; g.type = mujoco.mjtGeom.mjGEOM_BOX   # no-collision limit could not see them and steered
+            g.size = [0.001] * 3; g.mass = 0; g.contype = 0; g.conaffinity = 0; g.group = 4   # an end into M2's housing (3 Nov); sized after compile
         vis = os.environ.get('VISUAL_MESH') == '1'
         if vis: _add_visual_meshes(spec, self.ids)                                  # your real part meshes, for pictures only
-        self.m = spec.compile(); self.d = mujoco.MjData(self.m); m = self.m
+        # what the real robot's plastic and gears do, kept even when the ideal robot leaves them out: real_sync.py corrects for them
+        self.sag_spec = [dict(name=j.name, body=j.parent.name, axis=np.array(j.axis, float), k=float(j.stiffness[0]), rng=float(j.range[1])) for j in spec.joints if '_flex' in j.name or j.name.endswith('_bl')]
+        if rigid:
+            # the ideal robot (2 Nov): NO PLA flex and NO gear play - the joints are gone, not just stiff. Even at the stiffest stable
+            # limit each gave ~0.02 deg under load, and 81 of them put a 3-ring's tip 8 mm off a perfect plan
+            for j in list(spec.joints):
+                if '_flex' in j.name or j.name.endswith('_bl'): spec.delete(j)
+        self.engine = world_engine(spec); self.m, self.d = self.engine.model, self.engine.data; m = self.m
+        for g in [g for g in range(m.ngeom) if m.geom(g).name.endswith('_coarse') and any(k_ in m.geom(g).name for k_ in COARSE_ADD)]:
+            o = [h for h in range(m.ngeom) if m.geom_bodyid[h] == m.geom_bodyid[g] and h != g]
+            box = []
+            for h in o:
+                R = np.zeros(9); mujoco.mju_quat2Mat(R, m.geom_quat[h]); R = R.reshape(3, 3); c = m.geom_pos[h] + R @ m.geom_aabb[h, :3]; e = np.abs(R) @ m.geom_aabb[h, 3:]
+                box.append((c - e, c + e))
+            lo = np.min([b_[0] for b_ in box], 0); hi = np.max([b_[1] for b_ in box], 0)
+            m.geom_pos[g] = (lo + hi) / 2; m.geom_size[g] = (hi - lo) / 2; m.geom_quat[g] = [1, 0, 0, 0]
+            # compiled at the body's origin, MuJoCo flagged it 'same frame as the body' and kept drawing it there, not where it now is
+            # (3 Nov: stand_tested, the boxes sat 26 mm off their parts, DIK saw 9 mm of room while the pads already touched)
+            m.geom_sameframe[g] = 0; m.geom_rbound[g] = float(np.linalg.norm(m.geom_size[g])); m.geom_aabb[g] = np.r_[0, 0, 0, m.geom_size[g]]
         if not anchors: m.geom_size[m.geom('floor').id][:2] = 3.0          # bare floor (floor chains, 2 m long): draw it big; a plane collides everywhere anyway
         if vis:
             _place_visual_meshes(m)
@@ -267,7 +291,7 @@ class PhysWorld:
                 bs = {m.body(f'{mid}_End{e}_LockModule').id, m.body(f'{mid}_{rot}').id}
                 self.conn_geoms[(mid, e)] = [i for i in range(m.ngeom) if m.geom_bodyid[i] in bs and m.geom_contype[i] == 4 and m.geom_conaffinity[i] == 6]
         self.eq = {m.eq(i).name: i for i in range(m.neq)}
-        self.engaged = set()
+        self.engaged = set(); self.lock_t0 = {}
         self.view_names = [(mid, b) for mid in self.ids for b in VIEW_BODIES]
         self.view_bodies = [m.body(f'{mid}_{b}').id for mid, b in self.view_names]
         self.nom = dict(stiff=m.jnt_stiffness.copy(), damp=m.dof_damping.copy(), fl=m.dof_frictionloss.copy(), gain=m.actuator_gainprm.copy(),
@@ -330,15 +354,21 @@ class PhysWorld:
         for lk in scene['locks']: self.engage(lk)
 
     def engage(self, lk):
-        """the lock is closed: weld at the pose it is in NOW, stop its faces colliding"""
+        """the lock is closed: the rotors are turned and the fins sit under the lips - it HOLDS BY CONTACT (Nischay 2 Nov: 'held by
+        the mechanical collision of the turned fins', no glue). The relative pose NOW is stored for the planners (DIK, GroupFK use
+        it as a constraint); the physics weld is used only with LOCK_WELD=1 (the old shortcut: weld + connector faces off, faster)"""
         k = lock_key(lk); L = self.lock_defs.get(k)
         if L is None or k in self.engaged: return
         m, d = self.m, self.d; i = self.eq[k]
         b1, b2 = m.eq_obj1id[i], m.eq_obj2id[i]
         R1 = d.xmat[b1].reshape(3, 3); R2 = d.xmat[b2].reshape(3, 3)
         data = np.zeros(m.eq_data.shape[1]); data[3:6] = R1.T @ (d.xpos[b2] - d.xpos[b1]); data[6:10] = mat2q(R1.T @ R2); data[10] = 1.0
-        m.eq_data[i] = data; d.eq_active[i] = 1
-        for g in self.conn_geoms[L['dock']]: m.geom_contype[g] = 0; m.geom_conaffinity[g] = 0
+        m.eq_data[i] = data; self.lock_t0[k] = float(d.time)                         # its pose is taken again once settled (run)
+        # ideal (Nischay 2 Nov, option B): real fins while the rotors turn, then the closed lock is rigid - held by fin contact it rattled
+        # ~1 mm / 1 deg per control tick, which swung a ring's far end ~15 mm
+        if LOCK_WELD or self._args.get('rigid'):
+            d.eq_active[i] = 1
+            for g in self.conn_geoms[L['dock']]: m.geom_contype[g] = 0; m.geom_conaffinity[g] = 0
         self.engaged.add(k)
 
     # ── checkpoints: run a long pipeline in PIECES (save after a stage, start the next test from there) ──
@@ -369,11 +399,30 @@ class PhysWorld:
         w.nominal_poses = st['nominal']; mujoco.mj_forward(m, d)
         return w, st['extra']
 
+    def _store_lock_pose(self, k):
+        """a closed lock's pose, kept from now on: the planners hold it there and pull back any drift (2 Nov: re-reading it every
+        tick accepted every drift - the idle VSEPR walked a lock open in ~15 s)"""
+        m, d = self.m, self.d; i = self.eq[k]; b1, b2 = m.eq_obj1id[i], m.eq_obj2id[i]; R1 = d.xmat[b1].reshape(3, 3)
+        if d.eq_active[i]: return                                                       # a rigid lock has no slack: its pose stays the one it closed at
+        m.eq_data[i, 3:6] = R1.T @ (d.xpos[b2] - d.xpos[b1]); m.eq_data[i, 6:10] = mat2q(R1.T @ d.xmat[b2].reshape(3, 3))
+
+    def lock_drift(self):
+        """{lock: (mm, deg)} how far each closed lock has moved from its kept pose"""
+        m, d = self.m, self.d; out = {}
+        for k in self.engaged:
+            if k in self.lock_t0: continue                                             # not settled yet
+            i = self.eq[k]; b1, b2 = m.eq_obj1id[i], m.eq_obj2id[i]; R1 = d.xmat[b1].reshape(3, 3)
+            dp = R1.T @ (d.xpos[b2] - d.xpos[b1]) - m.eq_data[i, 3:6]
+            Rk = np.zeros(9); mujoco.mju_quat2Mat(Rk, m.eq_data[i, 6:10]); Rr = Rk.reshape(3, 3).T @ R1.T @ d.xmat[b2].reshape(3, 3)
+            out[k] = (float(np.linalg.norm(dp)) * 1000, math.degrees(math.acos(max(-1.0, min(1.0, (np.trace(Rr) - 1) / 2)))))
+        return out
+
     def release(self, lk):
         """rotor turned back: no weld, the faces collide again, magnets act"""
         k = lock_key(lk); L = self.lock_defs.get(k)
         if L is None or k not in self.engaged: return
         self.d.eq_active[self.eq[k]] = 0
+        self.lock_t0.pop(k, None)
         for g in self.conn_geoms[L['dock']]: self.m.geom_contype[g] = 4; self.m.geom_conaffinity[g] = 6
         self.engaged.discard(k)
 
@@ -427,6 +476,7 @@ class PhysWorld:
         for R in self.rx:
             R['seat'], R['z'], R['R'] = self.rx_frame(R, d.xmat[R['bid']].reshape(3, 3), d.xpos[R['bid']])
             R['mag_p'] = d.site_xpos[R['mags']].copy()
+        self._seats = np.array([R['seat'] for R in self.rx])
 
     def _magnets(self):
         """8 magnets per connector, N/S alternating; each end magnet pairs with the nearest receiver magnet (multi_env.py)"""
@@ -434,10 +484,10 @@ class PhysWorld:
         for mid in self.ids:
             for e in 'AB':
                 E = self.mod[mid]['end'][e]; tip = d.site_xpos[E['tip']]
-                for R in self.rx:
+                near = np.flatnonzero(((self._seats - tip) ** 2).sum(1) <= (MAG_CUT + 0.03) ** 2)   # one test for all receivers (was 40 % of the sim's time)
+                for R in (self.rx[i] for i in near):
                     if R['mod'] == mid: continue
                     if R['kind'] == 'end' and self.ids.index(R['mod']) < self.ids.index(mid): continue   # end pair counted once
-                    if np.linalg.norm(tip - R['seat']) > MAG_CUT + 0.03: continue
                     z = R['z']; Bm = d.site_xpos[E['mags']]
                     D = R['mag_p'][None, :, :] - Bm[:, None, :]; L = np.linalg.norm(D, axis=2); j = L.argmin(1); v = D[np.arange(8), j]
                     ax = v @ z; lat = v - ax[:, None] * z[None, :]; ln = np.linalg.norm(lat, axis=1); sep = np.maximum(-ax, 0.0) + self.mag_gap
@@ -459,21 +509,56 @@ class PhysWorld:
         m, d = self.m, self.d; nM = len(self.ids)
         F = d.actuator_force[self.all_act].reshape(nM, 9)
         I = 1.8 + np.abs(F).sum(1) / KT; sag = np.maximum(self.volt - 0.08 * I, 9.0) / self.volt; sag9 = np.repeat(sag, 9)
-        w0 = self.w0 * sag9; e = self.tgt - self.sp
+        w0 = self.w0 * sag9; glide = getattr(self, 'tgt_eff', None) is not None
+        tg = self.tgt_eff if glide else self.tgt; e = tg - self.sp
         if self.disturb is not None: e = np.where(np.abs(e) < DIST.DEADBAND, 0.0, e)     # servo deadband
-        vdes = np.sign(e) * np.minimum(w0, np.sqrt(2 * self.amax * np.abs(e)))
-        self.spv += np.clip(vdes - self.spv, -self.amax * dt, self.amax * dt); self.sp += self.spv * dt
+        if glide and getattr(self, 'exact', False):
+            # ideal + gliding command: the joint follows the moving command exactly, at most at its top speed
+            step = np.clip(e, -w0 * dt, w0 * dt); self.sp += step; self.spv = step / dt
+        else:
+            vdes = np.sign(e) * np.minimum(w0, np.sqrt(2 * self.amax * np.abs(e)))
+            if glide: vdes = np.clip(vdes + self.tgt_rate, -w0, w0)                  # + the command's own speed: no stop at each tick
+            self.spv += np.clip(vdes - self.spv, -self.amax * dt, self.amax * dt); self.sp += self.spv * dt
+            if getattr(self, 'exact', False):                                          # ideal: the last step lands EXACTLY on the command
+                hit = np.abs(self.tgt - self.sp) <= np.maximum(np.abs(self.spv) * dt, 1e-3)
+                self.sp[hit] = self.tgt[hit]; self.spv[hit] = 0.0
         d.ctrl[self.all_act] = self.sp
         w = d.qvel[self.all_dof]; tau = d.actuator_force[self.all_act]
         lim = sag9 * np.where(tau * w > 0, self.fr0 * np.clip(1 - np.abs(w) / w0, 0.08, 1.0), self.fr0)
         m.actuator_forcerange[self.all_act, 0] = -lim; m.actuator_forcerange[self.all_act, 1] = lim
+
+    def _exact(self):
+        """IDEAL robot (Nischay 2 Nov: 'just real rotation, math'): after every physics step each arm joint IS its command - set
+        exactly, not pulled by a spring (a MuJoCo servo is one: it sagged 0.0x deg under gravity, mm at a ring's tip). The locks
+        hold by their fins' contact (engage); the modules' own poses are never overridden (that fought the contact solver: the far
+        module sank 10 mm into the floor, 2 Nov)"""
+        m, d = self.m, self.d
+        k_ = np.flatnonzero(np.arange(len(self.all_act)) % 9 < 7)                     # arm servos (the lock rotors stay physical)
+        # the torque each servo really carries (gravity, contacts, locks: what holds the joint still), reported as its force - the
+        # motor model is off here, so DIK's 'servo at its limit' rule and the load % read this against the ideal 50 kg.cm
+        dv = self.all_dof[k_]; qa = m.jnt_qposadr[m.actuator_trnid[self.all_act[k_], 0]]
+        tau = d.qfrc_bias[dv] - d.qfrc_passive[dv] - d.qfrc_constraint[dv]; d.actuator_force[self.all_act[k_]] = tau
+        # ...exact only up to its 50 kg.cm (Nischay 2 Nov): a joint that would need more is BLOCKED (fins, floor, another part) and
+        # stalls like a real servo - it pushes with its full torque and no more, and its command restarts from where it is. An
+        # unlimited exact joint forced the fins through the lips and a lock came open
+        # (the torque is averaged over ~20 ms: single-step spikes from contacts read as 'blocked' and let joints go; a stalled servo
+        # HOLDS still - released with its speed, a joint coasted past its target, 2 Nov)
+        self.tau_f = tau if getattr(self, 'tau_f', None) is None else 0.95 * self.tau_f + 0.05 * tau
+        lim = self.fr0[k_]; stall = np.abs(self.tau_f) > lim
+        d.qfrc_applied[dv] = np.where(stall, np.clip(tau, -lim, lim), 0.0)
+        ok = ~stall; d.qpos[qa[ok]] = self.sp[k_[ok]]; d.qvel[dv[ok]] = self.spv[k_[ok]]
+        self.sp[k_[stall]] = d.qpos[qa[stall]]; self.spv[k_[stall]] = 0.0; d.qvel[dv[stall]] = 0.0
 
     def run(self, seconds, extra=None):
         """advance with gravity, contacts, magnets and servos; extra = (body, force3) applied meanwhile"""
         m, d = self.m, self.d
         n = max(1, int(round(seconds / m.opt.timestep)))
         peak = 0.0
+        # glide (Nischay 2 Nov: 'stepwise, I want it smooth like a robot arm'): a new command is not jumped to and stopped at - it
+        # moves evenly over this run, so the joints keep a steady speed from one control tick to the next
+        if getattr(self, 'glide', False): frm = self.sp.copy(); self.tgt_rate = (self.tgt - frm) / (n * m.opt.timestep)
         for k in range(n):
+            if getattr(self, 'glide', False) and k % 5 == 0: self.tgt_eff = frm + (self.tgt - frm) * min(1.0, (k + 5) / n)
             d.xfrc_applied[:] = 0
             if k % 10 == 0: self._refresh_rx()
             self._magnets()
@@ -482,11 +567,17 @@ class PhysWorld:
             if k % 5 == 0:
                 self._servo()
                 peak = max(peak, float(np.abs(d.actuator_force[self.all_act]).max() / STALL * 100))
-            mujoco.mj_step(m, d)
+            self.engine.step()
+            if getattr(self, 'exact', False): self._exact()
             if self.rec is not None and d.time - self.rec['last'] >= self.rec['dt'] - 1e-9:
-                self.rec['last'] = d.time; self.rec['frames'].append({'t': round(float(d.time), 3), 'p': self.body_poses()})
-            if not np.isfinite(d.qpos).all(): return peak, False
+                self.rec['last'] = d.time; fr_ = {'t': round(float(d.time), 3), 'p': self.body_poses()}
+                if getattr(self, 'rec_extra', None): fr_['x'] = self.rec_extra()                  # e.g. the connector dots of THIS moment (manual.py)
+                self.rec['frames'].append(fr_)
+            if not np.isfinite(d.qpos).all(): self.tgt_eff = None; return peak, False
+            if k % 100 == 0:
+                for lk_ in [x for x, t in self.lock_t0.items() if d.time - t >= 0.3]: self._store_lock_pose(lk_); del self.lock_t0[lk_]   # settled in its slack
             if k % 100 == 0 and getattr(self, 'on_tick', None): self.on_tick()     # e.g. snap.Snapper.tick: pictures during the run
+        self.tgt_eff = None
         return peak, True
 
     def body_poses(self):

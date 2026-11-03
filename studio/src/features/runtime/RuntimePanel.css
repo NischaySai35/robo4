@@ -65,3 +65,16 @@
 .rt-scrub { flex: 1; }
 .rt-clock { margin-top: 6px; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
 .rt-hint { font-size: 12px; color: var(--text-dim); line-height: 1.5; }
+
+/* Trace tab */
+.rt-trace { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.rt-trace-view { width: 100%; display: block; border: 1px solid var(--border); border-radius: 3px; }
+.rt-trace-hover { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); min-height: 15px; }
+.rt-trace-error { font-size: 12px; color: var(--danger); }
+.rt-trace-table { width: 100%; border-collapse: collapse; font-size: 11px; font-variant-numeric: tabular-nums; }
+.rt-trace-table th, .rt-trace-table td { padding: 3px 5px; text-align: right; border-bottom: 1px solid var(--border); }
+.rt-trace-table th:first-child, .rt-trace-table td:first-child { text-align: left; font-family: var(--font-mono); word-break: break-all; }
+.rt-trace-table th { color: var(--text-dim); font-weight: 600; }
+.rt-trace-table tbody tr { cursor: pointer; }
+.rt-trace-table tbody tr:hover { background: var(--bg-card-hover); }
+.rt-trace-table tbody tr.active { background: var(--accent-glow); }

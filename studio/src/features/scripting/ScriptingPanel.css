@@ -25,22 +25,7 @@
   color: var(--text-bright);
 }
 
-.scpt-head button,
-.scpt-actions button {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--bg);
-  color: var(--text);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.6px;
-  cursor: pointer;
-}
 
-.scpt-head button {
-  padding: 4px 7px;
-}
 
 .scpt-editor {
   display: block;
@@ -72,28 +57,8 @@
   padding: 0 10px 10px;
 }
 
-.scpt-actions button {
-  min-height: 29px;
-  padding: 5px 8px;
-}
 
-.scpt-actions button:hover,
-.scpt-head button:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-  box-shadow: 0 0 10px var(--accent-glow);
-}
 
-.scpt-run {
-  background: var(--accent) !important;
-  border-color: var(--accent) !important;
-  color: #fff !important;
-}
-
-.scpt-actions button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
 
 .scpt-output {
   display: grid;

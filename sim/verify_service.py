@@ -24,6 +24,7 @@ from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from concurrent.futures import ProcessPoolExecutor
 import numpy as np
 import mujoco
+from engine import world_engine
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 STARTED = __import__('time').time()   # the Studio restarts this service when sim code is newer (studio/tools/vite-plugin-physics.cjs)
@@ -129,8 +130,8 @@ class Robot:
 
     def __init__(self, module_ids, all_locks):
         self.ids = module_ids
-        self.m, _ = build_model(module_ids, all_locks)
-        self.d = mujoco.MjData(self.m)
+        m, spec = build_model(module_ids, all_locks)
+        self.engine = world_engine(spec, m); self.m, self.d = self.engine.model, self.engine.data
         m = self.m
         self.qadr = {mid: [m.joint(f'{mid}_J_{j}').qposadr[0] for j in JOINTS] for mid in module_ids}
         self.act = {mid: [m.actuator(f'{mid}_m_{j}').id for j in JOINTS] for mid in module_ids}
@@ -232,7 +233,7 @@ class Robot:
         for i in range(n):
             if ctrl_from is not None:
                 d.ctrl[:] = ctrl_from + (ctrl_to - ctrl_from) * min(1.0, (i + 1) / n)
-            mujoco.mj_step(m, d)
+            self.engine.step()
             if i % 10 == 0:
                 f = np.abs(d.actuator_force[self.all_act]).max() / STALL * 100
                 peak = max(peak, float(f))
@@ -317,7 +318,7 @@ def check_static(scene):
         n = int(0.5 / rb.m.opt.timestep)
         for _ in range(n):
             rb.d.xfrc_applied[:] = 0; rb.d.xfrc_applied[topb, :3] = [TOUCH_N * dx, TOUCH_N * dy, 0]
-            mujoco.mj_step(rb.m, rb.d)
+            rb.engine.step()
         pushed = rb.port_positions()
         give.append(max(float(np.linalg.norm(pushed[k] - mean[k])) for k in mean) * 1000)
         rb.d.xfrc_applied[:] = 0
@@ -584,7 +585,8 @@ class H(BaseHTTPRequestHandler):
             if os.path.exists(gp): r['measured'] = json.load(open(gp))
             return self._send(200, r)
         if self.path.startswith('/health'):
-            return self._send(200, {'ok': True, 'mujoco': mujoco.__version__, 'calibration_mm': CAL['worst_mm'], 'sim': HERE, 'pid': os.getpid(), 'started': STARTED})
+            return self._send(200, {'ok': True, 'mujoco': mujoco.__version__, 'calibration_mm': CAL['worst_mm'], 'sim': HERE, 'pid': os.getpid(), 'started': STARTED,
+                                    'live_sessions': sum(1 for S in getattr(sys.modules.get('manual'), 'SESS', {}).values() if time.time() - getattr(S, 'seen', 0) < 20)})
         self._send(404, {'ok': False})
 
     def do_POST(self):
@@ -613,7 +615,7 @@ class H(BaseHTTPRequestHandler):
                 import manual
                 if self.path.startswith('/manual/start'):
                     return self._send(200, manual.start(body['scene'], seed=int(body.get('seed', 1)), randomize=bool(body.get('randomize', True)),
-                                                        disturb=bool(body.get('disturb', True)), judge=body.get('judge', 'off')))
+                                                        disturb=bool(body.get('disturb', True)), judge=body.get('judge', 'off'), ideal=bool(body.get('ideal', False))))
                 if self.path.startswith('/manual/step'): return self._send(200, manual.step(body['id'], body.get('wait', 0.4)))
                 if self.path.startswith('/manual/cmd'): return self._send(200, manual.command(body['id'], body['cmd']))
             if self.path.startswith('/session/start'):

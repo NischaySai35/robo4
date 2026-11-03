@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/input';
 import './CopilotPanel.css';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -104,11 +105,11 @@ export default function CopilotPanel() {
       </div>
 
       {!backend.startsWith('ollama') && neuralLoad !== 'ready' && (
-        <button className="ai-neural" onClick={enableNeural} disabled={neuralLoad === 'loading'}>
+        <Button variant="outline" size="sm" className="tw:mx-2.5 tw:mt-2 tw:border-dashed tw:border-primary tw:text-primary" onClick={enableNeural} disabled={neuralLoad === 'loading'}>
           {neuralLoad === 'loading'
             ? `Downloading on-device AI… ${neuralPct}%`
             : '⚡ Enable on-device AI (~23 MB, offline after download)'}
-        </button>
+        </Button>
       )}
 
       <div className="ai-chat" ref={listRef}>
@@ -126,7 +127,7 @@ export default function CopilotPanel() {
           placeholder="Tell the copilot what to do…"
           rows={2}
         />
-        <button type="submit" disabled={busy || !input.trim()}>{busy ? '…' : 'Send'}</button>
+        <Button type="submit" className="tw:h-[38px]" disabled={busy || !input.trim()}>{busy ? '…' : 'Send'}</Button>
       </form>
     </div>
   );

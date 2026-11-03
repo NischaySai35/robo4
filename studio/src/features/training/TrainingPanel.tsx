@@ -17,6 +17,7 @@
  *   VLM goal parser — send natural-language instruction → 3D target (OpenAI / Anthropic)
  *   HuggingFace     — SmolVLA / Octo inference (planned)
  */
+import { Segmented } from '@/components/ui/segmented';
 import { Input, NativeSelect } from '@/components/ui/input';
 import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
@@ -1121,11 +1122,11 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         <div className="tr-sec">TASK</div>
         <div className="tr-task-grid">
           {(['reach', 'navigate', 'locomote', 'pose', 'assemble'] as TaskType[]).map((t) => (
-            <button key={t} className={`tr-task-btn${taskType === t ? ' tr-task-btn--on' : ''}`}
+            <Button key={t} variant={taskType === t ? 'default' : 'outline'} aria-pressed={taskType === t} className="tw:h-auto tw:flex-col tw:gap-0.5 tw:py-2 tw:text-xs"
               disabled={training} onClick={() => chooseTask(t)}>
               <span className="tr-task-icon">{taskIcons[t]}</span>
               <span>{taskLabels[t]}</span>
-            </button>
+            </Button>
           ))}
         </div>
         <div className="tr-hint">{taskHints[taskType]}</div>
@@ -1204,7 +1205,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         {savedSkill && (
           <div className="tr-saved-banner">
             Saved skill: <strong>{savedSkill.name}</strong> · {savedSkill.meta?.generations} iters
-            <button onClick={runSaved} className="tr-saved-run">▶ Run</button>
+            <Button size="xs" className="tw:ml-auto" onClick={runSaved}>▶ Run</Button>
           </div>
         )}
       </>
@@ -1232,14 +1233,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
         {algo !== 'bc' && (
           <>
             <div className="tr-sec">ARCHITECTURE</div>
-            <div className="tr-arch-grid">
-              {(['linear', 'mlp-s', 'mlp-m', 'mlp-l'] as ArchType[]).map((a) => (
-                <button key={a} className={`tr-arch-btn${arch === a ? ' tr-arch-btn--on' : ''}`}
-                  disabled={training} onClick={() => setArch(a)}>
-                  {archLabels[a]}
-                </button>
-              ))}
-            </div>
+            <Segmented size="xs" className="tw:flex-wrap" value={arch} onChange={setArch} options={(['linear', 'mlp-s', 'mlp-m', 'mlp-l'] as ArchType[]).map((a) => ({ value: a, label: archLabels[a], disabled: training }))} />
             <div className="tr-hint">{archHints[arch]}</div>
 
             <div className="tr-sec">HYPERPARAMETERS</div>
@@ -1262,14 +1256,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
           <>
             <div className="tr-sec">BC SETTINGS</div>
             <div className="tr-hint">Uses demonstrations from the DEMOS tab. Adam optimizer with backpropagation.</div>
-            <div className="tr-arch-grid">
-              {(['mlp-s', 'mlp-m', 'mlp-l'] as ArchType[]).map((a) => (
-                <button key={a} className={`tr-arch-btn${arch === a ? ' tr-arch-btn--on' : ''}`}
-                  disabled={training} onClick={() => setArch(a)}>
-                  {archLabels[a]}
-                </button>
-              ))}
-            </div>
+            <Segmented size="xs" className="tw:flex-wrap" value={arch} onChange={setArch} options={(['mlp-s', 'mlp-m', 'mlp-l'] as ArchType[]).map((a) => ({ value: a, label: archLabels[a], disabled: training }))} />
             <label className="tr-weight">
               <span>Learning rate (Adam)</span>
               <input type="range" min={1e-4} max={5e-3} step={1e-4} value={bcLr} disabled={training}
@@ -1393,7 +1380,7 @@ print("  Then: Training page → Cloud tab → Import trained policy")
           <div key={d.id} className="tr-demo-card">
             <div className="tr-demo-name">{d.label}</div>
             <div className="tr-demo-meta">{d.pairs.length} steps · {d.taskType} · {new Date(d.timestamp).toLocaleTimeString()}</div>
-            <button className="tr-demo-del" onClick={() => deleteDemo(d.id)}>✕</button>
+            <Button variant="ghost" size="icon-xs" className="tw:absolute tw:top-1.5 tw:right-1.5 tw:hover:text-destructive" title="Delete demo" onClick={() => deleteDemo(d.id)}>✕</Button>
           </div>
         ))}
         {demos.length > 0 && (

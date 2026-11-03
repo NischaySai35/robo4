@@ -101,6 +101,7 @@ export function hideGizmoVisuals(control: any) {
 }
 
 const _cssPos = new THREE.Vector3();
+const _cssScale = new THREE.Vector3();
 
 /** Rescale `target` every frame so it stays ~`pixels` tall on screen regardless
  *  of camera distance / zoom — the standard Blender & Fusion 360 behavior for
@@ -131,7 +132,9 @@ export function constantScreenSize(
     } else {
       world = (px / h) * (camera.top - camera.bottom);
     }
-    target.scale.setScalar(world / unitScale);
+    // a scaled parent (the MSRR scene is drawn at 1/UNITS_PER_M) shrinks the marker too: divide it out
+    const ps = target.parent ? target.parent.getWorldScale(_cssScale).x : 1;
+    target.scale.setScalar(world / unitScale / (ps || 1));
   };
 }
 

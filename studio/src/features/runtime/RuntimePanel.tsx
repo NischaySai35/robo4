@@ -21,9 +21,10 @@ import { Topics } from '@/runtime/messageBus';
 import { downloadBlob } from '@/core/serialization/fileIO';
 import type { DiagnosticsMsg } from '@/state/runtimeBridge';
 import type { Bag } from '@/runtime/recorder';
+import { parseTrace, type Trace } from '@/runtime/traceFile';
 import RtCoreReadout from '@/features/runtime/RtCoreReadout';
 
-type Tab = 'topics' | 'tf' | 'nodes' | 'health' | 'record' | 'rtcore';
+type Tab = 'topics' | 'tf' | 'nodes' | 'health' | 'record' | 'trace' | 'rtcore';
 
 // ── numeric leaf flattening (for plotting any topic's message) ────────────────
 function flattenNumeric(obj: unknown, prefix = '', out: Record<string, number> = {}, depth = 0): Record<string, number> {
@@ -295,18 +296,94 @@ function RecordTab() {
   );
 }
 
+// ── callback timings from a GOS script (App(trace=path)) ─────────────────────
+const TRACE_ROW = 22;
+const fmtMs = (ms: number) => (ms >= 100 ? ms.toFixed(0) : ms >= 1 ? ms.toFixed(1) : ms.toFixed(3));
+
+function TraceTab() {
+  const [trace, setTrace] = useState<Trace | null>(null);
+  const [file, setFile] = useState('');
+  const [error, setError] = useState('');
+  const [picked, setPicked] = useState<string | null>(null);
+  const [hover, setHover] = useState('');
+  const input = useRef<HTMLInputElement | null>(null);
+  const canvas = useRef<HTMLCanvasElement | null>(null);
+
+  const open = async (f: File | undefined) => {
+    if (!f) return;
+    try { setTrace(parseTrace(await f.text())); setFile(f.name); setError(''); setPicked(null); }
+    catch (e: any) { setTrace(null); setFile(''); setError(e.message); }
+  };
+
+  useEffect(() => {
+    const c = canvas.current;
+    if (!c || !trace) return;
+    const draw = () => {
+      const w = c.clientWidth, h = trace.threads.length * TRACE_ROW, dpr = window.devicePixelRatio || 1;
+      c.width = w * dpr; c.height = h * dpr;
+      const g = c.getContext('2d')!;
+      g.scale(dpr, dpr);
+      const css = getComputedStyle(c);
+      g.fillStyle = css.getPropertyValue('--bg-card'); g.fillRect(0, 0, w, h);
+      for (const b of trace.bars) {
+        g.fillStyle = picked && b.name !== picked ? css.getPropertyValue('--border-bright') : css.getPropertyValue('--primary');
+        g.fillRect(b.startMs / trace.lengthMs * w, trace.threads.indexOf(b.thread) * TRACE_ROW + 3, Math.max(1, b.durMs / trace.lengthMs * w), TRACE_ROW - 6);
+      }
+    };
+    draw();
+    const ro = new ResizeObserver(draw);
+    ro.observe(c);
+    return () => ro.disconnect();
+  }, [trace, picked]);
+
+  const onMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!trace) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const ms = (e.clientX - r.left) / r.width * trace.lengthMs, slop = 3 / r.width * trace.lengthMs;
+    const thread = trace.threads[Math.floor((e.clientY - r.top) / TRACE_ROW)];
+    const b = trace.bars.find((x) => x.thread === thread && ms >= x.startMs - slop && ms <= x.startMs + x.durMs + slop);
+    setHover(b ? `${b.name}: ${fmtMs(b.durMs)} ms, at ${fmtMs(b.startMs)} ms` : '');
+  };
+
+  return (
+    <div className="rt-trace">
+      <input ref={input} type="file" accept=".json" style={{ display: 'none' }} data-testid="trace-file"
+        onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ''; }} />
+      <Button variant="outline" size="sm" onClick={() => input.current?.click()}>Open trace file…</Button>
+      {error && <div className="rt-trace-error" role="alert">{error}</div>}
+      {!trace && !error && <div className="rt-hint">Shows how long each callback of a script took. Run the script with gos.App(trace="trace.json"), then open that file here.</div>}
+      {trace && <>
+        <div className="rt-hint">{file}: {trace.bars.length} callback runs over {fmtMs(trace.lengthMs)} ms, {trace.threads.length} thread(s)</div>
+        <canvas ref={canvas} className="rt-trace-view" style={{ height: trace.threads.length * TRACE_ROW }} onMouseMove={onMove} onMouseLeave={() => setHover('')} />
+        <div className="rt-trace-hover">{hover || 'Point at a bar for its name and time. Click a row below to pick out one callback.'}</div>
+        <table className="rt-trace-table">
+          <thead><tr><th>Callback</th><th>Runs</th><th>Total ms</th><th>Median ms</th><th>Worst ms</th></tr></thead>
+          <tbody>
+            {trace.rows.map((r) => (
+              <tr key={r.name} className={picked === r.name ? 'active' : ''} onClick={() => setPicked(picked === r.name ? null : r.name)}>
+                <td>{r.name}</td><td>{r.count}</td><td>{fmtMs(r.totalMs)}</td><td>{fmtMs(r.medianMs)}</td><td>{fmtMs(r.worstMs)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </>}
+    </div>
+  );
+}
+
 export default function RuntimePanel() {
   const [tab, setTab] = useState<Tab>('topics');
   return (
     <div className="rt-panel" data-ui="a">
       <TabBar size="sm" value={tab} onChange={setTab} tabs={[{ id: 'topics', label: 'Topics' }, { id: 'tf', label: 'TF' }, { id: 'nodes', label: 'Nodes' },
-        { id: 'health', label: 'Health' }, { id: 'record', label: 'Record' }, { id: 'rtcore', label: 'RT Core' }]} />
+        { id: 'health', label: 'Health' }, { id: 'record', label: 'Record' }, { id: 'trace', label: 'Trace' }, { id: 'rtcore', label: 'RT Core' }]} />
       <div className="rt-body">
         {tab === 'topics' && <TopicsTab />}
         {tab === 'tf' && <TfTab />}
         {tab === 'nodes' && <NodesTab />}
         {tab === 'health' && <HealthTab />}
         {tab === 'record' && <RecordTab />}
+        {tab === 'trace' && <TraceTab />}
         {tab === 'rtcore' && <RtCoreReadout />}
       </div>
     </div>

@@ -24,7 +24,7 @@ export function TabBar<T extends string>({ value, tabs, onChange, className, siz
     (row.current?.querySelectorAll<HTMLButtonElement>('[role=tab]')[to])?.focus();
   };
   return (
-    <div ref={row} role="tablist" className={cn('tw:flex tw:gap-0.5 tw:border-b tw:border-border tw:overflow-x-auto', className)}>
+    <div ref={row} role="tablist" className={cn('tw:flex tw:shrink-0 tw:gap-0.5 tw:border-b tw:border-border tw:overflow-x-auto', className)}>
       {tabs.map((t, i) => {
         const on = t.id === value;
         return (

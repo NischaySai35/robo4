@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 # "gos" on PyPI is not checked yet, so nothing is published.
-name = "tetrobot-gos"
+name = "gos-robotics"
 version = "0.1.0"
 description = "GOS: the graph engine under TETROBOT, usable with no window"
 requires-python = ">=3.12"
@@ -18,7 +18,7 @@ studio = ["websockets"]
 record = ["mcap"]
 ros = ["xacro"]
 sim = ["mujoco>=3.17", "scipy", "gymnasium", "pillow", "opencv-python-headless"]
-all = ["tetrobot-gos[ik,network,studio,record,sim,ros]"]
+all = ["gos-robotics[ik,network,studio,record,sim,ros]"]
 
 [project.scripts]
 gos = "gos.__main__:main"

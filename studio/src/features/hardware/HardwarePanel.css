@@ -59,8 +59,5 @@
 .hw-periph-tag.hw-driver { background: #f59e0b22; color: #f59e0b; }
 .hw-periph-name { color: var(--text-bright); font-weight: 600; }
 .hw-periph-type { font-family: var(--font-mono); font-size: 10px; color: var(--text-dim); }
-.hw-periph-row > button { width: 20px; height: 20px; padding: 0; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; color: var(--text-dim); cursor: pointer; }
-.hw-periph-row > button:hover { color: var(--danger); border-color: var(--danger); }
 .hw-periph-add { display: flex; gap: 5px; }
-.hw-periph-add [data-slot] { flex: 1; }
-.hw-periph-add button { width: 28px; background: var(--accent); color: #fff; border: none; border-radius: 5px; cursor: pointer; }
+.hw-periph-add [data-slot]:not([data-slot="button"]) { flex: 1; }

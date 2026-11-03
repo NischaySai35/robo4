@@ -12,8 +12,19 @@ from .app import GosError, Result
 
 
 class Esp32Robot:
+    @classmethod
+    def from_board(cls, url='http://mod1.local', **options):
+        """Joint names, IDs and limits as the board itself reports them (its servo labels and min/max), so no robot file
+        is needed. Limits become radians around each servo's home."""
+        servos = cls(url, **{k: v for k, v in options.items() if k == 'timeout'}).telemetry().get('servos', [])
+        if not servos: raise GosError(f'The board at {url} reports no servos. Run a scan in the ESP-TTL tab.')
+        names = [s.get('label') or f'servo{s["id"]}' for s in servos]
+        limits = {n: (math.radians(s['min'] - s['home']), math.radians(s['max'] - s['home']))
+                  for n, s in zip(names, servos) if s.get('min') is not None and s.get('max') is not None and s.get('home') is not None}
+        return cls(url, joints=names, servo_ids={n: s['id'] for n, s in zip(names, servos)}, limits=limits, **options)
+
     def __init__(self, url='http://mod1.local', joints=None, servo_ids=None, signs=None, limits=None,
-                 speed=10, acc=40, max_step_deg=15.0, timeout=0.5):
+                 speed=10, acc=40, max_step_deg=15.0, timeout=1.5):  # Wi-Fi replies take 0.25-0.6 s; 0.5 s gave false "does not answer"
         self.url = url.rstrip('/')
         self.joints = list(joints or [])
         self.ids = dict(servo_ids or {j: i + 1 for i, j in enumerate(self.joints)})
@@ -43,12 +54,47 @@ class Esp32Robot:
         self._homes = {j: float(servos[self.ids[j]]['home']) for j in self.joints}
         return servos
 
+    def live(self):
+        """Ask the board for live mode, if its firmware has it: while this program keeps asking (twice a second), the
+        board keeps its radio awake and pushes its angles here about 16 times a second over UDP, instead of each read
+        waiting 0.3-2 s for a web reply. When the asking stops, it goes back to its cool power saving. Returns True if on."""
+        import socket, threading
+        if getattr(self, '_udp', None): return True
+        h = self._get('/api/health')
+        if not h.get('live'): return False
+        board = (h.get('ip') or urllib.parse.urlparse(self.url).hostname, int(h['live']))
+        self._udp = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); self._udp.bind(('', 0)); self._udp.settimeout(0.25)
+        self._live_at, self._live_deg = 0.0, {}
+
+        def ask():
+            while self._udp:
+                try: self._udp.sendto(b'R4LV', board)
+                except OSError: pass
+                time.sleep(0.5)
+
+        def hear():
+            while self._udp:
+                try: m = json.loads(self._udp.recv(2048))
+                except (OSError, ValueError): continue
+                self._live_deg = {i: a for i, a in m.get('a', [])}; self._live_at = time.time()
+        threading.Thread(target=ask, daemon=True).start(); threading.Thread(target=hear, daemon=True).start()
+        return True
+
+    def close(self):
+        """Stop live mode (the board returns to power saving within 1.5 s)."""
+        u, self._udp = getattr(self, '_udp', None), None
+        if u: u.close()
+
     def read(self):
-        """Joint angles in radians, from the servo encoders."""
-        servos = self._read_homes()
+        """Joint angles in radians, from the servo encoders: the live stream when it is fresh, else one web request."""
+        if getattr(self, '_udp', None) and time.time() - self._live_at < 0.5:
+            if self._homes is None: self._read_homes()
+            deg = self._live_deg
+        else:
+            deg = {s['id']: s.get('currentAngle') for s in self._read_homes().values()}
         out = {}
         for j in self.joints:
-            a = servos[self.ids[j]].get('currentAngle')
+            a = deg.get(self.ids[j])
             if a is None: raise GosError(f'Servo {self.ids[j]} ({j}) gives no angle. It may be unpowered or disconnected.')
             out[j] = math.radians(self.signs[j] * (a - self._homes[j]))
         return out
@@ -99,3 +145,92 @@ class Esp32Robot:
         self._last.update(target)
         msg = f'Moved {len(target)} joints in {steps} step(s).' + (f' Clamped to limits: {", ".join(clamped)}.' if clamped else '')
         return Result(True, msg, {'steps': steps, 'clamped': clamped})
+
+
+def serve_robot(app, robot, name='mod1', rate=20):
+    """Put one module on the GOS network, like a ROS hardware driver, so any program on any computer can use it:
+    /NAME/joint_states   JointState, rate times a second, read from the servo encoders (radians)
+    /NAME/joint_commands {"name": [...], "position": [...]} in radians; refused until armed, clamped and stepped as move()
+    /NAME/arm, /NAME/disarm, /NAME/stop   services; stop is the emergency stop and always works
+    /NAME/status          {"online", "armed", "error"} whenever it changes
+    The board keeps its own web API; nothing on the module changes. Returns a function that stops serving."""
+    import threading
+    states, status = app.topic(f'/{name}/joint_states', type='JointState'), app.topic(f'/{name}/status')
+    done, last = threading.Event(), {}
+
+    def say(online, error=''):
+        s = {'online': online, 'armed': robot.armed, 'error': error}
+        if s != last: last.clear(); last.update(s); status.publish(s)
+
+    def loop():
+        while not done.is_set():
+            t0 = time.time()
+            try:
+                q = robot.read()
+                states.publish({'header': {'stamp': time.time(), 'frame_id': name}, 'name': list(q), 'position': list(q.values()), 'velocity': [], 'effort': []})
+                say(True)
+            except GosError as e:
+                say(False, str(e))
+            done.wait(max(0.0, 1 / rate - (time.time() - t0)))  # a slow board (0.4 s a reading over Wi-Fi) is not slowed further
+
+    def on_command(m):
+        if len(m.get('name', [])) != len(m.get('position', [])):
+            return say(last.get('online', False), 'A command needs one position per name. Nothing moved.')
+        r = robot.move(dict(zip(m['name'], m['position'])))
+        say(True, '' if r.ok else r.message)
+
+    def result(r):
+        say(last.get('online', False)); return {'ok': r.ok, 'message': r.message}
+
+    app.topic(f'/{name}/joint_commands').subscribe(on_command)
+    app.services.advertise(f'/{name}/arm', lambda _: result(robot.arm()))
+    app.services.advertise(f'/{name}/disarm', lambda _: result(robot.disarm()))
+    app.services.advertise(f'/{name}/stop', lambda _: result(robot.stop()))
+    try: on = robot.live()
+    except GosError: on = False
+    status.publish({'online': True, 'armed': robot.armed, 'error': '', 'live': on})
+    threading.Thread(target=loop, daemon=True).start()
+
+    def stop():
+        done.set(); robot.close()
+    return stop
+
+
+def find_modules(timeout=4.0):
+    """Every TETROBOT module on this computer's local networks: [{"name", "ip", "fw"}], sorted by name.
+    Works where mod1.local does not: first a quick knock on port 80 of every address of each local /24 network,
+    then /api/health only where something answered (a busy board can take seconds to reply)."""
+    import ipaddress, socket
+    from concurrent.futures import ThreadPoolExecutor
+    mine = {a[4][0] for a in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET)}
+    nets = {ipaddress.ip_network(f'{ip}/24', strict=False) for ip in mine if ipaddress.ip_address(ip).is_private and not ip.startswith('127.')}
+    hosts = [str(h) for n in nets for h in n.hosts() if str(h) not in mine]
+
+    def knock(ip):
+        try:
+            with socket.create_connection((ip, 80), timeout=0.8): return ip
+        except OSError:
+            return None
+
+    def ask(ip, tries=2):
+        for _ in range(tries - 1):
+            m = ask(ip, 1)
+            if m: return m
+        try:
+            with urllib.request.urlopen(f'http://{ip}/api/health', timeout=timeout) as r:
+                h = json.loads(r.read() or b'{}')
+            return {'name': h.get('hostname') or ip, 'ip': ip, 'fw': h.get('fw')} if h.get('device') == 'ROBO4-ESP32' else None
+        except Exception:
+            return None
+    def neighbours():
+        # devices this computer talked to lately (arp -a on Windows and macOS, ip neigh on Linux): a slow board is in it
+        import re, subprocess
+        for cmd in (['arp', '-a'], ['ip', 'neigh']):
+            try: out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+            except (OSError, subprocess.SubprocessError): continue
+            return {ip for ip in re.findall(r'\d+\.\d+\.\d+\.\d+', out) if ip in set(hosts)}
+        return set()
+    with ThreadPoolExecutor(256) as pool:
+        near = neighbours()
+        open_ = {ip for ip in pool.map(knock, [h for h in hosts if h not in near]) if ip}
+        return sorted((m for m in pool.map(ask, sorted(near | open_)) if m), key=lambda m: m['name'])

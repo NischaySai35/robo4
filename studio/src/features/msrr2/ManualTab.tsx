@@ -5,8 +5,9 @@
  * shapes…), then: move joints with sliders, hover a connector for lock / unlock, or switch to Connect and click two
  * connectors — the modules bend into a stand-off and the robot's own docking brain goes in and locks, if physics lets it.
  * Gravity, contact, friction, magnets, servo limits, a random robot and the room disturbances are ON by default.
- * Sync to the real robot and the camera come later (switches shown, not active yet).
+ * The real robot follows through the viewport's SYNC switch and its SIM → ESP panel (sim/real_sync.py). The camera comes later.
  */
+import { NativeSelect } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { runOperator } from '@/core/ops/registry';
 import { useEffect, useRef, useState } from 'react';
@@ -26,15 +27,17 @@ export function ManualTab() {
   const { manualStart, manualStop, manualCmd, manualSet } = useV2Store.getState();
   const [n, setN] = useState(2);
   const [preset, setPreset] = useState<ManualPreset>('chain');
-  const [seed, setSeed] = useState(1);
-  const [randomize, setRandomize] = useState(true);
+  // ONE random-robot setting: the physics bar's (Nischay 1 Nov: two boxes, 2 and 1, looked like the wrong robot)
+  const seed = useV2Store((s) => s.physSeed);
+  const randomize = useV2Store((s) => s.physRandom);
   const [disturb, setDisturb] = useState(true);
-  const [judge, setJudge] = useState('off');
+  const [ideal, setIdeal] = useState(false);
   const [mod, setMod] = useState('M1');
   const last = useRef(0);
   const st = man?.state as any;
   const starts = [...MANUAL_PRESETS.filter((p) => ((p.id !== 'stand_tested' && p.id !== 'end_end_tested') || n === 2) && (n > 1 || (p.id !== 'chain' && p.id !== 'stand_chain' && p.id !== 'stand_lying'))), ...libraryStarts(n)];
-  const start = () => manualStart(manualScene(n, preset), { seed, randomize, disturb, judge });
+  // ideal (Nischay 2 Nov): no random robot, no room, no plastic flex / gear play - only the physics itself (gravity, friction, contact)
+  const start = () => manualStart(manualScene(n, preset), ideal ? { seed, randomize: false, disturb: false, judge: 'truth', ideal: true } : { seed, randomize, disturb, judge: 'truth' });   // the sim knows where everything is (Nischay 1 Nov: no blind mode in the sim)
   const sendJoint = (j: string, v: number) => {
     const now = performance.now(); if (now - last.current < 80) return; last.current = now;      // the servos follow; don't flood the service
     manualCmd({ kind: 'joints', module: mod, joints: { [j]: v } });
@@ -46,20 +49,15 @@ export function ManualTab() {
       <Section title="Manual control (real physics)" info={<p className="msrr-note">Everything is real MuJoCo physics: gravity, contact and friction,
         magnets, ST3215 servo speed/torque limits, PLA sag and gear play, the MPU-6050s, a random robot and the room disturbances (table shake,
         bumps, air, cardboard play). A lock only closes if the end is really seated; end↔end turns BOTH centre rotors, end↔side only the end's.</p>}>
-        <Row label="modules"><select data-testid="man-n" value={n} onChange={(e) => { const v = +e.target.value; setN(v); setPreset('chain'); }}>{[1, 2, 3, 4].map((k) => <option key={k} value={k}>{k}</option>)}</select></Row>
-        <Row label="start as"><select data-testid="man-preset" value={preset} onChange={(e) => setPreset(e.target.value as ManualPreset)}>{starts.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</select></Row>
+        <Row label="modules"><NativeSelect size="xs" data-testid="man-n" value={n} onChange={(e) => { const v = +e.target.value; setN(v); setPreset('chain'); }}>{[1, 2, 3, 4].map((k) => <option key={k} value={k}>{k}</option>)}</NativeSelect></Row>
+        <Row label="start as"><NativeSelect size="xs" data-testid="man-preset" value={preset} onChange={(e) => setPreset(e.target.value as ManualPreset)}>{starts.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</NativeSelect></Row>
         <div className="msrr-row-btns">
-          <label className="msrr-note"><input type="checkbox" checked={randomize} onChange={(e) => setRandomize(e.target.checked)} /> random robot</label>
-          <input type="number" style={{ width: 52 }} value={seed} onChange={(e) => setSeed(+e.target.value || 1)} />
-          <label className="msrr-note"><input type="checkbox" checked={disturb} onChange={(e) => setDisturb(e.target.checked)} /> room disturbances</label>
+          <span className="msrr-note dim">{randomize ? `random robot #${seed}` : 'nominal robot'} (set in the bar above)</span>
+          <label className="msrr-note"><input type="checkbox" checked={disturb && !ideal} disabled={ideal} onChange={(e) => setDisturb(e.target.checked)} /> room disturbances</label>
+          <label className="msrr-note" title="no random robot, no room disturbances, no plastic flex or gear play, no friction: only gravity, contacts, magnets and the servo limits. Press Start/Restart after changing."><input type="checkbox" data-testid="man-ideal" checked={ideal} onChange={(e) => setIdeal(e.target.checked)} /> ideal robot (no errors)</label>
         </div>
-        <Row label="docking judge"><select value={judge} onChange={(e) => setJudge(e.target.value)}>
-          <option value="off">blind: encoders + IMU (the real robot today)</option>
-          <option value="truth">physics truth + 1 mm noise (debug only, a cheat)</option>
-        </select></Row>
         <div className="msrr-row-btns">
           <label className="msrr-note dim"><input type="checkbox" disabled /> camera (one, any angle) · next</label>
-          <label className="msrr-note dim"><input type="checkbox" disabled /> sync to the real robot · later</label>
         </div>
         <div className="msrr-row-btns">
           <Button size="xs" data-testid="man-start" disabled={busy} onClick={start}>{man ? '↻ Restart' : '▶ Start'}</Button>
@@ -86,7 +84,7 @@ export function ManualTab() {
           </Section>
           <ShapeButtons />
           <Section title="Joints">
-            <Row label="module"><select value={mod} onChange={(e) => setMod(e.target.value)}>{ms.map((m) => <option key={m}>{m}</option>)}</select></Row>
+            <Row label="module"><NativeSelect size="xs" value={mod} onChange={(e) => setMod(e.target.value)}>{ms.map((m) => <option key={m}>{m}</option>)}</NativeSelect></Row>
             {cur && JN.map((j, k) => (
               <div key={j} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 150px', gap: 6, alignItems: 'center' }}>
                 <span className="msrr-note">{j}</span>
@@ -138,7 +136,7 @@ const SHAPES: { name: string; label: string; needs: (locks: string[], n: number)
     needs: (l, n) => (n < 2 || !l.includes('M1.B|M2.A') ? 'needs M1.B locked to M2.A' : l.some((k) => k.startsWith('F:')) ? 'needs the chain lying (no floor connector)' : null) },
   { name: 'twohead', label: 'Two heads', note: 'M2 curls, M1 and M3 both stand up · NOT working yet (the middle cannot curl while dragging two arms)',
     needs: (l, n) => (n < 3 || !l.includes('M1.B|M2.A') || !l.includes('M2.B|M3.A') ? 'needs 3 modules end to end' : null) },
-  { name: 'ring', label: 'Ring', note: 'close the chain: M1.A docks into the last module\'s B · NOT locking yet (blind estimate ~37 mm off on the floor)',
+  { name: 'ring', label: 'Ring', note: 'close the chain: M1.A docks into the last module\'s B · physics truth (sim) · tested: 2 and 3 modules lock in 9-12 s, 4 not yet',
     needs: (l, n) => (n < 2 || !l.includes('M1.B|M2.A') ? 'needs a chain end to end' : null) },
   { name: 'straight', label: 'Straighten', note: 'every joint back to 0', needs: () => null },
 ];

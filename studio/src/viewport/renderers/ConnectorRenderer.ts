@@ -19,8 +19,10 @@ import { constantScreenSize } from '@/viewport/gizmoUtil';
 // rather than looking tiny once you zoom into a module. ~4.5% of canvas height.
 const CON_HEIGHT_FRAC = 0.045;
 
-const COLOR = 0xff33cc;
-const SEL_COLOR = 0xffee33;
+export const CONNECTOR_COLOR = 0xff33cc;
+export const CONNECTOR_SEL_COLOR = 0xffee33;
+const COLOR = CONNECTOR_COLOR;
+const SEL_COLOR = CONNECTOR_SEL_COLOR;
 
 export class ConnectorRenderer {
   /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
@@ -98,7 +100,7 @@ export class ConnectorRenderer {
       if (cached && cached.sig === sig) {
         // Shape unchanged — just move it (position + orientation can change every frame).
         cached.node.position.copy(world.position);
-        this._orientNode(cached.node, world);
+        orientConnectorMarker(cached.node, world);
         continue;
       }
       if (cached) {
@@ -106,62 +108,8 @@ export class ConnectorRenderer {
         cached.node.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
       }
 
-      const node = new THREE.Group();
-      node.position.copy(world.position);
+      const node = buildConnectorMarker(world, aLen, color);
       node.userData = { bodyId: ref.bodyId, connectorId: ref.connectorId, isConnector: true };
-
-      // A dot at the connector anchor + a short arrow pointing along its outward
-      // normal — so you can see both WHERE it is and WHICH WAY it needs to face
-      // another module's connector to snap (normals must end up opposed).
-      const dot = new THREE.Mesh(
-        new THREE.SphereGeometry(aLen * 0.22, 10, 8),
-        new THREE.MeshBasicMaterial({ color, depthTest: false }),
-      );
-      dot.renderOrder = 998;
-      node.add(dot);
-
-      // A 3-axis (+ / X,Y,Z) crosshair over the dot so the exact anchor reads
-      // clearly. Drawn in white for contrast against the pink dot/arrow.
-      const arm = aLen * 0.4;
-      const crossPts = [
-        new THREE.Vector3(-arm, 0, 0), new THREE.Vector3(arm, 0, 0),
-        new THREE.Vector3(0, -arm, 0), new THREE.Vector3(0, arm, 0),
-        new THREE.Vector3(0, 0, -arm), new THREE.Vector3(0, 0, arm),
-      ];
-      const cross = new THREE.LineSegments(
-        new THREE.BufferGeometry().setFromPoints(crossPts),
-        new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false }),
-      );
-      cross.renderOrder = 999;
-      node.add(cross);
-
-      // Key "up" indicator — a short line along the connector's roll tangent, in a
-      // distinct cyan, so you can SEE the keyway orientation. Two connectors seat
-      // only when these line up to a symmetry step (every 90° for this lock), so
-      // this is the handle for "is the rotation right before it slides in".
-      if (world.roll) {
-        const rollLine = new THREE.LineSegments(
-          new THREE.BufferGeometry().setFromPoints([
-            new THREE.Vector3(), world.roll.clone().multiplyScalar(arm * 1.6),
-          ]),
-          new THREE.LineBasicMaterial({ color: 0x00e5ff, depthTest: false }),
-        );
-        rollLine.renderOrder = 1000;
-        rollLine.userData.isRollLine = true;
-        rollLine.userData.armLen = arm * 1.6;
-        node.add(rollLine);
-      }
-
-      const arrow = new THREE.ArrowHelper(world.normal, new THREE.Vector3(), aLen, color, aLen * 0.4, aLen * 0.22);
-      arrow.traverse((o: any) => { if (o.material) o.material.depthTest = false; o.renderOrder = 998; });
-      node.add(arrow);
-
-      // Keep the marker a constant size on screen regardless of zoom (matches the
-      // move gizmo). aLen is the node's world design radius; drive the rescale
-      // from every rendered child so at least one fires onBeforeRender each frame.
-      node.traverse((o: any) => {
-        if (o.isMesh || o.isLine) constantScreenSize(o, node, 0, aLen, CON_HEIGHT_FRAC);
-      });
 
       this._nodes.set(key, { node, sig });
       this.group.add(node);
@@ -172,22 +120,6 @@ export class ConnectorRenderer {
       this.group.remove(node);
       node.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
       this._nodes.delete(key);
-    }
-  }
-
-  /** Fast path for a connector whose shape (size/color/roll) hasn't changed, only its
-   *  world orientation (e.g. its body rotated) — update the direction-dependent children
-   *  in place instead of rebuilding the node. */
-  _orientNode(node: any, world: any) {
-    for (const child of node.children) {
-      if (child.userData?.isRollLine && world.roll) {
-        const pos = child.geometry.attributes.position;
-        const end = world.roll.clone().multiplyScalar(child.userData.armLen);
-        pos.setXYZ(1, end.x, end.y, end.z);
-        pos.needsUpdate = true;
-      } else if (child.isArrowHelper) {
-        child.setDirection(world.normal);
-      }
     }
   }
 
@@ -228,5 +160,83 @@ export class ConnectorRenderer {
       c.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); });
     }
     this.group.parent?.remove(this.group);
+  }
+}
+
+export interface ConnectorPose { position: THREE.Vector3; normal: THREE.Vector3; roll?: THREE.Vector3 | null }
+
+/** One connector's marker: dot + white crosshair + cyan key line + outward arrow, constant size on screen. Shared by every
+ *  viewport that shows connectors (ConnectorRenderer here, the MSRR live robot in MsrrCanvas), so they all look the same. */
+export function buildConnectorMarker(world: ConnectorPose, aLen: number, color: number = COLOR): THREE.Group {
+  const node = new THREE.Group();
+  node.position.copy(world.position);
+  // A dot at the connector anchor + a short arrow pointing along its outward
+  // normal — so you can see both WHERE it is and WHICH WAY it needs to face
+  // another module's connector to snap (normals must end up opposed).
+  const dot = new THREE.Mesh(
+    new THREE.SphereGeometry(aLen * 0.22, 10, 8),
+    new THREE.MeshBasicMaterial({ color, depthTest: false }),
+  );
+  dot.renderOrder = 998;
+  node.add(dot);
+
+  // A 3-axis (+ / X,Y,Z) crosshair over the dot so the exact anchor reads
+  // clearly. Drawn in white for contrast against the pink dot/arrow.
+  const arm = aLen * 0.4;
+  const crossPts = [
+    new THREE.Vector3(-arm, 0, 0), new THREE.Vector3(arm, 0, 0),
+    new THREE.Vector3(0, -arm, 0), new THREE.Vector3(0, arm, 0),
+    new THREE.Vector3(0, 0, -arm), new THREE.Vector3(0, 0, arm),
+  ];
+  const cross = new THREE.LineSegments(
+    new THREE.BufferGeometry().setFromPoints(crossPts),
+    new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false }),
+  );
+  cross.renderOrder = 999;
+  node.add(cross);
+
+  // Key "up" indicator — a short line along the connector's roll tangent, in a
+  // distinct cyan, so you can SEE the keyway orientation. Two connectors seat
+  // only when these line up to a symmetry step (every 90° for this lock), so
+  // this is the handle for "is the rotation right before it slides in".
+  if (world.roll) {
+    const rollLine = new THREE.LineSegments(
+      new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(), world.roll.clone().multiplyScalar(arm * 1.6),
+      ]),
+      new THREE.LineBasicMaterial({ color: 0x00e5ff, depthTest: false }),
+    );
+    rollLine.renderOrder = 1000;
+    rollLine.userData.isRollLine = true;
+    rollLine.userData.armLen = arm * 1.6;
+    node.add(rollLine);
+  }
+
+  const arrow = new THREE.ArrowHelper(world.normal, new THREE.Vector3(), aLen, color, aLen * 0.4, aLen * 0.22);
+  arrow.traverse((o: any) => { if (o.material) o.material.depthTest = false; o.renderOrder = 998; });
+  node.add(arrow);
+
+  // Keep the marker a constant size on screen regardless of zoom (matches the
+  // move gizmo). aLen is the node's world design radius; drive the rescale
+  // from every rendered child so at least one fires onBeforeRender each frame.
+  node.traverse((o: any) => {
+    if (o.isMesh || o.isLine) constantScreenSize(o, node, 0, aLen, CON_HEIGHT_FRAC);
+  });
+
+  return node;
+}
+
+/** Fast path for a marker whose shape (size/color/roll) hasn't changed, only its world orientation (e.g. its body rotated) —
+ *  update the direction-dependent children in place instead of rebuilding the node. */
+export function orientConnectorMarker(node: any, world: ConnectorPose) {
+  for (const child of node.children) {
+    if (child.userData?.isRollLine && world.roll) {
+      const pos = child.geometry.attributes.position;
+      const end = world.roll.clone().multiplyScalar(child.userData.armLen);
+      pos.setXYZ(1, end.x, end.y, end.z);
+      pos.needsUpdate = true;
+    } else if (child.isArrowHelper) {
+      child.setDirection(world.normal);
+    }
   }
 }

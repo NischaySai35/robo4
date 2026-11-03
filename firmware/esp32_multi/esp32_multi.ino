@@ -35,6 +35,9 @@
 
 #include <Arduino.h>
 #include <WiFi.h>
+#include <WiFiUdp.h>
+#include <esp_wifi.h>
+#include <esp_netif.h>
 #include <WebServer.h>
 #include <ESPmDNS.h>
 #include <ArduinoOTA.h>
@@ -848,19 +851,71 @@ void refreshSlow(ServoState& sv) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Wi-Fi: never-give-up state machine
+//  Wi-Fi: never-give-up state machine, reconnect target < 2 s
 // ─────────────────────────────────────────────────────────────────────────────
+// Slot 0 is meant for the laptop's own network (tools/robo4-net.ps1); the router is the
+// fallback. Three things keep a drop under 2 s:
+//   1. The laptop broadcasts a heartbeat every 200 ms. Missing it for HB_LOST_MS means the
+//      link is dead — the radio alone only notices after its beacon timeout (>= 3 s).
+//   2. Rejoining a network we were just on reuses its channel + BSSID (skips the ~1.6 s
+//      all-channel scan) and, on a heartbeat network, the last lease as a static IP: right
+//      after a module leaves, the laptop's DHCP takes 1-7 s to hand out an address again.
+//      With a static IP GOT_IP can fire before the radio has joined, so "link up" is the
+//      CONNECTED event instead, and a reused address that gets no heartbeat in
+//      STATIC_VERIFY_MS is dropped for a fresh DHCP lease.
+//   3. A live drop retries the SAME network at once; only repeated failures rotate slots.
 bool     mdnsOk       = false;
 bool     wantMdns     = false;   // set from the event handler, acted on in loop()
+bool     wantFastSave = false;   // GOT_IP seen — remember channel/BSSID/lease from loop()
 bool     apUp         = false;
 bool     otaStarted   = false;   // ArduinoOTA.begin() only works once we have an IP
 uint8_t  wSlot        = 255;     // slot currently being tried
 uint16_t wFails       = 0;       // consecutive failed attempts
+uint16_t wSameTries   = 0;       // attempts on wSlot since it last changed
 uint32_t wBackoff     = 800;
 uint32_t wNextTry     = 0;
+uint32_t wAttemptAt   = 0;
 uint32_t wDrops       = 0;
 uint32_t wConnectedAt = 0;
+bool     wUp          = false;   // had an IP; a loss after this counts as an outage
+bool     wHinted      = false;   // current attempt uses the remembered channel/BSSID
+bool     wStatic      = false;   // current attempt reuses the remembered lease as a static IP
+volatile bool wAssoc  = false;   // current attempt has associated (IP may still be pending)
+volatile uint32_t wAssocAt = 0;
+uint32_t wDhcpKickAt  = 0;
+uint8_t  wReturnSlot  = 255;     // trial switch to a preferred slot: where to go back if it fails
+uint32_t wLostAt      = 0;       // when the current outage began (0 = none)
+uint32_t wLastGapMs   = 0;
+uint32_t wMaxGapMs    = 0;
+uint32_t wPrefScanAt  = 0;
+bool     wPrefScanning = false;
 char     apName[24];
+
+// Per slot, RAM only — after a reboot the first join is a normal scan + DHCP.
+struct FastJoin {
+  bool ok; uint8_t bssid[6]; int32_t ch;      // where the network was
+  bool lease; IPAddress ip, gw, mask, dns;    // the last DHCP lease on it
+  bool hb;                                    // it carries the laptop heartbeat
+};
+FastJoin fj[4];
+
+#define HB_PORT    4210
+// MIN_MODEM sleep wakes only for DTIM beacons — ~0.9 s apart on the laptop's network, so the
+// 200 ms heartbeat arrived ~0.9 s apart, too coarse to notice a dead link in time.
+// MAX_MODEM wakes every LISTEN_INTERVAL beacons instead (it ignores DTIM); 1 = every
+// beacon (~0.1 s): still modem sleep, a little warmer, far cooler than no sleep at all.
+#define ROBO_WIFI_PS    WIFI_PS_MAX_MODEM
+#define LISTEN_INTERVAL 1
+#define HB_LOST_MS      700
+#define HINT_JOIN_MS    700      // fast rejoin not associated by then -> full scan
+#define DHCP_KICK_MS    1200     // associated but no IP by then -> ask DHCP again
+#define STATIC_VERIFY_MS 1500    // reused address, no heartbeat by then -> fresh DHCP lease
+WiFiUDP  hbUdp;
+bool     hbOpen   = false;
+bool     hbSeen   = false;       // heartbeats arrived since the last (re)connect
+uint32_t hbLastMs = 0;
+uint32_t hbCount  = 0;
+uint32_t hbLosses = 0;
 
 // Slot 3 is virtual: the SSID compiled into this firmware. Saved slots are tried first.
 #define WSLOT_DEFAULT 3
@@ -925,83 +980,282 @@ void startAP() {
   lg("SoftAP up: %s / %s -> http://192.168.4.1", apName, AP_PASS);
 }
 
+// The link is usable: an IP from DHCP, or (static reuse) the radio has joined.
+void wifiLinkUp() {
+  wConnectedAt = millis();
+  wFails = 0; wBackoff = 800; wSameTries = 0; wReturnSlot = 255;
+  if (wLostAt) {
+    wLastGapMs = wConnectedAt - wLostAt;
+    if (wLastGapMs > wMaxGapMs) wMaxGapMs = wLastGapMs;
+    wLostAt = 0;
+  }
+  wUp = true;
+  wantMdns = true; wantFastSave = true;
+  hbSeen = false; hbLastMs = wConnectedAt;
+  lg("WiFi up %s on '%s' ch %d rssi %d%s, gap %lu ms",
+     WiFi.localIP().toString().c_str(), WiFi.SSID().c_str(), WiFi.channel(), WiFi.RSSI(),
+     wStatic ? " (fast rejoin, reused address)" : wHinted ? " (fast rejoin)" : "", wLastGapMs);
+}
+
 void onWiFiEvent(WiFiEvent_t ev, WiFiEventInfo_t info) {
   switch (ev) {
     case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      wConnectedAt = millis();
-      wFails = 0; wBackoff = 800;
-      wantMdns = true;
-      lg("WiFi got IP %s on '%s' rssi %d",
-         WiFi.localIP().toString().c_str(), WiFi.SSID().c_str(), WiFi.RSSI());
+      if (!wStatic) wifiLinkUp();        // static: this can fire before the join — wait for CONNECTED
+      break;
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      wAssoc = true; wAssocAt = millis();
+      if (wStatic) wifiLinkUp();
       break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      wAssoc = false;
+      if (wUp) { wUp = false; if (!wLostAt) wLostAt = millis(); }
       if (mdnsOk) { wDrops++; lg("WiFi lost (reason %d) — retrying", info.wifi_sta_disconnected.reason); }
       mdnsOk = false;
-      wNextTry = millis() + 300;       // retry almost immediately after a live drop
+      // Retry at once — but our own disconnect() at the start of an attempt lands here
+      // too (within a few ms), and must not abort the attempt it belongs to. Right after
+      // we left, the laptop often accepts the rejoin and kicks it ~0.1 s later; that one
+      // must retry immediately, so the window is short.
+      if (millis() - wAttemptAt > 50) wNextTry = millis();
       break;
     default: break;
   }
 }
 
+// First two tries on a slot: remembered channel/BSSID (+ lease on a heartbeat network).
+// Third: full scan + DHCP.
 void wifiConnectSlot(uint8_t i) {
+  if (i > WSLOT_DEFAULT) return;
+  // The radio refuses to connect while a scan runs; drop any background scan first.
+  if (wPrefScanning || WiFi.scanComplete() == WIFI_SCAN_RUNNING) { esp_wifi_scan_stop(); WiFi.scanDelete(); }
+  wPrefScanning = false;
+  if (i != wSlot) wSameTries = 0;
   wSlot = i;
-  lg("WiFi try %s '%s' (attempt %u, backoff %lums)",
-     i == WSLOT_DEFAULT ? "compiled default" : "saved slot", ssidFor(i), wFails, wBackoff);
+  const FastJoin& f = fj[i];
+  // Twice: right after we leave, the laptop sometimes refuses the first rejoin for ~1 s,
+  // and a scan would only find it on the same channel ~1 s later anyway.
+  wHinted = f.ok && wSameTries < 2;
+  wStatic = wHinted && f.lease && f.hb;
+  wSameTries++;
+  wAttemptAt = millis();
+  lg("WiFi try %s '%s' (%s, attempt %u)",
+     i == WSLOT_DEFAULT ? "compiled default" : "saved slot", ssidFor(i),
+     wStatic ? "fast rejoin, reused address" : wHinted ? "fast rejoin" : "full scan", wFails);
   WiFi.disconnect(false, false);
-  WiFi.begin(ssidFor(i), passFor(i));
+  wAssoc = false;
+  // Must be set before begin(): begin() only starts DHCP when no static IP is configured.
+  if (wStatic) WiFi.config(f.ip, f.gw, f.mask, f.dns);
+  else         WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE);
+  // begin() without connecting, so the listen interval can be set before the join.
+  WiFi.begin(ssidFor(i), passFor(i), wHinted ? f.ch : 0, wHinted ? f.bssid : nullptr, false);
+  wifi_config_t c;
+  if (esp_wifi_get_config(WIFI_IF_STA, &c) == ESP_OK) {
+    c.sta.listen_interval = LISTEN_INTERVAL;
+    esp_wifi_set_config(WIFI_IF_STA, &c);
+  }
+  esp_wifi_connect();
+  // A failure usually reports itself sooner (DISCONNECTED pulls wNextTry in); this is
+  // the cap for an attempt that just goes quiet. Spaced out once nothing works at all.
+  // A fast rejoin that has not associated by HINT_JOIN_MS is cut short in wifiTick().
+  wNextTry = millis() + (wHinted ? 2000 : 4000) + (wFails > 12 ? 2000 : 0);
+}
+
+void wifiRadioTuning() {
+  WiFi.setHostname(cfg.host);
+  WiFi.setTxPower(WIFI_POWER_11dBm);
+  esp_wifi_set_inactive_time(WIFI_IF_STA, 3);   // beacon-loss timeout: 6 s default, 3 s minimum
 }
 
 void wifiInit() {
   snprintf(apName, sizeof(apName), "ROBO4-%s", cfg.host);
   WiFi.persistent(false);
   WiFi.mode(WIFI_STA);
-  WiFi.setHostname(cfg.host);
-  WiFi.setAutoReconnect(true);
-  WiFi.setSleep(true);                      // MODEM_SLEEP — keeps the C3 cool
-  WiFi.setTxPower(WIFI_POWER_11dBm);
+  WiFi.setAutoReconnect(false);             // wifiTick() decides what to rejoin, and how fast
+  WiFi.setSleep(ROBO_WIFI_PS);                   // modem sleep — keeps the C3 cool
+  wifiRadioTuning();
   WiFi.onEvent(onWiFiEvent);
   uint8_t s = nextSlot();
   if (s == 255) { lg("No Wi-Fi credentials stored — raising SoftAP"); startAP(); return; }
   wifiConnectSlot(s);
-  wNextTry = millis() + 6000;               // give the first attempt 6 s before rotating
+}
+
+void hbPoll() {
+  if (!hbOpen) hbOpen = hbUdp.begin(HB_PORT);
+  while (hbUdp.parsePacket() > 0) {
+    uint8_t b[16];
+    int n = hbUdp.read(b, sizeof(b));
+    if (n >= 4 && memcmp(b, "R4HB", 4) == 0) {
+      hbLastMs = millis(); hbSeen = true; hbCount++;
+      if (wSlot <= WSLOT_DEFAULT) fj[wSlot].hb = true;
+    }
+  }
+}
+
+// ── Live mode (GOS) ───────────────────────────────────────────────────────────
+// A web request costs 0.3-2 s here: modem sleep plus a new TCP connection each time. While a program on the laptop
+// keeps sending "R4LV" to LIVE_PORT (GOS does, twice a second), the radio stays awake and every fresh servo read
+// (each FAST_MS) is pushed back to it as one small UDP packet: {"t":ms,"a":[[id,deg],...]}, deg as in /api/telemetry
+// currentAngle (null if unread). No asking for LIVE_HOLD_MS -> back to modem sleep, so an idle module stays cool.
+// Commands still go through the web API, which confirms each one.
+#define LIVE_PORT    4211
+#define LIVE_HOLD_MS 1500
+WiFiUDP   liveUdp;
+bool      liveOpen  = false;
+bool      liveAwake = false;
+uint32_t  liveUntil = 0;
+IPAddress liveIp;
+uint16_t  livePort  = 0;
+uint32_t  liveSent  = 0;
+
+void livePoll() {
+  if (WiFi.status() != WL_CONNECTED) { if (liveOpen) { liveUdp.stop(); liveOpen = false; } return; }
+  if (!liveOpen) liveOpen = liveUdp.begin(LIVE_PORT);
+  while (liveUdp.parsePacket() > 0) {
+    uint8_t b[8];
+    int n = liveUdp.read(b, sizeof(b));
+    if (n >= 4 && memcmp(b, "R4LV", 4) == 0) {
+      liveIp = liveUdp.remoteIP(); livePort = liveUdp.remotePort(); liveUntil = millis() + LIVE_HOLD_MS;
+    }
+  }
+  bool want = livePort && (int32_t)(liveUntil - millis()) > 0;
+  if (want == liveAwake || otaBusy) return;         // OTA owns the radio settings while it runs
+  liveAwake = want;
+  if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
+  lg(want ? "live mode on (%s): radio awake, angles pushed" : "live mode off: back to modem sleep (%s)", liveIp.toString().c_str());
+}
+
+void liveSend() {
+  if (!liveAwake) return;
+  char buf[24 + MAX_SERVOS * 18]; int k = snprintf(buf, sizeof(buf), "{\"t\":%lu,\"a\":[", (unsigned long)millis());
+  for (uint8_t i = 0; i < nServos && k < (int)sizeof(buf) - 24; i++) {
+    const ServoState& sv = servos[i];
+    if (sv.rawPos >= 0) k += snprintf(buf + k, sizeof(buf) - k, "%s[%u,%.2f]", i ? "," : "", sv.id, rawToNom(sv.id, (uint16_t)sv.rawPos));
+    else                k += snprintf(buf + k, sizeof(buf) - k, "%s[%u,null]", i ? "," : "", sv.id);
+  }
+  k += snprintf(buf + k, sizeof(buf) - k, "]}");
+  liveUdp.beginPacket(liveIp, livePort); liveUdp.write((const uint8_t*)buf, k); liveUdp.endPacket();
+  liveSent++;
+}
+
+void saveFastJoin() {
+  wantFastSave = false;
+  hbUdp.stop(); hbOpen = false;             // rebind on the fresh interface
+  liveUdp.stop(); liveOpen = false;
+  if (wSlot > WSLOT_DEFAULT) return;
+  FastJoin& f = fj[wSlot];
+  const uint8_t* b = WiFi.BSSID();
+  if (!b) return;
+  memcpy(f.bssid, b, 6);
+  f.ch = WiFi.channel();
+  f.ok = true;
+  if (!wStatic) {                           // a real DHCP lease — keep it for the next rejoin
+    f.ip = WiFi.localIP(); f.gw = WiFi.gatewayIP(); f.mask = WiFi.subnetMask(); f.dns = WiFi.dnsIP();
+    f.lease = f.ip != INADDR_NONE;
+  }
+}
+
+// On a fallback slot: every 10 s look (async, SSID-filtered) for a better slot; switch when seen.
+void preferredCheck() {
+  if (wSlot > WSLOT_DEFAULT) return;        // a reconnect was just requested; not on a slot
+  uint8_t p = 255;
+  for (uint8_t i = 0; i < wSlot && i <= WSLOT_DEFAULT; i++) if (slotUsable(i)) { p = i; break; }
+  if (p == 255 || strcmp(ssidFor(p), ssidFor(wSlot)) == 0) { wPrefScanning = false; return; }
+  if (wPrefScanning) {
+    int16_t n = WiFi.scanComplete();
+    if (n == WIFI_SCAN_RUNNING) return;
+    wPrefScanning = false;
+    if (n > 0) {
+      // Join on the channel/BSSID the scan just saw; one try, then straight back.
+      FastJoin& f = fj[p];
+      memcpy(f.bssid, WiFi.BSSID((uint8_t)0), 6); f.ch = WiFi.channel((uint8_t)0); f.ok = true;
+      WiFi.scanDelete();
+      lg("preferred '%s' is back on ch %d — switching", ssidFor(p), f.ch);
+      wReturnSlot = wSlot;
+      wifiConnectSlot(p);
+      return;
+    }
+    WiFi.scanDelete();
+    return;
+  }
+  if (millis() - wPrefScanAt < 10000) return;
+  wPrefScanAt = millis();
+  wPrefScanning = WiFi.scanNetworks(true, false, false, 100, 0, ssidFor(p)) == WIFI_SCAN_RUNNING;
 }
 
 // Called every loop iteration. Never blocks, never returns without a plan.
 void wifiTick() {
-  if (WiFi.status() == WL_CONNECTED) {
+  if (wUp && wAssoc) {
+    if (wantFastSave) saveFastJoin();
+    hbPoll();
+    // A reused address the laptop doesn't route (lease gone, handed to someone else):
+    // no heartbeat arrives. Drop it and rejoin with a fresh DHCP lease.
+    if (wStatic && !hbSeen && millis() - wConnectedAt > STATIC_VERIFY_MS) {
+      lg("no heartbeat on the reused address — asking DHCP");
+      fj[wSlot].lease = false;
+      wUp = false; wLostAt = wConnectedAt; mdnsOk = false;
+      wifiConnectSlot(wSlot);
+      return;
+    }
     if (wantMdns) { wantMdns = false; mdnsOk = false; startMDNS(); }
     if (!mdnsOk)  startMDNS();
     if (!otaStarted) { ArduinoOTA.begin(); otaStarted = true; lg("ArduinoOTA listening on %s:%u", cfg.host, OTA_PORT); }
     if (apUp && millis() - wConnectedAt > 20000) stopAP();   // link proven stable → drop the AP
+    // The laptop went quiet: the link is dead even though the radio hasn't noticed yet.
+    if (hbSeen && !otaBusy && wSlot <= WSLOT_DEFAULT && millis() - hbLastMs > HB_LOST_MS) {
+      hbLosses++; hbSeen = false;
+      wUp = false; wLostAt = hbLastMs; mdnsOk = false;
+      lg("heartbeat silent %lu ms — rejoining '%s'", millis() - hbLastMs, ssidFor(wSlot));
+      wifiConnectSlot(wSlot);
+      return;
+    }
+    preferredCheck();
     return;
+  }
+
+  // A fast rejoin either associates almost at once or not at all (the AP moved, or still
+  // holds our old session) — don't sit out the full window, go scan.
+  if (wHinted && !wAssoc && millis() - wAttemptAt > HINT_JOIN_MS) wNextTry = millis();
+
+  // Joined but no address: right after we left, the laptop's DHCP can ignore the first
+  // DISCOVER and lwIP only resends ~2 s later. Its normal answer takes ~1 s, so restart
+  // the client only after DHCP_KICK_MS — kicking sooner aborts answers that were coming.
+  if (!wStatic && wAssoc && millis() - wAssocAt > DHCP_KICK_MS && millis() - wDhcpKickAt > DHCP_KICK_MS) {
+    wDhcpKickAt = millis();
+    esp_netif_t* n = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (n) { esp_netif_dhcpc_stop(n); esp_netif_dhcpc_start(n); }
   }
 
   if ((int32_t)(millis() - wNextTry) < 0) return;
 
   wFails++;
 
-  // After ~6 failures (≈30 s) put up our own AP so the board is never unreachable.
-  if (wFails >= 6 && !apUp) startAP();
+  // After ~12 failures (≈30 s) put up our own AP so the board is never unreachable.
+  if (wFails >= 12 && !apUp) startAP();
 
-  // Every 12th failure, tear the radio down and back up — clears a wedged driver /
+  // Every 24th failure, tear the radio down and back up — clears a wedged driver /
   // a router that has stopped answering this MAC.
-  if (wFails % 12 == 0) {
+  if (wFails % 24 == 0) {
     lg("WiFi stuck after %u tries — re-initialising radio", wFails);
     WiFi.disconnect(true, false);
     WiFi.mode(WIFI_OFF);
     delay(80);
     WiFi.mode(apUp ? WIFI_AP_STA : WIFI_STA);
-    WiFi.setHostname(cfg.host);
-    WiFi.setTxPower(WIFI_POWER_11dBm);
+    wifiRadioTuning();
     if (apUp) WiFi.softAP(apName, AP_PASS);
   }
 
-  uint8_t s = nextSlot();
+  // A trial switch that failed: back to the network we came from, fast.
+  if (wReturnSlot <= WSLOT_DEFAULT) {
+    uint8_t r = wReturnSlot; wReturnSlot = 255;
+    lg("switch failed — back to '%s'", ssidFor(r));
+    wSameTries = 0; wSlot = 255;            // so the return is a fast rejoin
+    wifiConnectSlot(r);
+    return;
+  }
+
+  // Same network three times (fast rejoin x2, then full scan) before moving to the next slot.
+  uint8_t s = (wSlot <= WSLOT_DEFAULT && wSameTries < 3 && slotUsable(wSlot)) ? wSlot : nextSlot();
   if (s == 255) { wNextTry = millis() + 10000; return; }     // nothing to try; AP is up
   wifiConnectSlot(s);
-
-  wBackoff = min<uint32_t>(wBackoff * 2, 30000);             // 0.8s → 30s ceiling, then steady
-  wNextTry = millis() + wBackoff;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1281,7 +1535,11 @@ String buildJSON() {
   j += F("\",\"rssi\":");    j += (up ? WiFi.RSSI() : 0);
   j += F(",\"drops\":");     j += wDrops;
   j += F(",\"hostname\":\""); j += cfg.host;
-  j += F("\"}}");
+  j += F("\",\"channel\":"); j += (up ? WiFi.channel() : 0);
+  j += F(",\"hbAgeMs\":");   j += (hbSeen ? (long)(millis() - hbLastMs) : -1L);
+  j += F(",\"lastGapMs\":"); j += wLastGapMs;
+  j += F(",\"maxGapMs\":");  j += wMaxGapMs;
+  j += F("}}");
   return j;
 }
 
@@ -1296,7 +1554,9 @@ void handleHealth() {
   b += F("\",\"ip\":\""); b += WiFi.localIP().toString();
   b += F("\",\"hostname\":\""); b += cfg.host;
   b += F("\",\"otaSpace\":"); b += ESP.getFreeSketchSpace();
-  b += F(",\"sketchSize\":"); b += ESP.getSketchSize(); b += '}';
+  b += F(",\"sketchSize\":"); b += ESP.getSketchSize();
+  b += F(",\"live\":"); b += LIVE_PORT;      // live mode: GOS asks here for pushed angles
+  b += F(",\"liveOn\":"); b += (liveAwake ? F("true") : F("false")); b += '}';
   okJson(b);
 }
 void handleTelemetry() { okJson(buildJSON()); }
@@ -1894,6 +2154,14 @@ void handleWifiGet() {
   j += F(",\"drops\":"); j += wDrops;
   j += F(",\"fails\":"); j += wFails;
   j += F(",\"apUp\":");  j += (apUp ? F("true") : F("false"));
+  j += F(",\"slot\":");  j += (wSlot <= WSLOT_DEFAULT ? (int)wSlot : -1);
+  j += F(",\"channel\":"); j += (WiFi.status() == WL_CONNECTED ? WiFi.channel() : 0);
+  j += F(",\"hb\":{\"seen\":"); j += (hbSeen ? F("true") : F("false"));
+  j += F(",\"ageMs\":");   j += (hbSeen ? (long)(millis() - hbLastMs) : -1L);
+  j += F(",\"count\":");   j += hbCount;
+  j += F(",\"losses\":");  j += hbLosses;
+  j += F("},\"lastGapMs\":"); j += wLastGapMs;
+  j += F(",\"maxGapMs\":"); j += wMaxGapMs;
   j += F(",\"slots\":[");
   for (uint8_t i = 0; i < 3; i++) { if (i) j += ','; j += '"'; j += cfg.ssid[i]; j += '"'; }
   j += F("]}");
@@ -1962,7 +2230,7 @@ void otaEnd(bool success) {
   if (success) return;
   otaBusy = false;
   setCpuFrequencyMhz(80);
-  WiFi.setSleep(true);
+  WiFi.setSleep(ROBO_WIFI_PS);
   WiFi.setTxPower(WIFI_POWER_11dBm);
 }
 
@@ -2188,6 +2456,7 @@ void loop() {
   server.handleClient();
   ArduinoOTA.handle();
   wifiTick();
+  livePoll();
   if (mdnsOk) { /* ESPmDNS services itself in the background */ }
   delay(1);
 
@@ -2200,6 +2469,7 @@ void loop() {
   if (millis() - lastFast >= FAST_MS) {
     lastFast = millis();
     refreshAllFastSync();
+    liveSend();                        // fresh angles to a watching laptop (live mode)
     server.handleClient();
   }
 

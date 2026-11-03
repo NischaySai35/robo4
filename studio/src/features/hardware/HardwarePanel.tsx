@@ -44,7 +44,7 @@ function Peripherals() {
           <span className={`hw-periph-tag hw-${p.kind}`}>{p.kind}</span>
           <span className="hw-periph-name">{p.name || p.type}</span>
           <span className="hw-periph-type">{p.type}{p.pin ? ` · ${p.pin}` : ''}</span>
-          <button onClick={() => remove(p.id)} title="Remove">✕</button>
+          <Button variant="outline" size="icon-xs" className="tw:hover:text-destructive" onClick={() => remove(p.id)} title="Remove">✕</Button>
         </div>
       ))}
       <div className="hw-periph-add">
@@ -55,7 +55,7 @@ function Peripherals() {
           {opts.map((o) => <option key={o} value={o}>{o}</option>)}
         </NativeSelect>
         <Input size="xs" placeholder="pin/addr" value={draft.pin} onChange={(e) => setDraft({ ...draft, pin: e.target.value })} />
-        <button onClick={() => { add({ name: draft.type, kind: draft.kind, type: draft.type, pin: draft.pin || undefined }); setDraft({ ...draft, pin: '' }); }}>＋</button>
+        <Button size="icon-xs" title="Add" onClick={() => { add({ name: draft.type, kind: draft.kind, type: draft.type, pin: draft.pin || undefined }); setDraft({ ...draft, pin: '' }); }}>＋</Button>
       </div>
     </div>
   );

@@ -7,8 +7,10 @@ END_A_RGBA, END_B_RGBA = (0.1, 0.2, 0.75, 1), (1.0, 0.55, 0.05, 1)    # same col
 
 
 class Snapper:
-    def __init__(self, w, out_dir, tag, size=(480, 400), every=10.0):
-        self.w, self.out, self.tag, self.size, self.every = w, out_dir, tag, size, every
+    def __init__(self, w, out_dir, tag, size=(480, 400), every=10.0, focus=None):
+        """focus = body ids to also show CLOSE UP (side + top, ~35 cm): e.g. the two connectors of a dock, whose last mm the
+        whole-robot views cannot show"""
+        self.w, self.out, self.tag, self.size, self.every, self.focus = w, out_dir, tag, size, every, list(focus or [])
         os.makedirs(out_dir, exist_ok=True); self.n = 0; self.last = -1e9
         self.R = mujoco.Renderer(w.m, size[1], size[0])
         # one colour per module (display only), so a picture says WHICH module did what
@@ -42,7 +44,12 @@ class Snapper:
             opt.geomgroup[:] = 0; opt.geomgroup[2] = 1; opt.geomgroup[3] = 1
         for az, el, dist in ((135, -25, 1.6), (45, -5, 1.6), (90, -89, 1.5)):
             self.R.update_scene(self.w.d, self._cam(az, el, dist), opt); imgs.append(Image.fromarray(self.R.render()))
-        W, H = self.size; im = Image.new('RGB', (3 * W, H + 26), 'white')
+        if self.focus:
+            c0 = self.w.d.xpos[self.focus].mean(0)
+            for az, el in ((45, -10), (90, -89)):
+                c = mujoco.MjvCamera(); c.type = mujoco.mjtCamera.mjCAMERA_FREE; c.lookat[:] = c0; c.azimuth, c.elevation, c.distance = az, el, 0.35
+                self.R.update_scene(self.w.d, c, opt); imgs.append(Image.fromarray(self.R.render()))
+        W, H = self.size; im = Image.new('RGB', (len(imgs) * W, H + 26), 'white')
         for i, x in enumerate(imgs): im.paste(x, (i * W, 26))
         ImageDraw.Draw(im).text((6, 6), f't={self.w.d.time:6.1f}s  {label}', fill='black')
         self.n += 1; p = os.path.join(self.out, f'{self.tag}_{self.n:03d}.png'); im.save(p); self.last = self.w.d.time

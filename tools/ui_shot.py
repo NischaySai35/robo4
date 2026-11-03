@@ -11,7 +11,9 @@ STUDIO_URL = os.environ.get('STUDIO_URL', 'http://localhost:5173/')
 
 async def open_studio(p, startup_shot=None, real_gpu=False):
     """Open the Studio past its startup dialog. Returns (browser, page, logs). Shared with ui_baseline.py."""
-    b = await p.chromium.launch(args=['--use-angle=d3d11' if real_gpu else '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'])
+    # real_gpu: the fast graphics card, as the app asks for (electron/main.cjs); without the switch a laptop uses its built-in one
+    gpu = ['--use-angle=d3d11', '--force_high_performance_gpu'] if real_gpu else ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+    b = await p.chromium.launch(args=gpu + ['--ignore-gpu-blocklist'])
     pg = await b.new_page(viewport={'width': 1700, 'height': 1000})
     logs = []
     pg.on('console', lambda m: logs.append(f'{m.type}: {m.text}') if m.type in ('error', 'warning') else None)

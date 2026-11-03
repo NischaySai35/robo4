@@ -54,7 +54,8 @@ interface IntegrationState {
   setTotalCurrentMA: (v: number | null) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setOvercurrentServos: (arr: any[]) => void;
-  queueAngles: (angles: Angles) => boolean;
+  queueAngles: (angles: Angles, labels?: Record<string, string>) => boolean;
+  noteAngles: (angles: Angles, labels: Record<string, string>, online: boolean) => void;
   consumeAngles: () => void;
   markSent: (angles: Angles) => void;
   simSent: (detail: string) => void;
@@ -99,11 +100,8 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
   setOvercurrentServos:  (arr)       => set({ overcurrentServos: arr }),
 
   // ── Angle queue (called by SimTransmitPanel every 500ms) ────────────────────
-  queueAngles: (angles) => {
+  queueAngles: (angles, labels = {}) => {
     const { lastSentAngles, connected } = get();
-
-    // Nothing to transmit to while the ESP is offline — don't queue or log.
-    if (!connected) return false;
 
     // Only queue if at least one servo moved ≥ 0.8°
     const changed: Angles = {};
@@ -113,10 +111,13 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
     }
     if (!Object.keys(changed).length) return false;
 
-    const summary = Object.entries(changed)
-      .sort(([a],[b]) => Number(a) - Number(b))
-      .map(([id, d]) => `J${id}→${Number(d).toFixed(1)}°`)
-      .join(' ');
+    const summary = Object.entries(changed).map(([id, d]) => `${labels[id] ?? id}→${Number(d).toFixed(1)}°`).join(' ');
+    // Offline: nothing goes out, but the log still shows exactly what WOULD be sent (Nischay 3 Nov)
+    if (!connected) {
+      set(s => ({ lastSentAngles: { ...s.lastSentAngles, ...changed }, stats: { ...s.stats, queued: s.stats.queued + 1 },
+                  simLog: push(s.simLog, mk('offline', 'OFF', `would send ${summary}`)) }));
+      return false;
+    }
 
     set(s => ({
       pendingAngles: { ...angles },
@@ -124,6 +125,18 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
       simLog: push(s.simLog, mk('queued', 'SIM', `TX ${summary}`)),
     }));
     return true;
+  },
+
+  // log only: angles another sender already sends (the MSRR live robot: the physics service talks to the boards itself)
+  noteAngles: (angles, labels, online) => {
+    const { lastSentAngles } = get();
+    const changed: Angles = {};
+    for (const [k, v] of Object.entries(angles)) { const prev = lastSentAngles[k]; if (prev == null || Math.abs(v - prev) >= 0.8) changed[k] = v; }
+    if (!Object.keys(changed).length) return;
+    const summary = Object.entries(changed).map(([id, d]) => `${labels[id] ?? id}→${Number(d).toFixed(1)}°`).join(' ');
+    set(s => ({ lastSentAngles: { ...s.lastSentAngles, ...changed },
+                stats: { ...s.stats, queued: s.stats.queued + 1, sent: s.stats.sent + (online ? 1 : 0) },
+                simLog: push(s.simLog, online ? mk('sent', 'SIM', `TX ${summary}`) : mk('offline', 'OFF', `would send ${summary}`)) }));
   },
 
   consumeAngles: () => set({ pendingAngles: null }),

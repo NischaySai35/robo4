@@ -68,6 +68,41 @@ class Rate:
         return {'median_ms': s[len(s) // 2] * 1000, 'p99_ms': s[int(len(s) * 0.99)] * 1000, 'worst_ms': s[-1] * 1000}
 
 
+def realtime(priority=80, cpu=None, lock_memory=True, freeze_gc=True):
+    """Ask the system to treat this program as real time, as far as it allows, before a Rate loop. Returns what it got.
+
+    Linux: the SCHED_FIFO scheduler at `priority` (needs root or CAP_SYS_NICE; otherwise the highest nice level it may
+    take), memory locked so it is never swapped out, and whether the kernel has the real-time patch (PREEMPT_RT).
+    Windows: 1 ms timer resolution and the high priority class. macOS: none, it says so.
+    Everywhere: pin to `cpu` if given, and move Python's existing objects out of the garbage collector's way.
+    """
+    import gc, os, platform, ctypes
+    got = {'system': platform.system()}
+    if cpu is not None:
+        if hasattr(os, 'sched_setaffinity'): os.sched_setaffinity(0, {cpu}); got['cpu'] = cpu
+        else: got['cpu'] = 'not offered here'
+    if got['system'] == 'Linux':
+        try:
+            os.sched_setscheduler(0, os.SCHED_FIFO, os.sched_param(priority)); got['priority'] = f'SCHED_FIFO {priority}'
+        except PermissionError:
+            try: os.nice(-20); got['priority'] = 'nice -20 (SCHED_FIFO needs root or CAP_SYS_NICE)'
+            except PermissionError: got['priority'] = 'normal (SCHED_FIFO needs root or CAP_SYS_NICE)'
+        if lock_memory:
+            got['memory_locked'] = ctypes.CDLL(None, use_errno=True).mlockall(3) == 0  # MCL_CURRENT | MCL_FUTURE; needs a high enough `ulimit -l`
+        rt = 'PREEMPT_RT' in platform.uname().version or os.path.exists('/sys/kernel/realtime')
+        got['kernel'] = 'PREEMPT_RT' if rt else 'not real time (no PREEMPT_RT)'
+    elif got['system'] == 'Windows':
+        k = ctypes.windll.kernel32
+        k.GetCurrentProcess.restype = ctypes.c_void_p; k.SetPriorityClass.argtypes = (ctypes.c_void_p, ctypes.c_uint32)  # a handle is 64-bit
+        ctypes.windll.winmm.timeBeginPeriod(1)
+        got['priority'] = 'high' if k.SetPriorityClass(k.GetCurrentProcess(), 0x80) else 'normal'  # HIGH_PRIORITY_CLASS
+    else:
+        got['priority'] = 'normal (not offered on this system)'
+    if freeze_gc:
+        gc.collect(); gc.freeze(); got['gc'] = 'frozen'
+    return got
+
+
 class Tracer:
     """Records how long every callback took, in Chrome's trace format: open it at ui.perfetto.dev."""
     def __init__(self, path): self.path, self.events, self._lock = path, [], threading.Lock()

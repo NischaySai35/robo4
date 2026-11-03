@@ -1,3 +1,4 @@
+import { Button } from '@/components/ui/button';
 import './LoadingBar.css';
 import { useShallow } from 'zustand/shallow';
 import { useBusyStore, busySnapshot } from '@/state/busyStore';
@@ -13,7 +14,7 @@ export default function LoadingBar() {
         <div className="loadbar-sheen" />
       </div>
       <span className="loadbar-label">{label}</span>
-      <button className="loadbar-cancel" title="Cancel import" onClick={cancel}>✕</button>
+      <Button variant="ghost" size="icon-xs" className="tw:hover:text-destructive" title="Cancel import" onClick={cancel}>✕</Button>
     </div>
   );
 }

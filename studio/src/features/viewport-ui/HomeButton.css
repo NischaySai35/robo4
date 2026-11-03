@@ -42,6 +42,8 @@
 /* Permanent IK-drag toggle. ON → glows/blinks in accent; OFF → plain neutral pill. */
 .canvas-ik-btn {
   display: inline-flex;
+  white-space: nowrap;
+  flex-shrink: 0;
   align-items: center;
   gap: 7px;
   padding: 7px 16px;

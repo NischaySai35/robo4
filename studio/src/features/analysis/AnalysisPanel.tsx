@@ -8,6 +8,7 @@
  *   - Live winding temperature indicator (from thermalModel)
  *   - Overload threshold is now motor-specific, not hardcoded ST3215
  */
+import { Button } from '@/components/ui/button';
 import './AnalysisPanel.css';
 import { useMemo, useEffect, useRef, useState } from 'react';
 import { useModelStore } from '@/state/modelStore';
@@ -74,8 +75,8 @@ function AngleInput({ joint }: { joint: any }) {
 
   if (joint.type === 'fixed') return <span className="an-angle-fixed">—</span>;
   return (
-    <div className="an-angle">
-      <button className="an-angle-arrow" onClick={() => step(-1)} title="Decrease">◀</button>
+    <div className="an-angle" data-ui="a">
+      <Button variant="outline" size="icon-xs" className="tw:h-5 tw:w-4 tw:text-[9px]" onClick={() => step(-1)} title="Decrease">◀</Button>
       <input
         className="an-angle-input"
         value={buf}
@@ -93,7 +94,7 @@ function AngleInput({ joint }: { joint: any }) {
         title="Type a value + Enter · drag left/right to scrub"
       />
       <span className="an-angle-unit">{isPrismatic ? 'mm' : '°'}</span>
-      <button className="an-angle-arrow" onClick={() => step(1)} title="Increase">▶</button>
+      <Button variant="outline" size="icon-xs" className="tw:h-5 tw:w-4 tw:text-[9px]" onClick={() => step(1)} title="Increase">▶</Button>
     </div>
   );
 }

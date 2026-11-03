@@ -15,7 +15,8 @@ import { toView } from './v2View';
 export interface PhysRun {
   bodies: [string, string][];
   frame0: number[];
-  frames: { t: number; p: number[] }[];
+  /** x (manual sessions): the connector dots at that moment, in `ports` order - drawn in step with the robot */
+  frames: { t: number; p: number[]; x?: number[][] }[];
   /** plan runs: one per plan step (step, verb); transformation runs: one per finished stage (label only, 'OK' / 'FAILED' at the end) */
   events: { step?: number; verb?: string; label: string; t: number; latched?: boolean; note?: string; end_off_mm?: number[] }[];
   fps: number;

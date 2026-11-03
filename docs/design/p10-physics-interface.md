@@ -9,7 +9,7 @@
 ## Limits
 
 - Locks, IK, the graph and `loop_check` use MuJoCo's own objects. On another engine they stop with an error that says so.
-- The Studio and `sim/` still call their physics directly. Moving them comes after the Newton test decides, so nothing is moved twice.
+- `sim/` (3 Nov 2026): its live worlds get their engine from `sim/engine.py`, which asks `gos.physics.open_engine` and hands it the robot built in code (`MujocoEngine.adopt`). The Studio reaches physics only through that service, so it is on the plug-in point too. Choose with `TETROBOT_ENGINE`.
 - Jolt still runs the Studio's gravity preview.
 
 ## Reading a MuJoCo file into Newton
@@ -22,6 +22,20 @@ These four defaults change the result, and the first test got them wrong:
 - Motors read `control.joint_target_q`, which starts at 0, and not only `control.mujoco.ctrl`. Unset, a closed lock opens itself.
 
 Newton pins its own MuJoCo (3.15, the project uses 3.17), so it needs its own environment.
+
+## Whole-robot test (3 Nov 2026)
+
+`tools/bench/newton_module.py` runs the real module (CAD shapes, ST3215 servos, gravity) through one GOS script on both engines: the servos hold one pose and move three joints.
+
+- The engines agree: joint angles within 0.007 rad, parts within 2.6 mm on average (6.8 mm at the far tip) after 1 s; up to 21 mm while the servos are still moving.
+- With a 4x heavier module both engines sag the overloaded joint to the same angle (-1.473 and -1.472 rad), so both keep the 2.7 N*m servo limit.
+- Speed for one robot: MuJoCo about 23,000 steps/s, Newton about 140 steps/s and 5 s to load. Newton pays a GPU launch for every step, so it only makes sense for thousands of robots at once, and there MuJoCo Warp was twice as fast at 512 robots (newton_vs_mjw.py).
+- **Decision so far:** MuJoCo for one robot (Studio, scripts, real-robot sync), MuJoCo Warp for many-robot GPU runs. Newton stays plugged in and agrees, but has no speed advantage here.
+
+Two bugs this test found and fixed:
+
+- The export (shared by GOS and the Studio's Export) never wrote each part's CAD mass, so MuJoCo filled every hollow part as solid water: the module weighed 3.26 kg instead of 0.88 kg, and the servos could not hold it. Measured masses and inertias are now written; `auto` parts still take theirs from the shape.
+- GOS documents had no servos at all. Joints with a motor profile now get an ST3215 servo (kp 80, kv 1, armature 0.012 from `sim/physics_params.json`, torque from the profile). Without the armature, the light lock rotors shook themselves loose.
 
 ## How to verify
 

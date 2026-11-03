@@ -905,10 +905,9 @@ export default function ServoController() {
     consumeAngles();
 
     const summary = Object.entries(angles)
-      .sort(([a],[b]) => Number(a)-Number(b))
-      .map(([id, d]) => `J${id}→${Number(d).toFixed(1)}°`)
+      .map(([id, d]) => `${defsRef.current.find((x) => x.id === id)?.name ?? id}→${Number(d).toFixed(1)}°`)
       .join(' ');
-    pushCtrlLog('queued', 'SIM', `Received from Page 1: ${summary}`);
+    pushCtrlLog('queued', 'SIM', `Received from the sim: ${summary}`);
 
     if (connectedNodes === 0) {
       pushCtrlLog('offline', 'OFF', 'Cannot relay — no ESP board online');
@@ -916,9 +915,8 @@ export default function ServoController() {
       return;
     }
 
-    // Map the sim's local-servo-id keys → jointIds, then batch per module ESP.
-    const byJoint: Record<string, number> = {};
-    for (const def of defsRef.current) { const v = (angles as any)[def.servoId]; if (v != null) byJoint[def.id] = v; }
+    // keyed by joint id already (SimTransmitPanel): batch per module ESP
+    const byJoint: Record<string, number> = { ...(angles as Record<string, number>) };
     sendServoBatch(doc, byJoint, { speed: 5, acc: 20 }).then((r) => {
       if (r.errors.length) { pushCtrlLog('error', 'ERR', `Batch: ${r.errors.join('; ')}`); simFailed(summary); }
       else { pushCtrlLog('ok', 'ESP', `Batch OK — ${r.sent} servo(s) across ${r.nodes} board(s)`); simSent(summary); markSent(angles); }

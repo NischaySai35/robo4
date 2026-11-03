@@ -82,6 +82,9 @@ module.exports = function physicsPlugin() {
     const h = await health();
     const same = h && h.sim && path.resolve(h.sim).toLowerCase() === SIM.toLowerCase();
     if (same && h.started * 1000 >= newestCode()) return true;
+    // newer sim code, but someone is using a live Manual session: never kill it under them (1 Nov: an edit restarted the service
+    // mid-connect); the new code loads at the next restart
+    if (same && h.live_sessions > 0) return true;
     if (await listening(PORT)) {
       const pid = h?.pid ?? servicePid();
       if (!pid) { log(`[physics] port ${PORT} is used by another program - left alone`); return false; }

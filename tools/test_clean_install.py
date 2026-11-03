@@ -2,6 +2,7 @@
 runs and closes a simulation with no window, plus the gos command.
 
 usage: py -3.12 tools/test_clean_install.py          (needs the core built: py -3.12 gos/build.py)
+On Linux, any Python 3.12+ with pip; the core library for Linux goes in gos/python/gos/_native/ (libgos_core.so).
 """
 import os, shutil, subprocess, sys, tempfile, venv
 
@@ -12,17 +13,18 @@ try:
     subprocess.run([sys.executable, '-m', 'pip', 'wheel', os.path.join(ROOT, 'gos', 'python'), '--no-deps', '-q', '-w', wheels], check=True)
     for d in ('build',): shutil.rmtree(os.path.join(ROOT, 'gos', 'python', d), ignore_errors=True)
     env_dir = os.path.join(work, 'env')
-    venv.create(env_dir, with_pip=True)
-    py = os.path.join(env_dir, 'Scripts' if os.name == 'nt' else 'bin', 'python')
+    venv.create(env_dir, with_pip=False)  # some Pythons (Ubuntu's) have no ensurepip: install with this pip instead
+    py = os.path.join(env_dir, 'Scripts', 'python.exe') if os.name == 'nt' else os.path.join(env_dir, 'bin', 'python')
     gos_cmd = os.path.join(env_dir, 'Scripts' if os.name == 'nt' else 'bin', 'gos')
     wheel = os.path.join(wheels, os.listdir(wheels)[0])
     shutil.copy(os.path.join(ROOT, 'studio', 'src', 'core', 'factory', 'single-module-demo.json'), os.path.join(work, 'robot.json'))
-    subprocess.run([py, '-m', 'pip', 'install', '-q', wheel], check=True)
+    pip = [sys.executable, '-m', 'pip', '--python', py, 'install', '-q']
+    subprocess.run([*pip, wheel], check=True)
     # the core alone: messaging works, and simulating says which add-on to install
     core_only = "import gos\nwith gos.App() as a:\n    a.topic('/x').publish(1)\n    a.load('robot.json')"
     out = subprocess.run([py, '-c', core_only], cwd=work, capture_output=True, text=True, timeout=120)
-    assert out.returncode != 0 and 'tetrobot-gos[sim]' in out.stderr, out.stdout + out.stderr
-    subprocess.run([py, '-m', 'pip', 'install', '-q', wheel + '[sim]'], check=True)
+    assert out.returncode != 0 and 'gos-robotics[sim]' in out.stderr, out.stdout + out.stderr
+    subprocess.run([*pip, wheel + '[sim]'], check=True)
     with open(os.path.join(work, 'demo.py'), 'w') as f:
         f.write("import gos\nwith gos.App(headless=True) as app:\n    app.load('robot.json')\n    r = app.run(seconds=0.2)\nprint('RAN', r.steps, app.model is None)\n")
     # Outside the repo, with no PYTHONPATH: only the installed package can answer.

@@ -6,6 +6,7 @@
  * feedback loop: the operator sees trajectory progress, completion, and per-joint
  * tracking error exactly as the 1 kHz controller reports it.
  */
+import { Button } from '@/components/ui/button';
 import { useEffect, useRef, useState } from 'react';
 import { useRtStatusStore } from '@/state/rtStatusStore';
 import { summarizeStatus } from '@/robotics/runtime/rtStatus';
@@ -41,28 +42,27 @@ function ConnectBar() {
   };
 
   const connected = !!connRef.current;
-  const btn = { padding: '3px 8px', fontSize: 11, cursor: 'pointer' } as const;
   return (
-    <div style={{ borderBottom: '1px solid rgba(128,128,128,0.2)' }}>
+    <div data-ui="a" style={{ borderBottom: '1px solid rgba(128,128,128,0.2)' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px' }}>
         <span style={{ width: 8, height: 8, borderRadius: 4, background: CONN_COLOR[conn] }} />
         <span style={{ fontSize: 12, opacity: 0.8 }}>{conn}</span>
         <code style={{ fontSize: 11, opacity: 0.6 }}>{DEFAULT_RTCORE_URL}</code>
-        <button className="rt-btn" style={{ marginLeft: 'auto' }} onClick={toggle}>
+        <Button variant="outline" size="xs" className="tw:ml-auto" onClick={toggle}>
           {connected ? 'Disconnect' : 'Connect'}
-        </button>
+        </Button>
       </div>
       {connected && (
         <div style={{ display: 'flex', gap: 6, padding: '0 12px 8px', flexWrap: 'wrap' }}>
-          <button className="rt-btn" style={btn} onClick={() => connRef.current?.sendTrajectory(sampleTrajectory())}>
+          <Button variant="outline" size="xs" onClick={() => connRef.current?.sendTrajectory(sampleTrajectory())}>
             Send sample move
-          </button>
-          <button className="rt-btn" style={{ ...btn, color: '#fff', background: '#e11d48' }} onClick={() => connRef.current?.sendEstop(true)}>
+          </Button>
+          <Button size="xs" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/80" onClick={() => connRef.current?.sendEstop(true)}>
             ■ E-STOP
-          </button>
-          <button className="rt-btn" style={btn} onClick={() => connRef.current?.sendEstop(false)}>
+          </Button>
+          <Button variant="outline" size="xs" onClick={() => connRef.current?.sendEstop(false)}>
             Reset
-          </button>
+          </Button>
         </div>
       )}
     </div>

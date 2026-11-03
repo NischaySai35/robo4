@@ -114,12 +114,6 @@
 
 /* Editable joint-angle cell */
 .an-angle { display: inline-flex; align-items: center; gap: 2px; }
-.an-angle-arrow {
-  width: 16px; height: 20px; padding: 0; font-size: 9px; line-height: 1;
-  background: transparent; border: 1px solid var(--border); border-radius: 4px;
-  color: var(--text-dim); cursor: pointer; flex: none;
-}
-.an-angle-arrow:hover { border-color: var(--accent); color: var(--accent); }
 .an-angle-input {
   width: 34px; padding: 2px 2px; text-align: right;
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 4px;

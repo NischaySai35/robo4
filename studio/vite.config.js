@@ -9,13 +9,15 @@ const require = createRequire(import.meta.url);
 const metricsPlugin = require('./tools/vite-plugin-metrics.cjs');
 // physicsPlugin starts the MuJoCo physics service (verify_service.py in C:/TETROBOT/sim) with npm run dev (DEV only).
 const physicsPlugin = require('./tools/vite-plugin-physics.cjs');
+// robo4NetPlugin keeps the modules' Wi-Fi network (tools/robo4-net.ps1, ROBO4-NET) up with npm run dev (DEV only).
+const { robo4NetPlugin } = require('./tools/robo4Net.cjs');
 
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
   // metricsPlugin serves /__metrics in DEV only, so the viewport HUD can show real
   // machine RAM/CPU/GPU when the app is opened in a browser instead of the Electron shell
   // (a web page can't read any of that itself). See tools/vite-plugin-metrics.cjs.
-  plugins: [react(), tailwindcss(), metricsPlugin(), physicsPlugin()],
+  plugins: [react(), tailwindcss(), metricsPlugin(), physicsPlugin(), robo4NetPlugin()],
   // '@' → src, so cross-directory imports don't depend on file depth (survives
   // restructures). Co-located imports (./Foo.css) stay relative. See ARCHITECTURE.md.
   resolve: {

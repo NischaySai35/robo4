@@ -1055,7 +1055,9 @@ FastJoin fj[4];
 #define ROBO_WIFI_PS    WIFI_PS_MAX_MODEM
 #define LISTEN_INTERVAL 1
 #define HB_LOST_MS      700
-#define HB_LOST_LINKED_MS 2000   // radio still connected with a good signal: a motor-noise hiccup, wait longer (4 Nov 2026)
+#define HB_LOST_LINKED_MS 4000   // radio still connected with a good signal: a hiccup, wait longer (4 Nov 2026). 5 Nov: 2 s left
+                                 // on the laptop's 2-minute 2 s pause and made a 2.1-2.8 s outage; a dead network still shows within
+                                 // 3 s as beacon loss (esp_wifi_set_inactive_time) or a kick, so 4 s costs nothing
 #define HINT_JOIN_MS    700      // fast rejoin not associated by then -> full scan
 #define DHCP_KICK_MS    1200     // associated but no IP by then -> ask DHCP again
 #define STATIC_VERIFY_MS 1500    // reused address, no heartbeat by then -> fresh DHCP lease

@@ -36,6 +36,10 @@ $null = [Windows.Security.Credentials.PasswordCredential, Windows.Security.Crede
 
 function Log($m) { Write-Host ("[{0:HH:mm:ss.fff}] {1}" -f (Get-Date), $m) }
 
+# The heartbeat must never wait behind the laptop's other work: 5 Nov 2026, while the sim ran, it paused 2 s twice and
+# the module left the network. High priority costs nothing (it sleeps 200 ms between 16-byte packets).
+try { [Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'High' } catch {}
+
 # One network, one owner: two publishers with the same SSID abort each other.
 $mutex = New-Object Threading.Mutex($false, 'Local\ROBO4-NET')
 $owned = $false

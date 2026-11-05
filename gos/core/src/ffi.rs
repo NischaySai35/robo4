@@ -195,3 +195,21 @@ pub extern "C" fn gos_net_forwarded(h: u32) -> u32 {
 pub extern "C" fn gos_net_close(h: u32) {
     if let Some(n) = crate::net::forget(h) { n.close(); }
 }
+
+// ── shared-memory handover (shm.rs): not in the WebAssembly build ──
+
+/// Write `n` bytes from `src` into a slot (counter, then data 64 bytes in). Returns the picture's number.
+///
+/// # Safety
+/// See `shm::write`.
+#[cfg(not(target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_shm_write(slot: *mut u8, src: *const u8, n: usize) -> u64 { unsafe { crate::shm::write(slot, src, n) } }
+
+/// Copy a slot into `dst` if it still holds picture `want`: 1 if copied whole, 0 if it was overwritten meanwhile.
+///
+/// # Safety
+/// See `shm::read`.
+#[cfg(not(target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_shm_read(slot: *const u8, dst: *mut u8, n: usize, want: u64) -> i32 { unsafe { crate::shm::read(slot, dst, n, want) as i32 } }

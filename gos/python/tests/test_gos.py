@@ -1129,6 +1129,28 @@ def test_rate_keeps_time_and_reports_jitter():
     assert 0.45 < took < 0.6 and j['median_ms'] < 1.0
 
 
+def test_rate_stays_on_time_beside_a_busy_python_thread():
+    """G10 step 4: with Python's default 5 ms lock turn a busy thread made a 100 Hz loop 7.9 ms late; Rate shortens it."""
+    import sys, threading
+    old = sys.getswitchinterval()
+    stop = threading.Event()
+    def burn():
+        x = 0
+        while not stop.is_set(): x += 1
+    t = threading.Thread(target=burn, daemon=True)
+    try:
+        sys.setswitchinterval(0.005)
+        r = gos.Rate(100)
+        assert sys.getswitchinterval() <= 0.0005
+        t.start()
+        for _ in range(100): r.sleep()
+        j = r.jitter()
+        print('100 Hz beside a busy thread:', {k: round(v, 3) for k, v in j.items()})
+        assert j['median_ms'] < 1.0 and j['p99_ms'] < 3.0
+    finally:
+        stop.set(); t.join(); sys.setswitchinterval(old)
+
+
 def test_realtime_asks_the_system_and_says_what_it_got():
     # in its own process, so the test run itself keeps its normal priority
     code = 'import gos, json; print(json.dumps(gos.realtime()))'

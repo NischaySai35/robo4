@@ -48,13 +48,31 @@ So the gain is not packing in Rust but not packing at all: a **binary frame**, a
 
 Measured with the laptop at 36 % load from other work. Small messages unchanged (180,000 a second). An array arrives read-only (a view of the received bytes): copy it to change it. Arrays on one computer still go fastest through shared memory (`app.arrays`, only a name travels).
 
+## Step 4: the timing loop (6 Nov 2026)
+
+Measured `gos.Rate` on Windows:
+
+- Beside one busy Python thread in the same program, a 100 Hz loop was **7.9 ms late** (16 ms at the 99th percentile): after each wait it queued for Python's lock, which changes hands only every 5 ms. Moving the wait into Rust would not help: the loop's own Python code still needs that lock. Fix: `gos.Rate` (and `gos.realtime()`) make the lock change hands every 0.5 ms. Now **0.002 ms** typical, 0.05-0.12 ms at the 99th percentile; the busy thread lost nothing measurable at 100 Hz (27.3 vs 27.7 million steps a second).
+- At 1000 Hz it spun the last 2 ms of every wait: **98 % of a core**. Python's `time.sleep` already uses Windows' high-resolution timer, the same one Rust would use, so the fix is a shorter spin: `Rate(hz, spin=0.0005)` by default, **40-47 %** of a core, 0.12-0.3 ms late at the 99th percentile; `spin=0` is 1 % of a core and 0.3-0.8 ms late, plenty for 16-100 Hz robot loops.
+- `Rate` keeps the latest 100,000 tick times (it kept every one, so a 1000 Hz loop grew by 3.6 million numbers an hour).
+- The executor already waits in Python's queue, which lets go of the lock while it waits: nothing to move.
+
+So step 4 needed no Rust.
+
+## Step 5: controllers and shared-memory arrays (6 Nov 2026)
+
+- **Controllers ran slow:** the joint-state broadcaster asked for 50 a second gave 32, asked for 200 gave 64 (a plain wait after each tick; Windows waits in ~15 ms steps). The broadcaster and the trajectory controller now use `gos.Rate(rate, spin=0)`: exactly 50, 200 and 1000 a second, at 0-5 % of a core. One tick (reading 9 joints, publishing) takes about 4 µs, so the loops themselves do not need Rust.
+- **Shared-memory arrays were torn:** one buffer per topic, overwritten by the sender while the reader read it: 257 of 300 camera pictures (640x480) arrived half old, half new. Now each topic has 3 slots used in turn, each with a counter in the Rust core (`gos/core/src/shm.rs`, a seqlock): odd while written, even when done, checked before and after the reader copies. Rust because the counter needs memory fences that make it correct on Apple and ARM chips too; Python cannot order memory. Result: **0 torn**; a full-HD camera at 60 a second arrives 300 of 300; a sender faster than the reader makes it skip to the newest whole picture (`app.arrays.skipped` counts them). Checked on Windows and Linux.
+
 ## Order of work, by measured value
 
 1. **Done:** the baseline above.
 2. **Done (6 Nov): the TCP hub in Rust.** 2.3x the small messages a second, 1.7x the joint states, same 99% line (above). Python programs keep the same `App` calls.
 3. **Done (6 Nov): big messages travel raw.** Bytes and numpy arrays as binary frames: 3.4x for 1 MB, 24x for 100,000 numbers (above). Not in Rust after all: measured, the cost was the text, not the packing.
-4. **Executor and `gos.Rate` waiting in Rust:** Python's lock is released while a loop waits, so other threads keep running.
-5. **Shared-memory arrays and the controllers' inner loops in Rust.**
+4. **Done (6 Nov): the timing loop.** Python's lock and the spin were the costs, not the timer: fixed in `gos.Rate`, no Rust (above).
+5. **Done (6 Nov): controllers on time (via `gos.Rate`) and shared-memory arrays never torn (Rust counter).**
+
+G10 is finished: everything on the list was measured, and moved to Rust where that was what helped.
 
 Not worth moving (measured): small-message JSON, the `gos` commands, planners (already on MuJoCo and the Rust IK), package tools.
 

@@ -11,6 +11,8 @@ The servos take positions only, so there are no velocity or effort controllers: 
 """
 import threading, time
 
+from .execution import Rate
+
 
 def joint_state_broadcaster(app, topic='/joint_states', rate=50):
     """Publish every joint's position as a JointState, rate times a second, until the returned stop() is called."""
@@ -18,10 +20,11 @@ def joint_state_broadcaster(app, topic='/joint_states', rate=50):
     stop = threading.Event()
 
     def loop():
+        r = Rate(rate, spin=0)  # a plain wait after each tick ran slow: asked 50/s gave 32/s, 200/s gave 64/s (Windows)
         while not stop.is_set():
             j = app.robot.joints()
             pub.publish({'header': {'stamp': float(app.now()), 'frame_id': ''}, 'name': list(j), 'position': list(j.values()), 'velocity': [], 'effort': []})
-            stop.wait(1 / rate)
+            r.sleep()
     threading.Thread(target=loop, daemon=True).start()
     return stop.set
 
@@ -58,6 +61,7 @@ def joint_trajectory_controller(app, action='/arm/follow_joint_trajectory', rate
         start = dict(app.robot.joints())
         path = [{'q': [start[n] for n in names], 't': 0.0}] + [p for p in pts if p['t'] > 0]
         t0, end = time.time(), path[-1]['t']
+        tick = Rate(rate, spin=0)
         while True:
             t = time.time() - t0
             if cancelled() or not active():
@@ -71,7 +75,7 @@ def joint_trajectory_controller(app, action='/arm/follow_joint_trajectory', rate
             if not r.ok: raise RuntimeError(r.message)
             feedback({'progress': min(1.0, t / end) if end else 1.0, 'q': q})
             if t >= end: return {'reached': dict(zip(names, q)), 'seconds': t}
-            time.sleep(1 / rate)
+            tick.sleep()
     app.actions.advertise(action, follow)
     return action
 

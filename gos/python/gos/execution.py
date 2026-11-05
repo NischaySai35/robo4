@@ -47,18 +47,33 @@ class Executor:
         while time.time() < end: self.spin_once(timeout=min(0.05, max(0.0, end - time.time())))
 
 
+LOCK_TURN_S = 0.0005  # Python's lock passes between busy threads this often (Python's own default: every 5 ms)
+
+
 class Rate:
     """A loop at a fixed rate, like ROS's Rate, that measures how late each tick was. On Windows and macOS this
-    is soft real time; hard real time belongs on the ESP32 or real-time Linux (RESTRUCTURING 10.2)."""
-    def __init__(self, hz):
-        self.period, self.next, self.late = 1.0 / hz, time.perf_counter(), []
+    is soft real time; hard real time belongs on the ESP32 or real-time Linux (RESTRUCTURING 10.2).
+
+    spin: the last part of each wait, in seconds, is spent checking the clock instead of sleeping. Measured on
+    Windows at 1000 Hz (6 Nov 2026): 0.0005 (default) ticks 0.12 ms late at the 99th percentile for half a core;
+    0 sleeps all the way, 0.3-0.8 ms late, for 1 % of a core (enough for 16-100 Hz robot loops); 0.002 is 0.01 ms
+    late but takes a whole core.
+
+    A Rate also makes Python's lock change hands every 0.5 ms instead of 5: measured, a busy Python thread in the
+    same program made the loop 7.9 ms late (16 ms at the 99th percentile); with the shorter turn, 0.1 ms. This is
+    Python's lock, not the timer, so moving the wait into Rust would not help (G10 step 4)."""
+    def __init__(self, hz, spin=0.0005):
+        import collections, sys
+        self.period, self.spin, self.next = 1.0 / hz, spin, time.perf_counter()
+        self.late = collections.deque(maxlen=100_000)  # the latest ticks, so a long loop does not grow without end
+        if sys.getswitchinterval() > LOCK_TURN_S: sys.setswitchinterval(LOCK_TURN_S)
 
     def sleep(self):
         self.next += self.period
         while True:
             left = self.next - time.perf_counter()
             if left <= 0: break
-            time.sleep(left if left > 0.002 else 0)   # sleep coarsely, then spin the last 2 ms for accuracy
+            time.sleep(left - self.spin if left > self.spin else 0)   # sleep, then spin the last bit for accuracy
         self.late.append(time.perf_counter() - self.next)
 
     def jitter(self):
@@ -100,6 +115,9 @@ def realtime(priority=80, cpu=None, lock_memory=True, freeze_gc=True):
         got['priority'] = 'normal (not offered on this system)'
     if freeze_gc:
         gc.collect(); gc.freeze(); got['gc'] = 'frozen'
+    import sys
+    if sys.getswitchinterval() > LOCK_TURN_S: sys.setswitchinterval(LOCK_TURN_S)
+    got['lock_turn_ms'] = sys.getswitchinterval() * 1000
     return got
 
 

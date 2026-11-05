@@ -52,7 +52,7 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
   - In one program: 431,000 msgs/s, 9 µs there and back.
   - TCP: 54,000/s, 58 µs. Zenoh: 121,000/s, 130 µs.
   - The cost is system calls and thread wake-ups, not JSON.
-- [x] 71 GOS tests pass (2 skipped): `cd gos/python; $env:PYTHONPATH='.'; py -3.12 -m pytest -q -p no:dash -p no:anyio tests/test_gos.py` (the two `-p no:` hide warnings from other installed packages). Rust: `cd gos; cargo test --release`.
+- [x] 72 GOS tests pass (2 skipped): `cd gos/python; $env:PYTHONPATH='.'; py -3.12 -m pytest -q -p no:dash -p no:anyio tests/test_gos.py` (the two `-p no:` hide warnings from other installed packages). Rust: `cd gos; cargo test --release`.
 
 ### Firmware (`firmware/esp32_multi/`, FW_VERSION stays 0.1.0; flashed to mod1 and checked)
 - [x] **Power-on is always limp:** it reads the servos and moves nothing.
@@ -105,7 +105,7 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - [x] **G10 step 2, the TCP wire in Rust (6 Nov):** `gos/core/src/net.rs`; 2.3x the messages a second; numbers in `docs/design/g10-fast-core.md`.
   - Linux and macOS libraries rebuilt with `py -3.12 gos/build.py --all` (ziglang + cargo-zigbuild now installed); Linux checked in WSL, macOS not tested (no Mac).
 - [x] **G10 step 3, bytes and arrays travel raw (6 Nov):** binary frames on TCP, raw arrays on Zenoh; 3.4x for 1 MB, 24x for arrays.
-- [ ] **G10 next:** executor and `gos.Rate` waiting in Rust; then shared-memory arrays and controller loops.
+- [x] **G10 steps 4-5 (6 Nov):** `gos.Rate` on time beside busy threads (7.9 ms -> 0.002 ms) and less CPU; controllers at the asked rate (50/s gave 32/s); shared-memory arrays never torn (257/300 were). **G10 is finished.**
   - Measure each step with `tools/bench/gos_messaging.py`.
 - [ ] **Wi-Fi link quality on ROBO4-NET:** tonight 25–50 % ping loss, even with the guard paused, so it is not the guard.
   - Check again after the capacitors; read the heartbeat-gap log lines (voltage, loop time).

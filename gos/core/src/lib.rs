@@ -10,6 +10,8 @@ pub mod tf;
 pub mod ik;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod net;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod shm;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};

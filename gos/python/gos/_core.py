@@ -116,3 +116,25 @@ def net_forwarded(handle: int) -> int: return _lib.gos_net_forwarded(handle)
 
 
 def net_close(handle: int) -> None: _lib.gos_net_close(handle)
+
+
+# ── shared-memory handover (gos/core/src/shm.rs), used by bigdata.SharedArrays ──
+
+def _shm():
+    lib = _load()
+    if not hasattr(lib, 'gos_shm_write'): raise OSError('This build of the GOS core has no shared-memory handover. Rebuild it with: py -3.12 gos/build.py')
+    if not getattr(lib, '_shm_ready', False):
+        lib.gos_shm_write.restype = ctypes.c_uint64; lib.gos_shm_write.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t]
+        lib.gos_shm_read.restype = ctypes.c_int; lib.gos_shm_read.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_uint64]
+        lib._shm_ready = True
+    return lib
+
+
+def shm_write(slot: int, src: int, n: int) -> int:
+    """Write n bytes from address src into the slot at address slot; returns the picture's number."""
+    return _shm().gos_shm_write(slot, src, n)
+
+
+def shm_read(slot: int, dst: int, n: int, want: int) -> bool:
+    """Copy the slot into dst if it still holds picture number want; False if it was overwritten meanwhile."""
+    return _shm().gos_shm_read(slot, dst, n, want) == 1

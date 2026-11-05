@@ -45,6 +45,8 @@
 #include <HTTPUpdate.h>
 #include "guard.h"          // overload guard (layer 1), see the Overload guard section
 #include "sync.h"           // synchronised motion: every joint at the same share of its path (Sync motion)
+#include <esp_now.h>
+#include "r4now.h"          // ESP-NOW frame format, shared with the USB dongle (firmware/libraries/R4Now)
 #include <Preferences.h>
 #include <SCServo.h>
 #include <esp_system.h>
@@ -276,6 +278,52 @@ void logStore(const char* b, TickType_t wait) {
 // ── Servos ───────────────────────────────────────────────────────────────────
 SafeSMS   st;   // SMS_STS with bounded, yielding bus reads — see types.h
 WebServer server(80);
+
+// Where a handler's arguments come from: the web request, or a request that came over ESP-NOW (section ESP-NOW link).
+// Every handler reads rq.arg()/rq.hasArg(), so both paths run the same code. A radio request is "path?a=1&b=2", and
+// its optional body (after a newline) is the "plain" argument, as WebServer gives a POST body.
+struct ReqArgs {
+  static const uint8_t MAX = 24;
+  bool radio = false;
+  uint8_t n = 0;
+  String key[MAX], val[MAX];
+  void fromRadio(const String& query, const String* body) {
+    radio = true; n = 0;
+    int at = 0;
+    while (at < (int)query.length() && n < MAX) {
+      int amp = query.indexOf('&', at); if (amp < 0) amp = query.length();
+      int eq = query.indexOf('=', at);
+      if (eq < 0 || eq > amp) { key[n] = urlDecode(query.substring(at, amp)); val[n] = ""; }
+      else { key[n] = urlDecode(query.substring(at, eq)); val[n] = urlDecode(query.substring(eq + 1, amp)); }
+      if (key[n].length()) n++;
+      at = amp + 1;
+    }
+    if (body && n < MAX) { key[n] = "plain"; val[n] = *body; n++; }
+  }
+  void fromWeb() { radio = false; n = 0; for (uint8_t i = 0; i < MAX; i++) { key[i] = String(); val[i] = String(); } }
+  bool hasArg(const char* k) const {
+    if (!radio) return server.hasArg(k);
+    for (uint8_t i = 0; i < n; i++) if (key[i] == k) return true;
+    return false;
+  }
+  String arg(const char* k) const {
+    if (!radio) return server.arg(k);
+    for (uint8_t i = 0; i < n; i++) if (key[i] == k) return val[i];
+    return String();
+  }
+  bool hasArg(const String& k) const { return hasArg(k.c_str()); }
+  String arg(const String& k) const { return arg(k.c_str()); }
+  static String urlDecode(const String& s) {
+    String o; o.reserve(s.length());
+    for (int i = 0; i < (int)s.length(); i++) {
+      char c = s[i];
+      if (c == '+') o += ' ';
+      else if (c == '%' && i + 2 < (int)s.length()) { o += (char)strtol(s.substring(i + 1, i + 3).c_str(), nullptr, 16); i += 2; }
+      else o += c;
+    }
+    return o;
+  }
+} rq;
 
 ServoState servos[MAX_SERVOS];
 uint8_t    nServos = 0;
@@ -1373,10 +1421,13 @@ void livePoll() {
 // (even while a laptop watches in live mode) it stays in modem sleep: sending still works, it just stays cool.
 bool radioHold  = false;   // /api/radio?awake=1: keep the radio awake for a Wi-Fi test (not saved; a reboot clears it)
 bool guardBusy();
+bool nowLinked();          // ESP-NOW link section
+void nowStop();
+String nowJson();
 bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS || guardBusy(); }
 void radioTick() {
   if (otaBusy) return;                              // OTA owns the radio settings while it runs
-  bool want = moving() || radioHold;
+  bool want = moving() || radioHold || nowLinked();   // modem sleep would miss most ESP-NOW frames
   if (want == radioAwake) return;
   radioAwake = want;
   if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
@@ -1386,7 +1437,7 @@ void okJson(const String& body);
 // GET /api/radio            -> {"hold":false,"awake":false}
 // GET /api/radio?awake=1|0  -> hold the radio awake (1) or back to normal sleep when still (0). Moves nothing.
 void handleRadio() {
-  if (server.hasArg("awake")) { radioHold = server.arg("awake") == "1"; radioTick(); }
+  if (rq.hasArg("awake")) { radioHold = rq.arg("awake") == "1"; radioTick(); }
   String b = F("{\"ok\":true,\"hold\":"); b += radioHold ? "true" : "false";
   b += F(",\"awake\":"); b += radioAwake ? "true" : "false"; b += '}';
   okJson(b);
@@ -1476,7 +1527,9 @@ void wifiTick() {
     // noise / supply dip, mod1 4 Nov): rejoining on that turned a hiccup into a 0.8-6 s outage. Linked with a good signal,
     // give it HB_LOST_LINKED_MS.
     bool linked = WiFi.status() == WL_CONNECTED && WiFi.RSSI() > -80;
-    if (hbSeen && !otaBusy && wSlot <= WSLOT_DEFAULT && millis() - hbLastMs > (linked ? HB_LOST_LINKED_MS : HB_LOST_MS)) {
+    // Heard over ESP-NOW: the laptop is there, and Wi-Fi is only for uploads now. A rejoin could also hop channels
+    // and cut the ESP-NOW link, so a missing Wi-Fi heartbeat does not count while ESP-NOW is linked.
+    if (hbSeen && !otaBusy && !nowLinked() && wSlot <= WSLOT_DEFAULT && millis() - hbLastMs > (linked ? HB_LOST_LINKED_MS : HB_LOST_MS)) {
       hbLosses++; hbSeen = false;
       wUp = false; wLostAt = hbLastMs; mdnsOk = false; wHbRejoin = true;
       int vMin = 999, mA = 0;
@@ -1514,6 +1567,7 @@ void wifiTick() {
   // a router that has stopped answering this MAC.
   if (wFails % 24 == 0) {
     lg("WiFi stuck after %u tries — re-initialising radio", wFails);
+    nowStop();                               // ESP-NOW must be stopped before the driver; nowPoll() restarts it
     WiFi.disconnect(true, false);
     WiFi.mode(WIFI_OFF);
     delay(80);
@@ -1746,8 +1800,14 @@ void errJson(int code, const char* msg) {
 }
 // One handler per path for every verb; OPTIONS is answered inline for CORS preflight.
 // bus=false: the handler never touches the servo bus and sends by itself (the page, the log, the OTA pull).
-void route(const char* path, void (*fn)(), bool bus = true) {
+// radio=false: the handler writes to the web connection itself (the page, the OTA pull), so it is web-only.
+struct Route { const char* path; void (*fn)(); bool bus, radio; };
+Route    routes[48];
+uint8_t  nRoutes = 0;
+void route(const char* path, void (*fn)(), bool bus = true, bool radio = true) {
+  if (nRoutes < sizeof(routes) / sizeof(routes[0])) routes[nRoutes++] = {path, fn, bus, radio};
   server.on(path, HTTP_ANY, [fn, bus]() {
+    rq.fromWeb();
     if (server.method() == HTTP_OPTIONS) { setCORS(); server.send(204); return; }
     if (!bus) { fn(); return; }
     { BusLock L; replyDefer = true; replyCode = 0; fn(); replyDefer = false; }
@@ -1837,7 +1897,8 @@ String buildJSON() {
   j += F(",\"hbAgeMs\":");   j += (hbSeen ? (long)(millis() - hbLastMs) : -1L);
   j += F(",\"lastGapMs\":"); j += wLastGapMs;
   j += F(",\"maxGapMs\":");  j += wMaxGapMs;
-  j += F("}}");
+  j += F("},\"espnow\":"); j += nowJson();
+  j += '}';
   return j;
 }
 
@@ -1861,19 +1922,18 @@ void handleHealth() {
 }
 void handleTelemetry() { okJson(buildJSON()); }
 void handleLog() {
-  setCORS();
   String s; s.reserve(logCount * 60 + 32);
   uint8_t start = (uint8_t)((logHead + LOG_LINES - logCount) % LOG_LINES);
   // ?after=<ms>: only lines stamped later (the Studio's Debug Log follows the board with it). The board's uptime is the
   // first line, so a restart (uptime went back) is visible to the reader.
-  bool since = server.hasArg("after"); uint32_t after = since ? strtoul(server.arg("after").c_str(), nullptr, 10) : 0;
+  bool since = rq.hasArg("after"); uint32_t after = since ? strtoul(rq.arg("after").c_str(), nullptr, 10) : 0;
   if (since) { s += F("uptime "); s += millis(); s += '\n'; }
   for (uint8_t i = 0; i < logCount; i++) {
     const String& l = logBuf[(start + i) % LOG_LINES];
     if (since && strtoul(l.c_str() + 1, nullptr, 10) <= after) continue;
     s += l; s += '\n';
   }
-  server.send(200, "text/plain", s);
+  reply(200, "text/plain", s);
 }
 
 void applyCmd(ServoState& sv, const String& cmd) {
@@ -1887,9 +1947,9 @@ void applyCmd(ServoState& sv, const String& cmd) {
 }
 
 void handleCommand() {
-  if (!server.hasArg("servo") || !server.hasArg("cmd")) { errJson(400, "missing args"); return; }
-  String sa = server.arg("servo");
-  String cmd = server.arg("cmd"); cmd.toLowerCase();
+  if (!rq.hasArg("servo") || !rq.hasArg("cmd")) { errJson(400, "missing args"); return; }
+  String sa = rq.arg("servo");
+  String cmd = rq.arg("cmd"); cmd.toLowerCase();
 
   if ((sa == "all" || sa == "0") && (cmd == "estop" || cmd == "stop")) {
     estopAll(); okJson(F("{\"ok\":true,\"result\":\"estop_all\"}")); return;
@@ -1904,9 +1964,9 @@ void handleCommand() {
   // names the exact request it was in, which beats guessing from the browser side.
   bc("cmd id=%u %s", sv->id, cmd.c_str());
 
-  float   angle = server.hasArg("angle") ? server.arg("angle").toFloat() : sv->targetDeg;
-  int     speed = server.hasArg("speed") ? server.arg("speed").toInt()   : 10;
-  uint8_t acc   = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100)
+  float   angle = rq.hasArg("angle") ? rq.arg("angle").toFloat() : sv->targetDeg;
+  int     speed = rq.hasArg("speed") ? rq.arg("speed").toInt()   : 10;
+  uint8_t acc   = (uint8_t)(rq.hasArg("acc") ? constrain(rq.arg("acc").toInt(), 1, 100)
                                                  : POS_ACC_DEFAULT);
   if (cmd == "pos" || cmd == "torqueon" || cmd == "torquetoggle" || cmd == "home") motionLocked = false;
   if (cmd == "pos") { cmdPos(*sv, angle, speed, acc); okTrue(); return; }
@@ -1921,8 +1981,8 @@ void handleBatch() {
   if (!motionLocked) lastMotionMs = millis();
   if (motionLocked) { errJson(423, "locked after power-on: nothing moves until you press Turn torque ON, Go to manual home or a servo's own button"); return; }
   bc("batch move");
-  int     spd = server.hasArg("speed") ? constrain(server.arg("speed").toInt(), 1, 10) : 5;
-  uint8_t acc = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100)
+  int     spd = rq.hasArg("speed") ? constrain(rq.arg("speed").toInt(), 1, 10) : 5;
+  uint8_t acc = (uint8_t)(rq.hasArg("acc") ? constrain(rq.arg("acc").toInt(), 1, 100)
                                                : POS_ACC_DEFAULT);
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
   uint16_t spds[MAX_SERVOS]; uint8_t accs[MAX_SERVOS];
@@ -1931,13 +1991,13 @@ void handleBatch() {
   for (uint8_t i = 0; i < nServos; i++) {
     ServoState& sv = servos[i];
     String key = String(sv.id);
-    if (!server.hasArg(key)) continue;
+    if (!rq.hasArg(key)) continue;
     float lo, hi; limitsFor(i, lo, hi);
-    if (!guardAllows(i, nomToRaw(sv.id, clampF(server.arg(key).toFloat(), lo, hi)))) { refused++; continue; }
+    if (!guardAllows(i, nomToRaw(sv.id, clampF(rq.arg(key).toFloat(), lo, hi)))) { refused++; continue; }
     sv.mode = POS_MODE;
     setHwMode(sv, POS_MODE);
     ensureTorque(sv);
-    sv.targetDeg     = clampF(server.arg(key).toFloat(), lo, hi);
+    sv.targetDeg     = clampF(rq.arg(key).toFloat(), lo, hi);
     sv.targetRaw     = nomToRaw(sv.id, sv.targetDeg);
     sv.speedScale    = spd;
     sv.speedRaw      = speedScaleToRaw(spd);
@@ -1961,8 +2021,8 @@ void handleBatch() {
 // pose whichever way it is asked for. ?raw=1 sends every joint to the MECHANICAL 180 instead
 // (seating a horn at the true middle of the servo's travel).
 void handleHome() {
-  bool manual = server.hasArg("manual") && server.arg("manual") != "0";
-  bool raw = server.hasArg("raw") && server.arg("raw") != "0";
+  bool manual = rq.hasArg("manual") && rq.arg("manual") != "0";
+  bool raw = rq.hasArg("raw") && rq.arg("raw") != "0";
   bc(raw ? "home all -> mechanical 180" : "home all -> straight (nominal 180)");
   homeAll(manual, raw);
   motionLocked = false;
@@ -1977,17 +2037,17 @@ void handleHomeManual() { bc("home all -> straight (nominal 180)"); homeAll(true
 // GET /api/home/set?id=N&deg=142.5     set it to an explicit angle instead
 // GET /api/home/set?id=N&clear=1       forget it (no correction until a home is saved again)
 void handleHomeSet() {
-  bool clear = server.hasArg("clear") && server.arg("clear") != "0";
+  bool clear = rq.hasArg("clear") && rq.arg("clear") != "0";
   String out = F("{\"ok\":true,\"homes\":[");
   uint8_t n = 0;
 
   for (uint8_t i = 0; i < nServos; i++) {
     ServoState& sv = servos[i];
-    if (server.hasArg("id") && server.arg("id") != "all" &&
-        (uint8_t)server.arg("id").toInt() != sv.id) continue;
+    if (rq.hasArg("id") && rq.arg("id") != "all" &&
+        (uint8_t)rq.arg("id").toInt() != sv.id) continue;
 
     if (clear) { clearHomeFor(sv.id); }
-    else if (server.hasArg("deg")) { setHomeFor(sv.id, server.arg("deg").toFloat()); }
+    else if (rq.hasArg("deg")) { setHomeFor(sv.id, rq.arg("deg").toFloat()); }
     else {
       // Capture what the joint is ACTUALLY at. A servo that never answered has no angle
       // to capture, so it is skipped rather than silently homed to a stale reading.
@@ -2017,8 +2077,8 @@ void handleHomeSet() {
 // stored sequence until the whole thing parses — a half-received upload leaves the
 // previous one intact rather than half-wrecking it.
 void handleAnimLoad() {
-  if (!server.hasArg("plain")) { errJson(400, "empty body"); return; }
-  String body = server.arg("plain");
+  if (!rq.hasArg("plain")) { errJson(400, "empty body"); return; }
+  String body = rq.arg("plain");
 
   int nl = body.indexOf('\n');
   if (nl < 0) { errJson(400, "no header line"); return; }
@@ -2094,9 +2154,9 @@ void handleAnimLoad() {
   animStop();
   memcpy(anim, tmp, sizeof(AnimFrame) * got);
   animCount = got;
-  animSine = !(server.hasArg("sine") && server.arg("sine") == "0");
-  if (server.hasArg("sync")) { animSync = server.arg("sync") == "1"; prefs.putBool("animSync", animSync); }
-  animLoop = server.hasArg("loop") && server.arg("loop") != "0";
+  animSine = !(rq.hasArg("sine") && rq.arg("sine") == "0");
+  if (rq.hasArg("sync")) { animSync = rq.arg("sync") == "1"; prefs.putBool("animSync", animSync); }
+  animLoop = rq.hasArg("loop") && rq.arg("loop") != "0";
   lg("anim loaded: %u frames, sine %s, loop %s", animCount,
      animSine ? "on" : "off", animLoop ? "on" : "off");
 
@@ -2109,8 +2169,8 @@ void handleAnimLoad() {
 
 void handleAnimPlay() {
   if (animCount == 0) { errJson(409, "no sequence loaded"); return; }
-  if (server.hasArg("loop")) animLoop = server.arg("loop") != "0";
-  uint8_t from = server.hasArg("from") ? (uint8_t)server.arg("from").toInt() : 0;
+  if (rq.hasArg("loop")) animLoop = rq.arg("loop") != "0";
+  uint8_t from = rq.hasArg("from") ? (uint8_t)rq.arg("from").toInt() : 0;
   if (from >= animCount) from = 0;
   bc("anim play (%u frames)", animCount);
   animPlaying = true; animInterrupted = false; motionLocked = false;
@@ -2124,7 +2184,7 @@ void handleAnimStop() { animStop(); okTrue(); }
 // GET /api/anim/sync          -> {"sync":true|false}
 // GET /api/anim/sync?on=1|0   Sync motion on/off, remembered across reboots (takes effect from the next frame)
 void handleAnimSync() {
-  if (server.hasArg("on")) { animSync = server.arg("on") == "1"; prefs.putBool("animSync", animSync); lg("Sync motion %s", animSync ? "on" : "off"); }
+  if (rq.hasArg("on")) { animSync = rq.arg("on") == "1"; prefs.putBool("animSync", animSync); lg("Sync motion %s", animSync ? "on" : "off"); }
   String r = F("{\"ok\":true,\"sync\":"); r += animSync ? F("true") : F("false"); r += '}';
   okJson(r);
 }
@@ -2150,10 +2210,10 @@ void handleAnimStatus() {
 // Applied to every servo immediately and remembered across reboots. tuneByteIfDiff only
 // writes when the value actually changes, so repeated calls do not wear the servo EPROM.
 void handleDeadband() {
-  if (server.hasArg("deg") || server.hasArg("units")) {
-    int units = server.hasArg("units")
-              ? server.arg("units").toInt()
-              : (int)lroundf(server.arg("deg").toFloat() / DEG_PER_UNIT);
+  if (rq.hasArg("deg") || rq.hasArg("units")) {
+    int units = rq.hasArg("units")
+              ? rq.arg("units").toInt()
+              : (int)lroundf(rq.arg("deg").toFloat() / DEG_PER_UNIT);
     units = constrain(units, 0, 200);
     deadbandUnits = (uint8_t)units;
     prefs.putUChar("deadband", deadbandUnits);
@@ -2170,13 +2230,13 @@ void handleDeadband() {
 
 // GET /api/servo/home?id=N[&raw=1]   send one servo to straight (nominal 180); raw=1: mechanical 180
 void handleServoHome() {
-  if (!server.hasArg("id")) { errJson(400, "need id"); return; }
-  uint8_t id = (uint8_t)server.arg("id").toInt();
+  if (!rq.hasArg("id")) { errJson(400, "need id"); return; }
+  uint8_t id = (uint8_t)rq.arg("id").toInt();
   int slot = slotOf(id);
   if (slot < 0) { errJson(404, "servo not in the current list"); return; }
   // nominal 180 IS the straight pose, so "180" and "home" are the same place now; raw=1 is the
   // mechanical 180 (nominal 180 minus this joint's offset)
-  bool raw = server.hasArg("raw") && server.arg("raw") != "0";
+  bool raw = rq.hasArg("raw") && rq.arg("raw") != "0";
   float target = raw ? 180.0f - offsetFor(id) : 180.0f;
   gotoDeg((uint8_t)slot, target);
   motionLocked = false;
@@ -2202,17 +2262,17 @@ void handleGuard() {
   r += "]}"; okJson(r);
 }
 void handleGuardSet() {
-  if (server.hasArg("everyMs")) guardEveryMs = (uint16_t)constrain(server.arg("everyMs").toInt(), 0, 500);
+  if (rq.hasArg("everyMs")) guardEveryMs = (uint16_t)constrain(rq.arg("everyMs").toInt(), 0, 500);
   String r = F("{\"ok\":true,\"everyMs\":"); r += guardEveryMs; r += '}'; okJson(r);
 }
 void handleGuardClear() {
-  String a = server.hasArg("id") ? server.arg("id") : String("all");
+  String a = rq.hasArg("id") ? rq.arg("id") : String("all");
   guardClear(a == "all" ? -1 : a.toInt());
   okTrue();
 }
 
 void handleTorqueAll() {
-  bool on = !server.hasArg("on") || server.arg("on") != "0";
+  bool on = !rq.hasArg("on") || rq.arg("on") != "0";
   bc("torque all %s (%u servos)", on ? "ON" : "OFF", nServos);
   if (on) { torqueOnAll(); motionLocked = false; } else torqueOffAll();
   okJson(on ? F("{\"ok\":true,\"torque\":\"on\"}") : F("{\"ok\":true,\"torque\":\"off\"}"));
@@ -2220,8 +2280,8 @@ void handleTorqueAll() {
 
 // Wiggle one servo ±8° so you can SEE which physical joint an ID belongs to.
 void handleIdentify() {
-  if (!server.hasArg("id")) { errJson(400, "missing id"); return; }
-  uint8_t id = (uint8_t)server.arg("id").toInt();
+  if (!rq.hasArg("id")) { errJson(400, "missing id"); return; }
+  uint8_t id = (uint8_t)rq.arg("id").toInt();
   // A single dropped reply used to abort identify ("no reply") with nothing moving. Retry,
   // then fall back to the position telemetry last saw for this id.
   int base = readRetry(id, [](uint8_t i) { return st.ReadPos(i); },
@@ -2248,11 +2308,11 @@ void handleIdentify() {
 // finished. Shows directly whether our own request echoes, when the servo answers, and
 // whether the reply is intact: no library parsing in between.
 void handleBusRaw() {
-  if (!server.hasArg("id")) { errJson(400, "missing id"); return; }
-  const uint8_t id = (uint8_t)server.arg("id").toInt();
-  const int trials = server.hasArg("n") ? constrain(server.arg("n").toInt(), 1, 8) : 3;
+  if (!rq.hasArg("id")) { errJson(400, "missing id"); return; }
+  const uint8_t id = (uint8_t)rq.arg("id").toInt();
+  const int trials = rq.hasArg("n") ? constrain(rq.arg("n").toInt(), 1, 8) : 3;
   // &ping=1 sends a PING (FF FF id 02 01 chk) instead of the position read.
-  const bool ping = server.hasArg("ping") && server.arg("ping") != "0";
+  const bool ping = rq.hasArg("ping") && rq.arg("ping") != "0";
   uint8_t pkt[8] = { 0xFF, 0xFF, id, 4, 2, 56, 2, 0 };
   int plen = 8;
   if (ping) { pkt[3] = 2; pkt[4] = 1; plen = 6; }
@@ -2286,11 +2346,11 @@ void handleBusRaw() {
 // ── Scan endpoints ───────────────────────────────────────────────────────────
 void handleScan() {
   if (sc.active) { errJson(409, "scan already running"); return; }
-  uint8_t from = server.hasArg("from") ? server.arg("from").toInt() : 1;
-  uint8_t to   = server.hasArg("to")   ? server.arg("to").toInt()   : 20;
-  bool allBaud = server.hasArg("allbaud") && server.arg("allbaud") != "0";
+  uint8_t from = rq.hasArg("from") ? rq.arg("from").toInt() : 1;
+  uint8_t to   = rq.hasArg("to")   ? rq.arg("to").toInt()   : 20;
+  bool allBaud = rq.hasArg("allbaud") && rq.arg("allbaud") != "0";
   // adopt=0 → a read-only detect: report what answers, change nothing.
-  scAdopt = !(server.hasArg("adopt") && server.arg("adopt") == "0");
+  scAdopt = !(rq.hasArg("adopt") && rq.arg("adopt") == "0");
   scanStart(from, to, allBaud);
   okTrue();
 }
@@ -2325,16 +2385,16 @@ void handleScanStatus() {
 
 // ── Servo tooling endpoints ──────────────────────────────────────────────────
 void handleSetId() {
-  if (!server.hasArg("from") || !server.hasArg("to")) { errJson(400, "need from & to"); return; }
-  uint8_t a = (uint8_t)server.arg("from").toInt();
-  uint8_t b = (uint8_t)server.arg("to").toInt();
+  if (!rq.hasArg("from") || !rq.hasArg("to")) { errJson(400, "need from & to"); return; }
+  uint8_t a = (uint8_t)rq.arg("from").toInt();
+  uint8_t b = (uint8_t)rq.arg("to").toInt();
   if (a < 1 || a > 253 || b < 1 || b > 253) { errJson(400, "id out of range 1..253"); return; }
 
   // The write is addressed to one id, so with unique ids it is safe even on a full bus.
   // What the firmware still refuses, unless forced, is the genuinely dangerous pair:
   // a source the last detect never saw, or a target that is already taken (which would
   // leave two servos colliding on the same id, and scanning cannot tell them apart).
-  bool force = server.hasArg("force") && server.arg("force") != "0";
+  bool force = rq.hasArg("force") && rq.arg("force") != "0";
   if (!sc.done || sc.active) { errJson(409, "run a detect first"); return; }
   bool srcSeen = false, dstSeen = false;
   for (uint8_t i = 0; i < sc.nHits; i++) {
@@ -2366,9 +2426,9 @@ void handleSetId() {
   okJson(r);
 }
 void handleSetBaud() {
-  if (!server.hasArg("id") || !server.hasArg("idx")) { errJson(400, "need id & idx"); return; }
-  uint8_t id  = (uint8_t)server.arg("id").toInt();
-  uint8_t idx = (uint8_t)constrain(server.arg("idx").toInt(), 0, 7);
+  if (!rq.hasArg("id") || !rq.hasArg("idx")) { errJson(400, "need id & idx"); return; }
+  uint8_t id  = (uint8_t)rq.arg("id").toInt();
+  uint8_t idx = (uint8_t)constrain(rq.arg("idx").toInt(), 0, 7);
   if (st.Ping(id) == -1) { errJson(404, "no reply"); return; }
   st.unLockEprom(id);                 delay(10);
   st.writeByte(id, REG_BAUD, idx);    delay(20);
@@ -2380,8 +2440,8 @@ void handleSetBaud() {
   okJson(r);
 }
 void handleCenter() {
-  if (!server.hasArg("id")) { errJson(400, "need id"); return; }
-  uint8_t id = (uint8_t)server.arg("id").toInt();
+  if (!rq.hasArg("id")) { errJson(400, "need id"); return; }
+  uint8_t id = (uint8_t)rq.arg("id").toInt();
   if (st.Ping(id) == -1) { errJson(404, "no reply"); return; }
   st.CalibrationOfs(id); delay(20);
   int pos = st.ReadPos(id);
@@ -2390,9 +2450,9 @@ void handleCenter() {
   okJson(r);
 }
 void handleOfs() {
-  if (!server.hasArg("id") || !server.hasArg("val")) { errJson(400, "need id & val"); return; }
-  uint8_t id = (uint8_t)server.arg("id").toInt();
-  int val = server.arg("val").toInt();
+  if (!rq.hasArg("id") || !rq.hasArg("val")) { errJson(400, "need id & val"); return; }
+  uint8_t id = (uint8_t)rq.arg("id").toInt();
+  int val = rq.arg("val").toInt();
   st.unLockEprom(id);                          delay(10);
   st.writeWord(id, REG_OFS, (uint16_t)val);    delay(20);
   st.LockEprom(id);                            delay(10);
@@ -2400,10 +2460,10 @@ void handleOfs() {
   okJson(r);
 }
 void handleRegRead() {
-  if (!server.hasArg("id") || !server.hasArg("addr")) { errJson(400, "need id & addr"); return; }
-  uint8_t id   = (uint8_t)server.arg("id").toInt();
-  uint8_t addr = (uint8_t)server.arg("addr").toInt();
-  uint8_t len  = server.hasArg("len") ? (uint8_t)server.arg("len").toInt() : 2;
+  if (!rq.hasArg("id") || !rq.hasArg("addr")) { errJson(400, "need id & addr"); return; }
+  uint8_t id   = (uint8_t)rq.arg("id").toInt();
+  uint8_t addr = (uint8_t)rq.arg("addr").toInt();
+  uint8_t len  = rq.hasArg("len") ? (uint8_t)rq.arg("len").toInt() : 2;
   int val = (len == 1) ? st.readByte(id, addr) : st.readWord(id, addr);
   String r = F("{\"ok\":"); r += (val < 0 ? F("false") : F("true"));
   r += F(",\"id\":");   r += id;
@@ -2413,14 +2473,14 @@ void handleRegRead() {
   okJson(r);
 }
 void handleRegWrite() {
-  if (!server.hasArg("id") || !server.hasArg("addr") || !server.hasArg("val")) {
+  if (!rq.hasArg("id") || !rq.hasArg("addr") || !rq.hasArg("val")) {
     errJson(400, "need id, addr & val"); return;
   }
-  uint8_t id   = (uint8_t)server.arg("id").toInt();
-  uint8_t addr = (uint8_t)server.arg("addr").toInt();
-  uint8_t len  = server.hasArg("len") ? (uint8_t)server.arg("len").toInt() : 2;
-  int     val  = server.arg("val").toInt();
-  bool unlock  = server.hasArg("unlock") && server.arg("unlock") != "0";
+  uint8_t id   = (uint8_t)rq.arg("id").toInt();
+  uint8_t addr = (uint8_t)rq.arg("addr").toInt();
+  uint8_t len  = rq.hasArg("len") ? (uint8_t)rq.arg("len").toInt() : 2;
+  int     val  = rq.arg("val").toInt();
+  bool unlock  = rq.hasArg("unlock") && rq.arg("unlock") != "0";
   if (unlock) { st.unLockEprom(id); delay(10); }
   if (len == 1) st.writeByte(id, addr, (uint8_t)val);
   else          st.writeWord(id, addr, (uint16_t)val);
@@ -2457,20 +2517,20 @@ void handleConfigGet() {
 // GET /api/config/set?host=mod2&baud=1000000&hold=40&servos=1:J1:0:360|2:J2:80:280|...
 void handleConfigSet() {
   bool hostChanged = false;
-  if (server.hasArg("host")) {
-    String h = server.arg("host"); h.trim();
+  if (rq.hasArg("host")) {
+    String h = rq.arg("host"); h.trim();
     if (h.length() && h.length() < sizeof(cfg.host)) {
       hostChanged = h != String(cfg.host);
       strlcpy(cfg.host, h.c_str(), sizeof(cfg.host));
     }
   }
-  if (server.hasArg("baud")) {
-    uint32_t b = (uint32_t)server.arg("baud").toInt();
+  if (rq.hasArg("baud")) {
+    uint32_t b = (uint32_t)rq.arg("baud").toInt();
     if (b >= 9600 && b <= 1000000) cfg.baud = b;
   }
 
-  if (server.hasArg("servos")) {
-    String s = server.arg("servos");
+  if (rq.hasArg("servos")) {
+    String s = rq.arg("servos");
     uint8_t n = 0;
     int i = 0;
     while (i < (int)s.length() && n < MAX_SERVOS) {
@@ -2526,11 +2586,11 @@ void handleWifiGet() {
   okJson(j);
 }
 void handleWifiSet() {
-  if (!server.hasArg("slot")) { errJson(400, "need slot"); return; }
-  uint8_t s = (uint8_t)constrain(server.arg("slot").toInt(), 0, 2);
-  String ssid = server.arg("ssid");
-  String pass = server.arg("pass");
-  bool force  = server.hasArg("force");
+  if (!rq.hasArg("slot")) { errJson(400, "need slot"); return; }
+  uint8_t s = (uint8_t)constrain(rq.arg("slot").toInt(), 0, 2);
+  String ssid = rq.arg("ssid");
+  String pass = rq.arg("pass");
+  bool force  = rq.hasArg("force");
   if (!ssid.length() && !force) { errJson(400, "empty ssid (pass force=1 to clear)"); return; }
   strlcpy(cfg.ssid[s], ssid.c_str(), sizeof(cfg.ssid[s]));
   if (pass.length() || force) strlcpy(cfg.pass[s], pass.c_str(), sizeof(cfg.pass[s]));
@@ -2601,7 +2661,7 @@ void handleOtaUpload() {
     // The browser sends the file's exact length as ?size=. Telling Update the real size
     // is what makes a truncated transfer fail loudly here instead of being finalised into
     // an image the bootloader then refuses ("Could Not Activate The Firmware").
-    otaExpected  = server.hasArg("size") ? (size_t)server.arg("size").toInt() : 0;
+    otaExpected  = rq.hasArg("size") ? (size_t)rq.arg("size").toInt() : 0;
     otaGot       = 0;
     otaSum       = 2166136261u;
     otaAccepting = Update.begin(otaExpected ? otaExpected : UPDATE_SIZE_UNKNOWN);
@@ -2665,8 +2725,8 @@ void handleOtaDone() {
 
 // GET /api/ota/url?u=http://192.168.1.20:8000/firmware.bin  — the board pulls its own update
 void handleOtaUrl() {
-  if (!server.hasArg("u")) { errJson(400, "need u=<url>"); return; }
-  String url = server.arg("u");
+  if (!rq.hasArg("u")) { errJson(400, "need u=<url>"); return; }
+  String url = rq.arg("u");
   if (otaBusy) { errJson(409, "an update is already in progress"); return; }
   if (ESP.getFreeSketchSpace() == 0) {
     errJson(500, "no OTA partition on this board - re-flash over USB with an OTA scheme");
@@ -2735,6 +2795,177 @@ void guardTask(void*) {
   }
 }
 
+// ── ESP-NOW link ─────────────────────────────────────────────────────────────
+// The laptop's USB dongle (firmware/espnow_dongle; laptop side gos/python/gos/espnow.py) reaches the board with no
+// access point in between: no joining, no DHCP, no hotspot kicks. It uses the Wi-Fi network's channel (the laptop
+// finds it). Wi-Fi stays for firmware uploads and the web page.
+// - Requests run through the SAME handlers as the web API (route table + rq), one at a time, here in loop().
+// - The answer carries the request's number, so it is also the acknowledgement; the laptop resends until it has it.
+//   A repeat of the request just answered gets the saved answer again: nothing runs twice (torque toggles!).
+// - HELLO (name, address, channel) every second, and at once on the first heartbeat after a silence.
+// - While the laptop's heartbeat is heard the radio stays awake: in modem sleep it misses most frames (radioTick).
+// - Heartbeat silent NOW_HOLD_MS while the laptop was driving moves: each joint still on its way stops where it is
+//   and holds, torque on. Never limp, never a new move. A sequence the board plays by itself keeps playing.
+#define NOW_HELLO_MS 1000
+#define NOW_LINK_MS  1500    // a heartbeat this recent = linked over ESP-NOW (the laptop sends one every 100 ms)
+#define NOW_HOLD_MS   500    // silent this long while driving -> hold
+#define NOW_DRIVE_MS 3000    // a laptop move this recent = the laptop is driving
+
+struct NowIn { uint8_t mac[6]; uint8_t len; uint8_t data[r4now::FRAME_MAX]; };
+QueueHandle_t    nowQ = nullptr;
+r4now::Assembly* nowAsm = nullptr;      // 7.7 KB, made once
+bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false, nowHaveLast = false;
+uint8_t  nowPeer[6] = {0};
+uint32_t nowHbMs = 0, nowHelloMs = 0, nowMoveMs = 0;
+uint32_t nowReqs = 0, nowRepeats = 0, nowDrops = 0, nowHolds = 0;
+uint16_t nowLastSeq = 0;
+String   nowLastAnswer;
+
+bool nowLinked() { return nowHbSeen && millis() - nowHbMs < NOW_LINK_MS; }
+
+void nowOnRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {   // Wi-Fi task: just queue it
+  if (!nowQ || len <= 0 || len > r4now::FRAME_MAX) return;
+  NowIn m; memcpy(m.mac, info->src_addr, 6); m.len = (uint8_t)len; memcpy(m.data, data, len);
+  if (xQueueSend(nowQ, &m, 0) != pdTRUE) nowDrops++;
+}
+
+void nowInit() {
+  if (!nowQ) nowQ = xQueueCreate(40, sizeof(NowIn));
+  if (!nowAsm) nowAsm = new r4now::Assembly();
+  if (esp_now_init() != ESP_OK) return;              // Wi-Fi not started yet: nowPoll() tries again
+  esp_now_register_recv_cb(nowOnRecv);
+  esp_now_peer_info_t p = {}; memset(p.peer_addr, 0xff, 6); p.ifidx = WIFI_IF_STA;
+  esp_now_add_peer(&p);
+  nowPeerSet = false;
+  nowUp = true;
+}
+
+void nowStop() {                                     // before the Wi-Fi driver is switched off
+  if (nowUp) esp_now_deinit();
+  nowUp = false; nowPeerSet = false;
+}
+
+void nowSend(const uint8_t* mac, uint8_t type, uint16_t seq, const String& msg) {
+  uint8_t f[r4now::FRAME_MAX];
+  const int cnt = r4now::fragsFor(msg.length());
+  if (cnt > r4now::FRAG_MAX) return;
+  for (int i = 0; i < cnt; i++) {
+    int n = r4now::build(f, type, seq, (const uint8_t*)msg.c_str(), msg.length(), i);
+    for (int t = 0; esp_now_send(mac, f, n) == ESP_ERR_ESPNOW_NO_MEM && t < 20; t++) delay(1);
+  }
+}
+
+void nowHello(const uint8_t* mac) {
+  uint8_t ch = 0; wifi_second_chan_t sc; esp_wifi_get_channel(&ch, &sc);
+  String s; s.reserve(96);
+  s += F("name="); s += cfg.host;
+  s += F(" ip=");  s += WiFi.status() == WL_CONNECTED ? WiFi.localIP().toString() : String("-");
+  s += F(" fw=");  s += FW_VERSION;
+  s += F(" up=");  s += millis();
+  s += F(" ch=");  s += ch;
+  nowSend(mac, r4now::HELLO, 0, s);
+  nowHelloMs = millis();
+}
+
+void nowSetPeer(const uint8_t* mac) {
+  if (nowPeerSet && memcmp(mac, nowPeer, 6) == 0) return;
+  if (nowPeerSet) esp_now_del_peer(nowPeer);
+  memcpy(nowPeer, mac, 6);
+  esp_now_peer_info_t p = {}; memcpy(p.peer_addr, mac, 6); p.ifidx = WIFI_IF_STA; p.channel = 0;
+  esp_err_t e = esp_now_add_peer(&p);
+  nowPeerSet = e == ESP_OK || e == ESP_ERR_ESPNOW_EXIST;
+}
+
+void nowRun(uint16_t seq, const uint8_t* msg, int len) {
+  String all; all.concat((const char*)msg, len);
+  const int nl = all.indexOf('\n');
+  const String target = nl < 0 ? all : all.substring(0, nl);
+  const String body = nl < 0 ? String() : all.substring(nl + 1);
+  const int q = target.indexOf('?');
+  const String path = q < 0 ? target : target.substring(0, q);
+  const Route* r = nullptr;
+  for (uint8_t i = 0; i < nRoutes; i++) if (path == routes[i].path) { r = &routes[i]; break; }
+  nowReqs++;
+  String ans;
+  if (!r)             ans = F("404\n{\"ok\":false,\"error\":\"not found\"}");
+  else if (!r->radio) ans = F("501\n{\"ok\":false,\"error\":\"Wi-Fi only: use the board's address\"}");
+  else {
+    if (path == "/api/batch" || (path == "/api/command" && target.indexOf("cmd=pos") >= 0)) nowMoveMs = millis();
+    rq.fromRadio(q < 0 ? String() : target.substring(q + 1), nl < 0 ? nullptr : &body);
+    replyDefer = true; replyCode = 0;
+    if (r->bus) { BusLock L; r->fn(); } else r->fn();
+    replyDefer = false;
+    rq.fromWeb();
+    ans = String(replyCode ? replyCode : 500); ans += '\n'; ans += replyBody;
+    replyBody = String();
+  }
+  nowLastSeq = seq; nowHaveLast = true; nowLastAnswer = ans;
+  nowSend(nowPeer, r4now::RESP, seq, ans);
+}
+
+// Each joint still on its way stops where it is now (plus the little it coasts), torque on. Returns how many.
+uint8_t nowHold() {
+  uint8_t held = 0;
+  for (uint8_t i = 0; i < nServos; i++) {
+    ServoState& sv = servos[i];
+    if (!sv.torqueOn || sv.rawPos < 0 || sv.mode != POS_MODE || guards[i].state != G_OK) continue;
+    int left = (int)sv.targetRaw - sv.rawPos;
+    if (abs(left) < 8) continue;                     // already there (8 steps = 0.7 deg)
+    int coast = abs(sv.rawSpeed) / 16;               // ~60 ms of travel: no snap back against its own motion
+    if (coast > abs(left)) coast = abs(left);
+    uint16_t stop = (uint16_t)(sv.rawPos + (left > 0 ? coast : -coast));
+    sv.targetRaw = stop; sv.targetDeg = rawToNom(sv.id, stop); sv.lastCommandMs = millis();
+    st.WritePosEx(sv.id, (int16_t)stop, sv.speedRaw ? sv.speedRaw : speedScaleToRaw(10), POS_ACC_DEFAULT);
+    delay(2);
+    held++;
+  }
+  return held;
+}
+
+void nowPoll() {
+  if (!nowUp) { if (WiFi.getMode() != WIFI_OFF) nowInit(); if (!nowUp) return; }
+  NowIn m;
+  while (xQueueReceive(nowQ, &m, 0) == pdTRUE) {
+    r4now::Head h; const uint8_t* p; int n;
+    if (!r4now::parse(m.data, m.len, h, p, n)) continue;
+    if (h.type == r4now::HB) {
+      const bool fresh = !nowLinked();
+      nowSetPeer(m.mac);                             // only the laptop's dongle sends heartbeats
+      nowHbMs = millis(); nowHbSeen = true;
+      if (nowHeld) { nowHeld = false; lg("ESP-NOW: laptop back"); }
+      if (fresh) { lg("ESP-NOW: laptop heard"); nowHello(nowPeer); }
+    } else if (h.type == r4now::REQ && !otaBusy) {
+      nowSetPeer(m.mac);
+      if (nowHaveLast && h.seq == nowLastSeq) {      // a resend of the request just answered
+        if (h.idx == h.cnt - 1) { nowRepeats++; nowSend(nowPeer, r4now::RESP, h.seq, nowLastAnswer); }
+        continue;
+      }
+      if (nowAsm->add(h, p, n)) { nowRun(h.seq, nowAsm->buf, nowAsm->len); nowAsm->reset(); }
+    }
+  }
+  const uint32_t now = millis();
+  if (now - nowHelloMs > NOW_HELLO_MS) {             // not linked: say it to everyone, so a searching laptop finds us
+    static const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    nowHello(nowLinked() && nowPeerSet ? nowPeer : all);
+  }
+  if (nowHbSeen && !nowHeld && !otaBusy && now - nowHbMs > NOW_HOLD_MS && nowMoveMs && now - nowMoveMs < NOW_DRIVE_MS + NOW_HOLD_MS) {
+    nowHeld = true; nowHolds++;
+    uint8_t held; { BusLock L; held = nowHold(); }
+    lg("ESP-NOW: laptop silent %lu ms while driving - %u joint(s) stopped where they were, holding", (unsigned long)(now - nowHbMs), held);
+  }
+}
+
+String nowJson() {
+  String j = F("{\"linked\":"); j += nowLinked() ? F("true") : F("false");
+  j += F(",\"hbAgeMs\":");  j += nowHbSeen ? (long)(millis() - nowHbMs) : -1L;
+  j += F(",\"requests\":"); j += nowReqs;
+  j += F(",\"repeats\":");  j += nowRepeats;
+  j += F(",\"dropped\":");  j += nowDrops;
+  j += F(",\"holds\":");    j += nowHolds;
+  j += '}';
+  return j;
+}
+
 void setup() {
   captureLastBoot();          // must be first: nothing may overwrite the breadcrumb
   busMx = xSemaphoreCreateRecursiveMutex();
@@ -2765,7 +2996,7 @@ void setup() {
   wifiInit();                          // non-blocking: the server is up in milliseconds
   otaConfig();                         // begin() happens in wifiTick once we have an IP
 
-  route("/",                    handleUI, false);          // the web page
+  route("/",                    handleUI, false, false);   // the web page (Wi-Fi only)
   route("/api/health",          handleHealth);
   route("/api/telemetry",       handleTelemetry);
   route("/api/command",         handleCommand);
@@ -2804,7 +3035,7 @@ void setup() {
   route("/api/wifi/reconnect",  handleWifiReconnect);
   route("/api/wifi/scan",       handleWifiScan);
   route("/api/radio",           handleRadio, false);   // radio sleep on/off for Wi-Fi tests
-  route("/api/ota/url",         handleOtaUrl, false);
+  route("/api/ota/url",         handleOtaUrl, false, false);
   server.on("/api/ota", HTTP_POST, handleOtaDone, handleOtaUpload);
   server.on("/api/ota", HTTP_OPTIONS, []() { setCORS(); server.send(204); });
   server.onNotFound([]() {
@@ -2860,6 +3091,7 @@ void loop() {
   server.handleClient();
   ArduinoOTA.handle();
   wifiTick();
+  nowPoll();                            // ESP-NOW requests run here, between web requests (same handlers)
   { BusLock L; livePoll(); }            // its UDP socket is shared with the guard task's liveSend()
   radioTick();
   if (mdnsOk) { /* ESPmDNS services itself in the background */ }

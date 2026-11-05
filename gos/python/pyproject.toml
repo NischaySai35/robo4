@@ -13,7 +13,7 @@ dependencies = ["numpy"]
 
 [project.optional-dependencies]
 ik = ["mink", "daqp"]
-network = ["eclipse-zenoh", "cryptography"]
+network = ["eclipse-zenoh", "cryptography", "pyserial"]
 studio = ["websockets"]
 record = ["mcap"]
 ros = ["xacro"]

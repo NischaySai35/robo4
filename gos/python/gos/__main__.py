@@ -224,7 +224,7 @@ def main(argv=None):
     s.add_parser('doctor', help='check this computer for what GOS needs')
     w = s.add_parser('ws', help='build or test every package in a workspace (like colcon)'); w.add_argument('action', choices=['build', 'test']); w.add_argument('folder', nargs='?', default='.')
     s.add_parser('plugins', help='commands added by other packages or gos-NAME programs')
-    rb = s.add_parser('robot', help='put a real module on the GOS network (its board keeps its own firmware)'); rb.add_argument('action', choices=['serve', 'list']); rb.add_argument('address', nargs='?', help='serve: the board, e.g. mod1.local or 192.168.1.40'); rb.add_argument('--name', help='topic prefix (default: the board name, e.g. mod1)'); rb.add_argument('--rate', type=float, default=20, help='joint states per second')
+    rb = s.add_parser('robot', help='put a real module on the GOS network (its board keeps its own firmware)'); rb.add_argument('action', choices=['serve', 'list', 'bridge']); rb.add_argument('address', nargs='?', help='serve: the board, e.g. mod1.local or 192.168.1.40; bridge: the ESP-NOW dongle port, e.g. COM7 (default: find it)'); rb.add_argument('--port', type=int, default=8790, help='bridge: web gateway port'); rb.add_argument('--channel', type=int, help='bridge: Wi-Fi channel of the modules (default: search)'); rb.add_argument('--name', help='topic prefix (default: the board name, e.g. mod1)'); rb.add_argument('--rate', type=float, default=20, help='joint states per second')
     a = p.parse_args(argv)
     need = lambda x, what: x if x is not None else (_ for _ in ()).throw(GosError(f'Give the {what}.'))
     try:
@@ -285,6 +285,21 @@ def main(argv=None):
             found = find_modules()
             print('\n'.join(f"{m['name']:8s} {m['ip']:16s} firmware {m['fw']}" for m in found) or 'No modules found. Are they powered and on the same Wi-Fi as this computer?')
             print(f'{len(found)} module(s).')
+        elif a.cmd == 'robot' and a.action == 'bridge':
+            from .espnow import EspNowLink, serve_gateway
+            link = EspNowLink.open(a.address, channel=a.channel)
+            srv = serve_gateway(link, a.port)
+            print(f'ESP-NOW dongle ready ({link.dongle.info}). Gateway: http://127.0.0.1:{a.port}/<module>/api/... (e.g. /mod1/api/health). Ctrl+C stops.', flush=True)
+            seen = set()
+            try:
+                while True:
+                    time.sleep(0.5)
+                    now = {m.name for m in link.alive()}
+                    for n in sorted(now - seen): print(f'+ {n} heard on channel {link.channel}', flush=True)
+                    for n in sorted(seen - now): print(f'- {n} not heard for {link.STALE:.0f} s', flush=True)
+                    seen = now
+            except KeyboardInterrupt: pass
+            finally: srv.shutdown(); link.close()   # the heartbeat stops: a module the laptop was driving holds its pose
         elif a.cmd == 'robot':
             from .hardware import Esp32Robot, serve_robot
             need(a.address, 'board address, e.g. mod1.local')

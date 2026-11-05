@@ -47,7 +47,8 @@ START=$(date +%s)
 # (app, bootloader, merged, partitions, boot_app0) into build/ here, right next to the one
 # that matters - too easy to pick the wrong one on the OTA page.
 WORK="${TMPDIR:-${TEMP:-/tmp}}/robo4-esp32_multi-build"
-"$CLI" compile --fqbn "$FQBN" --libraries "$LIBS" --build-path "$WORK" "$SKETCH_DIR"
+# R4Now = the ESP-NOW frame format shared with firmware/espnow_dongle
+"$CLI" compile --fqbn "$FQBN" --libraries "$LIBS" --library "$SKETCH_DIR/../libraries/R4Now" --build-path "$WORK" "$SKETCH_DIR"
 rm -rf build                                # leftovers from the old --export-binaries layout
 
 BUILT="$WORK/esp32_multi.ino.bin"

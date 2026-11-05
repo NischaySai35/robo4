@@ -91,7 +91,9 @@ class Dongle:
     def _reader(self):
         buf = bytearray()
         while self._run:
-            try: chunk = self.port.read(4096)
+            # read what is there (at least 1 byte): read(4096) waits for 4096 bytes or the 50 ms timeout, which added
+            # ~50 ms to every answer (health took 77 ms, measured on mod1 6 Nov)
+            try: chunk = self.port.read(max(1, getattr(self.port, 'in_waiting', 0) or 0))
             except Exception: break
             if not chunk: continue
             buf += chunk
@@ -206,6 +208,11 @@ class EspNowLink:
             kv = dict(x.split('=', 1) for x in payload.decode(errors='replace').split() if '=' in x)
             m.name, m.ip, m.fw = kv.get('name', m.name), kv.get('ip', m.ip), kv.get('fw', m.fw)
             m.ch = int(kv.get('ch', 0) or 0)
+            # The radio also hears a neighbouring channel a little (mod1 on 13 was found from 12): enough for a hello,
+            # not for a 14-piece answer. The hello says the module's real channel, so go there.
+            if m.ch and m.ch != self.channel and not self._fixed and 1 <= m.ch <= 13:
+                self.channel = m.ch
+                self.dongle.channel(m.ch)
             if m.ch and m.ch != self._remembered(): self._remember(m.ch)
         elif kind == RESP:
             m.seen = time.time()

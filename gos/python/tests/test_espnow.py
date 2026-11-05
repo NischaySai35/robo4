@@ -51,11 +51,16 @@ class FakeAir:
 
     def _lost(self): return self.rng.random() < self.loss
 
+    def _hears(self):           # a neighbouring channel lets only hellos through (seen on mod1: 13 heard from 12)
+        return self.tuned == self.channel or abs(self.tuned - self.channel) == 1
+
     def _to_laptop(self, frame):
-        if self.tuned == self.channel and not self._lost(): self._usb('R', MAC + struct.pack('b', -50) + frame)
+        exact = self.tuned == self.channel
+        if (exact or (self._hears() and frame[2] == espnow.HELLO)) and not self._lost():
+            self._usb('R', MAC + struct.pack('b', -50) + frame)
 
     def _air_to_module(self, mac, frame):
-        if self.tuned != self.channel or self._lost(): return
+        if not self._hears() or self._lost(): return
         kind, seq, idx, cnt, payload = espnow.parse(frame)
         if kind == espnow.HB:
             if time.time() - self.hb_seen > 0.5 or time.time() - self.hello_at > 1.0: self._hello()   # at once after silence, then every second

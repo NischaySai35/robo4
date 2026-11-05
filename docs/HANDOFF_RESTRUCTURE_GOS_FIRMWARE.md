@@ -114,6 +114,17 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - [ ] `docs/RESTRUCTURING.md` / `docs/GOS_PARITY.md`: add the firmware guard and the G10 progress when they change.
 - [ ] Option B (a GOS client inside the firmware): only if the laptop translator (`gos robot serve`) proves too slow. Not needed so far.
 
+### ESP-NOW link (6 Nov, on mod1, read-only checks)
+- [x] **Dongle:** ESP32-CAM (AI-Thinker, CH340 = COM7, flashes with no button) runs `firmware/espnow_dongle`; only the radio.
+  - Camera + SD tested first (`firmware/espcam_test`, `tools/espcam/grab.py`): OV3660, 640x480 JPEG in 0.19 s.
+- [x] **mod1** runs the ESP-NOW firmware: every web-API handler also answers over the radio (`rq` + route table), repeats get the saved answer.
+- [x] **Laptop:** `gos robot bridge COM7` -> `http://127.0.0.1:8790/mod1/api/...` answers like the board. Channel found by itself (mod1's hello names it; remembered in `~/.gos/espnow_channel`).
+- [x] Measured: health 19 ms median (Wi-Fi: 250-600 ms), telemetry 4.3 KB in 95 ms; 60 s non-stop: 1,565 reads, worst 123 ms, 0 resends, no 2 s pauses.
+- [ ] **Hold on silence** (laptop quiet 0.5 s while driving -> joints stop where they are) is untested: needs motors, ask first.
+- [ ] Heat: radio stays awake while linked: chip 65-67 C (62-64 napping). Watch it during longer runs.
+- [ ] Point the Studio / `sim/real_sync.py` (other chat's) / `gos robot serve` at the gateway address instead of mod1's own.
+- [ ] Dongle reception is weak-ish (-76..-80 dBm at mod1); a dongle with an external antenna would give more margin.
+
 ---
 
 ## 4. Key files

@@ -222,12 +222,26 @@ String  logBuf[LOG_LINES];
 uint8_t logHead = 0, logCount = 0;
 
 SemaphoreHandle_t lgMx = nullptr;   // lg() is called from loop() and from the guard task
+void logStore(const char* b, TickType_t wait);
 void lg(const char* fmt, ...) {
-  if (lgMx) xSemaphoreTake(lgMx, portMAX_DELAY);
   char b[180];
   va_list ap; va_start(ap, fmt);
   vsnprintf(b, sizeof(b), fmt, ap);
   va_end(ap);
+  logStore(b, portMAX_DELAY);
+}
+// The Wi-Fi chip's own messages (ESP-IDF log, errors only in this build) into the same log, so /api/log shows why the
+// radio did something (5 Nov 2026: the laptop kicks the board every 120.6 s and the board gives no reason). Called on
+// the Wi-Fi task: it never waits for the log lock, a line is dropped instead.
+vprintf_like_t idfPrevLog = nullptr;
+int idfToLog(const char* fmt, va_list ap) {
+  char b[180]; va_list c; va_copy(c, ap); int n = vsnprintf(b, sizeof(b), fmt, c); va_end(c);
+  size_t k = strlen(b); while (k && (b[k - 1] == 10 || b[k - 1] == 13)) b[--k] = 0;
+  if (k) logStore(b, 0);
+  return n;
+}
+void logStore(const char* b, TickType_t wait) {
+  if (lgMx && xSemaphoreTake(lgMx, wait) != pdTRUE) return;
   Serial.println(b);
   char stamp[16];
   snprintf(stamp, sizeof(stamp), "[%7lu] ", millis());
@@ -285,6 +299,7 @@ constexpr uint8_t  POS_ACC_DEFAULT = 40;
 unsigned long lastFast = 0, lastSlow = 0;
 uint8_t       slowIdx = 0;
 bool          otaBusy = false;      // pause the servo bus while flashing
+bool          radioAwake = false;   // radio fully awake now, not napping (radioTick)
 // After every power-on the board refuses moves sent from a laptop (/api/batch): a program that was streaming before a
 // power cut must not drive the robot the moment it comes back. Only an operator action unlocks it: Turn torque ON, Go to
 // manual home, a servo's own buttons, or playing a sequence (Nischay, 4 Nov 2026).
@@ -1276,7 +1291,6 @@ void livePoll() {
 
 // Radio fully awake only while the robot moves: commands answered at once and angles streamed fast. Standing still
 // (even while a laptop watches in live mode) it stays in modem sleep: sending still works, it just stays cool.
-bool radioAwake = false;
 bool radioHold  = false;   // /api/radio?awake=1: keep the radio awake for a Wi-Fi test (not saved; a reboot clears it)
 bool guardBusy();
 bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS || guardBusy(); }
@@ -2619,6 +2633,7 @@ void setup() {
   busMx = xSemaphoreCreateRecursiveMutex();
   sketchSizeBoot = ESP.getSketchSize(); otaSpaceBoot = ESP.getFreeSketchSpace();
   lgMx  = xSemaphoreCreateMutex();
+  idfPrevLog = esp_log_set_vprintf(idfToLog);
   Serial.begin(115200);
   delay(300);
   cfgLoad();

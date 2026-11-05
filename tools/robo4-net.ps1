@@ -26,7 +26,13 @@ param(
   [int]   $Seconds  = 0,        # 0 = forever
   [int]   $HbMs     = 200,
   [int]   $Port     = 4210,
-  [int]   $ParentPid = 0        # stop when this process is gone (the Studio, if it was killed)
+  [int]   $ParentPid = 0,       # stop when this process is gone (the Studio, if it was killed)
+  # hotspot = Windows Mobile Hotspot with this name and password (default). Measured 5 Nov 2026: Wi-Fi Direct (the old
+  # way) dropped the ESP32 every 120.6 s on one fixed clock (gone 0.6-2.8 s each time) while a phone stayed; on the
+  # Mobile Hotspot the module stayed 4 minutes without a single drop. The laptop's own hotspot settings are put back
+  # when this stops. It needs an internet connection to share: without one it falls back to direct.
+  # direct  = Wi-Fi Direct group owner.
+  [ValidateSet('direct', 'hotspot')] [string]$Mode = 'hotspot'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,7 +52,42 @@ $owned = $false
 try { $owned = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $owned = $true }   # previous owner was killed
 if (-not $owned) { Log 'ROBO4-NET is already running in another process - leaving it to that one'; exit 3 }
 
+if ($Mode -eq 'hotspot') {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $null = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager, Windows.Networking.NetworkOperators, ContentType = WindowsRuntime]
+  $null = [Windows.Networking.Connectivity.NetworkInformation, Windows.Networking.Connectivity, ContentType = WindowsRuntime]
+  $asTaskOp = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+                $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' } | Select-Object -First 1
+  function Wait-Op($op, [Type]$t) { $k = $asTaskOp.MakeGenericMethod($t).Invoke($null, @($op)); [void]$k.Wait(-1); $k.Result }
+  $asTaskAct = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+                 $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' } | Select-Object -First 1
+  function Wait-Act($op) { [void]$asTaskAct.Invoke($null, @($op)).Wait(-1) }
+  $hsOld = $null
+}
+
+# The network object: Status says 'Started' while it is up, Stop() takes it down.
 function New-Publisher {
+  if ($Mode -eq 'hotspot') {
+    $prof = [Windows.Networking.Connectivity.NetworkInformation]::GetInternetConnectionProfile()
+    if (-not $prof) { throw 'Mobile Hotspot needs an internet connection to share' }
+    $m = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($prof)
+    $c = $m.GetCurrentAccessPointConfiguration()
+    if (-not $script:hsOld) { $script:hsOld = @{ Ssid = $c.Ssid; Pass = $c.Passphrase; Band = $c.Band } }
+    $c.Ssid = $Ssid; $c.Passphrase = $Pass; $c.Band = 'TwoPointFourGigahertz'   # the ESP32-C3 cannot see 5 GHz
+    Wait-Act ($m.ConfigureAccessPointAsync($c))
+    $r = Wait-Op ($m.StartTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult])
+    if ($r.Status -ne 'Success') { throw "Mobile Hotspot did not start: $($r.Status) $($r.AdditionalErrorMessage)" }
+    $o = [pscustomobject]@{ M = $m }
+    $o | Add-Member ScriptProperty Status { if ([string]$this.M.TetheringOperationalState -eq 'On') { 'Started' } else { [string]$this.M.TetheringOperationalState } }
+    $o | Add-Member ScriptMethod Stop {
+      [void](Wait-Op ($this.M.StopTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult]))
+      if ($script:hsOld) {   # the laptop's own hotspot settings back as they were
+        $c = $this.M.GetCurrentAccessPointConfiguration(); $c.Ssid = $script:hsOld.Ssid; $c.Passphrase = $script:hsOld.Pass; $c.Band = $script:hsOld.Band
+        Wait-Act ($this.M.ConfigureAccessPointAsync($c))
+      }
+    }
+    return $o
+  }
   $p = New-Object Windows.Devices.WiFiDirect.WiFiDirectAdvertisementPublisher
   $p.Advertisement.IsAutonomousGroupOwnerEnabled = $true
   $ls = $p.Advertisement.LegacySettings          # legacy = plain WPA2 AP any device can join
@@ -87,7 +128,7 @@ $watch = [PowerShell]::Create().AddScript({
 }).AddArgument($shared)
 $watchRun = $watch.BeginInvoke()
 
-$pub = $null; $lastStatus = ''; $bcast = $null; $members = @()
+$pub = $null; $hsFails = 0; $lastStatus = ''; $bcast = $null; $members = @()
 $udp = New-Object Net.Sockets.UdpClient
 $udp.EnableBroadcast = $true
 $seq = [uint32]0
@@ -95,7 +136,7 @@ $sw = [Diagnostics.Stopwatch]::StartNew()
 $nextCheck = 0
 $nextBeat = 0
 
-Log "ROBO4-NET: '$Ssid' heartbeat every $HbMs ms on udp/$Port"
+Log "ROBO4-NET ($Mode): '$Ssid' heartbeat every $HbMs ms on udp/$Port"
 try {
   while ($Seconds -le 0 -or $sw.Elapsed.TotalSeconds -lt $Seconds) {
     $now = [int64]$sw.ElapsedMilliseconds
@@ -106,7 +147,10 @@ try {
       if ($st -ne 'Started') {
         # Windows aborts the network when Wi-Fi is toggled or the internet side changes band.
         try { if ($pub) { $pub.Stop() } } catch {}
-        try { $pub = New-Publisher } catch { Log "start failed: $($_.Exception.Message)"; $pub = $null }
+        try { $pub = New-Publisher } catch {
+          Log "start failed: $($_.Exception.Message)"; $pub = $null
+          if ($Mode -eq 'hotspot' -and ++$hsFails -ge 3) { Log 'Mobile Hotspot will not start - using Wi-Fi Direct instead'; $Mode = 'direct' }
+        }
       }
       $b = $shared.Bcast
       if ("$b" -ne "$bcast") { $bcast = $b; Log "modules subnet broadcast: $bcast" }

@@ -16,7 +16,43 @@
 @import "@fontsource/rajdhani/700.css";
 @import "@fontsource/share-tech-mono/400.css";
 
+/* Tailwind's dark: follows the app's own theme switch (<html data-theme>), not the computer's dark setting. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Native parts (dropdown lists, scrollbars, date pickers, checkboxes) follow the app theme too. */
+:root { color-scheme: light; }
+[data-theme="dark"] { color-scheme: dark; }
+
+/* White theme: same blues and greys as the old light screens (index.css :root), so new and old controls match. */
 [data-ui="a"] {
+  --background: #ffffff;
+  --foreground: #11223b;
+  --card: #ffffff;
+  --card-foreground: #11223b;
+  --popover: #ffffff;
+  --popover-foreground: #11223b;
+  --primary: #0062cc;
+  --primary-foreground: #ffffff;
+  --secondary: #e3eaf4;
+  --secondary-foreground: #11223b;
+  --muted: #eef2f8;
+  --muted-foreground: #3f5577;
+  --accent: #0062cc;
+  --accent-foreground: #ffffff;
+  --destructive: #bd1c00;
+  --border: #a6b9d2;
+  --input: #a6b9d2;
+  --ring: #0062cc;
+  --ok: #007a36;
+  --warn: #ad5a00;
+  --end-a: #1a2f8f;
+  --end-b: #d97800;
+  --locked: #007a36;
+  --radius: 3px;
+}
+
+/* Dark theme: Direction A, Blender-like. */
+[data-theme="dark"] [data-ui="a"], [data-theme="dark"][data-ui="a"] {
   --background: #1d1d1d;
   --foreground: #cfcfcf;
   --card: #262626;

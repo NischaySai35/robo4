@@ -21,7 +21,7 @@ import {
 import { edgeProblem } from '@/robotics/msrr2/rules';
 import { toSimScene, physicsFetch } from '@/robotics/msrr2/simScene';
 import { jointTolerance, type JointRange } from '@/robotics/msrr2/tolerance';
-import { Section, Row } from '@/features/msrr/panelParts';
+import { Section, Row, LogStrip } from '@/features/msrr/panelParts';
 import { MarginChips } from './MarginChips';
 import { ShapesTab } from './ShapesTab';
 import { PlanTab } from './PlanTab';
@@ -63,11 +63,7 @@ export default function V2Panel() {
 
 function V2Log() {
   const log = useV2Store((s) => s.log);
-  return (
-    <div className="msrr-log" style={{ maxHeight: 140, overflow: 'auto', fontFamily: 'monospace', fontSize: 11, padding: '6px 10px', borderTop: '1px solid #2a2f36' }}>
-      {log.slice(-40).map((l, i) => <div key={i}>{l}</div>)}
-    </div>
-  );
+  return <LogStrip log={log.slice(-40)} onClear={() => useV2Store.setState({ log: [] })} />;
 }
 
 // ── Robot tab (M1) ────────────────────────────────────────────────────────────

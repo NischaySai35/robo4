@@ -468,7 +468,7 @@
   font-weight: 700;
   padding: 1px 5px;
   border-radius: 4px;
-  background: var(--bg-app, rgba(127,127,127,0.15));
+  background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text-dim);
 }

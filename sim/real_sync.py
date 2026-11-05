@@ -26,6 +26,7 @@ SEND_DT = 0.06                 # s: the board's own read / write cycle
 LAG = float(os.environ.get('SYNC_LAG', '0.12'))   # s: command delay (60-180 ms in the servo model): moving joints are led by this
 FOLLOW_RATE, CATCH_RATE = 60.0, 15.0   # deg/s: following the sim / closing a big gap after Sync
 CATCH_GAP = 3.0                # deg: further from the wanted angle than this = still catching up
+RESUME_GAP_S = 2.0             # s: offline longer than this (or restarted) = hold until Sync is pressed again
 BEHIND_DEG, LOAD_STOP, HOLD_S = 25.0, 900, 0.5   # holds when a servo stays this far behind, or this loaded (0.1 %), this long
 TRIM_MAX, TRIM_RATE, TRIM_DEAD = 3.0, 0.5, 0.1   # deg, deg/s, deg: the slow encoder trim
 SMOOTH_S = 0.3                 # s: the correction is low-passed, contact spikes must not shake the robot
@@ -105,11 +106,18 @@ class ModuleLink:
     def __init__(self, mid, host, want):
         self.mid, self.want, self.host = mid, want, host; self.board = Esp32Robot('http://' + host, timeout=0.4)
         self.online = False; self.read = {}; self.load = {}; self.error = ''; self.alive = True; self.sending = False
-        self.sent = {}; self.trim = np.zeros(7); self.held = ''; self.far_t = None
+        self.sent = {}; self.trim = np.zeros(7); self.held = ''; self.far_t = None; self.lost_at = None; self.board_ms = None
         self.th = threading.Thread(target=self._run, daemon=True); self.th.start()
 
     def _poll(self):
         t = self.board.telemetry(); ids = {s['id']: s for s in t.get('servos', [])}
+        # back after a long gap or a restart (power cut: the board now boots limp): never resume by itself (Nischay, 4 Nov)
+        restarted = self.board_ms is not None and t.get('ms') is not None and t['ms'] + 1000 < self.board_ms
+        self.board_ms = t.get('ms', self.board_ms)
+        gap = time.time() - self.lost_at if self.lost_at else 0.0
+        self.lost_at = None
+        if self.sending and not self.held and (restarted or gap > RESUME_GAP_S):
+            self.held = 'module restarted (power cut?): check it, then press Sync' if restarted else f'no contact for {gap:.0f} s: check it, then press Sync'
         self.read = {j: ids[i]['currentAngle'] for j, i in SERVO_ID.items() if i in ids and ids[i].get('currentAngle') is not None}
         self.load = {j: ids[i].get('loadAbs', 0) for j, i in SERVO_ID.items() if i in ids}
         self.online = True; self.error = ''
@@ -143,8 +151,10 @@ class ModuleLink:
                     self.board._get('/api/batch?' + urllib.parse.urlencode(q))
                 last = t0
             except GosError as e:
+                self.lost_at = self.lost_at or time.time()
                 self.online = False; self.error = str(e).split('.')[0]; self.sent = {}; time.sleep(0.5)   # back online: starts again from the robot's real pose
             except Exception as e:
+                self.lost_at = self.lost_at or time.time()
                 self.online = False; self.error = f'{type(e).__name__}: {e}'; self.sent = {}; time.sleep(0.5)
             time.sleep(max(0.0, SEND_DT - (time.time() - t0)))
 

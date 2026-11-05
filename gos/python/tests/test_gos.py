@@ -564,6 +564,8 @@ class FakeBoard:
         self.homes = {i + 1: 180.0 + i for i in range(n)}
         self.angles.update(self.homes)
         self.calls = []
+        self.ms = 100000  # the board's clock: ms since power-on
+        self.locked = False  # like the firmware after power-on: refuses /api/batch until the operator acts
         board = self
         class H(http.server.BaseHTTPRequestHandler):
             def log_message(self, *a): pass
@@ -574,8 +576,12 @@ class FakeBoard:
                 if u.path == '/api/health':
                     body = {'ok': True, 'device': 'ROBO4-ESP32', 'ip': '127.0.0.1', **({'live': board.live_port} if live else {})}
                 elif u.path == '/api/telemetry':
-                    body = {'servos': [{'id': i, 'label': f'J{i}', 'min': 80, 'max': 280, 'currentAngle': board.angles[i], 'home': board.homes[i]} for i in board.angles]}
+                    board.ms += 50
+                    body = {'ms': board.ms, 'servos': [{'id': i, 'label': f'J{i}', 'min': 80, 'max': 280, 'currentAngle': board.angles[i], 'home': board.homes[i]} for i in board.angles]}
                 else:
+                    if u.path == '/api/batch' and board.locked:
+                        data = json.dumps({'ok': False, 'error': 'locked after power-on: nothing moves until you press Turn torque ON'}).encode()
+                        self.send_response(423); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data); return
                     if u.path == '/api/batch':
                         for k, v in q.items():
                             if k.isdigit(): board.angles[int(k)] = float(v)
@@ -696,6 +702,31 @@ def test_downloads_show_a_progress_bar_in_a_terminal_and_lines_in_a_log():
     p.finish()
     lines = log.getvalue().splitlines()
     assert '\r' not in log.getvalue() and 10 <= len(lines) <= 12, 'a log gets about one line per 10%, no redrawing'
+
+
+def test_a_restarted_or_silent_module_is_disarmed():
+    import time
+    from gos.hardware import Esp32Robot
+    board = FakeBoard()
+    robot = Esp32Robot.from_board(board.url)
+    assert robot.arm().ok and robot.move({'J3': 0.1}).ok
+    board.ms = 3000; robot.read()                  # its clock went back: it powered off and on
+    assert not robot.armed
+    r = robot.move({'J3': 0.2})
+    assert not r.ok and 'restarted' in r.message, r.message
+    assert robot.arm().ok and robot.move({'J3': 0.1}).ok, 'arming again works'
+    robot._contact_at -= 3                         # as if nothing came back for 3 s
+    r = robot.move({'J3': 0.2})
+    assert not r.ok and 'no reply' in r.message and not robot.armed, r.message
+
+
+def test_a_board_locked_after_power_on_refuses_moves_with_its_reason():
+    from gos.hardware import Esp32Robot
+    board = FakeBoard(); board.locked = True
+    robot = Esp32Robot.from_board(board.url)
+    assert robot.arm().ok
+    with pytest.raises(gos.GosError, match='locked after power-on'):
+        robot.move({'J3': 0.2})
 
 
 def test_an_unreachable_robot_says_what_to_check():

@@ -34,16 +34,16 @@ export default function SpreadHud({ source = 'document' }: { source?: 'document'
   const better = prev.current != null && s.energy < prev.current - 1e-6;
   const worse = prev.current != null && s.energy > prev.current + 1e-6;
   prev.current = s.energy;
-  const color = better ? '#4ade80' : worse ? '#f87171' : 'rgba(255,255,255,0.85)';
+  const color = better ? 'var(--hud-good)' : worse ? 'var(--hud-bad)' : 'var(--hud-text)';
 
   // No absolute positioning / magic offset: this is a flow item inside .vp-hud-stack, so
   // the stats box below can grow (RAM, Load, the CPU/GPU expansion) without colliding.
   const box: React.CSSProperties = {
     alignSelf: 'flex-start',
-    background: 'rgba(30,30,30,0.38)', backdropFilter: 'blur(6px)',
-    border: '1px solid rgba(255,255,255,0.10)', borderRadius: 8, padding: '5px 10px',
+    background: 'var(--hud-bg)', backdropFilter: 'blur(6px)',
+    border: '1px solid var(--hud-border)', borderRadius: 8, padding: '5px 10px',
     font: '10px/1 var(--font-mono, ui-monospace, monospace)', letterSpacing: '0.05em',
-    color: 'rgba(255,255,255,0.45)', pointerEvents: 'none', whiteSpace: 'nowrap',
+    color: 'var(--hud-label)', pointerEvents: 'none', whiteSpace: 'nowrap',
   };
 
   return (

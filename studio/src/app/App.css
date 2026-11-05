@@ -242,6 +242,10 @@
   box-shadow: 0 0 0 3px var(--accent);
 }
 
+/* Set by useNavFit (App.tsx) when the full tab names don't fit next to the chips on the right. */
+.app-nav--compact .app-nav-tab:not(.active) .app-nav-label { display: none; }
+.app-nav--compact .app-nav-tab:not(.active) { padding: 7px 10px; }
+
 .app-header-space { flex: 1 1 0; min-width: 8px; }
 
 .app-header-right {

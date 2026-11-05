@@ -52,3 +52,9 @@ export function parseTelemetry(line: any) {
   try { return { type: 'json', data: JSON.parse(s) }; }
   catch { return { type: 'text', data: s }; }
 }
+/** Why a module board refused a request, in its own words (its web API answers {"ok":false,"error":"..."}), e.g.
+ *  423 "locked after power-on: nothing moves until you press Turn torque ON ...". Falls back to the HTTP status. */
+export async function boardRefusal(res: Response): Promise<string> {
+  try { const j = await res.clone().json(); if (j?.error) return String(j.error); } catch { /* not JSON */ }
+  return `${res.status} ${res.statusText}`.trim();
+}

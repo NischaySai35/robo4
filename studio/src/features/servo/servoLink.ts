@@ -10,6 +10,7 @@
  */
 import type { Document } from '@/core/model/index';
 import { useEspNodesStore, type EspNode } from '@/state/espNodesStore';
+import { boardRefusal } from '@/hardware/protocol';
 
 export interface ServoRoute {
   jointId: string;
@@ -97,7 +98,7 @@ export async function sendServoBatch(
   await Promise.all([...perUrl.entries()].map(async ([url, g]) => {
     try {
       const res = await fetch(`${url}/api/batch?${g.qs}`, { signal: AbortSignal.timeout(5000) });
-      if (!res.ok) throw new Error(res.statusText);
+      if (!res.ok) throw new Error(await boardRefusal(res));
       sent += g.count;
     } catch (e: any) { errors.push(`${url}: ${e?.message ?? e}`); }
   }));

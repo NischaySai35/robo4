@@ -184,7 +184,7 @@ export function ManualPortMenu() {
     && (p.kind === 'end' || q.kind === 'end') && !q.locked);
   const close = () => manualSet({ hover: null });
   return (
-    <div ref={box} className="msrr-note" style={{ position: 'absolute', left: man.hover.x + 14, top: man.hover.y + 14, background: 'rgba(20,24,32,0.94)', color: '#eee', padding: '6px 8px', borderRadius: 6, zIndex: 20, minWidth: 170 }}>
+    <div ref={box} className="msrr-note" style={{ position: 'absolute', left: man.hover.x + 14, top: man.hover.y + 14, background: 'var(--overlay-bg)', color: 'var(--overlay-text)', border: '1px solid var(--overlay-border)', boxShadow: '0 6px 20px rgba(0,0,0,.2)', fontSize: 12, padding: '6px 8px', borderRadius: 6, zIndex: 20, minWidth: 170 }}>
       <b>{p.id}</b> <span className="dim">({p.kind === 'end' ? 'end connector' : p.kind === 'side' ? 'spine receiver' : 'floor receiver'})</span>
       <a style={{ float: 'right', cursor: 'pointer' }} onClick={close}>✕</a>
       <div>{p.locked ? <>locked to <b>{p.locked}</b></> : 'free'}</div>

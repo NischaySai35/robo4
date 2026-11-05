@@ -69,7 +69,7 @@
   font-size: 10px; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
 }
 .an-overload-title--crit { color: #ff5555; }
-.an-overload-title--warn { color: #f5b027; margin-top: 2px; }
+.an-overload-title--warn { color: var(--warn); margin-top: 2px; }
 .an-overload-card {
   display: flex; align-items: center; gap: 8px; white-space: nowrap; width: fit-content;
   background: var(--overlay-bg); backdrop-filter: blur(12px);
@@ -79,7 +79,7 @@
 .an-ol-name { font-weight: 700; color: var(--text-bright); }
 .an-ol-pct { font-weight: 800; font-family: var(--font-mono); }
 .an-ol-pct--crit { color: #ff5555; }
-.an-ol-pct--warn { color: #f5b027; }
+.an-ol-pct--warn { color: var(--warn); }
 .an-ol-sep { color: var(--text-dim); opacity: 0.6; }
 .an-ol-v { font-family: var(--font-mono); font-size: 10.5px; color: var(--text); }
 .an-ol-dim { color: var(--text-dim); }
@@ -139,7 +139,7 @@
 
 .an-rigid--empty { font-size: 11.5px; line-height: 1.4; color: var(--text-dim); }
 
-.an-rigid { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-inset, rgba(255,255,255,0.02)); }
+.an-rigid { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-card); }
 .an-rigid-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .an-rigid-label { font-size: 12.5px; font-weight: 700; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .an-rigid-gizmo { display: flex; gap: 4px; flex-shrink: 0; }
@@ -231,7 +231,7 @@
 
 /* ── Structural Factor of Safety colouring ─────────────────────────────── */
 .an-fos-ok   { color: #4ade80; font-family: var(--font-mono); }  /* green  FoS ≥ 2   */
-.an-fos-warn { color: #facc15; font-family: var(--font-mono); }  /* yellow 1.5–2     */
+.an-fos-warn { color: var(--warn); font-family: var(--font-mono); }  /* yellow 1.5–2     */
 .an-fos-crit { color: #f97316; font-family: var(--font-mono); }  /* orange 1–1.5     */
 .an-fos-fail { color: #ef4444; font-family: var(--font-mono); font-weight: 700; }  /* red <1 */
 
@@ -264,6 +264,6 @@
   transition: background 0.15s, color 0.15s;
   white-space: nowrap;
 }
-.an-box-btn:hover { background: var(--bg-hover, rgba(255,255,255,0.06)); color: var(--text); }
+.an-box-btn:hover { background: var(--bg-card-hover); color: var(--text); }
 .an-box-btn--on { background: var(--accent); color: #fff; border-color: var(--accent); }
 

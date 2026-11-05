@@ -75,6 +75,10 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
   <span class="pill" id="p-wifi">wifi</span>
   <span class="pill" id="p-rssi">-</span>
   <span class="pill" id="p-up">-</span>
+  <span class="pill" id="p-chip" title="the ESP32 chip's own temperature">-</span>
+  <span class="pill off" id="p-guard" style="display:none" title="the overload guard: a joint hit something or got too hot"></span>
+  <span class="pill off" id="p-lock" style="display:none" title="after power-on the module ignores moves from the laptop until you press Turn torque ON, Go to manual home or a servo's own button">locked after power-on</span>
+  <span class="pill off" id="p-anim" style="display:none" title="power was lost while a sequence played; it did not resume">sequence interrupted by power loss</span>
   <span class="pill" id="p-fw">-</span>
   <span style="flex:1"></span>
   <button class="d" onclick="api('/api/command?servo=all&cmd=estop')">E-STOP ALL</button>
@@ -108,6 +112,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <button onclick="setHomeAll()" title="save every joint's current angle as its home">Set current angles as home</button>
       <button onclick="clearHomeAll()" title="forget all saved homes - every joint goes back to the built-in straight pose">Clear homes</button>
       <button onclick="api('/api/servo/tune',1)" title="Re-write deadband / Kp / Kd / Ki / torque limit">Re-tune hold</button>
+      <button onclick="api('/api/guard/clear?id=all')" title="joints the overload guard stopped go back to normal strength, right where they are (nothing moves)">Clear blocks</button>
       <span class="hint" id="torqhint"></span>
     </div>
   </div>
@@ -299,15 +304,22 @@ function rows(d){
     q('vv').textContent=s.voltageV==null?'--':s.voltageV;
     q('tp').textContent=s.tempC==null?'--':s.tempC;
     q('tp').style.color=s.tempC>55?'var(--bad)':s.tempC>45?'var(--warn)':'';
-    q('md').textContent=s.mode+(s.torque?'':' /off');
-    // The home button states its own destination: an explicit angle once one is saved,
-    // a greyed 180 while it is still the default.
+    const gd=s.guard&&s.guard!=='ok';
+    q('md').textContent=gd?(s.guard.toUpperCase()+' '+((s.torqueLimit|0)/10|0)+'%'):s.mode+(s.torque?'':' /off');
+    q('md').style.color=gd?'var(--bad)':'';
+    q('md').title=gd?'overload guard: '+(s.guard==='held'?'stopped after a hit, holding gently. Move it the other way or press Clear blocks.':s.guard==='giving'?'giving way slowly under a load it cannot hold':'too hot: holding gently, moves refused'):'';
+    // The angle column is NOMINAL: 180 = straight = this joint's home (its offset is built in). The home
+    // button says whether the joint is there, so it never looks like it disagrees with the angle column;
+    // the servo's own (mechanical) angle at home is in its hover text. (Showing that mechanical number,
+    // e.g. "home 168", next to an angle of 180 made it look like home was wrong when it was not.)
     const hb=r.querySelector('.hb');
     if(hb&&s.home!=null){
-      hb.textContent='home '+(+s.home).toFixed(0)+'\u00b0';
-      hb.style.borderColor=s.homeSet?'var(--ok)':'';
-      hb.style.color=s.homeSet?'var(--ok)':'var(--dim)';
-      hb.title=s.homeSet?'saved home for this joint':'no home saved yet - uses the built-in straight pose';
+      const at=s.currentAngle!=null&&Math.abs(s.currentAngle-180)<=0.5;
+      hb.textContent=at?'at home \u2713':'go home';
+      hb.style.borderColor=at?'var(--ok)':'';
+      hb.style.color=at?'var(--ok)':'';
+      hb.title='home = straight = 180 in the angle column. The servo itself reads '+(+s.home).toFixed(1)+'\u00b0 there ('+
+        (s.homeSet?'saved home':'built-in straight pose')+'). '+(at?'Already there.':'Click to send this joint home.');
     }
     // The slider always shows where the joint is meant to be: the real angle while limp
     // (it can be moved by hand), the commanded target while torque is on, so moves made by
@@ -348,6 +360,11 @@ async function poll(){
     el('p-wifi').className='pill '+(d.wifi.connected?'on':'off');
     el('p-rssi').textContent=d.wifi.rssi+' dBm';
     el('p-up').textContent=(d.ms/1000|0)+'s up / '+d.wifi.drops+' drops';
+    if(d.chipC!=null){el('p-chip').textContent='chip '+d.chipC+'°C';el('p-chip').className='pill '+(d.chipC>70?'off':'');}
+    el('p-anim').style.display=d.animInterrupted?'':'none';
+    el('p-lock').style.display=d.motionLocked?'':'none';
+    const anyG=(d.servos||[]).some(x=>x.guard&&x.guard!=='ok');
+    el('p-guard').style.display=anyG&&d.guardMsg?'':'none'; el('p-guard').textContent=d.guardMsg||'';
     el('p-ver').textContent='v'+d.fw;
     const ob=el('otabanner'), sp=d.otaSpace|0;
     if(ob){ if(sp>0){ ob.textContent='OTA ready - free partition '+(sp/1048576).toFixed(2)+

@@ -1069,24 +1069,28 @@ export class ModelEditor {
     // forever → the vibration + flickering penetration). Physics uses a flat cuboid (terrainTri
     // = null); wheels still grip via friction. A subtle grid shows where the ground is.
     this._terrainTri = null;
+    // Colours follow the app theme, like SceneManager.applyTheme does for the shared ground + grid.
+    const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
+    const dark = theme === 'dark';
     const g = new THREE.Group();
     const plane = new THREE.Mesh(
       new THREE.PlaneGeometry(span, span),
-      new THREE.MeshStandardMaterial({ color: 0x2b2f3a, roughness: 1, metalness: 0 }),
+      new THREE.MeshStandardMaterial({ color: dark ? 0x262626 : 0xe9e5de, roughness: 1, metalness: 0 }),
     );
     plane.rotation.x = -Math.PI / 2;
     plane.receiveShadow = true;
-    const grid = new THREE.GridHelper(span, 48, 0x3a4a66, 0x28324a);
+    const grid = new THREE.GridHelper(span, 48, dark ? 0x5a5a5a : 0x8499b8, dark ? 0x3a3a3a : 0xbfcbdc);
     g.add(plane); g.add(grid);
     g.position.y = this._floorY;
+    g.userData.theme = theme;
     this._scene.add(g);
     this._floor = g;
   }
   _hideFloor() {
     if (this._floor) {
       this._scene.remove(this._floor);
-      (this._floor as any).geometry?.dispose?.();
-      (this._floor as any).material?.dispose?.();
+      // The floor is a group (plane + grid): free each child's GPU memory, not the group's (it has none).
+      this._floor.traverse((o: any) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
       this._floor = null;
     }
     this._terrain = null;
@@ -1180,7 +1184,11 @@ export class ModelEditor {
     // Persistent rough floor: present on the Animation page whether gravity is on or off; removed
     // on other pages.
     const onAnim = usePageStore.getState().page === 'animation';
-    if (onAnim) { this._ensureTerrainFloor(); if (this._floor) this._floor.visible = true; }
+    if (onAnim) {
+      // Theme switched while on this page: rebuild the floor in the new colours.
+      if (this._floor && this._floor.userData.theme !== (document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light')) this._hideFloor();
+      this._ensureTerrainFloor(); if (this._floor) this._floor.visible = true;
+    }
     else if (this._floor) this._hideFloor();
   }
 

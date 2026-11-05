@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import './App.css';
 import SimTransmitPanel from '@/features/connection/SimTransmitPanel';
 import ConnectionWindow from '@/features/connection/ConnectionWindow';
@@ -202,8 +202,31 @@ function OvercurrentWarning() {
   );
 }
 
+/** The width tiers in App.css can't know which chips are showing (battery, current, alarms), so the tabs measure
+ *  themselves: when they don't fit, the inactive ones drop to icons (title + aria-label keep their names). */
+function useNavFit() {
+  const ref = useRef<HTMLElement>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const nav = ref.current; if (!nav) return;
+    const check = () => {
+      const space = nav.nextElementSibling as HTMLElement | null;   // .app-header-space: the slack the tabs could grow into
+      const was = nav.classList.contains('app-nav--compact');
+      nav.classList.remove('app-nav--compact'); const need = nav.scrollWidth;   // full names, measured now (no paint in between)
+      nav.classList.toggle('app-nav--compact', was);
+      setCompact(need > nav.clientWidth + Math.max(0, (space?.clientWidth ?? 0) - 8) + 1);
+    };
+    const ro = new ResizeObserver(check);
+    ro.observe(nav); if (nav.parentElement) { ro.observe(nav.parentElement); for (const c of nav.parentElement.children) ro.observe(c); }
+    check(); document.fonts?.ready.then(check);
+    return () => ro.disconnect();
+  }, []);
+  return { ref, compact };
+}
+
 function AppHeader({ page, setPage }: any) {
   const editActive       = useEditModeStore(s => s.active);
+  const navFit           = useNavFit();
 
   const handleNavClick = (id: string) => {
     if (editActive && id !== 'editor') {
@@ -247,7 +270,7 @@ function AppHeader({ page, setPage }: any) {
 
       <div className="app-header-sep" />
 
-      <nav className="app-nav">
+      <nav ref={navFit.ref} className={`app-nav ${navFit.compact ? 'app-nav--compact' : ''}`}>
         {NAV_TABS.map((t) => {
           const locked = editActive && t.id !== 'editor';
           return (

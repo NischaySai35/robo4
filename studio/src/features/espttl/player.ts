@@ -22,6 +22,7 @@ import { ttlUrl } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
 import { planFrame, profile } from './motion';
 import { currentPose } from '@/state/espTtlStore';
+import { boardRefusal } from '@/hardware/protocol';
 
 
 /** How often we push a setpoint while easing. 25 Hz is smooth and leaves the bus idle. */
@@ -44,7 +45,8 @@ async function sendPose(pose: Record<number, number>, speed: number, acc: number
   const parts = Object.entries(pose).map(([id, deg]) => `${id}=${(+deg).toFixed(1)}`);
   if (!parts.length) return;
   const url = `${ttlUrl()}/api/batch?${parts.join('&')}&speed=${speed}&acc=${acc}`;
-  await fetch(url, { cache: 'no-store', signal });
+  const res = await fetch(url, { cache: 'no-store', signal });
+  if (!res.ok) throw new Error(await boardRefusal(res));   // e.g. locked after power-on: stop the sequence and say why
 }
 
 /** Angles the arm should be at right now, per the frame we are leaving. */

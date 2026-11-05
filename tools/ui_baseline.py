@@ -1,6 +1,6 @@
 """P0 safety net: visit every Studio page, screenshot it, check the controls, and do the MSRR round trip.
 
-usage (PowerShell, dev server must be running):
+usage (PowerShell, dev server must be running; $env:THEME='light' or 'dark' picks the theme):
   $env:STUDIO_URL='http://127.0.0.1:5183/'; py -3.12 tools/ui_baseline.py OUT_DIR [--only editor,msrr]
   py -3.12 tools/ui_baseline.py --compare BASE_DIR NEW_DIR
 
@@ -63,6 +63,12 @@ async def main(out, only):
     async with async_playwright() as p:
         b, pg, logs = await open_studio(p)
         pg.on('dialog', lambda d: asyncio.ensure_future(d.dismiss()))
+        if os.environ.get('OS_SCHEME') in ('light', 'dark'):  # the computer's own light/dark setting must not leak into the app theme
+            await pg.emulate_media(color_scheme=os.environ['OS_SCHEME'])
+        if os.environ.get('THEME') in ('light', 'dark'):  # THEME=light|dark: shoot every page in that theme
+            await pg.evaluate(f"localStorage.setItem('tetrobot:theme', '{os.environ['THEME']}')")
+            await pg.reload(); await pg.wait_for_timeout(4000)
+            if await pg.locator('.sp-backdrop').count(): await pg.keyboard.press('Escape'); await pg.wait_for_timeout(300)
         report['startup'] = logs[:]; logs.clear()
         report['bodies'] = await pg.evaluate(ADD_MODULE); await pg.wait_for_timeout(2500)
         await pg.locator('button[title="Fit model in view (F)"]:visible').first.click(); await pg.wait_for_timeout(1500)

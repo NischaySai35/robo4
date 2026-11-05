@@ -63,6 +63,16 @@
   --overlay-text: #2c4263;
   --overlay-text-bright: #06152c;
   --overlay-text-dim: #4c648a;
+
+  /* Glass HUDs over the 3D view (stats box, VSEPR score): one look, per theme. */
+  --hud-bg: rgba(255, 255, 255, 0.78);
+  --hud-border: rgba(17, 34, 59, 0.16);
+  --hud-text: #11223b;
+  --hud-label: #4c648a;
+  --hud-faint: #7d8fab;
+  --hud-good: #0f8a43;
+  --hud-warn: #b06a00;
+  --hud-bad: #c62828;
 }
 
 /* Direction A: Blender-like greys and one selection blue (RESTRUCTURING 4.1). */
@@ -96,6 +106,15 @@
   --overlay-text: #c9d2e2;
   --overlay-text-bright: #ffffff;
   --overlay-text-dim: #8b93a6;
+
+  --hud-bg: rgba(30, 30, 30, 0.55);
+  --hud-border: rgba(255, 255, 255, 0.10);
+  --hud-text: rgba(255, 255, 255, 0.88);
+  --hud-label: rgba(255, 255, 255, 0.5);
+  --hud-faint: rgba(255, 255, 255, 0.3);
+  --hud-good: #4ade80;
+  --hud-warn: #fbbf24;
+  --hud-bad: #f87171;
 }
 
 :root {

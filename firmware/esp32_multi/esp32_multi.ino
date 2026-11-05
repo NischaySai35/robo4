@@ -43,6 +43,7 @@
 #include <ArduinoOTA.h>
 #include <Update.h>
 #include <HTTPUpdate.h>
+#include "guard.h"          // overload guard (layer 1), see the Overload guard section
 #include <Preferences.h>
 #include <SCServo.h>
 #include <esp_system.h>
@@ -126,7 +127,8 @@ constexpr uint8_t LAYOUT_N = sizeof(LAYOUT_LABELS) / sizeof(LAYOUT_LABELS[0]);
 // to when it has none (fresh board, layout change, /api/home/set?clear=1), so the straight
 // pose is never lost and never silently becomes 180.
 //   LOCK1 176.8 | T1 181.4 | B1 167.9 | B2 179.9 | T2 185.1 | B3 179.7 | B4 176.9 | T3 179.3 | LOCK2 184.1
-static const int16_t LAYOUT_HOME_DEG10[LAYOUT_N] = { 1768, 1814, 1679, 1799, 1851, 1797, 1769, 1793, 1841 };
+// mod1's straight pose used to be compiled here (LAYOUT_HOME_DEG10) and applied to EVERY module; each board now keeps
+// its own homes in flash (Set current angles as home). mod1's: firmware/backups/mod1-homes-2026-11-04.json
 
 void cfgApplyLayout() {
   // The physical module is confirmed to use 1 Mbaud. An earlier false-positive scan
@@ -219,7 +221,9 @@ void captureLastBoot() {
 String  logBuf[LOG_LINES];
 uint8_t logHead = 0, logCount = 0;
 
+SemaphoreHandle_t lgMx = nullptr;   // lg() is called from loop() and from the guard task
 void lg(const char* fmt, ...) {
+  if (lgMx) xSemaphoreTake(lgMx, portMAX_DELAY);
   char b[180];
   va_list ap; va_start(ap, fmt);
   vsnprintf(b, sizeof(b), fmt, ap);
@@ -230,6 +234,7 @@ void lg(const char* fmt, ...) {
   logBuf[logHead] = String(stamp) + b;
   logHead = (logHead + 1) % LOG_LINES;
   if (logCount < LOG_LINES) logCount++;
+  if (lgMx) xSemaphoreGive(lgMx);
 }
 
 // ── Servos ───────────────────────────────────────────────────────────────────
@@ -239,7 +244,7 @@ WebServer server(80);
 ServoState servos[MAX_SERVOS];
 uint8_t    nServos = 0;
 
-constexpr uint16_t FAST_MS         = 60;
+constexpr uint16_t FAST_MS         = 30;    // the guard's reaction depends on this; one bus read of all 9 takes ~3 ms
 constexpr uint16_t SLOW_MS         = 25;    // one servo per tick: each one every 9 x 25 = ~225ms
 constexpr uint8_t  POS_MODE        = 0;
 // ── Holding-stiffness tuning (ST3215 EPROM/SRAM registers) ───────────────────
@@ -271,12 +276,57 @@ constexpr uint16_t TUNE_TORQUE_MAX = 1000;   // full scale
 constexpr uint8_t  REG_KP = 21, REG_KD = 22, REG_KI = 23;
 constexpr uint8_t  REG_CW_DEAD = 26, REG_CCW_DEAD = 27;
 constexpr uint8_t  REG_TORQUE_LIMIT = 48;
+// the servo's own protection (EPROM): checked against mod1's servos and the STS memory table, 4 Nov 2026
+constexpr uint8_t  REG_MAX_TORQUE = 16, REG_PROT_SWITCH = 19, REG_PROT_CURRENT = 28, REG_PROT_TORQUE = 34,
+                   REG_PROT_TIME = 35, REG_OVERLOAD_PCT = 36, REG_OVERCUR_TIME = 38;
 
 constexpr uint8_t  POS_ACC_DEFAULT = 40;
 
 unsigned long lastFast = 0, lastSlow = 0;
 uint8_t       slowIdx = 0;
 bool          otaBusy = false;      // pause the servo bus while flashing
+// After every power-on the board refuses moves sent from a laptop (/api/batch): a program that was streaming before a
+// power cut must not drive the robot the moment it comes back. Only an operator action unlocks it: Turn torque ON, Go to
+// manual home, a servo's own buttons, or playing a sequence (Nischay, 4 Nov 2026).
+bool          motionLocked = true;
+// Last time anything was commanded to move. The radio stays fully awake only while the robot moves (and 2 s after),
+// so moving is responsive and standing still is cool (Nischay, 4 Nov 2026: heat).
+uint32_t      lastMotionMs = 0;
+// The servo bus has two users: the guard task (every FAST_MS: read all, guard, live stream) and the web handlers /
+// sequence / scan in loop(). One recursive lock keeps them from talking on the wire at once. Web replies are sent AFTER
+// it is released (route()), because a reply over a sleepy Wi-Fi link took 0.5-0.7 s and froze everything (4 Nov 2026).
+SemaphoreHandle_t busMx = nullptr;
+struct BusLock {
+  BusLock()  { if (busMx) xSemaphoreTakeRecursive(busMx, portMAX_DELAY); }
+  ~BusLock() { if (busMx) xSemaphoreGiveRecursive(busMx); }
+};
+uint32_t guardGapMs = 0, guardGapPrev = 0, guardWinAt = 0;   // longest time between two guard passes (5 s windows)
+uint32_t guardPassMs = 0, guardPassPrev = 0;                // longest pass itself (read + guard + live)
+uint32_t guardWaitMs = 0, guardWaitPrev = 0;                // longest wait for the bus lock
+// ESP.getSketchSize() / getFreeSketchSpace() read the flash: ~200 ms, inside every telemetry reply, holding the bus lock
+// and so the guard (measured on mod1, 5 Nov). They cannot change while running: read once at boot.
+uint32_t sketchSizeBoot = 0, otaSpaceBoot = 0;
+uint16_t guardEveryMs = FAST_MS;   // the guard task's period; /api/guard/set?everyMs= (0 = paused, for tests)
+uint32_t servoMisses = 0;                                   // servo replies missed in the fast read, since boot
+constexpr uint16_t AWAKE_AFTER_MOVE_MS = 2000;
+
+// ── Overload guard (guard.h; Nischay, 4 Nov 2026) ─────────────────────────────
+// Layer 1, here: every fresh read (FAST_MS) each joint's load / current / temperature goes through its Guard: stop at a
+// hit, step back to the last easy point, hold at reduced strength, give way slowly under a load it cannot hold, never
+// limp, refuse moves further into the hit. Layer 2, inside each servo (tuneServoHolding): its own overload and current
+// protection set just above these, as a backup if this board stops reacting. Always: a strength ceiling per joint.
+struct GuardSettings { uint16_t ver; GuardCfg bend, lock; };
+constexpr uint16_t GUARD_VER = 1;
+//                        trip  mA  calm ms  ceil hold back yield dn up clear calmMs hotMs warm hot cool
+const GuardCfg GUARD_BEND = {750, 1300, 500, 100, 800, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
+const GuardCfg GUARD_LOCK = {880, 1900, 500, 100, 1000, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
+GuardSettings guardSet = {GUARD_VER, GUARD_BEND, GUARD_LOCK};
+Guard guards[MAX_SERVOS];
+char  guardMsg[96] = "";             // the last thing the guard did, for the page / GOS / Studio
+bool  animPausedByGuard = false;
+bool isLockSlot(uint8_t i);
+const GuardCfg& guardCfgFor(uint8_t i);
+bool guardAllows(uint8_t i, uint16_t raw);
 
 // Bounded: "drain until empty" never empties on a floating half-duplex line, which is
 // the same trap that hung the board during a bus scan (see SafeSMS in types.h).
@@ -307,10 +357,11 @@ static inline float rawToAngle(uint16_t r) { return (r / 4095.0f) * 360.0f; }
  */
 float homeFor(uint8_t id);
 float builtinHomeFor(uint8_t id);
-/* The offset comes from the module's BUILT-IN straight pose (LAYOUT_HOME_DEG10), compiled into this
-   firmware, not from the board's saved homes: the deviation belongs to the module's hardware, so
-   each module gets its own .bin and a board can be re-flashed or swapped without it drifting. */
-static inline float offsetFor(uint8_t id) { return builtinHomeFor(id) - 180.0f; }
+/* The offset comes from this board's SAVED home (Set current angles as home, /api/home/set), which
+   lives in flash and survives OTA updates; only a joint with no saved home falls back to the BUILT-IN
+   straight pose (180, no correction). Until 4 Nov 2026 it always used a compiled pose, so saving a new
+   home changed nothing and every module flashed with mod1's .bin got mod1's horn offsets. */
+static inline float offsetFor(uint8_t id) { return homeFor(id) - 180.0f; }
 static inline uint16_t nomToRaw(uint8_t id, float nominal) { return angleToRaw(nominal + offsetFor(id)); }
 static inline float rawToNom(uint8_t id, uint16_t raw) { return rawToAngle(raw) - offsetFor(id); }
 static inline uint16_t speedScaleToRaw(int s) {
@@ -401,11 +452,13 @@ void updateMotionFlag(ServoState& sv) {
 }
 
 void cmdPos(ServoState& sv, float deg, int speedScale, uint8_t acc) {
+  lastMotionMs = millis();
   int slot = slotOf(sv.id); if (slot < 0) return;
   float lo, hi; limitsFor((uint8_t)slot, lo, hi);
   sv.mode = POS_MODE;
   setHwMode(sv, POS_MODE);
   ensureTorque(sv);
+  if (!guardAllows((uint8_t)slot, nomToRaw(sv.id, clampF(deg, lo, hi)))) return;
   sv.targetDeg  = clampF(deg, lo, hi);
   sv.targetRaw  = nomToRaw(sv.id, sv.targetDeg);
   sv.speedScale = constrain(speedScale, 1, 10);
@@ -476,8 +529,21 @@ void tuneServoHolding(ServoState& sv) {
      servo always takes the direct path. Written only if different, like the rest. */
   changed |= tuneWordIfDiff(sv.id, REG_MIN_ANGLE, 0,    "min angle limit");
   changed |= tuneWordIfDiff(sv.id, REG_MAX_ANGLE, 4095, "max angle limit");
+  // Layer 2, the servo's own protection, a little above the board's guard so the board always acts first; this only
+  // catches what the board misses (if it ever stops reacting). Factory: 80 % for 2 s, about 2000 mA for 2 s.
+  int slot = slotOf(sv.id);
+  bool lock = slot >= 0 && isLockSlot((uint8_t)slot);
+  const GuardCfg& gc = slot >= 0 ? guardCfgFor((uint8_t)slot) : guardSet.bend;
+  changed |= tuneByteIfDiff(sv.id, REG_PROT_SWITCH, 0x2D, "protections on (voltage, heat, current, overload)");
+  // must sit BELOW the strength ceiling (80 % bend/twist, or it could never fire) and above the board's trip (95 % of it)
+  changed |= tuneByteIfDiff(sv.id, REG_OVERLOAD_PCT, lock ? 92 : 78, "overload torque %");
+  changed |= tuneByteIfDiff(sv.id, REG_PROT_TIME, 30, "overload time x10ms");
+  changed |= tuneByteIfDiff(sv.id, REG_PROT_TORQUE, 30, "torque after protection %");
+  changed |= tuneWordIfDiff(sv.id, REG_PROT_CURRENT, (uint16_t)((lock ? 2200 : 1600) / 6.5f), "protection current x6.5mA");
+  changed |= tuneByteIfDiff(sv.id, REG_OVERCUR_TIME, 30, "overcurrent time x10ms");
+  changed |= tuneWordIfDiff(sv.id, REG_MAX_TORQUE, gc.ceiling, "max torque (power-on ceiling)");
   st.LockEprom(sv.id); delay(10);
-  st.writeWord(sv.id, REG_TORQUE_LIMIT, TUNE_TORQUE_MAX);
+  st.writeWord(sv.id, REG_TORQUE_LIMIT, gc.ceiling);   // the strength ceiling, now
   delay(6);
   if (!changed) lg("  id%u already tuned", sv.id);
 }
@@ -559,12 +625,14 @@ uint8_t   animCount   = 0;
 bool      animSine    = true;
 bool      animLoop    = false;
 bool      animPlaying = false;
+bool      animInterrupted = false;   // power was lost while a sequence played (set at boot, cleared by the next play/stop)
 uint8_t   animIdx     = 0;
 uint32_t  animT0      = 0;         // when the current frame started
 
 void animStop() {
   if (animPlaying) lg("anim stopped at frame %u", animIdx + 1);
-  animPlaying = false;
+  if (animPlaying) prefs.putUChar("animRun", 0);
+  animPlaying = false; animInterrupted = false;
 }
 
 /*
@@ -622,6 +690,7 @@ void animSendFrame(uint8_t idx) {
     float wantDeg = clampF(f.deg10[i] / 10.0f, lo, hi);
     // Distance from where the joint actually is, not from where we last told it to be.
     int32_t cur = sv.rawPos >= 0 ? sv.rawPos : (int32_t)sv.targetRaw;
+    if (!guardAllows((uint8_t)slot, nomToRaw(sv.id, wantDeg))) continue;   // that joint sits this frame out
     slots[n] = slot; deg[n] = wantDeg; want[n] = nomToRaw(sv.id, wantDeg);
     D[n] = (float)labs((int32_t)want[n] - cur);
     if (D[n] >= 4.0f) {
@@ -696,7 +765,7 @@ void animTick() {
 
   if (animIdx + 1 < animCount) { animBeginFrame(animIdx + 1); return; }
   if (animLoop)                { animBeginFrame(0); return; }
-  animPlaying = false;
+  animPlaying = false; prefs.putUChar("animRun", 0);
   lg("anim finished (%u frames)", animCount);
 }
 
@@ -725,12 +794,12 @@ void homesSave() { prefs.putBytes("homes", &homes, sizeof(homes)); }
 
 /* The module's straight pose as compiled into this firmware (mechanical degrees). */
 float builtinHomeFor(uint8_t id) {
-  if (id >= 1 && id <= LAYOUT_N) return LAYOUT_HOME_DEG10[id - 1] / 10.0f;
-  return 180.0f;
+  (void)id;
+  return 180.0f;   // no saved home = no correction; mod1's own horn offsets are no longer compiled in for every module
 }
 
-/* A home saved on the board (legacy / informational), else the built-in straight pose. It no longer
-   drives motion: the nominal<->mechanical offset always comes from builtinHomeFor(). */
+/* The home saved on this board, else the built-in straight pose. offsetFor() uses it: straight
+   (nominal 180) is wherever the operator saved home. */
 float homeFor(uint8_t id) {
   for (uint8_t i = 0; i < homes.n; i++) if (homes.ids[i] == id) return homes.deg10[i] / 10.0f;
   return builtinHomeFor(id);
@@ -766,8 +835,10 @@ void gotoDeg(uint8_t slot, float deg) {
 }
 
 void homeAll(bool homeManual = false, bool raw180 = false) {
+  lastMotionMs = millis();
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
   uint16_t spd[MAX_SERVOS]; uint8_t  acc[MAX_SERVOS];
+  uint8_t  n = 0;
   for (uint8_t i = 0; i < nServos; i++) {
     setHwMode(servos[i], POS_MODE);
     ensureTorque(servos[i]);
@@ -776,18 +847,82 @@ void homeAll(bool homeManual = false, bool raw180 = false) {
     // Straight is nominal 180 for every joint (the offset turns that into the hand-set home), so
     // "home" and "manual home" are now the same place. `homeManual` is kept so old callers work;
     // raw180 asks for the MECHANICAL 180 instead (horn assembly: seat the horn at the true middle).
-    servos[i].targetDeg = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : 180.0f, lo, hi);
+    float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : 180.0f, lo, hi);
+    if (!guardAllows(i, nomToRaw(servos[i].id, want))) continue;
+    servos[i].targetDeg = want;
     (void)homeManual;
     servos[i].targetRaw = nomToRaw(servos[i].id, servos[i].targetDeg);
     servos[i].speedScale = 10;
     servos[i].speedRaw = speedScaleToRaw(10);
     servos[i].acc = POS_ACC_DEFAULT;
     servos[i].lastCommandMs = millis();
-    ids[i] = servos[i].id; pos[i] = (int16_t)servos[i].targetRaw;
-    spd[i] = servos[i].speedRaw; acc[i] = servos[i].acc;
+    ids[n] = servos[i].id; pos[n] = (int16_t)servos[i].targetRaw;
+    spd[n] = servos[i].speedRaw; acc[n] = servos[i].acc; n++;
   }
-  if (nServos == 1)      { st.WritePosEx(ids[0], pos[0], spd[0], acc[0]); delay(3); }
-  else if (nServos > 1)  { st.SyncWritePosEx(ids, nServos, pos, spd, acc); delay(3); }
+  if (n == 1)      { st.WritePosEx(ids[0], pos[0], spd[0], acc[0]); delay(3); }
+  else if (n > 1)  { st.SyncWritePosEx(ids, n, pos, spd, acc); delay(3); }
+}
+
+// ── Overload guard: apply what it decides ───────────────────────────────────
+bool isLockSlot(uint8_t i) { return strncmp(cfg.labels[i], "LOCK", 4) == 0; }
+// a joint held or giving way: keep the radio awake so the page and the laptop see it at once
+bool guardBusy() { for (uint8_t i = 0; i < nServos; i++) if (guards[i].state != G_OK) return true; return false; }
+const GuardCfg& guardCfgFor(uint8_t i) { return isLockSlot(i) ? guardSet.lock : guardSet.bend; }
+const char* guardName(GuardState g) { return g == G_GIVING ? "giving" : g == G_HELD ? "held" : g == G_HOT ? "hot" : "ok"; }
+
+void guardApply(uint8_t i, const GuardAction& a) {
+  ServoState& sv = servos[i];
+  if (a.setTorque) { st.writeWord(sv.id, REG_TORQUE_LIMIT, a.torque); delay(2); }
+  if (a.setTarget) {
+    uint16_t t = (uint16_t)constrain((int)a.target, 0, 4095);
+    sv.targetRaw = t; sv.targetDeg = rawToNom(sv.id, t);
+    st.WritePosEx(sv.id, t, speedScaleToRaw(3), 20); delay(2);     // gently: this is a retreat, not a move
+  }
+  if (!a.event) return;
+  const Guard& g = guards[i];
+  switch (a.event) {
+    case GE_TRIP_LOAD: case GE_TRIP_CURRENT:
+      snprintf(guardMsg, sizeof(guardMsg), "%s hit: %u%% load, %u mA at %.1f deg - stopped, holding gently",
+               cfg.labels[i], g.tripLoad / 10, g.tripmA, rawToNom(sv.id, (uint16_t)max(0, (int)g.hitRaw)));
+      if (animPlaying) { animStop(); animPausedByGuard = true; }
+      break;
+    case GE_SETTLED: snprintf(guardMsg, sizeof(guardMsg), "%s holding at %.1f deg, load safe again", cfg.labels[i], sv.targetDeg); break;
+    case GE_CLEARED: snprintf(guardMsg, sizeof(guardMsg), "%s back to normal", cfg.labels[i]); break;
+    case GE_HOT:     snprintf(guardMsg, sizeof(guardMsg), "%s too hot (%d C): holding gently, moves refused", cfg.labels[i], sv.rawTemp); break;
+    case GE_COOL:    snprintf(guardMsg, sizeof(guardMsg), "%s cooled down", cfg.labels[i]); break;
+    default: break;
+  }
+  lg("guard: %s", guardMsg);
+}
+
+void guardTick(uint8_t i) {
+  ServoState& sv = servos[i];
+  if (sv.rawPos < 0 || sv.mode != POS_MODE) return;
+  int mA = sv.rawCurrent >= 0 ? (int)(sv.rawCurrent * 6.5f) : 0;
+  GuardAction a = guards[i].step(guardCfgFor(i), millis(), sv.rawPos, sv.rawLoad, mA, (int)sv.targetRaw, sv.rawTemp, sv.torqueOn);
+  guardApply(i, a);
+}
+
+// May this joint be sent to `raw`? A refused move is logged once and simply not sent.
+bool guardAllows(uint8_t i, uint16_t raw) {
+  const ServoState& sv = servos[i];
+  if (sv.rawPos < 0) return true;
+  if (guards[i].allow(sv.rawPos, raw)) return true;
+  snprintf(guardMsg, sizeof(guardMsg), "%s: move refused - %s", cfg.labels[i],
+           guards[i].state == G_HOT ? "too hot" : "it would push further into what it hit (move it the other way, or Clear)");
+  return false;
+}
+
+void guardClear(int id) {   // id < 0: every joint
+  for (uint8_t i = 0; i < nServos; i++) {
+    if (id >= 0 && servos[i].id != id) continue;
+    if (guards[i].state == G_OK) continue;
+    GuardAction a; guards[i].clearNow(guardCfgFor(i), servos[i].rawTemp, a);
+    a.setTarget = servos[i].rawPos >= 0; a.target = (int16_t)servos[i].rawPos;   // stay exactly where it is now
+    guardApply(i, a);
+  }
+  snprintf(guardMsg, sizeof(guardMsg), "cleared: back to normal where they are");
+  lg("guard: cleared %s", id < 0 ? "all" : "one joint");
 }
 
 // ── Telemetry reads ──────────────────────────────────────────────────────────
@@ -801,21 +936,29 @@ void refreshAllFastSync() {
   // decoder "ToWrod" — this uses only what the shipped library actually exposes.
   // syncReadPacketTx does no flushing of its own: without the bracket, stale bytes and the
   // request's own echo sat in front of the replies and slots got each other's positions.
+  // 9 replies at 1 Mbaud arrive within ~3 ms. A missing or garbled reply used to wait the full default timeout (~100 ms)
+  // and then poll that servo again: two misses made the guard 0.2 s late (mod1, 4 Nov). Give up after 5 ms instead;
+  // that servo's next read is only FAST_MS away.
+  unsigned long savedTo = st.IOTimeOut;
+  st.IOTimeOut = 5;
   st.beginTx();
-  st.syncReadPacketTx(ids, nServos, SMS_STS_PRESENT_POSITION_L, 2);
+  // registers 56..70 in one go: position, speed, load, voltage, temperature, status, moving, current. The guard needs
+  // load and current every read, not one servo per SLOW_MS (that was each servo every ~225 ms).
+  st.syncReadPacketTx(ids, nServos, SMS_STS_PRESENT_POSITION_L, 15);
   st.endTx();
-  uint8_t rx[2];
+  uint8_t rx[15];
   for (uint8_t i = 0; i < nServos; i++) {
     bool got = false;
-    if (st.syncReadPacketRx(ids[i], rx) == 2) {
-      int pos = st.syncReadRxPacketToWrod(0);        // position is unsigned 0..4095
+    if (st.syncReadPacketRx(ids[i], rx) == 15) {
+      int pos = rx[0] | (rx[1] << 8);                // position is unsigned 0..4095
       if (pos >= 0 && pos <= 4095) { servos[i].rawPos = pos; got = true; }
+      int ld = (rx[4] | (rx[5] << 8)) & 0x3FF; if (rx[5] & 0x04) ld = -ld;   // load: bit 10 is the sign
+      int cu = (rx[13] | (rx[14] << 8)) & 0x7FFF;                           // current, 6.5 mA units
+      servos[i].rawLoad = ld; servos[i].rawLoadAbs = abs(ld); servos[i].rawCurrent = cu;
+      if (rx[7] > 0 && rx[7] < 150) servos[i].rawTemp = rx[7];
+      if (rx[6] > 0 && rx[6] < 200) servos[i].rawVoltage = rx[6];
     }
-    if (!got) {                                      // this servo missed its slot — poll it
-      int pos = readRetry(ids[i], [](uint8_t id) { return st.ReadPos(id); },
-                                  [](int v) { return v >= 0 && v <= 4095; }, 1);
-      if (pos >= 0) { servos[i].rawPos = pos; got = true; }
-    }
+    if (!got) servoMisses++;                          // missed its slot: keep the last reading, try again next pass
     // A limp joint has no goal of its own: keep its target on the measured position, so a
     // stale target (a phantom read, an old slider value) can never linger and "Turn torque
     // ON" or a nudge always starts from where the arm actually is.
@@ -825,6 +968,9 @@ void refreshAllFastSync() {
     }
     updateMotionFlag(servos[i]);
   }
+  st.IOTimeOut = savedTo;
+  flushBus();                                      // nothing half-read may sit in front of the next request
+  for (uint8_t i = 0; i < nServos; i++) guardTick(i);   // after the whole read: writes never cut into the replies
 }
 
 void refreshSlow(ServoState& sv) {
@@ -872,6 +1018,8 @@ bool     otaStarted   = false;   // ArduinoOTA.begin() only works once we have a
 uint8_t  wSlot        = 255;     // slot currently being tried
 uint16_t wFails       = 0;       // consecutive failed attempts
 uint16_t wSameTries   = 0;       // attempts on wSlot since it last changed
+bool     wHbRejoin    = false;   // this rejoin came from a heartbeat gap on a good link: stay on that network longer
+uint32_t loopMaxMs = 0, loopMaxPrev = 0, loopWinAt = 0;   // slowest loop() pass, this and the last 5 s window
 uint32_t wBackoff     = 800;
 uint32_t wNextTry     = 0;
 uint32_t wAttemptAt   = 0;
@@ -907,6 +1055,7 @@ FastJoin fj[4];
 #define ROBO_WIFI_PS    WIFI_PS_MAX_MODEM
 #define LISTEN_INTERVAL 1
 #define HB_LOST_MS      700
+#define HB_LOST_LINKED_MS 2000   // radio still connected with a good signal: a motor-noise hiccup, wait longer (4 Nov 2026)
 #define HINT_JOIN_MS    700      // fast rejoin not associated by then -> full scan
 #define DHCP_KICK_MS    1200     // associated but no IP by then -> ask DHCP again
 #define STATIC_VERIFY_MS 1500    // reused address, no heartbeat by then -> fresh DHCP lease
@@ -983,7 +1132,7 @@ void startAP() {
 // The link is usable: an IP from DHCP, or (static reuse) the radio has joined.
 void wifiLinkUp() {
   wConnectedAt = millis();
-  wFails = 0; wBackoff = 800; wSameTries = 0; wReturnSlot = 255;
+  wFails = 0; wBackoff = 800; wSameTries = 0; wReturnSlot = 255; wHbRejoin = false;
   if (wLostAt) {
     wLastGapMs = wConnectedAt - wLostAt;
     if (wLastGapMs > wMaxGapMs) wMaxGapMs = wLastGapMs;
@@ -1092,12 +1241,13 @@ void hbPoll() {
 
 // ── Live mode (GOS) ───────────────────────────────────────────────────────────
 // A web request costs 0.3-2 s here: modem sleep plus a new TCP connection each time. While a program on the laptop
-// keeps sending "R4LV" to LIVE_PORT (GOS does, twice a second), the radio stays awake and every fresh servo read
-// (each FAST_MS) is pushed back to it as one small UDP packet: {"t":ms,"a":[[id,deg],...]}, deg as in /api/telemetry
-// currentAngle (null if unread). No asking for LIVE_HOLD_MS -> back to modem sleep, so an idle module stays cool.
-// Commands still go through the web API, which confirms each one.
+// keeps sending "R4LV" to LIVE_PORT (GOS does, twice a second), fresh servo reads are pushed back to it as small UDP
+// packets: {"t":ms,"a":[[id,deg],...]}, deg as in /api/telemetry currentAngle (null if unread). While the robot moves
+// that is every read (~16 a second, radio awake: radioTick); standing still, every 4th (~4 a second, radio in modem
+// sleep, which sending does not need). No asking for LIVE_HOLD_MS -> pushing stops. Commands still go through the web
+// API, which confirms each one.
 #define LIVE_PORT    4211
-#define LIVE_HOLD_MS 1500
+#define LIVE_HOLD_MS 2500     // modem sleep can delay an incoming R4LV by a beacon or two
 WiFiUDP   liveUdp;
 bool      liveOpen  = false;
 bool      liveAwake = false;
@@ -1117,14 +1267,29 @@ void livePoll() {
     }
   }
   bool want = livePort && (int32_t)(liveUntil - millis()) > 0;
-  if (want == liveAwake || otaBusy) return;         // OTA owns the radio settings while it runs
+  if (want == liveAwake) return;
   liveAwake = want;
-  if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
-  lg(want ? "live mode on (%s): radio awake, angles pushed" : "live mode off: back to modem sleep (%s)", liveIp.toString().c_str());
+  lg(want ? "live mode on (%s): angles pushed" : "live mode off (%s)", liveIp.toString().c_str());
 }
 
+// Radio fully awake only while the robot moves: commands answered at once and angles streamed fast. Standing still
+// (even while a laptop watches in live mode) it stays in modem sleep: sending still works, it just stays cool.
+bool radioAwake = false;
+bool guardBusy();
+bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS || guardBusy(); }
+void radioTick() {
+  if (otaBusy) return;                              // OTA owns the radio settings while it runs
+  bool want = moving();
+  if (want == radioAwake) return;
+  radioAwake = want;
+  if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
+}
+
+uint8_t liveTick = 0;
 void liveSend() {
   if (!liveAwake) return;
+  liveTick++;
+  if (moving() ? (liveTick % 2) : (liveTick % 8)) return;   // FAST_MS 30: still every 8th read (~4 a second), moving every 2nd (~16)
   char buf[24 + MAX_SERVOS * 18]; int k = snprintf(buf, sizeof(buf), "{\"t\":%lu,\"a\":[", (unsigned long)millis());
   for (uint8_t i = 0; i < nServos && k < (int)sizeof(buf) - 24; i++) {
     const ServoState& sv = servos[i];
@@ -1200,10 +1365,17 @@ void wifiTick() {
     if (!otaStarted) { ArduinoOTA.begin(); otaStarted = true; lg("ArduinoOTA listening on %s:%u", cfg.host, OTA_PORT); }
     if (apUp && millis() - wConnectedAt > 20000) stopAP();   // link proven stable → drop the AP
     // The laptop went quiet: the link is dead even though the radio hasn't noticed yet.
-    if (hbSeen && !otaBusy && wSlot <= WSLOT_DEFAULT && millis() - hbLastMs > HB_LOST_MS) {
+    // Under heavy servo load the heartbeat went missing for ~0.7 s at a time while the radio stayed connected (motor
+    // noise / supply dip, mod1 4 Nov): rejoining on that turned a hiccup into a 0.8-6 s outage. Linked with a good signal,
+    // give it HB_LOST_LINKED_MS.
+    bool linked = WiFi.status() == WL_CONNECTED && WiFi.RSSI() > -80;
+    if (hbSeen && !otaBusy && wSlot <= WSLOT_DEFAULT && millis() - hbLastMs > (linked ? HB_LOST_LINKED_MS : HB_LOST_MS)) {
       hbLosses++; hbSeen = false;
-      wUp = false; wLostAt = hbLastMs; mdnsOk = false;
-      lg("heartbeat silent %lu ms — rejoining '%s'", millis() - hbLastMs, ssidFor(wSlot));
+      wUp = false; wLostAt = hbLastMs; mdnsOk = false; wHbRejoin = true;
+      int vMin = 999, mA = 0;
+      for (uint8_t i = 0; i < nServos; i++) { if (servos[i].rawVoltage > 0 && servos[i].rawVoltage < vMin) vMin = servos[i].rawVoltage; if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f); }
+      lg("heartbeat silent %lu ms — rejoining '%s' (rssi %d, loop max %lu ms, servos %d.%d V, %d mA)", millis() - hbLastMs, ssidFor(wSlot),
+         (int)WiFi.RSSI(), (unsigned long)loopMaxMs, vMin / 10, vMin % 10, mA);
       wifiConnectSlot(wSlot);
       return;
     }
@@ -1253,7 +1425,8 @@ void wifiTick() {
   }
 
   // Same network three times (fast rejoin x2, then full scan) before moving to the next slot.
-  uint8_t s = (wSlot <= WSLOT_DEFAULT && wSameTries < 3 && slotUsable(wSlot)) ? wSlot : nextSlot();
+  // a heartbeat gap on a good link is a short dip, not a lost network: 6 tries before the house Wi-Fi, not 3
+  uint8_t s = (wSlot <= WSLOT_DEFAULT && wSameTries < (wHbRejoin ? 6 : 3) && slotUsable(wSlot)) ? wSlot : nextSlot();
   if (s == 255) { wNextTry = millis() + 10000; return; }     // nothing to try; AP is up
   wifiConnectSlot(s);
 }
@@ -1453,18 +1626,25 @@ void setCORS() {
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
   server.sendHeader("Cache-Control",                "no-store, no-cache");
 }
-void okJson(const String& body) { setCORS(); server.send(200, "application/json", body); }
+bool replyDefer = false; int replyCode = 0; String replyType, replyBody;
+void reply(int code, const char* type, const String& body) {
+  if (replyDefer) { replyCode = code; replyType = type; replyBody = body; return; }
+  setCORS(); server.send(code, type, body);
+}
+void okJson(const String& body) { reply(200, "application/json", body); }
 void okTrue() { okJson(F("{\"ok\":true}")); }
 void errJson(int code, const char* msg) {
-  setCORS();
   String b = F("{\"ok\":false,\"error\":\""); b += msg; b += F("\"}");
-  server.send(code, "application/json", b);
+  reply(code, "application/json", b);
 }
 // One handler per path for every verb; OPTIONS is answered inline for CORS preflight.
-void route(const char* path, void (*fn)()) {
-  server.on(path, HTTP_ANY, [fn]() {
+// bus=false: the handler never touches the servo bus and sends by itself (the page, the log, the OTA pull).
+void route(const char* path, void (*fn)(), bool bus = true) {
+  server.on(path, HTTP_ANY, [fn, bus]() {
     if (server.method() == HTTP_OPTIONS) { setCORS(); server.send(204); return; }
-    fn();
+    if (!bus) { fn(); return; }
+    { BusLock L; replyDefer = true; replyCode = 0; fn(); replyDefer = false; }
+    if (replyCode) { setCORS(); server.send(replyCode, replyType.c_str(), replyBody); replyBody = String(); }
   });
 }
 
@@ -1479,10 +1659,19 @@ String buildJSON() {
   j += F(",\"deadbandUnits\":"); j += deadbandUnits;
   j += F(",\"heap\":");    j += ESP.getFreeHeap();
   // 0 = this board has NO second OTA partition, so wireless upload cannot work
-  j += F(",\"otaSpace\":");   j += ESP.getFreeSketchSpace();
-  j += F(",\"sketchSize\":"); j += ESP.getSketchSize();
+  j += F(",\"otaSpace\":");   j += otaSpaceBoot;
+  j += F(",\"sketchSize\":"); j += sketchSizeBoot;
   j += F(",\"animFrames\":");  j += animCount;
   j += F(",\"animPlaying\":"); j += (animPlaying ? F("true") : F("false"));
+  j += F(",\"animInterrupted\":"); j += (animInterrupted ? F("true") : F("false"));
+  j += F(",\"motionLocked\":"); j += (motionLocked ? F("true") : F("false"));
+  j += F(",\"guardMsg\":\""); j += guardMsg; j += '"';
+  j += F(",\"loopMaxMs\":"); j += (loopMaxMs > loopMaxPrev ? loopMaxMs : loopMaxPrev);
+  j += F(",\"guardGapMs\":"); j += (guardGapMs > guardGapPrev ? guardGapMs : guardGapPrev);   // should stay near FAST_MS
+  j += F(",\"guardPassMs\":"); j += (guardPassMs > guardPassPrev ? guardPassMs : guardPassPrev);
+  j += F(",\"guardWaitMs\":"); j += (guardWaitMs > guardWaitPrev ? guardWaitMs : guardWaitPrev);
+  j += F(",\"servoMisses\":"); j += servoMisses;
+  j += F(",\"chipC\":"); j += String(temperatureRead(), 1);
   j += F(",\"animIdx\":");     j += animIdx;
   j += F(",\"animPlanMs\":");  j += animPlanMs;
   j += F(",\"animStretched\":"); j += (animStretched ? F("true") : F("false"));
@@ -1513,6 +1702,8 @@ String buildJSON() {
     j += F(",\"speed\":");   j += sv.rawSpeed;
     j += F(",\"loadRaw\":"); j += sv.rawLoad;
     j += F(",\"loadAbs\":"); j += sv.rawLoadAbs;
+    j += F(",\"guard\":\""); j += guardName(guards[i].state); j += '"';
+    j += F(",\"torqueLimit\":"); j += guards[i].torque;
     j += F(",\"currentmA\":");
     if (sv.rawCurrent >= 0) j += String(sv.rawCurrent * 6.5f, 1); else j += F("null");
     j += F(",\"voltageV\":");
@@ -1553,10 +1744,12 @@ void handleHealth() {
   b += FW_VERSION;
   b += F("\",\"ip\":\""); b += WiFi.localIP().toString();
   b += F("\",\"hostname\":\""); b += cfg.host;
-  b += F("\",\"otaSpace\":"); b += ESP.getFreeSketchSpace();
-  b += F(",\"sketchSize\":"); b += ESP.getSketchSize();
+  b += F("\",\"otaSpace\":"); b += otaSpaceBoot;
+  b += F(",\"sketchSize\":"); b += sketchSizeBoot;
   b += F(",\"live\":"); b += LIVE_PORT;      // live mode: GOS asks here for pushed angles
-  b += F(",\"liveOn\":"); b += (liveAwake ? F("true") : F("false")); b += '}';
+  b += F(",\"liveOn\":"); b += (liveAwake ? F("true") : F("false"));
+  b += F(",\"radioAwake\":"); b += (radioAwake ? F("true") : F("false"));
+  b += F(",\"chipC\":"); b += String(temperatureRead(), 1); b += '}';
   okJson(b);
 }
 void handleTelemetry() { okJson(buildJSON()); }
@@ -1600,6 +1793,7 @@ void handleCommand() {
   int     speed = server.hasArg("speed") ? server.arg("speed").toInt()   : 10;
   uint8_t acc   = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100)
                                                  : POS_ACC_DEFAULT);
+  if (cmd == "pos" || cmd == "torqueon" || cmd == "torquetoggle" || cmd == "home") motionLocked = false;
   if (cmd == "pos") { cmdPos(*sv, angle, speed, acc); okTrue(); return; }
   if (cmd == "stop" || cmd == "estop" ||
       cmd == "torquetoggle" || cmd == "torqueon" || cmd == "torqueoff" || cmd == "home") {
@@ -1609,19 +1803,22 @@ void handleCommand() {
 }
 
 void handleBatch() {
+  if (!motionLocked) lastMotionMs = millis();
+  if (motionLocked) { errJson(423, "locked after power-on: nothing moves until you press Turn torque ON, Go to manual home or a servo's own button"); return; }
   bc("batch move");
   int     spd = server.hasArg("speed") ? constrain(server.arg("speed").toInt(), 1, 10) : 5;
   uint8_t acc = (uint8_t)(server.hasArg("acc") ? constrain(server.arg("acc").toInt(), 1, 100)
                                                : POS_ACC_DEFAULT);
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
   uint16_t spds[MAX_SERVOS]; uint8_t accs[MAX_SERVOS];
-  uint8_t cnt = 0;
+  uint8_t cnt = 0, refused = 0;
 
   for (uint8_t i = 0; i < nServos; i++) {
     ServoState& sv = servos[i];
     String key = String(sv.id);
     if (!server.hasArg(key)) continue;
     float lo, hi; limitsFor(i, lo, hi);
+    if (!guardAllows(i, nomToRaw(sv.id, clampF(server.arg(key).toFloat(), lo, hi)))) { refused++; continue; }
     sv.mode = POS_MODE;
     setHwMode(sv, POS_MODE);
     ensureTorque(sv);
@@ -1637,7 +1834,9 @@ void handleBatch() {
   }
   if (cnt == 1)     { st.WritePosEx(ids[0], pos[0], spds[0], accs[0]); delay(3); }
   else if (cnt > 1) { st.SyncWritePosEx(ids, cnt, pos, spds, accs);    delay(3); }
-  String b = F("{\"ok\":true,\"sent\":"); b += cnt; b += '}';
+  String b = F("{\"ok\":true,\"sent\":"); b += cnt;
+  if (refused) { b += F(",\"refused\":"); b += refused; b += F(",\"why\":\""); b += guardMsg; b += '"'; }
+  b += '}';
   okJson(b);
 }
 
@@ -1651,16 +1850,17 @@ void handleHome() {
   bool raw = server.hasArg("raw") && server.arg("raw") != "0";
   bc(raw ? "home all -> mechanical 180" : "home all -> straight (nominal 180)");
   homeAll(manual, raw);
+  motionLocked = false;
   okTrue();
 }
 
 // GET /api/home/manual                 same as /api/home?manual=1
-void handleHomeManual() { bc("home all -> straight (nominal 180)"); homeAll(true); okTrue(); }
+void handleHomeManual() { bc("home all -> straight (nominal 180)"); homeAll(true); motionLocked = false; okTrue(); }
 
 // GET /api/home/set                    capture EVERY servo's current angle as its home
 // GET /api/home/set?id=N               just this one
 // GET /api/home/set?id=N&deg=142.5     set it to an explicit angle instead
-// GET /api/home/set?id=N&clear=1       forget it (back to the built-in straight pose, LAYOUT_HOME_DEG10)
+// GET /api/home/set?id=N&clear=1       forget it (no correction until a home is saved again)
 void handleHomeSet() {
   bool clear = server.hasArg("clear") && server.arg("clear") != "0";
   String out = F("{\"ok\":true,\"homes\":[");
@@ -1797,7 +1997,8 @@ void handleAnimPlay() {
   uint8_t from = server.hasArg("from") ? (uint8_t)server.arg("from").toInt() : 0;
   if (from >= animCount) from = 0;
   bc("anim play (%u frames)", animCount);
-  animPlaying = true;
+  animPlaying = true; animInterrupted = false; motionLocked = false;
+  prefs.putUChar("animRun", 1);         // remembered across a power cut, so the next boot can say it was interrupted
   animBeginFrame(from);
   okTrue();
 }
@@ -1848,15 +2049,42 @@ void handleServoHome() {
   bool raw = server.hasArg("raw") && server.arg("raw") != "0";
   float target = raw ? 180.0f - offsetFor(id) : 180.0f;
   gotoDeg((uint8_t)slot, target);
+  motionLocked = false;
   String r = F("{\"ok\":true,\"id\":"); r += id;
   r += F(",\"target\":"); r += String(target, 1); r += '}';
   okJson(r);
 }
 void handleTune() { bc("tune all"); tuneAllServos(); okTrue(); }
+// GET /api/guard            settings and every joint's guard state
+// GET /api/guard/clear?id=N  (or id=all) back to normal where it is now
+void handleGuard() {
+  auto c = [](const GuardCfg& g) {
+    String o = F("{\"loadTrip\":"); o += g.loadTrip; o += F(",\"currTripmA\":"); o += g.currTripmA; o += F(",\"calm\":"); o += g.calm;
+    o += F(",\"tripMs\":"); o += g.tripMs; o += F(",\"ceiling\":"); o += g.ceiling; o += F(",\"holdTorque\":"); o += g.holdTorque;
+    o += F(",\"warmC\":"); o += g.warmC; o += F(",\"hotC\":"); o += g.hotC; o += '}'; return o; };
+  String r = F("{\"ok\":true,\"bend\":"); r += c(guardSet.bend); r += F(",\"lock\":"); r += c(guardSet.lock);
+  r += F(",\"msg\":\""); r += guardMsg; r += F("\",\"joints\":[");
+  for (uint8_t i = 0; i < nServos; i++) {
+    if (i) r += ',';
+    r += F("{\"id\":"); r += servos[i].id; r += F(",\"state\":\""); r += guardName(guards[i].state);
+    r += F("\",\"torque\":"); r += guards[i].torque; r += F(",\"blockDir\":"); r += guards[i].blockDir; r += '}';
+  }
+  r += "]}"; okJson(r);
+}
+void handleGuardSet() {
+  if (server.hasArg("everyMs")) guardEveryMs = (uint16_t)constrain(server.arg("everyMs").toInt(), 0, 500);
+  String r = F("{\"ok\":true,\"everyMs\":"); r += guardEveryMs; r += '}'; okJson(r);
+}
+void handleGuardClear() {
+  String a = server.hasArg("id") ? server.arg("id") : String("all");
+  guardClear(a == "all" ? -1 : a.toInt());
+  okTrue();
+}
+
 void handleTorqueAll() {
   bool on = !server.hasArg("on") || server.arg("on") != "0";
   bc("torque all %s (%u servos)", on ? "ON" : "OFF", nServos);
-  if (on) torqueOnAll(); else torqueOffAll();
+  if (on) { torqueOnAll(); motionLocked = false; } else torqueOffAll();
   okJson(on ? F("{\"ok\":true,\"torque\":\"on\"}") : F("{\"ok\":true,\"torque\":\"off\"}"));
 }
 
@@ -2209,8 +2437,9 @@ void handleWifiScan() {
 // radio at full power, CPU at full speed so the flash write is fast and reliable.
 void prepareForOta(const char* how) {
   otaBusy = true;
+  prefs.putUChar("otaBoot", 1);      // the boot after an update stays limp (setup): an update never moves a motor
   lg("OTA (%s) starting — de-torquing servos", how);
-  for (uint8_t i = 0; i < nServos; i++) { st.EnableTorque(servos[i].id, 0); delay(2); servos[i].torqueOn = false; }
+  { BusLock L; for (uint8_t i = 0; i < nServos; i++) { st.EnableTorque(servos[i].id, 0); delay(2); servos[i].torqueOn = false; } }
   WiFi.setSleep(false);
   // Full TX power for the transfer: the 8.5 dBm setting that keeps the C3 cool is the
   // difference between a 1.1 MB upload finishing and stalling on a weak link.
@@ -2229,6 +2458,7 @@ uint32_t otaSum     = 2166136261u;  // FNV-1a over the received bytes: proves wh
 void otaEnd(bool success) {
   if (success) return;
   otaBusy = false;
+  prefs.putUChar("otaBoot", 0);
   setCpuFrequencyMhz(80);
   WiFi.setSleep(ROBO_WIFI_PS);
   WiFi.setTxPower(WIFI_POWER_11dBm);
@@ -2349,8 +2579,33 @@ void otaConfig() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Its own task, above loop(): every FAST_MS read all servos, run the guard on each, push live angles. A web reply or a
+// Wi-Fi reconnect in loop() can no longer make the guard late.
+void guardTask(void*) {
+  TickType_t last = xTaskGetTickCount();
+  uint32_t prev = 0;
+  for (;;) {
+    vTaskDelayUntil(&last, pdMS_TO_TICKS(guardEveryMs ? guardEveryMs : FAST_MS));
+    uint32_t now = millis();
+    if (prev && now - prev > guardGapMs) guardGapMs = now - prev;
+    if (now - guardWinAt > 5000) { guardGapPrev = guardGapMs; guardGapMs = 0; guardPassPrev = guardPassMs; guardPassMs = 0; guardWaitPrev = guardWaitMs; guardWaitMs = 0; guardWinAt = now; }
+    prev = now;
+    if (otaBusy || sc.active || nServos == 0 || guardEveryMs == 0) continue;
+    uint32_t tw = millis();
+    BusLock L;
+    uint32_t t0 = millis();
+    if (t0 - tw > guardWaitMs) guardWaitMs = t0 - tw;
+    refreshAllFastSync();                // guardTick() for every joint at its end
+    liveSend();
+    if (millis() - t0 > guardPassMs) guardPassMs = millis() - t0;
+  }
+}
+
 void setup() {
   captureLastBoot();          // must be first: nothing may overwrite the breadcrumb
+  busMx = xSemaphoreCreateRecursiveMutex();
+  sketchSizeBoot = ESP.getSketchSize(); otaSpaceBoot = ESP.getFreeSketchSpace();
+  lgMx  = xSemaphoreCreateMutex();
   Serial.begin(115200);
   delay(300);
   cfgLoad();
@@ -2374,7 +2629,7 @@ void setup() {
   wifiInit();                          // non-blocking: the server is up in milliseconds
   otaConfig();                         // begin() happens in wifiTick once we have an IP
 
-  route("/",                    handleUI);          // the web page
+  route("/",                    handleUI, false);          // the web page
   route("/api/health",          handleHealth);
   route("/api/telemetry",       handleTelemetry);
   route("/api/command",         handleCommand);
@@ -2389,9 +2644,12 @@ void setup() {
   route("/api/servo/home",      handleServoHome);
   route("/api/servo/deadband",  handleDeadband);
   route("/api/torque",          handleTorqueAll);
+  route("/api/guard",           handleGuard);
+  route("/api/guard/clear",     handleGuardClear);
+  route("/api/guard/set",       handleGuardSet);
   route("/api/servo/tune",      handleTune);
   route("/api/identify",        handleIdentify);
-  route("/api/log",             handleLog);
+  route("/api/log",             handleLog, false);
   route("/api/bus/raw",         handleBusRaw);
   route("/api/scan",            handleScan);
   route("/api/scan/status",     handleScanStatus);
@@ -2408,7 +2666,7 @@ void setup() {
   route("/api/wifi/set",        handleWifiSet);
   route("/api/wifi/reconnect",  handleWifiReconnect);
   route("/api/wifi/scan",       handleWifiScan);
-  route("/api/ota/url",         handleOtaUrl);
+  route("/api/ota/url",         handleOtaUrl, false);
   server.on("/api/ota", HTTP_POST, handleOtaDone, handleOtaUpload);
   server.on("/api/ota", HTTP_OPTIONS, []() { setCORS(); server.send(204); });
   server.onNotFound([]() {
@@ -2438,44 +2696,43 @@ void setup() {
   seedTargetsFromHardware();
   tuneAllServos();          // writes only what differs, so this is a no-op after the first boot
 
-  // If manual homes have been saved, the operator has already said where this arm should
-  // rest, so go there on power-up. With none saved we stay limp rather than inventing a
-  // destination — driving to a hardcoded 180 that nobody chose is the behaviour that used
-  // to make the arm lunge at boot.
-  if (homes.n > 0) {
-    lg("boot: moving to saved manual home (%u joint(s) have one)", homes.n);
-    homeAll(true);
-  } else {
-    lg("boot: no manual home saved — staying limp. Pose the arm and press 'Set current as home'.");
-  }
-  lg("boot complete — %s, %u servo(s) configured",
-     homes.n > 0 ? "moved to manual home" : "torque OFF", nServos);
+  // Power-on is ALWAYS limp (Nischay, 4 Nov 2026): after a power cut, a reset or an update the board only
+  // reads where every joint is and waits. Torque on, Go to manual home, continue: the operator decides.
+  // (It used to drive to the saved home at full speed the moment power came back.)
+  prefs.putUChar("otaBoot", 0);
+  animInterrupted = prefs.getUChar("animRun", 0) != 0;
+  if (animInterrupted) { prefs.putUChar("animRun", 0); lg("boot: a sequence was playing when power was lost - it does NOT resume"); }
+  lg("boot complete - torque OFF, nothing moved, %u servo(s) read. Waiting for the operator.", nServos);
+  // priority 2, just above loop() (1). Tried 19 (above the TCP/IP task): web replies then took ~6 s and ping ~1 s
+  // (mod1, 5 Nov). The 0.2 s late guard was the flash-size reads holding the lock, not the priority.
+  xTaskCreate(guardTask, "guard", 6144, nullptr, 2, nullptr);
 }
 
 void loop() {
+  static uint32_t t0 = 0;
+  uint32_t tn = millis();
+  if (t0) { uint32_t d = tn - t0; if (d > loopMaxMs) loopMaxMs = d; }
+  t0 = tn;
+  if (tn - loopWinAt > 5000) { loopMaxPrev = loopMaxMs; loopMaxMs = 0; loopWinAt = tn; }
   server.handleClient();
   ArduinoOTA.handle();
   wifiTick();
-  livePoll();
+  { BusLock L; livePoll(); }            // its UDP socket is shared with the guard task's liveSend()
+  radioTick();
   if (mdnsOk) { /* ESPmDNS services itself in the background */ }
   delay(1);
 
   if (otaBusy) return;                 // never touch the servo bus mid-flash
 
-  animTick();                          // the board owns sequence timing, not the browser
+  { BusLock L; animTick(); }           // the board owns sequence timing, not the browser
 
-  if (sc.active) { scanStep(); return; }   // scan owns the bus until it finishes
+  if (sc.active) { BusLock L; scanStep(); return; }   // scan owns the bus until it finishes
 
-  if (millis() - lastFast >= FAST_MS) {
-    lastFast = millis();
-    refreshAllFastSync();
-    liveSend();                        // fresh angles to a watching laptop (live mode)
-    server.handleClient();
-  }
+  // the fast read, the guard and the live stream run in guardTask(), so nothing here can hold them up
 
   if (nServos && millis() - lastSlow >= SLOW_MS) {
     lastSlow = millis();
-    refreshSlow(servos[slowIdx]);
+    { BusLock L; refreshSlow(servos[slowIdx]); }
     slowIdx = (uint8_t)((slowIdx + 1) % nServos);
     server.handleClient();
   }

@@ -38,7 +38,7 @@ import { Button } from '@/components/ui/button';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import './MsrrPanel.css';
 import V2Panel from '@/features/msrr2/V2Panel';
-import { Section, Row } from './panelParts';
+import { Section, Row, LogStrip } from './panelParts';
 import { useV2Store } from '@/state/msrrV2Store';
 import { useMsrrStore, DEFAULT_CELL_SIZE } from '@/state/msrrStore';
 import { runOperator } from '@/core/ops/registry';
@@ -103,7 +103,7 @@ function LegacyPanel({ switcher }: { switcher: React.ReactNode }) {
         {tab === 'bridge' && <BridgeTab />}
       </div>
 
-      <LogStrip />
+      <MsrrLog />
     </div>
   );
 }
@@ -1095,25 +1095,10 @@ function BridgeTab() {
 
 // ── log ───────────────────────────────────────────────────────────────────────
 
-function LogStrip() {
+function MsrrLog() {
   const log = useMsrrStore((s) => s.log);
   const clearLog = useMsrrStore((s) => s.clearLog);
-  const ref = useRef<HTMLDivElement | null>(null);
-  useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; }, [log]);
-
-  return (
-    <div className="msrr-log">
-      <div className="msrr-log-head">
-        <span>Log</span>
-        <Button variant="ghost" size="xs" onClick={clearLog} disabled={!log.length}>Clear</Button>
-      </div>
-      <div className="msrr-log-body" ref={ref}>
-        {log.length === 0
-          ? <div className="msrr-log-line dim">Planner output and tool notes appear here.</div>
-          : log.map((l, i) => <div key={i} className="msrr-log-line">{l}</div>)}
-      </div>
-    </div>
-  );
+  return <LogStrip log={log} onClear={clearLog} />;
 }
 
 // ── BUILD: shape diagram -> real modules ──────────────────────────────────────

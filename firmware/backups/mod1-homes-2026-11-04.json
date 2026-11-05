@@ -1,0 +1,4 @@
+{
+ "note": "mod1 saved manual homes (mechanical degrees, servo ID -> home), read from /api/telemetry on 4 Nov 2026 before the live-mode firmware. Restore one with /api/home/set?id=N&deg=X (no motor moves).",
+ "homes": {"1": 176.8, "2": 181.4, "3": 167.9, "4": 179.9, "5": 185.1, "6": 179.7, "7": 176.9, "8": 179.3, "9": 184.1}
+}

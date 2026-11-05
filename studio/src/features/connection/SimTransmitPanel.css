@@ -1,6 +1,6 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    SimTransmitPanel — live transmission log overlay on Page 1 canvas
-   Dark terminal aesthetic to contrast against the light 3D canvas.
+   Terminal look in the app's own colours, so it reads in the light and the dark theme.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 .stp-panel {
@@ -9,7 +9,7 @@
   height: 100%;
   font-family: 'Share Tech Mono', 'Courier New', monospace;
   font-size: 11px;
-  color: #94a3b8;
+  color: var(--text-dim);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -21,8 +21,8 @@
   align-items: center;
   justify-content: space-between;
   padding: 8px 11px 6px;
-  border-bottom: 1px solid rgba(100,140,200,0.15);
-  background: rgba(255,255,255,0.04);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-card);
 }
 .stp-header-left  { display: flex; align-items: center; gap: 7px; }
 .stp-header-right { display: flex; align-items: center; gap: 5px; }
@@ -31,7 +31,7 @@
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 2px;
-  color: #e2e8f0;
+  color: var(--text-bright);
   text-transform: uppercase;
 }
 
@@ -53,20 +53,20 @@
   align-items: center;
   gap: 7px;
   padding: 4px 11px;
-  border-bottom: 1px solid rgba(100,140,200,0.10);
+  border-bottom: 1px solid var(--border);
 }
 .stp-target-label {
-  font-size: 9px; color: #475569; letter-spacing: 1.2px; text-transform: uppercase;
+  font-size: 9px; color: var(--text-dim); letter-spacing: 1.2px; text-transform: uppercase;
 }
 .stp-target-url   { color: #6366f1; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.stp-target-interval { font-size: 9px; color: #475569; flex-shrink: 0; }
+.stp-target-interval { font-size: 9px; color: var(--text-dim); flex-shrink: 0; }
 
 /* ── Stats ── */
 .stp-stats {
   display: flex;
   gap: 0;
   padding: 5px 11px;
-  border-bottom: 1px solid rgba(100,140,200,0.10);
+  border-bottom: 1px solid var(--border);
 }
 .stp-stat {
   display: flex;
@@ -77,7 +77,7 @@
 }
 .stp-stat-k {
   font-size: 8px;
-  color: #475569;
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 0.8px;
 }
@@ -85,7 +85,7 @@
   font-size: 14px;
   font-weight: 700;
   letter-spacing: -0.5px;
-  color: #94a3b8;
+  color: var(--text-dim);
 }
 
 /* ── Log header ── */
@@ -95,12 +95,12 @@
   align-items: center;
   padding: 4px 11px 3px;
   font-size: 8px;
-  color: #334155;
+  color: var(--text-dim);
   text-transform: uppercase;
   letter-spacing: 1.5px;
-  border-bottom: 1px solid rgba(100,140,200,0.10);
+  border-bottom: 1px solid var(--border);
 }
-.stp-log-count { color: #1e293b; }
+.stp-log-count { color: var(--text); }
 
 /* ── Log body ── */
 .stp-log-body {
@@ -109,11 +109,11 @@
   min-height: 0;
   overflow-y: auto;
   scrollbar-width: thin;
-  scrollbar-color: rgba(100,140,200,0.2) transparent;
+  scrollbar-color: var(--border) transparent;
 }
 .stp-empty {
   padding: 12px 11px;
-  color: #334155;
+  color: var(--text-dim);
   font-size: 10px;
   text-align: center;
 }
@@ -125,8 +125,8 @@
   padding: 1.5px 11px;
   transition: background .1s;
 }
-.stp-entry:hover { background: rgba(255,255,255,0.04); }
+.stp-entry:hover { background: var(--bg-card); }
 
-.stp-e-time { color: #334155; flex-shrink: 0; font-size: 10px; }
+.stp-e-time { color: var(--text-dim); flex-shrink: 0; font-size: 10px; }
 .stp-e-src  { font-size: 9px; font-weight: 700; flex-shrink: 0; letter-spacing: 0.3px; min-width: 27px; }
 .stp-e-msg  { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; }

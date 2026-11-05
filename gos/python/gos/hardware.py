@@ -34,12 +34,20 @@ class Esp32Robot:
         self.armed = False
         self._homes = None
         self._last = None
+        self._board_ms, self._contact_at, self.why_disarmed = None, 0.0, ''
 
     # ── talking to the board ──────────────────────────────────────────────────
     def _get(self, path):
         try:
             with urllib.request.urlopen(self.url + path, timeout=self.timeout) as r:
-                return json.loads(r.read() or b'{}')
+                out = json.loads(r.read() or b'{}')
+            self._heard(out.get('ms'))
+            return out
+        except urllib.error.HTTPError as e:  # the board answered, and said no (e.g. 423: locked after power-on)
+            try: why = json.loads(e.read() or b'{}').get('error')
+            except ValueError: why = None
+            self._contact_at = time.time()
+            raise GosError(f'The robot at {self.url} refused: {why or e.reason}.') from None
         except (urllib.error.URLError, TimeoutError, OSError) as e:
             raise GosError(f'The robot at {self.url} does not answer ({e}). Check it is powered, on the same Wi-Fi, and the address is right.') from None
 
@@ -76,7 +84,7 @@ class Esp32Robot:
             while self._udp:
                 try: m = json.loads(self._udp.recv(2048))
                 except (OSError, ValueError): continue
-                self._live_deg = {i: a for i, a in m.get('a', [])}; self._live_at = time.time()
+                self._live_deg = {i: a for i, a in m.get('a', [])}; self._live_at = time.time(); self._heard(m.get('t'))
         threading.Thread(target=ask, daemon=True).start(); threading.Thread(target=hear, daemon=True).start()
         return True
 
@@ -87,7 +95,7 @@ class Esp32Robot:
 
     def read(self):
         """Joint angles in radians, from the servo encoders: the live stream when it is fresh, else one web request."""
-        if getattr(self, '_udp', None) and time.time() - self._live_at < 0.5:
+        if getattr(self, '_udp', None) and time.time() - self._live_at < 1.0:  # ~4 a second while the robot stands still
             if self._homes is None: self._read_homes()
             deg = self._live_deg
         else:
@@ -100,10 +108,20 @@ class Esp32Robot:
         return out
 
     # ── safety ───────────────────────────────────────────────────────────────
+    def _heard(self, board_ms):
+        """Every reply carries the board's clock (ms since it powered on). If it jumps back, the board restarted (a power
+        cut): what we think the joints are doing is no longer true, so disarm until someone arms again."""
+        self._contact_at = time.time()
+        if board_ms is None: return
+        prev, self._board_ms = self._board_ms, int(board_ms)
+        if prev is not None and self._board_ms + 1000 < prev and self.armed:
+            self.armed = False
+            self.why_disarmed = 'the module restarted (power cut?) and is now in its own start-up pose. Check it, then arm again.'
+
     def arm(self):
         """Allow motion. Reads the current pose first, so the first move starts from where the robot really is."""
         self._last = self.read()
-        self.armed = True
+        self.armed, self.why_disarmed = True, ''
         return Result(True, 'Armed: commands will move the motors. Call stop() to halt everything.')
 
     def disarm(self):
@@ -125,8 +143,11 @@ class Esp32Robot:
 
     def move(self, values):
         """Command joint angles (radians, by joint name). Clamped to limits; a large jump goes in steps."""
+        if self.armed and time.time() - self._contact_at > 2.0:
+            self.armed = False
+            self.why_disarmed = f'no reply from the module for {time.time() - self._contact_at:.0f} s (Wi-Fi drop or power cut). When it answers again, check it and arm again.'
         if not self.armed:
-            return Result(False, 'Not armed: call arm() first. Nothing moved.')
+            return Result(False, f'Not armed: {self.why_disarmed or "call arm() first."} Nothing moved.')
         unknown = [j for j in values if j not in self.ids]
         if unknown:
             return Result(False, f'Unknown joints {", ".join(unknown)}. Joints: {", ".join(self.joints)}.')
@@ -139,7 +160,9 @@ class Esp32Robot:
             q = {j: start[j] + (target[j] - start[j]) * k / steps for j in target}
             parts = {'speed': self.speed, 'acc': self.acc}
             parts.update({str(self.ids[j]): round(self._homes[j] + self.signs[j] * math.degrees(v), 2) for j, v in q.items()})
-            self._get('/api/batch?' + urllib.parse.urlencode(parts))
+            sent = self._get('/api/batch?' + urllib.parse.urlencode(parts))
+            if sent.get('refused'):  # the board's overload guard: a joint hit something, or is too hot
+                return Result(False, f'The module refused {sent["refused"]} joint(s): {sent.get("why") or "overload guard"}. Move it the other way, or clear the block.')
             if not self.armed: return Result(False, 'Stopped during the move.')
             if k < steps: time.sleep(0.05)
         self._last.update(target)
@@ -176,7 +199,8 @@ def serve_robot(app, robot, name='mod1', rate=20):
     def on_command(m):
         if len(m.get('name', [])) != len(m.get('position', [])):
             return say(last.get('online', False), 'A command needs one position per name. Nothing moved.')
-        r = robot.move(dict(zip(m['name'], m['position'])))
+        try: r = robot.move(dict(zip(m['name'], m['position'])))
+        except GosError as e: return say(True, str(e))   # e.g. the board is locked after power-on
         say(True, '' if r.ok else r.message)
 
     def result(r):

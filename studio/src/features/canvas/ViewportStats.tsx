@@ -65,7 +65,7 @@ export default function ViewportStats() {
     : n >= 1_000   ? `${(n / 1_000).toFixed(0)}K`
     : `${n}`;
 
-  const loadColour = (pct: number) => (pct >= 85 ? '#f87171' : pct >= 60 ? '#fbbf24' : '#4ade80');
+  const loadColour = (pct: number) => (pct >= 85 ? 'var(--hud-bad)' : pct >= 60 ? 'var(--hud-warn)' : 'var(--hud-good)');
 
   const ENGINE_COLOUR: Record<string, string> = {
     eevee:   '#2f7dff',
@@ -89,13 +89,13 @@ export default function ViewportStats() {
 
   return (
     <div className="vp-stats">
-      <div className="vp-stats-engine" style={{ color: ENGINE_COLOUR[stats.engine] ?? '#fff' }}>
+      <div className="vp-stats-engine" style={{ color: ENGINE_COLOUR[stats.engine] ?? 'var(--hud-text)' }}>
         {stats.engine.toUpperCase()}
         </div>
 
       <div className="vp-stats-row">
         <span className="vp-stats-label">FPS</span>
-        <span className="vp-stats-val" style={{ color: stats.fps < 20 ? '#f87171' : stats.fps < 45 ? '#fbbf24' : '#4ade80' }}>
+        <span className="vp-stats-val" style={{ color: stats.fps < 20 ? 'var(--hud-bad)' : stats.fps < 45 ? 'var(--hud-warn)' : 'var(--hud-good)' }}>
           {stats.fps}
         </span>
       </div>
@@ -144,7 +144,7 @@ export default function ViewportStats() {
               {sysWide && <div className="vp-stats-note vp-stats-scope">* dev mode: editor + whole browser. The packaged app reports itself only.</div>}
               <div className="vp-stats-row vp-stats-row-sub">
                 <span className="vp-stats-label">· GPU</span>
-                <span className="vp-stats-val" style={{ color: sys.gpuPercent === null ? '#888' : loadColour(sys.gpuPercent) }}>
+                <span className="vp-stats-val" style={{ color: sys.gpuPercent === null ? 'var(--hud-faint)' : loadColour(sys.gpuPercent) }}>
                   {sys.gpuPercent === null ? '—' : `${Math.round(sys.gpuPercent)} %`}
                 </span>
               </div>
@@ -163,14 +163,14 @@ export default function ViewportStats() {
           </div>
           <div className="vp-stats-row">
             <span className="vp-stats-label">Smp/sec</span>
-            <span className="vp-stats-val" style={{ color: stats.ptSamplesPerSec > 0 ? '#e07b39' : '#888' }}>
+            <span className="vp-stats-val" style={{ color: stats.ptSamplesPerSec > 0 ? '#e07b39' : 'var(--hud-faint)' }}>
               {stats.ptSamplesPerSec > 0 ? stats.ptSamplesPerSec : '—'}
             </span>
           </div>
           <div className="vp-stats-bar-wrap">
             <div className="vp-stats-bar" style={{ width: `${converged}%` }} />
           </div>
-          <div className="vp-stats-note" style={{ color: converged >= 100 ? '#4ade80' : undefined }}>
+          <div className="vp-stats-note" style={{ color: converged >= 100 ? 'var(--hud-good)' : undefined }}>
             {stats.ptSamples === 0
               ? 'Starting…'
               : converged >= 100

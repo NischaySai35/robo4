@@ -52,6 +52,8 @@
 }
 
 .cmdk-input::placeholder { color: var(--text-dim); }
+/* The whole search bar is the field: no second focus ring inside it. */
+.cmdk-input:focus-visible { box-shadow: none; }
 
 .cmdk-esc {
   font-family: var(--font-mono);

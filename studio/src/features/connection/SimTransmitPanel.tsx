@@ -149,7 +149,7 @@ export default function SimTransmitPanel() {
         </div>
         <div className="stp-stat">
           <span className="stp-stat-k">DROP%</span>
-          <span className="stp-stat-v" style={{ color: '#94a3b8' }}>
+          <span className="stp-stat-v" style={{ color: 'var(--text-dim)' }}>
             {stats.queued > 0 ? ((stats.failed / stats.queued) * 100).toFixed(0) : '0'}
           </span>
         </div>
@@ -167,10 +167,10 @@ export default function SimTransmitPanel() {
         {recent.map(e => (
           <div key={e.id} className="stp-entry">
             <span className="stp-e-time">{e.time.slice(3)}</span>
-            <span className="stp-e-src" style={{ color: SRC_COLOR[e.src as keyof typeof SRC_COLOR] ?? '#94a3b8' }}>
+            <span className="stp-e-src" style={{ color: SRC_COLOR[e.src as keyof typeof SRC_COLOR] ?? 'var(--text-dim)' }}>
               {e.src}
             </span>
-            <span className="stp-e-msg" style={{ color: LEVEL_COLOR[e.level as keyof typeof LEVEL_COLOR] ?? '#cbd5e1' }}>
+            <span className="stp-e-msg" style={{ color: LEVEL_COLOR[e.level as keyof typeof LEVEL_COLOR] ?? 'var(--text)' }}>
               {e.msg}
             </span>
           </div>

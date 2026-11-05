@@ -14,9 +14,9 @@
 }
 
 .vp-stats {
-  background: rgba(30, 30, 30, 0.38);
+  background: var(--hud-bg);
   backdrop-filter: blur(6px);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  border: 1px solid var(--hud-border);
   border-radius: 8px;
   padding: 7px 10px 6px;
   display: flex;
@@ -47,7 +47,7 @@
 .vp-stats-label {
   font-family: var(--font-mono);
   font-size: 9px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--hud-label);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
@@ -56,14 +56,14 @@
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 700;
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--hud-text);
 }
 
 @keyframes vp-blink { from { opacity: 1 } to { opacity: 0.3 } }
 
 .vp-stats-bar-wrap {
   height: 3px;
-  background: rgba(255,255,255,0.1);
+  background: var(--hud-border);
   border-radius: 2px;
   margin: 3px 0 1px;
   overflow: hidden;
@@ -78,7 +78,7 @@
 .vp-stats-note {
   font-family: var(--font-mono);
   font-size: 8px;
-  color: rgba(255, 255, 255, 0.25);
+  color: var(--hud-faint);
   text-align: right;
   margin-top: 2px;
   letter-spacing: 0.08em;

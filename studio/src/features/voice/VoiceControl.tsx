@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useVoiceStore } from './voiceStore';
 import { speak, stopSpeaking, downloadVoiceModel, PIPER_VOICE } from './speech';
 import { BATT_WARN_V, BATT_EMPTY_V } from './battery';
+import { Button } from '@/components/ui/button';
 
 /** Header speaker button + a small settings popover (on/off, voice download, volume, test). */
 export default function VoiceControl() {
@@ -40,11 +41,11 @@ export default function VoiceControl() {
       </button>
 
       {open && (
-        <div style={{
+        <div data-ui="a" style={{
           position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 300, zIndex: 50,
-          background: 'var(--panel, #11182a)', border: '1px solid var(--border, #2a3550)',
+          background: 'var(--bg-panel)', color: 'var(--text)', border: '1px solid var(--border)',
           borderRadius: 8, padding: 12, display: 'grid', gap: 10, fontSize: 12,
-          boxShadow: '0 8px 28px rgba(0,0,0,.45)',
+          boxShadow: '0 8px 28px rgba(0,0,0,.25)',
         }}>
           <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
             <input type="checkbox" checked={S.enabled}
@@ -62,15 +63,15 @@ export default function VoiceControl() {
           </div>
           <div style={{ opacity: 0.8 }}>{status}</div>
           {S.model === 'downloading' && (
-            <div style={{ height: 6, background: 'rgba(255,255,255,.12)', borderRadius: 99, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${S.progress * 100}%`, background: '#3b82f6' }} />
+            <div style={{ height: 6, background: 'var(--bg-card)', borderRadius: 99, overflow: 'hidden' }}>
+              <div style={{ height: '100%', width: `${S.progress * 100}%`, background: 'var(--accent)' }} />
             </div>
           )}
           <div style={{ display: 'flex', gap: 8 }}>
             {(S.model === 'missing' || S.model === 'error') && (
-              <button onClick={() => void downloadVoiceModel()}>Download voice ({PIPER_VOICE.replace('en_US-', '')})</button>
+              <Button size="xs" onClick={() => void downloadVoiceModel()}>Download voice ({PIPER_VOICE.replace('en_US-', '')})</Button>
             )}
-            <button onClick={() => speak('Module detected, connected!', { key: 'test', cooldownMs: 0, urgent: true })}>Test voice</button>
+            <Button variant="outline" size="xs" onClick={() => speak('Module detected, connected!', { key: 'test', cooldownMs: 0, urgent: true })}>Test voice</Button>
           </div>
         </div>
       )}

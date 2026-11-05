@@ -45,6 +45,28 @@ class LocalTransport:
         self._subs.clear()
 
 
+def as_binary(msg):
+    """(meta, raw bytes) for bytes and numpy arrays, which travel without being turned into text; None for the rest.
+    The one packing for every transport (G10 step 3: 1 MB as base64 in JSON cost 14 ms; raw it is a copy)."""
+    if isinstance(msg, (bytes, bytearray, memoryview)): return {'bin': 'b'}, bytes(msg)
+    if type(msg).__module__ == 'numpy' and hasattr(msg, 'dtype') and hasattr(msg, 'shape'):
+        import numpy as np
+        a = np.ascontiguousarray(msg)
+        return {'bin': 'nd', 'dtype': a.dtype.str, 'shape': list(a.shape)}, a.tobytes()
+    return None
+
+
+def from_binary(meta, raw):
+    """The message back from as_binary. An array comes back read-only (it is a view of the received bytes): copy it to change it."""
+    if meta.get('bin') == 'nd':
+        import numpy as np
+        return np.frombuffer(raw, np.dtype(meta['dtype'])).reshape(meta['shape'])
+    return raw
+
+
+ZENOH_ARRAY = b'\x00gos-array\x00'  # a Zenoh sample holding an array: this, its meta as JSON, a newline, the bytes
+
+
 def access_rules(permissions):
     """Zenoh access control from {user: {'publish': keys, 'subscribe': keys, 'call': keys}}: everything not listed is refused."""
     rules, subjects, policies = [], [], []
@@ -102,7 +124,9 @@ class ZenohTransport:
             # reliable=False is ROS's best effort: under load, old samples are dropped instead of slowing the sender
             self._pubs[key] = self._z.declare_publisher(key, reliability=zenoh.Reliability.RELIABLE if reliable else zenoh.Reliability.BEST_EFFORT,
                                                          congestion_control=zenoh.CongestionControl.BLOCK if reliable else zenoh.CongestionControl.DROP)
-        data = json.dumps(msg) if not isinstance(msg, (bytes, bytearray)) else bytes(msg)
+        if isinstance(msg, (bytes, bytearray)): data = bytes(msg)
+        elif (b := as_binary(msg)) is not None: data = ZENOH_ARRAY + json.dumps(b[0]).encode() + b'\n' + b[1]
+        else: data = json.dumps(msg)
         if latched:
             if not hasattr(self, '_latched'): self._latched = {}
             if key not in self._latched:
@@ -113,6 +137,9 @@ class ZenohTransport:
     def subscribe(self, topic, fn):
         def on(sample):
             raw = sample.payload.to_bytes()
+            if raw.startswith(ZENOH_ARRAY):
+                cut = raw.index(b'\n', len(ZENOH_ARRAY))
+                return fn(from_binary(json.loads(raw[len(ZENOH_ARRAY):cut]), raw[cut + 1:]))
             try: fn(json.loads(raw))
             except ValueError: fn(raw)
         key = self._key(topic)
@@ -172,10 +199,10 @@ class _PyWire:
     connection; every line is written with its own system call. Peer ids as in gos/core/src/net.rs: the hub is 0."""
     forwards = False  # the hub's message rules pass pub lines on themselves
 
-    def __init__(self, address, on_line, on_join, on_leave):
+    def __init__(self, address, on_line, on_frame, on_join, on_leave):
         import socket, threading
         host, port = address.rsplit(':', 1)
-        self._on_line, self._on_join, self._on_leave = on_line, on_join, on_leave
+        self._on_line, self._on_frame, self._on_join, self._on_leave = on_line, on_frame, on_join, on_leave
         self._socks, self._lock, self._next, self._closed = {}, threading.Lock(), 1, False
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Linux and macOS keep a closed hub's port for a minute, so a restarted hub could not take it back. On Windows
@@ -204,9 +231,15 @@ class _PyWire:
 
     def _read(self, pid, sock):
         try:
-            for line in sock.makefile('rb'):
-                if line.strip(): self._on_line(pid, line)
-        except OSError: pass  # a killed program resets the connection instead of closing it
+            f = sock.makefile('rb')
+            while line := f.readline():
+                if line[:1] == b'#':  # a binary frame: "#<n> {json}", then n raw bytes
+                    sp = line.index(b' ')
+                    n = int(line[1:sp]); raw = f.read(n)
+                    if len(raw) < n: break
+                    self._on_frame(pid, line[sp + 1:], raw)
+                elif line.strip(): self._on_line(pid, line)
+        except (OSError, ValueError): pass  # a killed program resets the connection instead of closing it
         with self._lock: self._socks.pop(pid, None)
         self._on_leave(pid)
 
@@ -215,6 +248,14 @@ class _PyWire:
         for sock, lock in targets:
             try:
                 with lock: sock.sendall(data + b'\n')
+            except OSError: pass
+
+    def send_frame(self, to, data, raw):
+        head = b'#%d ' % len(raw) + data + b'\n'
+        with self._lock: targets = list(self._socks.values()) if to == BROADCAST else [self._socks[to]] if to in self._socks else []
+        for sock, lock in targets:
+            try:
+                with lock: sock.sendall(head); sock.sendall(raw)
             except OSError: pass
 
     def wait(self, ev, timeout): return ev.wait(timeout)
@@ -234,12 +275,14 @@ class _RustWire:
     lines that arrive to the message rules, a batch at a time."""
     forwards = True
 
-    def __init__(self, address, on_line, on_join, on_leave):
+    def __init__(self, address, on_line, on_frame, on_join, on_leave):
         import threading
         from . import _core
         self._core = _core
         self._h, self.hub = _core.net_open(address)
-        self._on = {0: on_line, 1: lambda pid, _: on_join(pid), 2: lambda pid, _: on_leave(pid)}
+        def frame(pid, data):
+            cut = data.index(b'\n'); on_frame(pid, data[:cut], data[cut + 1:])
+        self._on = {0: on_line, 1: lambda pid, _: on_join(pid), 2: lambda pid, _: on_leave(pid), 3: frame}
         self._thread = threading.Thread(target=self._pump, daemon=True); self._thread.start()
 
     def _dispatch(self, timeout):
@@ -254,6 +297,8 @@ class _RustWire:
         while self._dispatch(0.2): pass
 
     def send(self, to, data): self._core.net_send(self._h, to, data)
+
+    def send_frame(self, to, data, raw): self._core.net_send_frame(self._h, to, data, raw)
 
     def wait(self, ev, timeout):
         """A handler running on the dispatch thread that waits for a reply keeps dispatching, or it would wait forever."""
@@ -293,7 +338,7 @@ class TcpTransport:
         self._services, self._waiting, self._seen, self._peers, self._late, self._closed = {}, {}, {}, {}, {}, False
         Wire = _pick_wire()
         self.wire = 'rust' if Wire is _RustWire else 'python'
-        self._wire = Wire(address, self._line, self._joined, self._left)
+        self._wire = Wire(address, self._line, self._frame, self._joined, self._left)
         self.hub = self._wire.hub
 
     # ── wire events ──
@@ -312,32 +357,43 @@ class TcpTransport:
         try: self._on(pid, json.loads(raw))
         except Exception: pass
 
+    def _frame(self, pid, data, raw):
+        try: self._on(pid, json.loads(data), raw)
+        except Exception: pass
+
+    def _send_value(self, pid, frame, stored):
+        """Send a frame whose message is a stored value: JSON as it is, or (meta, bytes) as a binary frame."""
+        if isinstance(stored, tuple):
+            frame['m'] = stored[0]; self._wire.send_frame(pid, json.dumps(frame).encode(), stored[1])
+        else:
+            frame['m'] = stored; self._send(pid, frame)
+
     def _send(self, pid, frame):
         if pid is None: self._on(None, frame)  # to this program itself (the hub asking its own rules)
         else: self._wire.send(pid, json.dumps(frame).encode())
 
     @staticmethod
-    def _pack(msg): return {'b': base64.b64encode(bytes(msg)).decode()} if isinstance(msg, (bytes, bytearray)) else {'j': msg}
+    def _unpack(m, raw=None):
+        if isinstance(m, tuple): m, raw = m
+        if raw is not None: return from_binary(m, raw)
+        return base64.b64decode(m['b']) if 'b' in m else m['j']  # 'b': bytes as text, from programs before binary frames
 
-    @staticmethod
-    def _unpack(m): return base64.b64decode(m['b']) if 'b' in m else m['j']
-
-    def _on(self, p, f):
+    def _on(self, p, f, raw=None):
         op = f['op']
         if op == 'pub':
             if self.hub:
-                if f.get('l'): self._latched[f['t']] = f['m']
+                if f.get('l'): self._latched[f['t']] = f['m'] if raw is None else (f['m'], raw)
                 if not self._wire.forwards:
                     data = json.dumps(f).encode()
                     for q in list(self._peers):
-                        if q != p: self._wire.send(q, data)
-            self._local.publish(f['t'], self._unpack(f['m']))
+                        if q != p: self._wire.send(q, data) if raw is None else self._wire.send_frame(q, data, raw)
+            self._local.publish(f['t'], self._unpack(f['m'], raw))
         elif op == 'sub':  # the hub replays latched values to a late subscriber, to it alone
             for t, m in list(self._latched.items()):
-                if fnmatch.fnmatch(t, f['t']): self._send(p, {'op': 'latched', 'id': f['id'], 'm': m})
+                if fnmatch.fnmatch(t, f['t']): self._send_value(p, {'op': 'latched', 'id': f['id']}, m)
         elif op == 'latched':
             fn = self._late.get(f['id'])
-            if fn: fn(self._unpack(f['m']))
+            if fn: fn(self._unpack(f['m'], raw))
         elif op == 'serve':
             with self._lock:
                 self._services[f['n']] = p
@@ -388,13 +444,12 @@ class TcpTransport:
             self._waiting.pop(('event', frame['id']), None)
             if self.hub: self._waiting.pop(frame['id'], None)
 
-    def _out(self, frame): self._wire.send(BROADCAST if self.hub else 0, json.dumps(frame).encode())
-
     # ── the transport interface ──
     def publish(self, topic, msg, latched=False, reliable=True):  # TCP is always reliable
-        m = self._pack(msg)
+        b = as_binary(msg)
+        m = b if b is not None else {'j': msg}
         if self.hub and latched: self._latched[topic] = m
-        self._out({'op': 'pub', 't': topic, 'm': m, 'l': latched})
+        self._send_value(BROADCAST if self.hub else 0, {'op': 'pub', 't': topic, 'l': latched}, m)
         self._local.publish(topic, msg)
 
     def subscribe(self, topic, fn):

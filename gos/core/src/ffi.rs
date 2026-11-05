@@ -151,8 +151,20 @@ pub unsafe extern "C" fn gos_net_send(h: u32, to: u32, ptr: *const u8, len: usiz
     match crate::net::get(h) { Some(n) => n.send(to, line) as i32, None => 0 }
 }
 
+/// Queue one binary frame for peer `to`: the frame's JSON and its raw bytes (G10 step 3).
+///
+/// # Safety
+/// `json`/`jlen` and `data`/`dlen` must be readable bytes.
+#[cfg(not(target_arch = "wasm32"))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gos_net_send_frame(h: u32, to: u32, json: *const u8, jlen: usize, data: *const u8, dlen: usize) -> i32 {
+    let j = unsafe { std::slice::from_raw_parts(json, jlen) };
+    let d = if dlen == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(data, dlen) } };
+    match crate::net::get(h) { Some(n) => n.send_frame(to, j, d) as i32, None => 0 }
+}
+
 /// Wait up to `timeout_ms` for lines; returns how many items arrived (-1 once closed). The reply holds them as
-/// repeated [peer u32 LE][kind u8: 0 line, 1 joined, 2 left][length u32 LE][bytes].
+/// repeated [peer u32 LE][kind u8: 0 line, 1 joined, 2 left, 3 binary frame = json, newline, bytes][length u32 LE][bytes].
 #[cfg(not(target_arch = "wasm32"))]
 #[unsafe(no_mangle)]
 pub extern "C" fn gos_net_recv(h: u32, timeout_ms: u32) -> i32 {

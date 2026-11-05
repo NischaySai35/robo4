@@ -73,9 +73,10 @@ def has_net() -> bool:
     """Whether this build of the core has the TCP wire (older builds, and the WebAssembly one, do not)."""
     try: lib = _load()
     except OSError: return False
-    if not hasattr(lib, 'gos_net_open'): return False
+    if not hasattr(lib, 'gos_net_send_frame'): return False  # a core from before binary frames: use the Python sockets
     if not getattr(lib, '_net_ready', False):
         lib.gos_net_send.restype = ctypes.c_int; lib.gos_net_send.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_size_t]
+        lib.gos_net_send_frame.restype = ctypes.c_int; lib.gos_net_send_frame.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_size_t, ctypes.c_char_p, ctypes.c_size_t]
         lib.gos_net_recv.restype = ctypes.c_int; lib.gos_net_recv.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
         lib.gos_net_forwarded.restype = ctypes.c_uint32; lib.gos_net_forwarded.argtypes = [ctypes.c_uint32]
         lib.gos_net_close.restype = None; lib.gos_net_close.argtypes = [ctypes.c_uint32]
@@ -94,8 +95,11 @@ def net_open(address: str):
 def net_send(handle: int, to: int, data: bytes) -> bool: return _lib.gos_net_send(handle, to, data, len(data)) == 1
 
 
+def net_send_frame(handle: int, to: int, data: bytes, raw: bytes) -> bool: return _lib.gos_net_send_frame(handle, to, data, len(data), raw, len(raw)) == 1
+
+
 def net_recv(handle: int, timeout: float):
-    """[(peer, kind, bytes)] that arrived (kind 0 line, 1 joined, 2 left), [] after the timeout, None once closed."""
+    """[(peer, kind, bytes)] that arrived (kind 0 line, 1 joined, 2 left, 3 binary frame), [] after the timeout, None once closed."""
     lib = _lib
     n = lib.gos_net_recv(handle, max(0, int(timeout * 1000)))
     if n < 0: return None

@@ -423,6 +423,56 @@ def test_a_service_is_called_from_another_process(tmp_path):
         p.kill()
 
 
+@pytest.mark.parametrize('wires', [('rust', 'rust', 'rust'), ('python', 'python', 'python'), ('python', 'rust', 'rust'), ('rust', 'python', 'rust')],
+                         ids=['rust', 'python', 'python-hub', 'mixed'])
+def test_bytes_and_arrays_travel_raw_over_tcp_on_either_wire(wires, monkeypatch):
+    """G10 step 3: bytes and numpy arrays go as binary frames (no base64, no JSON numbers), through the hub to a third
+    program, latched for one that starts late, and in order with ordinary messages."""
+    import numpy as np
+    from gos.testing import wait_until
+    addr, apps = '127.0.0.1:17562', []
+    try:
+        for i, name in enumerate(('hub', 'a', 'b')):
+            monkeypatch.setenv('GOS_TCP_WIRE', wires[i])
+            apps.append(gos.App(transport='tcp', address=addr, name=name))
+        hub, a, b = apps
+        assert [x.bus.raw.wire for x in apps] == list(wires)
+        got_b, got_hub = [], []
+        b.topic('/data').subscribe(got_b.append); hub.topic('/data').subscribe(got_hub.append)
+        import time; time.sleep(0.2)
+        blob = bytes(range(256)) * 4000                       # 1 MB with every byte value, newlines included
+        arr = np.arange(30000, dtype=np.float32).reshape(100, 300)
+        for m in ({'n': 1}, blob, arr, {'n': 2}): a.topic('/data').publish(m)
+        for got in (got_b, got_hub):
+            wait_until(lambda: len(got) == 4, 'all four messages', 5)
+            assert got[0] == {'n': 1} and got[3] == {'n': 2}, 'in order with the ordinary messages'
+            assert got[1] == blob
+            assert got[2].dtype == np.float32 and got[2].shape == (100, 300) and np.array_equal(got[2], arr)
+        a.topic('/shape', latched=True).publish(np.eye(3))
+        wait_until(lambda: '/d0/shape' in hub.bus.raw._latched, 'the hub to keep the latched array', 3)
+        late = []
+        b.topic('/shape').subscribe(late.append)
+        wait_until(lambda: len(late) == 1, 'the latched array for a late subscriber', 3)
+        assert np.array_equal(late[0], np.eye(3))
+    finally:
+        for x in apps: x.close()
+
+
+def test_arrays_travel_over_zenoh_too():
+    import numpy as np
+    from gos.testing import wait_until
+    with gos.App(transport='zenoh', listen=['tcp/127.0.0.1:17563']) as a, gos.App(transport='zenoh', connect=['tcp/127.0.0.1:17563']) as b:
+        got = []
+        b.topic('/arr').subscribe(got.append)
+        import time; time.sleep(0.5)
+        a.topic('/arr').publish(np.arange(12, dtype=np.int16).reshape(3, 4))
+        a.topic('/arr').publish(b'raw')
+        a.topic('/arr').publish({'still': 'json'})
+        wait_until(lambda: len(got) == 3, 'three messages', 5)
+        assert got[0].dtype == np.int16 and got[0].tolist() == [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, 10, 11]]
+        assert got[1] == b'raw' and got[2] == {'still': 'json'}
+
+
 @pytest.mark.parametrize('wires', [('rust',) * 3, ('python',) * 3, ('python', 'rust', 'rust'), ('rust', 'python', 'python')],
                          ids=['rust', 'python', 'python-hub', 'rust-hub'])
 def test_three_programs_talk_over_plain_tcp_with_no_add_ons(tmp_path, wires, monkeypatch):

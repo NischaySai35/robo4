@@ -6,6 +6,9 @@
 //! other programs here, without waking Python. Writes go through one writer thread per connection, so a
 //! burst of messages leaves in a few system calls instead of one each.
 //!
+//! Binary frames (G10 step 3) carry bytes and arrays without turning them into text: a header line
+//! `#<n> {json}` followed by exactly n raw bytes. The JSON is the same frame a text line would hold.
+//!
 //! Peers: on a hub, every connected program gets an id from 1 up. On a program that connected to a hub,
 //! the hub is peer 0. `BROADCAST` sends to every peer.
 // REUSE-CHECKED: no socket code in gos/core before this; the Python wire (TcpTransport._PyWire) stays as the fallback.
@@ -21,6 +24,10 @@ pub const BROADCAST: u32 = u32::MAX;
 pub const LINE: u8 = 0;
 pub const JOINED: u8 = 1;
 pub const LEFT: u8 = 2;
+/// A binary frame: delivered as the header's JSON, a newline, then the raw bytes.
+pub const FRAME: u8 = 3;
+/// The largest binary frame accepted; a bigger header means a broken or hostile sender, and the connection is closed.
+const MAX_FRAME: usize = 1 << 30;
 
 struct Out {
     buf: Vec<u8>,
@@ -41,16 +48,21 @@ struct Peer {
 }
 
 impl Peer {
-    fn push(&self, line: &[u8]) {
+    /// Queue bytes exactly as given (the caller ends lines with a newline). A lone write after a quiet spell
+    /// goes straight to the socket; otherwise the writer thread sends everything queued together.
+    fn push(&self, parts: &[&[u8]]) {
         let mut o = self.out.lock().unwrap();
         if o.closed { return; }
         if !o.writing && o.buf.is_empty() && o.last.elapsed() >= QUIET {
             o.writing = true;
             drop(o);
-            let mut one = Vec::with_capacity(line.len() + 1);
-            one.extend_from_slice(line);
-            if line.last() != Some(&b'\n') { one.push(b'\n'); }
-            let ok = (&self.sock).write_all(&one).is_ok();
+            let ok = if parts.len() == 1 {
+                (&self.sock).write_all(parts[0]).is_ok()
+            } else {
+                let mut one = Vec::with_capacity(parts.iter().map(|p| p.len()).sum());
+                for p in parts { one.extend_from_slice(p); }
+                (&self.sock).write_all(&one).is_ok()
+            };
             let mut o = self.out.lock().unwrap();
             o.writing = false;
             o.last = Instant::now();
@@ -61,11 +73,14 @@ impl Peer {
             return;
         }
         let was_empty = o.buf.is_empty();
-        o.buf.extend_from_slice(line);
-        if line.last() != Some(&b'\n') { o.buf.push(b'\n'); }
+        for p in parts { o.buf.extend_from_slice(p); }
         let idle = !o.writing;
         drop(o);
         if was_empty && idle { self.ready.notify_all(); }
+    }
+
+    fn push_line(&self, line: &[u8]) {
+        if line.last() == Some(&b'\n') { self.push(&[line]) } else { self.push(&[line, b"\n"]) }
     }
 
     fn close(&self) {
@@ -156,9 +171,30 @@ impl Net {
             }
             if line.last() == Some(&b'\n') { line.pop(); }
             if line.is_empty() { continue; }
+            if line[0] == b'#' {
+                // a binary frame: "#<n> {json}", then n raw bytes
+                let Some(sp) = line.iter().position(|&c| c == b' ') else { break };
+                let Some(n) = std::str::from_utf8(&line[1..sp]).ok().and_then(|t| t.parse::<usize>().ok()) else { break };
+                if n > MAX_FRAME { break; }
+                let mut payload = vec![0u8; n];
+                if std::io::Read::read_exact(&mut r, &mut payload).is_err() { break; }
+                let json = &line[sp + 1..];
+                if self.hub && is_pub(json) {
+                    for (&other, q) in self.peers.lock().unwrap().iter() {
+                        if other != id { q.push(&[&line, b"\n", &payload]); }
+                    }
+                    self.forwarded.fetch_add(1, Ordering::Relaxed);
+                }
+                let mut data = Vec::with_capacity(json.len() + 1 + n);
+                data.extend_from_slice(json);
+                data.push(b'\n');
+                data.extend_from_slice(&payload);
+                self.deliver(id, FRAME, data);
+                continue;
+            }
             if self.hub && is_pub(&line) {
                 for (&other, q) in self.peers.lock().unwrap().iter() {
-                    if other != id { q.push(&line); }
+                    if other != id { q.push_line(&line); }
                 }
                 self.forwarded.fetch_add(1, Ordering::Relaxed);
             }
@@ -177,13 +213,21 @@ impl Net {
     }
 
     /// Queue one line for a peer, or for every peer. Never blocks on the network.
-    pub fn send(&self, to: u32, line: &[u8]) -> bool {
+    pub fn send(&self, to: u32, line: &[u8]) -> bool { self.each(to, |p| p.push_line(line)) }
+
+    /// Queue one binary frame: `json` is the frame's JSON, `payload` its raw bytes.
+    pub fn send_frame(&self, to: u32, json: &[u8], payload: &[u8]) -> bool {
+        let head = format!("#{} ", payload.len());
+        self.each(to, |p| p.push(&[head.as_bytes(), json, b"\n", payload]))
+    }
+
+    fn each(&self, to: u32, f: impl Fn(&Peer)) -> bool {
         let peers = self.peers.lock().unwrap();
         if to == BROADCAST {
-            for p in peers.values() { p.push(line); }
+            for p in peers.values() { f(p); }
             true
         } else if let Some(p) = peers.get(&to) {
-            p.push(line);
+            f(p);
             true
         } else {
             false
@@ -291,6 +335,31 @@ mod tests {
         assert_eq!(lines(&hub, 1001).len(), 1001);
         assert_eq!(hub.forwarded.load(Ordering::Relaxed), 1000);
         assert!(b.recv(Duration::from_millis(200)).unwrap().iter().all(|(_, k, _)| *k != LINE));
+        for n in [&a, &b, &hub] { n.close(); }
+    }
+
+    #[test]
+    fn binary_frames_pass_through_untouched_between_lines() {
+        let hub = Net::open("127.0.0.1:17533").unwrap();
+        let a = Net::open("127.0.0.1:17533").unwrap();
+        let b = Net::open("127.0.0.1:17533").unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();  // has newlines in it
+        a.send(0, br#"{"op": "pub", "t": "/x", "m": {"j": 1}}"#);
+        a.send_frame(0, br#"{"op": "pub", "t": "/x", "m": {"bin": "b"}}"#, &payload);
+        a.send(0, br#"{"op": "pub", "t": "/x", "m": {"j": 2}}"#);
+        let mut got = Vec::new();
+        let end = Instant::now() + Duration::from_secs(5);
+        while got.len() < 3 && Instant::now() < end {
+            for (_, kind, data) in b.recv(Duration::from_millis(100)).unwrap() { if kind == LINE || kind == FRAME { got.push((kind, data)); } }
+        }
+        assert_eq!(got.len(), 3);
+        assert_eq!(got[0].0, LINE);
+        assert_eq!(got[1].0, FRAME);
+        let cut = got[1].1.iter().position(|&c| c == b'\n').unwrap();
+        assert_eq!(&got[1].1[..cut], br#"{"op": "pub", "t": "/x", "m": {"bin": "b"}}"#);
+        assert_eq!(&got[1].1[cut + 1..], &payload[..]);
+        assert!(String::from_utf8_lossy(&got[2].1).contains(r#""j": 2"#));
         for n in [&a, &b, &hub] { n.close(); }
     }
 

@@ -62,12 +62,15 @@ async function poll() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       txt = await r.text();
     } catch {
-      if (!f.failSince) f.failSince = Date.now();
+      if (!f.failSince && !f.first) {           // it had answered before: it just went quiet
+        f.failSince = Date.now();
+        log('offline', 'SYS', `${nd.name} stopped answering`);
+      }
       continue;
     }
     if (f.failSince) {
       const gone = (Date.now() - f.failSince) / 1000;
-      if (gone >= 3) log('ok', 'SYS', `${nd.name} answering again after ${gone.toFixed(1)} s - its own reason follows`);
+      log('ok', 'SYS', `${nd.name} answering again after ${gone.toFixed(1)} s - its own reason follows`);
       f.failSince = 0;
     }
     const lines = txt.split('\n').filter(Boolean);

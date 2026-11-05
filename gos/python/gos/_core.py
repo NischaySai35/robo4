@@ -1,5 +1,5 @@
 """The GOS Rust core, loaded through its C interface. No compiler or extra package is needed to use it."""
-import ctypes, json, os, sys
+import ctypes, json, os, struct, sys
 
 _NAMES = {'win32': 'gos_core.dll', 'darwin': 'libgos_core.dylib'}
 _PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '_native', _NAMES.get(sys.platform, 'libgos_core.so'))
@@ -65,3 +65,50 @@ def graph_of_document(doc: dict, roots=None) -> dict:
                     'disabled': bool((j.get('state') or {}).get('disabled'))} for i, j in doc['joints'].items()],
         'roots': list(roots or []),
     }
+
+
+# ── the TCP wire (gos/core/src/net.rs), used by transport.TcpTransport ──
+
+def has_net() -> bool:
+    """Whether this build of the core has the TCP wire (older builds, and the WebAssembly one, do not)."""
+    try: lib = _load()
+    except OSError: return False
+    if not hasattr(lib, 'gos_net_open'): return False
+    if not getattr(lib, '_net_ready', False):
+        lib.gos_net_send.restype = ctypes.c_int; lib.gos_net_send.argtypes = [ctypes.c_uint32, ctypes.c_uint32, ctypes.c_char_p, ctypes.c_size_t]
+        lib.gos_net_recv.restype = ctypes.c_int; lib.gos_net_recv.argtypes = [ctypes.c_uint32, ctypes.c_uint32]
+        lib.gos_net_forwarded.restype = ctypes.c_uint32; lib.gos_net_forwarded.argtypes = [ctypes.c_uint32]
+        lib.gos_net_close.restype = None; lib.gos_net_close.argtypes = [ctypes.c_uint32]
+        lib._net_ready = True
+    return True
+
+
+def net_open(address: str):
+    """(handle, is_hub). Raises OSError saying why the address could neither be opened nor reached."""
+    if not has_net(): raise OSError('This build of the GOS core has no TCP wire. Rebuild it with: py -3.12 gos/build.py')
+    try: r = _call('gos_net_open', {'address': address})
+    except ValueError as e: raise OSError(str(e)) from None
+    return r['handle'], r['hub']
+
+
+def net_send(handle: int, to: int, data: bytes) -> bool: return _lib.gos_net_send(handle, to, data, len(data)) == 1
+
+
+def net_recv(handle: int, timeout: float):
+    """[(peer, kind, bytes)] that arrived (kind 0 line, 1 joined, 2 left), [] after the timeout, None once closed."""
+    lib = _lib
+    n = lib.gos_net_recv(handle, max(0, int(timeout * 1000)))
+    if n < 0: return None
+    if n == 0: return []
+    buf = ctypes.string_at(lib.gos_reply_ptr(), lib.gos_reply_len())
+    out, i, unpack = [], 0, struct.unpack_from
+    for _ in range(n):
+        pid, kind, size = unpack('<IBI', buf, i); i += 9
+        out.append((pid, kind, buf[i:i + size])); i += size
+    return out
+
+
+def net_forwarded(handle: int) -> int: return _lib.gos_net_forwarded(handle)
+
+
+def net_close(handle: int) -> None: _lib.gos_net_close(handle)

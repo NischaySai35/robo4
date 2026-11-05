@@ -52,7 +52,7 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
   - In one program: 431,000 msgs/s, 9 µs there and back.
   - TCP: 54,000/s, 58 µs. Zenoh: 121,000/s, 130 µs.
   - The cost is system calls and thread wake-ups, not JSON.
-- [x] 65 GOS tests pass: `cd gos/python; $env:PYTHONPATH='.'; py -3.12 -m pytest -q tests/test_gos.py`.
+- [x] 66 GOS tests pass (2 skipped): `cd gos/python; $env:PYTHONPATH='.'; py -3.12 -m pytest -q -p no:dash -p no:anyio tests/test_gos.py` (the two `-p no:` hide warnings from other installed packages). Rust: `cd gos; cargo test --release`.
 
 ### Firmware (`firmware/esp32_multi/`, FW_VERSION stays 0.1.0; flashed to mod1 and checked)
 - [x] **Power-on is always limp:** it reads the servos and moves nothing.
@@ -96,14 +96,15 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
   - Still unmeasured: on the real servo, which trips first, 76 % load or 1300 mA? On mod1, 31 % load drew only about 270 mA.
 - [ ] **Hardware:** a 470–1000 µF capacitor (16 V or more) on the servo power near the servos, and about 100 µF on the ESP32 power.
   - Under load the voltage dropped to 10.5 V. That garbled servo reads and caused Wi-Fi drops while lifting.
-- [ ] **Push:** 11 commits on `restructure` are not pushed yet. Ask him: "push" or "push combined" (the last time he chose combined).
-  - Local backup branches `backup/before-squash-3nov` and `backup/before-squash-4nov` can be deleted when he says so.
+- [x] **Push (5 Nov):** the 12 commits went up combined as one (`99a6678`).
+  - Local backup branches `backup/before-squash-3nov`, `-4nov` and `-5nov` can be deleted when he says so.
 - [ ] **PyPI publish:** he chose the name `gos-robotics`. Still needed from him: the **licence** (suggested Apache 2.0, like ROS 2) and a pypi.org account plus token. Then: TestPyPI first, then PyPI.
 - [ ] **G4 drag IK, P6 hardware commands:** waiting for him.
 
 ### Claude
-- [ ] **G10 next: the TCP hub in Rust,** with several messages per system call; Python `App` calls unchanged. Order and numbers are in `docs/design/g10-fast-core.md`.
-  - After that: binary packing for big messages; executor/Rate waiting in Rust; shared-memory arrays and controller loops.
+- [x] **G10 step 2, the TCP wire in Rust (6 Nov):** `gos/core/src/net.rs`; 2.3x the messages a second; numbers in `docs/design/g10-fast-core.md`.
+  - Rebuild the Linux/macOS libraries (`gos/build.py --all`, needs ziglang + cargo-zigbuild) so they get it too.
+- [ ] **G10 next:** binary packing for big messages; then executor/Rate waiting in Rust; shared-memory arrays and controller loops.
   - Measure each step with `tools/bench/gos_messaging.py`.
 - [ ] **Wi-Fi link quality on ROBO4-NET:** tonight 25–50 % ping loss, even with the guard paused, so it is not the guard.
   - Check again after the capacitors; read the heartbeat-gap log lines (voltage, loop time).

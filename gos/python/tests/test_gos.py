@@ -423,9 +423,12 @@ def test_a_service_is_called_from_another_process(tmp_path):
         p.kill()
 
 
-def test_three_programs_talk_over_plain_tcp_with_no_add_ons(tmp_path):
+@pytest.mark.parametrize('wires', [('rust',) * 3, ('python',) * 3, ('python', 'rust', 'rust'), ('rust', 'python', 'python')],
+                         ids=['rust', 'python', 'python-hub', 'rust-hub'])
+def test_three_programs_talk_over_plain_tcp_with_no_add_ons(tmp_path, wires, monkeypatch):
     """Hub, a second program and this one: topics both ways and program to program, a latched value for a late
-    subscriber, bytes, services in every direction, and discovery that forgets a program when it stops."""
+    subscriber, bytes, services in every direction, and discovery that forgets a program when it stops.
+    Each program uses the Rust or the Python wire (wires = hub, other, this one); mixed, they still talk."""
     import time
     from gos.testing import wait_until
     addr = '127.0.0.1:17460'
@@ -455,15 +458,16 @@ def test_three_programs_talk_over_plain_tcp_with_no_add_ons(tmp_path):
             for line in sys.stdin:
                 if line.startswith('seen'): print('SEEN', seen, flush=True)
     '''))
-    env = dict(os.environ, PYTHONPATH=PY)
-    procs = [subprocess.Popen([sys.executable, str(f)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) for f in (hub,)]
+    env = lambda i: dict(os.environ, PYTHONPATH=PY, GOS_TCP_WIRE=wires[i])
+    procs = [subprocess.Popen([sys.executable, str(f)], env=env(0), stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True) for f in (hub,)]
     try:
         assert procs[0].stdout.readline().strip() == 'READY'
-        procs.append(subprocess.Popen([sys.executable, str(other)], env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True))
+        procs.append(subprocess.Popen([sys.executable, str(other)], env=env(1), stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True))
         assert procs[1].stdout.readline().strip() == 'READY'
         ask = lambda i, cmd: (procs[i].stdin.write(cmd + '\n'), procs[i].stdin.flush(), procs[i].stdout.readline())[2]
+        monkeypatch.setenv('GOS_TCP_WIRE', wires[2])
         with gos.App(transport='tcp', address=addr, name='me') as app:
-            assert not app.bus.raw.hub
+            assert not app.bus.raw.hub and app.bus.raw.wire == wires[2]
             late = []
             app.topic('/state').subscribe(late.append)
             wait_until(lambda: late == [{'mode': 'walk'}], 'the latched value', 3)

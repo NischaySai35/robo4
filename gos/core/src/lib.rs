@@ -8,6 +8,8 @@ mod ffi;
 pub mod mjcf;
 pub mod tf;
 pub mod ik;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod net;
 
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};

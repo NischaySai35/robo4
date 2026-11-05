@@ -164,18 +164,19 @@ class ZenohTransport:
         self._z.close()
 
 
-class TcpTransport:
-    """Across processes or machines with nothing to install: JSON lines over TCP, Python's standard library only.
-    The first program to open the address becomes the hub (like ROS 1's master); the others connect to it. The hub
-    passes messages on, keeps latched values, routes service calls and knows who is alive. If the hub program stops,
-    the others lose each other: start the hub first, or use Zenoh where no single program may be the centre."""
-    name = 'tcp'
+BROADCAST = 0xFFFFFFFF  # wire peer id meaning "every peer"
 
-    def __init__(self, address='127.0.0.1:7450'):
+
+class _PyWire:
+    """Sockets in Python's standard library: the fallback when the Rust core is missing. One reader thread per
+    connection; every line is written with its own system call. Peer ids as in gos/core/src/net.rs: the hub is 0."""
+    forwards = False  # the hub's message rules pass pub lines on themselves
+
+    def __init__(self, address, on_line, on_join, on_leave):
         import socket, threading
         host, port = address.rsplit(':', 1)
-        self._lock, self._local, self._latched = threading.RLock(), LocalTransport(), {}
-        self._services, self._waiting, self._seen, self._peers, self._late, self._closed = {}, {}, {}, [], {}, False
+        self._on_line, self._on_join, self._on_leave = on_line, on_join, on_leave
+        self._socks, self._lock, self._next, self._closed = {}, threading.Lock(), 1, False
         self._srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # Linux and macOS keep a closed hub's port for a minute, so a restarted hub could not take it back. On Windows
         # this option would let another program share the port, so it stays off there.
@@ -186,36 +187,134 @@ class TcpTransport:
         except OSError:  # someone already holds the address: they are the hub
             self._srv.close(); self._srv, self.hub = None, False
             s = socket.create_connection((host, int(port)), timeout=5); s.settimeout(None)
-            self._up = self._peer(s)
+            self._add(0, s)
 
-    # ── wire ──
-    def _peer(self, sock):
+    def _add(self, pid, sock):
         import threading
-        p = {'sock': sock, 'file': sock.makefile('r', encoding='utf-8'), 'send': threading.Lock(), 'seen': {}, 'serves': set()}
-        threading.Thread(target=self._read, args=(p,), daemon=True).start()
-        return p
-
-    def _send(self, p, frame):
-        try:
-            with p['send']: p['sock'].sendall((json.dumps(frame) + '\n').encode())
-        except OSError: pass
+        with self._lock: self._socks[pid] = (sock, threading.Lock())
+        self._on_join(pid)
+        threading.Thread(target=self._read, args=(pid, sock), daemon=True).start()
 
     def _accept(self):
         while not self._closed:
             try: s, _ = self._srv.accept()
             except OSError: return
-            with self._lock: self._peers.append(self._peer(s))
+            with self._lock: pid, self._next = self._next, self._next + 1
+            self._add(pid, s)
 
-    def _read(self, p):
+    def _read(self, pid, sock):
         try:
-            for line in p['file']:
-                try: self._on(p, json.loads(line))
-                except Exception: pass
+            for line in sock.makefile('rb'):
+                if line.strip(): self._on_line(pid, line)
         except OSError: pass  # a killed program resets the connection instead of closing it
+        with self._lock: self._socks.pop(pid, None)
+        self._on_leave(pid)
+
+    def send(self, to, data):
+        with self._lock: targets = list(self._socks.values()) if to == BROADCAST else [self._socks[to]] if to in self._socks else []
+        for sock, lock in targets:
+            try:
+                with lock: sock.sendall(data + b'\n')
+            except OSError: pass
+
+    def wait(self, ev, timeout): return ev.wait(timeout)
+
+    def close(self):
+        self._closed = True
+        with self._lock: socks = [s for s, _ in self._socks.values()]
+        for s in [self._srv] + socks:
+            try:
+                if s: s.close()
+            except OSError: pass
+
+
+class _RustWire:
+    """The same wire in the Rust core (gos/core/src/net.rs, G10 step 2): one writer thread per connection that
+    sends everything queued in one go, and the hub passes pub lines on without Python. One Python thread hands the
+    lines that arrive to the message rules, a batch at a time."""
+    forwards = True
+
+    def __init__(self, address, on_line, on_join, on_leave):
+        import threading
+        from . import _core
+        self._core = _core
+        self._h, self.hub = _core.net_open(address)
+        self._on = {0: on_line, 1: lambda pid, _: on_join(pid), 2: lambda pid, _: on_leave(pid)}
+        self._thread = threading.Thread(target=self._pump, daemon=True); self._thread.start()
+
+    def _dispatch(self, timeout):
+        items = self._core.net_recv(self._h, timeout)
+        if items is None: return False
+        for pid, kind, data in items:
+            try: self._on[kind](pid, data)
+            except Exception: pass
+        return True
+
+    def _pump(self):
+        while self._dispatch(0.2): pass
+
+    def send(self, to, data): self._core.net_send(self._h, to, data)
+
+    def wait(self, ev, timeout):
+        """A handler running on the dispatch thread that waits for a reply keeps dispatching, or it would wait forever."""
+        import threading
+        if threading.current_thread() is not self._thread: return ev.wait(timeout)
+        end = time.monotonic() + timeout
+        while not ev.is_set():
+            left = end - time.monotonic()
+            if left <= 0 or not self._dispatch(min(left, 0.05)): break
+        return ev.is_set()
+
+    def forwarded(self): return self._core.net_forwarded(self._h)
+
+    def close(self): self._core.net_close(self._h)
+
+
+def _pick_wire():
+    """GOS_TCP_WIRE=python or rust chooses; by default the Rust wire when the core has it."""
+    want = os.environ.get('GOS_TCP_WIRE', '').lower()
+    if want == 'python': return _PyWire
+    from . import _core
+    if want == 'rust' or _core.has_net(): return _RustWire
+    return _PyWire
+
+
+class TcpTransport:
+    """Across processes or machines with nothing to install: JSON lines over TCP.
+    The first program to open the address becomes the hub (like ROS 1's master); the others connect to it. The hub
+    passes messages on, keeps latched values, routes service calls and knows who is alive. If the hub program stops,
+    the others lose each other: start the hub first, or use Zenoh where no single program may be the centre.
+    The sockets are in the Rust core when it is there (`wire == 'rust'`), else in Python; the two talk to each other."""
+    name = 'tcp'
+
+    def __init__(self, address='127.0.0.1:7450'):
+        import threading
+        self._lock, self._local, self._latched = threading.RLock(), LocalTransport(), {}
+        self._services, self._waiting, self._seen, self._peers, self._late, self._closed = {}, {}, {}, {}, {}, False
+        Wire = _pick_wire()
+        self.wire = 'rust' if Wire is _RustWire else 'python'
+        self._wire = Wire(address, self._line, self._joined, self._left)
+        self.hub = self._wire.hub
+
+    # ── wire events ──
+    def _joined(self, pid):
+        with self._lock: self._peers[pid] = {'seen': {}, 'serves': set()}
+
+    def _left(self, pid):
         with self._lock:  # gone: like a liveliness token, what it offered disappears with it
-            if p in self._peers: self._peers.remove(p)
+            p = self._peers.pop(pid, None)
+            if p is None: return
             for key, c in p['seen'].items(): self._seen[key] = self._seen.get(key, c) - c
-            for name in p['serves']: self._services.pop(name, None)
+            for name in p['serves']:
+                if self._services.get(name) == pid: self._services.pop(name, None)
+
+    def _line(self, pid, raw):
+        try: self._on(pid, json.loads(raw))
+        except Exception: pass
+
+    def _send(self, pid, frame):
+        if pid is None: self._on(None, frame)  # to this program itself (the hub asking its own rules)
+        else: self._wire.send(pid, json.dumps(frame).encode())
 
     @staticmethod
     def _pack(msg): return {'b': base64.b64encode(bytes(msg)).decode()} if isinstance(msg, (bytes, bytearray)) else {'j': msg}
@@ -228,8 +327,10 @@ class TcpTransport:
         if op == 'pub':
             if self.hub:
                 if f.get('l'): self._latched[f['t']] = f['m']
-                for q in list(self._peers):
-                    if q is not p: self._send(q, f)
+                if not self._wire.forwards:
+                    data = json.dumps(f).encode()
+                    for q in list(self._peers):
+                        if q != p: self._wire.send(q, data)
             self._local.publish(f['t'], self._unpack(f['m']))
         elif op == 'sub':  # the hub replays latched values to a late subscriber, to it alone
             for t, m in list(self._latched.items()):
@@ -238,10 +339,12 @@ class TcpTransport:
             fn = self._late.get(f['id'])
             if fn: fn(self._unpack(f['m']))
         elif op == 'serve':
-            with self._lock: self._services[f['n']] = p; p['serves'].add(f['n'])
+            with self._lock:
+                self._services[f['n']] = p
+                if p in self._peers: self._peers[p]['serves'].add(f['n'])
         elif op == 'req':
             owner = self._services.get(f['n'])
-            if self.hub and owner is not None and owner != 'me' and owner is not p:
+            if self.hub and owner is not None and owner != 'me' and owner != p:
                 with self._lock: self._waiting[f['id']] = p if p is not None else 'me'
                 self._send(owner, f)
             elif owner == 'me' or (not self.hub and f['n'] in self._mine()):
@@ -258,7 +361,8 @@ class TcpTransport:
             with self._lock:
                 key = (f['k'], f['n'])
                 self._seen[key] = self._seen.get(key, 0) + (1 if f['on'] else -1)
-                p['seen'][key] = p['seen'].get(key, 0) + (1 if f['on'] else -1)
+                if p in self._peers:
+                    seen = self._peers[p]['seen']; seen[key] = seen.get(key, 0) + (1 if f['on'] else -1)
         elif op == 'disc':
             self._send(p, {'op': 'rep', 'id': f['id'], 'ok': True, 'v': self._known(f['k'])})
 
@@ -277,16 +381,14 @@ class TcpTransport:
         if self.hub: self._waiting[frame['id']] = 'me'
         try:
             if self.hub: self._on(None, frame)
-            else: self._send(self._up, frame)
-            if not ev.wait(timeout): return None
+            else: self._send(0, frame)
+            if not self._wire.wait(ev, timeout): return None
             return self._waiting.pop(('reply', frame['id']))
         finally:
             self._waiting.pop(('event', frame['id']), None)
+            if self.hub: self._waiting.pop(frame['id'], None)
 
-    def _out(self, frame):
-        if self.hub:
-            for q in list(self._peers): self._send(q, frame)
-        else: self._send(self._up, frame)
+    def _out(self, frame): self._wire.send(BROADCAST if self.hub else 0, json.dumps(frame).encode())
 
     # ── the transport interface ──
     def publish(self, topic, msg, latched=False, reliable=True):  # TCP is always reliable
@@ -303,7 +405,7 @@ class TcpTransport:
         else:
             import uuid
             token = uuid.uuid4().hex; self._late[token] = fn
-            self._send(self._up, {'op': 'sub', 't': topic, 'id': token})
+            self._send(0, {'op': 'sub', 't': topic, 'id': token})
         return off
 
     def topics(self): return sorted(set(self._local.topics()) | set(self._latched))
@@ -311,7 +413,7 @@ class TcpTransport:
     def serve(self, name, fn):
         self._own = self._mine(); self._own[name] = fn
         if self.hub: self._services[name] = 'me'
-        else: self._send(self._up, {'op': 'serve', 'n': name})
+        else: self._send(0, {'op': 'serve', 'n': name})
         return lambda: self._own.pop(name, None)
 
     def request(self, name, payload, timeout=5.0):
@@ -330,8 +432,8 @@ class TcpTransport:
             def off():
                 with self._lock: self._seen[key] = self._seen.get(key, 1) - 1
             return off
-        self._send(self._up, {'op': 'ann', 'k': kind, 'n': name, 'on': True})
-        return lambda: self._send(self._up, {'op': 'ann', 'k': kind, 'n': name, 'on': False})
+        self._send(0, {'op': 'ann', 'k': kind, 'n': name, 'on': True})
+        return lambda: self._send(0, {'op': 'ann', 'k': kind, 'n': name, 'on': False})
 
     def discover(self, kind, timeout=1.0):
         if self.hub: return self._known(kind)
@@ -340,10 +442,7 @@ class TcpTransport:
 
     def close(self):
         self._closed = True
-        for s in [self._srv] + [p['sock'] for p in self._peers] + ([self._up['sock']] if not self.hub else []):
-            try:
-                if s: s.close()
-            except OSError: pass
+        self._wire.close()
 
 
 class NamedBus:

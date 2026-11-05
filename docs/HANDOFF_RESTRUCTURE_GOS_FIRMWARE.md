@@ -107,8 +107,10 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - [x] **G10 step 3, bytes and arrays travel raw (6 Nov):** binary frames on TCP, raw arrays on Zenoh; 3.4x for 1 MB, 24x for arrays.
 - [x] **G10 steps 4-5 (6 Nov):** `gos.Rate` on time beside busy threads (7.9 ms -> 0.002 ms) and less CPU; controllers at the asked rate (50/s gave 32/s); shared-memory arrays never torn (257/300 were). **G10 is finished.**
   - Measure each step with `tools/bench/gos_messaging.py`.
-- [ ] **Wi-Fi link quality on ROBO4-NET:** tonight 25–50 % ping loss, even with the guard paused, so it is not the guard.
-  - Check again after the capacitors; read the heartbeat-gap log lines (voltage, loop time).
+- [ ] **Wi-Fi link quality on ROBO4-NET** (checked 6 Nov, motors unplugged, reading only):
+  - [x] Pings: 0 of 50 lost, 1–30 ms (the 25–50 % loss of 5 Nov is gone for now).
+  - [x] **Found and fixed (`tools/robo4-net.ps1`):** after an address sweep (`gos robot list`), Windows keeps 252 'Incomplete' neighbour entries, and the heartbeat went to all of them 5 times a second (~1,250 packets/s, each making Windows ask over the air who has the address). The same happened on the night of 5 Nov. Now it goes only to real devices (Wi-Fi Direct pins them as 'Permanent', with a real MAC) and remembers them. Takes effect when the Studio restarts the network (`npm run dev` again).
+  - [ ] **Still open:** the laptop drops mod1 **every 120.8 s like clockwork** (board log: "WiFi lost (reason 1)", back in 0.1–1.4 s; Windows logs only the rejoin, no reason). Signal is fine (−67 dBm). Suspect: the radio's modem sleep missing something Windows sends on a 2-minute timer. Test: keep the radio awake for 5 minutes and see whether the drops stop. Needs a small firmware switch and an OTA upload, so ask Nischay first.
 - [ ] `docs/RESTRUCTURING.md` / `docs/GOS_PARITY.md`: add the firmware guard and the G10 progress when they change.
 - [ ] Option B (a GOS client inside the firmware): only if the laptop translator (`gos robot serve`) proves too slow. Not needed so far.
 

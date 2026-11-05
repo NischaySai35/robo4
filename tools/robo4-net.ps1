@@ -60,16 +60,24 @@ function New-Publisher {
 $shared = [hashtable]::Synchronized(@{ Bcast = $null; Members = @(); Stop = $false })
 $watch = [PowerShell]::Create().AddScript({
   param($shared)
+  $seen = @{}   # every address that was ever a real device here: a sleeping module's entry can fall back to
+                # 'Incomplete' between replies, and it still needs its unicast heartbeat (that also refreshes the entry)
   while (-not $shared.Stop) {
     # The group-owner side of Wi-Fi Direct shows up as its own adapter with a 192.168.137.x address.
     $a = Get-NetIPAddress -AddressFamily IPv4 -EA SilentlyContinue | Where-Object IPAddress -like '192.168.137.*' | Select-Object -First 1
     if ($a) {
       $shared.Bcast = [Net.IPAddress]::Parse(($a.IPAddress -replace '\.\d+$', '.255'))
-      # Devices that joined: the adapter's neighbour table, minus broadcast/multicast.
-      $shared.Members = @(Get-NetNeighbor -AddressFamily IPv4 -InterfaceIndex $a.InterfaceIndex -EA SilentlyContinue |
-        Where-Object { $_.State -ne 'Unreachable' -and $_.IPAddress -notmatch '\.255$' -and $_.LinkLayerAddress -notmatch '^(FF-|01-00-5E)' } |
-        ForEach-Object { [Net.IPAddress]::Parse($_.IPAddress) })
-    } else { $shared.Bcast = $null; $shared.Members = @() }
+      # Devices that joined: the adapter's neighbour table, minus broadcast/multicast and lookups that never got an
+      # answer. Those are 'Incomplete' with MAC 00-00-...: an address sweep (gos robot list) left 252 of them, and the
+      # heartbeat went to all of them 5 times a second, ~1,250 packets/s, each one making Windows ask over the air who
+      # has that address (6 Nov 2026). Only real devices now; the broadcast heartbeat still reaches everyone.
+      Get-NetNeighbor -AddressFamily IPv4 -InterfaceIndex $a.InterfaceIndex -EA SilentlyContinue |
+        # (Windows' Wi-Fi Direct pins each device that joins as 'Permanent'; broadcast and multicast are Permanent too)
+        Where-Object { $_.State -in 'Permanent', 'Reachable', 'Stale', 'Delay', 'Probe' -and $_.IPAddress -notmatch '\.255$' -and
+                       $_.LinkLayerAddress -notmatch '^(FF-|01-00-5E|00-00-00-00-00-00)' } |
+        ForEach-Object { $seen[$_.IPAddress] = $true }
+      $shared.Members = @($seen.Keys | Sort-Object { [version]$_ } | ForEach-Object { [Net.IPAddress]::Parse($_) })
+    } else { $shared.Bcast = $null; $shared.Members = @(); $seen = @{} }
     Start-Sleep -Milliseconds 1000
   }
 }).AddArgument($shared)

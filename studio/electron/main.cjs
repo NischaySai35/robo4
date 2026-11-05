@@ -87,7 +87,8 @@ let stopPhysics = () => {};
 app.on('before-quit', () => stopPhysics());
 // The modules' Wi-Fi network (ROBO4-NET), shared with the dev server: see tools/robo4Net.cjs.
 let stopRobo4Net = () => {};
-app.on('before-quit', () => stopRobo4Net());
+let stopEspNow = () => {};   // the ESP-NOW bridge (USB dongle), same file
+app.on('before-quit', () => { stopRobo4Net(); stopEspNow(); });
 
 ipcMain.handle('metrics:sample', () => {
   const { ramBytes, cpuPercent, pids } = appRamAndCpu();
@@ -160,6 +161,11 @@ app.whenReady().then(() => {
   stopRobo4Net = require('../tools/robo4Net.cjs').startRobo4Net({
     script: app.isPackaged ? path.join(process.resourcesPath, 'robo4-net.ps1') : path.join(__dirname, '..', '..', 'tools', 'robo4-net.ps1'),
     logDir: path.join(app.getPath('userData'), 'data', 'logs'),
+  });
+  // Installed: needs gos on this laptop (py -3.12 -m pip install gos-robotics[network]); dev: the repo's gos/python.
+  stopEspNow = require('../tools/robo4Net.cjs').startEspNowBridge({
+    logDir: path.join(app.getPath('userData'), 'data', 'logs'),
+    gosPath: app.isPackaged ? null : path.join(__dirname, '..', '..', 'gos', 'python'),
   });
   createWindow();
   // (The renderer runs a quiet check shortly after launch via window.tetrobot —

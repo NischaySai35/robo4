@@ -74,7 +74,7 @@ class FakeAir:
             if whole is None: return
             self.runs.append(whole.decode())
             self.counter += 1
-            body = json.dumps({'ok': True, 'ran': whole.decode(), 'n': self.counter, 'pad': 'x' * (3000 if 'telemetry' in whole.decode() else 0)})
+            body = json.dumps({'ok': True, 'ip': '192.168.137.112', 'live': 4211, 'ran': whole.decode(), 'n': self.counter, 'pad': 'x' * (3000 if 'telemetry' in whole.decode() else 0)})
             answer = b'200\n' + body.encode()
             self.last_seq, self.last_answer = seq, answer
             for f in espnow.frames(espnow.RESP, seq, answer): self._to_laptop(f)
@@ -89,6 +89,11 @@ def _link(air, **kw):
     end = time.time() + 8
     while not link.alive() and time.time() < end: time.sleep(0.02)
     return link
+
+
+def test_module_addresses():
+    assert espnow.module_address('mod1') == '127.0.4.1' and espnow.module_address('mod12') == '127.0.4.12'
+    assert espnow.module_address('arm').startswith('127.0.5.') and espnow.module_address('arm') == espnow.module_address('arm')
 
 
 def test_frames_match_the_firmware_layout():
@@ -145,9 +150,15 @@ def test_silence_is_an_error_that_says_what_to_do():
 def test_gateway_answers_like_the_board():
     air = FakeAir(channel=11)
     link = _link(air)
-    srv = espnow.serve_gateway(link, port=0)
+    srv = espnow.serve_gateway(link, port=0, module_port=8799)
     base = f'http://127.0.0.1:{srv.server_address[1]}'
     try:
+        end = time.time() + 3
+        while not srv.address('mod1') and time.time() < end: time.sleep(0.05)
+        assert srv.address('mod1') == 'http://127.0.4.1:8799'                    # mod1's own laptop address
+        with urllib.request.urlopen(srv.address('mod1') + '/api/health', timeout=3) as r:
+            h = json.loads(r.read())
+        assert h['ran'] == '/api/health' and h['ip'] == '127.0.4.1:8799' and h['live'] == 0   # clients stay on the radio
         with urllib.request.urlopen(base + '/mod1/api/batch?3=170&speed=5', timeout=3) as r:
             assert r.headers['Access-Control-Allow-Origin'] == '*'
             assert json.loads(r.read())['ran'] == '/api/batch?3=170&speed=5'

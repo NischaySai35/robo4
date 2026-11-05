@@ -120,9 +120,11 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - [x] **mod1** runs the ESP-NOW firmware: every web-API handler also answers over the radio (`rq` + route table), repeats get the saved answer.
 - [x] **Laptop:** `gos robot bridge COM7` -> `http://127.0.0.1:8790/mod1/api/...` answers like the board. Channel found by itself (mod1's hello names it; remembered in `~/.gos/espnow_channel`).
 - [x] Measured: health 19 ms median (Wi-Fi: 250-600 ms), telemetry 4.3 KB in 95 ms; 60 s non-stop: 1,565 reads, worst 123 ms, 0 resends, no 2 s pauses.
-- [ ] **Hold on silence** (laptop quiet 0.5 s while driving -> joints stop where they are) is untested: needs motors, ask first.
-- [ ] Heat: radio stays awake while linked: chip 65-67 C (62-64 napping). Watch it during longer runs.
-- [ ] Point the Studio / `sim/real_sync.py` (other chat's) / `gos robot serve` at the gateway address instead of mod1's own.
+- [x] **Each module has its own laptop address** through the bridge: mod1 = `http://127.0.4.1` (modN = 127.0.4.N). It reports that address as the board's own, so the Studio and the sim (which switch to the board's reported address) stay on the radio. GOS driver checked: 9 joints, 156 reads in 80 s, worst 146 ms.
+- [x] **Starts with the Studio:** `studio/tools/robo4Net.cjs` `supervise()` runs both ROBO4-NET and the bridge (`npm run dev` and the installed app); no dongle = checks every 10 s; a second copy waits and takes over; stops with the Studio (`--parent-pid`). Log: `<data>/logs/espnow_bridge.log`. `ESPNOW_BRIDGE=0` turns it off.
+- [x] Heat with the radio awake: 65.3 -> 66.3 C over 80 s, steady.
+- [ ] **To switch over:** type `127.0.4.1` as M1 in the Sync box and `http://127.0.4.1` as mod1's address in the connection window (both stay on Wi-Fi until then).
+- [ ] **Hold on silence** untested (moves a motor): `py -3.12 tools/espnow/hold_test.py --yes` with Nischay at the robot, torque on, Studio bridge stopped.
 - [ ] Dongle reception is weak-ish (-76..-80 dBm at mod1); a dongle with an external antenna would give more margin.
 
 ---

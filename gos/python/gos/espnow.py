@@ -12,7 +12,7 @@ The laptop is the brain, the dongle only the radio:
 - every request is numbered and resent until its answer arrives; the module never runs one number twice;
 - the Wi-Fi channel is found by itself (the modules stay on ROBO4-NET's channel for uploads and their web page).
 """
-import json, os, pathlib, struct, threading, time, urllib.parse
+import json, os, pathlib, re, socketserver, struct, threading, time, urllib.parse, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .app import GosError
@@ -276,8 +276,18 @@ class EspNowLink:
 
 
 # ── the web gateway: the board's own API, reached over the radio ───────────────
-def serve_gateway(link, port=8790, host='127.0.0.1'):
-    """http://127.0.0.1:8790/<module>/api/... answers like http://<module>/api/... . / lists the modules."""
+def module_address(name):
+    """The laptop-local address a module answers on through the gateway: mod1 -> 127.0.4.1, mod12 -> 127.0.4.12; other
+    names get a fixed spot in 127.0.5.x. Every client that talks to http://<board>/api/... works with it unchanged."""
+    m = re.fullmatch(r'mod(\d{1,3})', name or '')
+    if m and 1 <= int(m.group(1)) <= 254: return f'127.0.4.{int(m.group(1))}'
+    return f'127.0.5.{zlib.crc32((name or "").encode()) % 254 + 1}'
+
+
+def _handler(link, fixed=None, own=None):
+    """fixed: the module this server stands for (its own address), else the first path part names it (/mod1/api/...).
+    own(name): the address to report as the board's own, so clients that switch to the board's reported address
+    (they do, to dodge slow name lookups) stay on the radio instead of jumping back to Wi-Fi."""
     class H(BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
         def log_message(self, *a): pass
@@ -298,15 +308,23 @@ def serve_gateway(link, port=8790, host='127.0.0.1'):
 
         def _forward(self, body=None):
             url = urllib.parse.urlsplit(self.path)
-            parts = url.path.strip('/').split('/', 1)
-            if not parts[0]: return self._send(200, json.dumps(link.status()))
-            name, rest = parts[0], '/' + (parts[1] if len(parts) > 1 else '')
+            if fixed: name, rest = fixed, url.path or '/'
+            else:
+                parts = url.path.strip('/').split('/', 1)
+                if not parts[0]: return self._send(200, json.dumps(link.status()))
+                name, rest = parts[0], '/' + (parts[1] if len(parts) > 1 else '')
             if rest.startswith('/api/ota'):
                 return self._send(501, json.dumps({'ok': False, 'error': 'firmware uploads go over Wi-Fi: use the board address'}))
             if rest == '/':
                 return self._send(501, json.dumps({'ok': False, 'error': "the board's web page is on Wi-Fi only"}))
-            try: code, text = link.request(name, rest + ('?' + url.query if url.query else ''), body)
+            try:
+                m = link.find(name)
+                code, text = link.request(m, rest + ('?' + url.query if url.query else ''), body)
             except GosError as e: return self._send(504, json.dumps({'ok': False, 'error': str(e)}))
+            mine = own(m.name) if own else None
+            if mine and m.ip and m.ip != '-':
+                text = text.replace(f'"{m.ip}"', f'"{mine}"')
+            if rest == '/api/health': text = re.sub(r'"live":\s*\d+', '"live":0', text)   # the UDP stream is Wi-Fi only
             self._send(code or 502, text)
 
         def do_GET(self): self._forward()
@@ -314,8 +332,78 @@ def serve_gateway(link, port=8790, host='127.0.0.1'):
         def do_POST(self):
             n = int(self.headers.get('Content-Length') or 0)
             self._forward(self.rfile.read(n) if n else None)
+    return H
 
-    srv = ThreadingHTTPServer((host, port), H)
+
+class _Server(ThreadingHTTPServer):
+    allow_reuse_address = False      # on Windows reuse would let a second bridge share the port
+    def server_bind(self):
+        # HTTPServer.server_bind asks Windows for its own address's name (getfqdn): for 127.0.4.1 that hung for seconds
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
+def _start(handler, host, port, name):
+    srv = _Server((host, port), handler)
     srv.daemon_threads = True
-    threading.Thread(target=srv.serve_forever, name='espnow-gateway', daemon=True).start()
+    threading.Thread(target=srv.serve_forever, name=name, daemon=True).start()
     return srv
+
+
+class Gateway:
+    """http://127.0.0.1:8790/<module>/api/... and http://<module address>/api/... (mod1: http://127.0.4.1) both answer like
+    the board itself. Each module gets its own address as soon as it is heard. / on 8790 lists the modules."""
+    def __init__(self, link, port=8790, host='127.0.0.1', module_port=80):
+        self.link, self.module_port, self.servers = link, module_port, {}
+        self.own = lambda name: module_address(name) + ('' if module_port == 80 else f':{module_port}')
+        self.main = _start(_handler(link, own=self.own), host, port, 'espnow-gateway')
+        self.server_address = self.main.server_address
+        self.errors, self._run = {}, True
+        threading.Thread(target=self._watch, name='espnow-gateway-modules', daemon=True).start()
+
+    def _watch(self):
+        while self._run:
+            try:
+                for m in self.link.alive():
+                    if m.name and m.name not in self.servers and m.name not in self.errors:
+                        try: self.servers[m.name] = _start(_handler(self.link, m.name, self.own), module_address(m.name), self.module_port, f'espnow-{m.name}')
+                        except OSError as e: self.errors[m.name] = str(e)
+            except Exception as e:   # never let one bad pass end the watcher
+                self.errors['_watch'] = repr(e)
+            time.sleep(0.2)
+
+    def address(self, name):
+        return f'http://{self.own(name)}' if name in self.servers else None
+
+    def shutdown(self):
+        self._run = False
+        for s in [self.main, *self.servers.values()]: s.shutdown(); s.server_close()
+
+
+def serve_gateway(link, port=8790, host='127.0.0.1', module_port=80):
+    return Gateway(link, port, host, module_port)
+
+
+# ── for whoever starts the bridge (the Studio: studio/tools/robo4Net.cjs) ──────
+BUSY, NO_DONGLE = 3, 4      # exit codes of `gos robot bridge`: another copy runs / no dongle plugged in
+
+
+def hold_port(port, host='127.0.0.1'):
+    """Take the gateway port (OSError if another bridge has it); close it right before serving."""
+    import socket
+    s = socket.socket()
+    s.bind((host, port))
+    return s
+
+
+def parent_alive(pid):
+    """True while process `pid` runs. (os.kill(pid, 0) is no test on Windows: signal 0 there is Ctrl+C.)"""
+    if os.name == 'nt':
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x00100000, False, pid)            # SYNCHRONIZE
+        if not h: return False
+        try: return k.WaitForSingleObject(h, 0) == 0x102     # WAIT_TIMEOUT = still running
+        finally: k.CloseHandle(h)
+    try: os.kill(pid, 0); return True
+    except OSError: return False

@@ -1275,14 +1275,25 @@ void livePoll() {
 // Radio fully awake only while the robot moves: commands answered at once and angles streamed fast. Standing still
 // (even while a laptop watches in live mode) it stays in modem sleep: sending still works, it just stays cool.
 bool radioAwake = false;
+bool radioHold  = false;   // /api/radio?awake=1: keep the radio awake for a Wi-Fi test (not saved; a reboot clears it)
 bool guardBusy();
 bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS || guardBusy(); }
 void radioTick() {
   if (otaBusy) return;                              // OTA owns the radio settings while it runs
-  bool want = moving();
+  bool want = moving() || radioHold;
   if (want == radioAwake) return;
   radioAwake = want;
   if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
+}
+
+void okJson(const String& body);
+// GET /api/radio            -> {"hold":false,"awake":false}
+// GET /api/radio?awake=1|0  -> hold the radio awake (1) or back to normal sleep when still (0). Moves nothing.
+void handleRadio() {
+  if (server.hasArg("awake")) { radioHold = server.arg("awake") == "1"; radioTick(); }
+  String b = F("{\"ok\":true,\"hold\":"); b += radioHold ? "true" : "false";
+  b += F(",\"awake\":"); b += radioAwake ? "true" : "false"; b += '}';
+  okJson(b);
 }
 
 uint8_t liveTick = 0;
@@ -2666,6 +2677,7 @@ void setup() {
   route("/api/wifi/set",        handleWifiSet);
   route("/api/wifi/reconnect",  handleWifiReconnect);
   route("/api/wifi/scan",       handleWifiScan);
+  route("/api/radio",           handleRadio, false);   // radio sleep on/off for Wi-Fi tests
   route("/api/ota/url",         handleOtaUrl, false);
   server.on("/api/ota", HTTP_POST, handleOtaDone, handleOtaUpload);
   server.on("/api/ota", HTTP_OPTIONS, []() { setCORS(); server.send(204); });

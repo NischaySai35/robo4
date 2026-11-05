@@ -29,8 +29,9 @@ param(
   [int]   $ParentPid = 0,       # stop when this process is gone (the Studio, if it was killed)
   # hotspot = Windows Mobile Hotspot with this name and password (default). Measured 5 Nov 2026: Wi-Fi Direct (the old
   # way) dropped the ESP32 every 120.6 s on one fixed clock (gone 0.6-2.8 s each time) while a phone stayed; on the
-  # Mobile Hotspot the module stayed 4 minutes without a single drop. The laptop's own hotspot settings are put back
-  # when this stops. It needs an internet connection to share: without one it falls back to direct.
+  # Mobile Hotspot the module stayed 4 minutes without a single drop. It takes over the laptop's Mobile hotspot setting
+  # (name and password) and stays up after this stops. It needs an internet connection to share: without one it falls
+  # back to direct.
   # direct  = Wi-Fi Direct group owner.
   [ValidateSet('direct', 'hotspot')] [string]$Mode = 'hotspot'
 )
@@ -62,7 +63,6 @@ if ($Mode -eq 'hotspot') {
   $asTaskAct = [System.WindowsRuntimeSystemExtensions].GetMethods() | Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
                  $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncAction' } | Select-Object -First 1
   function Wait-Act($op) { [void]$asTaskAct.Invoke($null, @($op)).Wait(-1) }
-  $hsOld = $null
 }
 
 # The network object: Status says 'Started' while it is up, Stop() takes it down.
@@ -72,20 +72,19 @@ function New-Publisher {
     if (-not $prof) { throw 'Mobile Hotspot needs an internet connection to share' }
     $m = [Windows.Networking.NetworkOperators.NetworkOperatorTetheringManager]::CreateFromConnectionProfile($prof)
     $c = $m.GetCurrentAccessPointConfiguration()
-    if (-not $script:hsOld) { $script:hsOld = @{ Ssid = $c.Ssid; Pass = $c.Passphrase; Band = $c.Band } }
-    $c.Ssid = $Ssid; $c.Passphrase = $Pass; $c.Band = 'TwoPointFourGigahertz'   # the ESP32-C3 cannot see 5 GHz
-    Wait-Act ($m.ConfigureAccessPointAsync($c))
-    $r = Wait-Op ($m.StartTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult])
-    if ($r.Status -ne 'Success') { throw "Mobile Hotspot did not start: $($r.Status) $($r.AdditionalErrorMessage)" }
+    $on = [string]$m.TetheringOperationalState -eq 'On'
+    if (-not ($on -and $c.Ssid -eq $Ssid)) {   # already up as ROBO4-NET (left by the Studio before): use it as it is
+      $c.Ssid = $Ssid; $c.Passphrase = $Pass; $c.Band = 'TwoPointFourGigahertz'   # the ESP32-C3 cannot see 5 GHz
+      Wait-Act ($m.ConfigureAccessPointAsync($c))
+      $r = Wait-Op ($m.StartTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult])
+      if ($r.Status -ne 'Success') { throw "Mobile Hotspot did not start: $($r.Status) $($r.AdditionalErrorMessage)" }
+    } else { Log 'Mobile Hotspot ROBO4-NET is already up - using it (no restart, the modules stay connected)' }
     $o = [pscustomobject]@{ M = $m }
     $o | Add-Member ScriptProperty Status { if ([string]$this.M.TetheringOperationalState -eq 'On') { 'Started' } else { [string]$this.M.TetheringOperationalState } }
-    $o | Add-Member ScriptMethod Stop {
-      [void](Wait-Op ($this.M.StopTetheringAsync()) ([Windows.Networking.NetworkOperators.NetworkOperatorTetheringOperationResult]))
-      if ($script:hsOld) {   # the laptop's own hotspot settings back as they were
-        $c = $this.M.GetCurrentAccessPointConfiguration(); $c.Ssid = $script:hsOld.Ssid; $c.Passphrase = $script:hsOld.Pass; $c.Band = $script:hsOld.Band
-        Wait-Act ($this.M.ConfigureAccessPointAsync($c))
-      }
-    }
+    # Stop() leaves the hotspot up on purpose: when the Studio restarts (npm run dev), the next copy adopts it and the
+    # modules never notice (5 Nov 2026: stopping it cost each restart a 5 s gap, the module fell back to the house Wi-Fi).
+    # It stays up after the Studio closes too, while modules are on it; switch it off in Windows' Mobile hotspot settings.
+    $o | Add-Member ScriptMethod Stop { }
     return $o
   }
   $p = New-Object Windows.Devices.WiFiDirect.WiFiDirectAdvertisementPublisher

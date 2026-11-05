@@ -355,7 +355,9 @@ constexpr uint16_t AWAKE_AFTER_MOVE_MS = 2000;
 struct GuardSettings { uint16_t ver; GuardCfg bend, lock; };
 constexpr uint16_t GUARD_VER = 1;
 //                        trip  mA  calm ms  ceil hold back yield dn up clear calmMs hotMs warm hot cool
-const GuardCfg GUARD_BEND = {750, 1300, 500, 100, 800, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
+// 5 Nov 2026 (Nischay): bend joints raised to 85 % (was trip 75 %, ceiling 80 %, 1300 mA): B1 needed 80 % / 1.5 A for
+// ordinary poses and the guard stopped the animation; 1700 mA ~ 85 % load on B1 plus a margin.
+const GuardCfg GUARD_BEND = {850, 1700, 500, 100, 850, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
 const GuardCfg GUARD_LOCK = {880, 1900, 500, 100, 1000, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
 GuardSettings guardSet = {GUARD_VER, GUARD_BEND, GUARD_LOCK};
 Guard guards[MAX_SERVOS];

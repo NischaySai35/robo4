@@ -38,6 +38,16 @@ th{color:var(--dim);font-weight:400;font-size:11px}
 th.l,td.l{text-align:left}
 button{background:#f6f8fa;border:1px solid var(--ln);color:var(--fg);padding:4px 9px;border-radius:6px;cursor:pointer;font:inherit}
 button:hover{border-color:var(--acc)}
+button:active{transform:scale(.96);filter:brightness(.85)}
+button.busy{opacity:.7;cursor:progress}button.busy::after{content:' \2026'}
+button.done{background:#1a7f37!important;border-color:#1a7f37!important;color:#fff!important}button.done::after{content:' \2713'}
+button.fail{background:#cf222e!important;border-color:#cf222e!important;color:#fff!important}button.fail::after{content:' \2717'}
+.tsw{display:inline-flex;align-items:center;gap:6px;margin:0 6px}.tsw b{min-width:52px}
+.tdot{width:10px;height:10px;border-radius:50%;background:#8c959f}
+.tsw.on .tdot{background:#2da44e}.tsw.on b{color:#1a7f37}.tsw.off .tdot,.tsw.part .tdot{background:#d4a72c}.tsw.off b,.tsw.part b{color:#9a6700}
+.tsw button{margin:0;font-weight:600}.tsw #b-ton{border-radius:6px 0 0 6px}.tsw #b-toff{border-radius:0 6px 6px 0;margin-left:-1px}
+.tsw.on #b-ton{background:#2da44e;border-color:#2da44e;color:#fff}.tsw.off #b-toff{background:#d4a72c;border-color:#d4a72c;color:#1f2328}
+#lastact{font-size:13px;color:var(--dim);margin-left:6px}#lastact.ok{color:#1a7f37}#lastact.bad{color:#cf222e;font-weight:600}
 button.p{background:var(--acc);border-color:var(--acc);color:#ffffff;font-weight:600}
 button.d{border-color:var(--bad);color:var(--bad)}
 input,select{background:var(--pan);border:1px solid var(--ln);color:var(--fg);padding:4px 6px;border-radius:6px;font:inherit}
@@ -105,14 +115,15 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <label>speed 1-10</label><input type="number" id="g-spd" value="5" min="1" max="10">
       <label>acc 1-100</label><input type="number" id="g-acc" value="20" min="1" max="100">
       <button class="p" onclick="sendAll()">Send all sliders (sync)</button>
-      <button class="p" onclick="api('/api/torque?on=1')">Turn torque ON (hold, no move)</button>
-      <button onclick="api('/api/torque?on=0')">Torque OFF (limp)</button>
+      <span class="tsw" id="tsw"><span class="tdot"></span>Torque: <b id="tword">?</b>
+        <button id="b-ton" onclick="api('/api/torque?on=1')" title="hold where it is, nothing moves">ON</button><button id="b-toff" onclick="api('/api/torque?on=0')">OFF (limp)</button></span>
       <button onclick="api('/api/home')">Home all &rarr; 180&deg;</button>
       <button class="p" onclick="api('/api/home/manual')">Go to manual home</button>
       <button onclick="setHomeAll()" title="save every joint's current angle as its home">Set current angles as home</button>
       <button onclick="clearHomeAll()" title="forget all saved homes - every joint goes back to the built-in straight pose">Clear homes</button>
       <button onclick="api('/api/servo/tune',1)" title="Re-write deadband / Kp / Kd / Ki / torque limit">Re-tune hold</button>
       <button onclick="api('/api/guard/clear?id=all')" title="joints the overload guard stopped go back to normal strength, right where they are (nothing moves)">Clear blocks</button>
+      <span id="lastact"></span>
       <span class="hint" id="torqhint"></span>
     </div>
   </div>
@@ -236,8 +247,16 @@ const el=id=>document.getElementById(id);
 const v=id=>el(id).value;
 let paused=false, tel=null;
 
-function api(u,show){return fetch(u).then(r=>r.json()).then(d=>{if(show)out(d);return d})
-  .catch(e=>{out({ok:false,error:''+e})})}
+// Feedback for the button that was clicked (Nischay, 5 Nov 2026: "I can't tell which button I clicked"): busy while
+// the board answers, then green tick or red cross for 2 s, and the line next to the buttons says what happened.
+function btnOf(){const b=document.activeElement;return b&&b.tagName==='BUTTON'?b:null}
+function mark(b,ok,msg){if(!b)return;b.classList.remove('busy');b.classList.add(ok?'done':'fail');
+  clearTimeout(b._fb);b._fb=setTimeout(()=>b.classList.remove('done','fail'),2000);
+  const la=el('lastact');if(la&&b.closest('.row')===la.closest('.row')){
+    la.className=ok?'ok':'bad';la.textContent=b.textContent.replace(/[\u2026\u2713\u2717]/g,'').trim()+': '+(ok?'done ':'FAILED - '+msg+' ')+new Date().toLocaleTimeString();}}
+function api(u,show){const b=btnOf();if(b){b.classList.remove('done','fail');b.classList.add('busy');}
+  return fetch(u).then(r=>r.json().then(d=>{if(show)out(d);mark(b,r.ok&&d.ok!==false,d.error||('HTTP '+r.status));return d}))
+  .catch(e=>{out({ok:false,error:''+e});mark(b,false,'no answer from the board ('+e+')')})}
 function out(d){const p=el('rout');if(p)p.textContent=JSON.stringify(d,null,1);}
 
 /* Named rather than inline so code can switch tabs too — the scan jumps back to the
@@ -332,6 +351,9 @@ function rows(d){
     if(sl&&want!=null&&!(slHeld[s.id]&&Date.now()-slHeld[s.id]<1500)&&document.activeElement!==tv){
       sl.value=want;tv.value=(+want).toFixed(1);}});
   const anyTorque=d.servos.some(s=>s.torque);
+  const nOn=d.servos.filter(s=>s.torque).length, nAll=d.servos.length, tsw=el('tsw');
+  if(tsw){const st=nAll&&nOn===nAll?'on':nOn?'part':'off';tsw.className='tsw '+st;
+    el('tword').textContent=st==='on'?'holding':st==='part'?nOn+'/'+nAll+' on':'limp';}
   const th=el('torqhint');
   if(th)th.textContent=d.servos.length===0?'no servos — run a scan in Tools'
     :anyTorque?'':'all limp — sliders follow the arm; press Turn torque ON to hold';

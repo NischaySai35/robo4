@@ -9,7 +9,7 @@
 #include <cmath>
 
 // as GUARD_BEND in esp32_multi.ino; reads every 30 ms (FAST_MS)
-static const GuardCfg BEND = {750, 1300, 500, 100, 800, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
+static const GuardCfg BEND = {850, 1700, 500, 100, 850, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
 static const double DT = 0.03;
 static int fails = 0;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("  FAIL: "); } else printf("  ok:   "); printf(__VA_ARGS__); printf("\n"); } while (0)

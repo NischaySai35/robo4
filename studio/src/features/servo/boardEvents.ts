@@ -47,21 +47,35 @@ function explain(line: string): { level: string; msg: string } | null {
   return { level: 'info', msg: text };
 }
 
-interface Follow { after: number; uptime: number; failSince: number; first: boolean }
+interface Follow { after: number; uptime: number; failSince: number; first: boolean; ip: string; misses: number }
 const follow = new Map<string, Follow>();
 let timer: ReturnType<typeof setInterval> | null = null;
+
+// Ask the board by its address, not its name: measured 5 Nov 2026, looking 'mod1.local' up froze for up to 18.6 s
+// while the board answered its address in 80 ms, which showed as "stopped answering" with no reason from the board.
+// The name is used only to learn the address (and again after a few misses, in case the address changed).
+async function ask(nd: { url: string }, f: Follow, path: string): Promise<string> {
+  const base = nd.url.replace(/\/$/, '');
+  if (!f.ip || f.misses >= 3) {
+    const h = await (await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(4000) })).json();
+    if (h?.ip) { f.ip = h.ip; f.misses = 0; }
+  }
+  const r = await fetch(`${f.ip ? `http://${f.ip}` : base}${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  f.misses = 0;
+  return r.text();
+}
 
 async function poll() {
   const log = useIntegrationStore.getState().pushCtrlLog;
   for (const nd of useEspNodesStore.getState().nodes) {
-    const f = follow.get(nd.id) ?? { after: 0, uptime: 0, failSince: 0, first: true };
+    const f = follow.get(nd.id) ?? { after: 0, uptime: 0, failSince: 0, first: true, ip: '', misses: 0 };
     follow.set(nd.id, f);
     let txt: string;
     try {
-      const r = await fetch(`${nd.url.replace(/\/$/, '')}/api/log?after=${f.after}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      txt = await r.text();
+      txt = await ask(nd, f, `/api/log?after=${f.after}`);
     } catch {
+      f.misses++;
       if (!f.failSince && !f.first) {           // it had answered before: it just went quiet
         f.failSince = Date.now();
         log('offline', 'SYS', `${nd.name} stopped answering`);

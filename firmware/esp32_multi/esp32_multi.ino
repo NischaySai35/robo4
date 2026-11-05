@@ -44,6 +44,7 @@
 #include <Update.h>
 #include <HTTPUpdate.h>
 #include "guard.h"          // overload guard (layer 1), see the Overload guard section
+#include "sync.h"           // synchronised motion: every joint at the same share of its path (Sync motion)
 #include <Preferences.h>
 #include <SCServo.h>
 #include <esp_system.h>
@@ -176,6 +177,22 @@ RTC_NOINIT_ATTR static uint32_t bcMagic;
 RTC_NOINIT_ATTR static char     bcText[72];
 RTC_NOINIT_ATTR static uint32_t bcAtMs;
 
+// The servo supply over the last second, for the post-mortem: lowest voltage and highest total current. A brownout
+// right after a current spike says "a motor pulled the supply down" (Nischay, 5 Nov 2026).
+RTC_NOINIT_ATTR static uint32_t pwMagic;
+RTC_NOINIT_ATTR static uint16_t pwVmin10, pwPeakmA;   // this second so far
+RTC_NOINIT_ATTR static uint16_t pwLastVmin10, pwLastPeakmA;   // the whole previous second
+RTC_NOINIT_ATTR static uint32_t pwWinMs;
+uint16_t prevVmin10 = 0, prevPeakmA = 0; bool prevPower = false;
+void powerNote(uint16_t v10, uint16_t mA, uint32_t now) {
+  if (pwMagic != BC_MAGIC || now - pwWinMs > 1000) {
+    if (pwMagic == BC_MAGIC) { pwLastVmin10 = pwVmin10; pwLastPeakmA = pwPeakmA; } else { pwLastVmin10 = v10; pwLastPeakmA = mA; }
+    pwVmin10 = 999; pwPeakmA = 0; pwWinMs = now; pwMagic = BC_MAGIC;
+  }
+  if (v10 && v10 < pwVmin10) pwVmin10 = v10;
+  if (mA > pwPeakmA) pwPeakmA = mA;
+}
+
 // What the PREVIOUS boot was doing when it died, captured before we overwrite it.
 String prevCrumb = "";
 String resetWhy  = "";
@@ -214,6 +231,11 @@ void captureLastBoot() {
   }
   bcMagic = 0;
   bcText[0] = 0;
+  if (pwMagic == BC_MAGIC) {   // the worse of this second and the one before
+    prevVmin10 = pwVmin10 < pwLastVmin10 ? pwVmin10 : pwLastVmin10; prevPeakmA = pwPeakmA > pwLastPeakmA ? pwPeakmA : pwLastPeakmA;
+    prevPower = prevVmin10 > 0 && prevVmin10 < 999;
+  }
+  pwMagic = 0;
 }
 
 // ── Log ring (readable over Wi-Fi at /api/log) ───────────────────────────────
@@ -679,6 +701,18 @@ constexpr float    ANIM_RF_LINEAR   = 0.15f;
 constexpr uint32_t ANIM_ARRIVE_TOL  = 12;        // steps (~1 deg) counts as arrived
 constexpr uint32_t ANIM_ARRIVE_WAIT = 600;       // ms to wait past the plan before moving on anyway
 
+// Sync motion (sync.h, 5 Nov 2026): instead of one goal per joint per frame, the guard task steers every joint along
+// one shared progress clock each FAST_MS, so all joints start, move and finish together; the slowest (a loaded joint)
+// slows everyone down. Off = the one-goal-per-frame player below. Remembered across reboots (/api/anim/sync?on=1).
+//                            lagOk lagMax minRate leadS accRaw catchGain vMaxRaw vMinRaw stallS stallStep endWaitS tol minMove
+const SyncCfg SYNC_CFG = {0.02f, 0.08f, 0.15f, 0.20f, 5000.0f, 4.0f, 2048.0f, 40.0f, 1.5f, 0.004f, 0.8f, 12, 23};
+const uint8_t SYNC_ACC = 50;       // servo ACC units (100 steps/s^2): = SYNC_CFG.accRaw
+bool     animSync   = false;
+bool     syncActive = false;
+SyncMove syncMv;
+int      syncSlot[MAX_SERVOS];
+uint32_t syncLastMs = 0;
+
 uint32_t animPlanMs    = 0;        // planned duration of the current frame
 bool     animStretched = false;    // true when the limits made it longer than requested
 bool     animArrived   = false;
@@ -694,6 +728,7 @@ void animSendFrame(uint8_t idx) {
   uint16_t want[MAX_SERVOS];
   float    D[MAX_SERVOS];
   float    deg[MAX_SERVOS];
+  int32_t  curRaw[MAX_SERVOS];
   uint8_t  n = 0;
   float    Tmin = 0.0f;
 
@@ -706,7 +741,7 @@ void animSendFrame(uint8_t idx) {
     // Distance from where the joint actually is, not from where we last told it to be.
     int32_t cur = sv.rawPos >= 0 ? sv.rawPos : (int32_t)sv.targetRaw;
     if (!guardAllows((uint8_t)slot, nomToRaw(sv.id, wantDeg))) continue;   // that joint sits this frame out
-    slots[n] = slot; deg[n] = wantDeg; want[n] = nomToRaw(sv.id, wantDeg);
+    slots[n] = slot; deg[n] = wantDeg; want[n] = nomToRaw(sv.id, wantDeg); curRaw[n] = cur;
     D[n] = (float)labs((int32_t)want[n] - cur);
     if (D[n] >= 4.0f) {
       float Tv = D[n] / (vCap * (1.0f - rf));                     // speed limit
@@ -742,8 +777,38 @@ void animSendFrame(uint8_t idx) {
     ids[k] = sv.id; pos[k] = (int16_t)want[k]; spd[k] = v; acc[k] = a;
   }
 
+  if (animSync && n > 0) {             // the guard task steers them from its next read (<= FAST_MS)
+    int16_t from[MAX_SERVOS], to[MAX_SERVOS];
+    for (uint8_t k = 0; k < n; k++) { syncSlot[k] = slots[k]; from[k] = (int16_t)curRaw[k]; to[k] = (int16_t)want[k]; }
+    syncMv.begin(SYNC_CFG, n, from, to, T, animSine);
+    syncLastMs = millis(); syncActive = true;
+    return;
+  }
+  syncActive = false;
   if (n == 1)     { st.WritePosEx(ids[0], pos[0], spd[0], acc[0]); delay(2); }
   else if (n > 1) { st.SyncWritePosEx(ids, n, pos, spd, acc);      delay(2); }
+}
+
+// One Sync motion step, in the guard task right after it read every joint (bus held). A joint the guard is holding
+// (it hit something) is left to the guard.
+void syncTick() {
+  if (!syncActive) return;
+  if (!animPlaying) { syncActive = false; return; }
+  uint32_t now = millis();
+  float dt = (now - syncLastMs) / 1000.0f; syncLastMs = now;
+  if (dt <= 0) return;
+  if (dt > 0.2f) dt = 0.2f;                       // a late pass must not make the clock jump
+  int pos[SYNC_MAX]; SyncOut out[SYNC_MAX];
+  for (uint8_t k = 0; k < syncMv.n; k++) pos[k] = servos[syncSlot[k]].rawPos;
+  SyncState r = syncMv.step(SYNC_CFG, dt, pos, out);
+  uint8_t ids[MAX_SERVOS]; int16_t gp[MAX_SERVOS]; uint16_t spd[MAX_SERVOS]; uint8_t acc[MAX_SERVOS]; uint8_t m = 0;
+  for (uint8_t k = 0; k < syncMv.n; k++) {
+    if (guards[syncSlot[k]].state != G_OK) continue;
+    ids[m] = servos[syncSlot[k]].id; gp[m] = out[k].goal; spd[m] = out[k].speed ? out[k].speed : 1; acc[m] = SYNC_ACC; m++;
+  }
+  if (m == 1) st.WritePosEx(ids[0], gp[0], spd[0], acc[0]);
+  else if (m > 1) st.SyncWritePosEx(ids, m, gp, spd, acc);
+  if (r != SY_RUN) syncActive = false;            // animTick() reads the result and moves on (or stops)
 }
 
 void animBeginFrame(uint8_t i) {
@@ -770,6 +835,19 @@ void animTick() {
   if (!animPlaying || animCount == 0) return;
   uint32_t el = millis() - animT0;
 
+  if (!animArrived && animSync) {
+    if (syncMv.state == SY_RUN) return;
+    int8_t w = syncMv.laggard; const char* who = (w >= 0) ? cfg.labels[syncSlot[w]] : "a joint";
+    if (syncMv.state == SY_STALLED) {
+      lg("anim: %s could not keep up (stuck at %.1f deg, %.0f%% behind) - stopping", who,
+         w >= 0 ? rawToNom(servos[syncSlot[w]].id, (uint16_t)max(0, (int)servos[syncSlot[w]].rawPos)) : 0.0f, syncMv.lag * 100);
+      animStop(); return;
+    }
+    if (syncMv.worstLag > SYNC_CFG.lagOk || syncMv.state == SY_LATE)
+      lg("anim frame %u: %.1f s (planned %.1f), worst gap %.0f%%%s", animIdx + 1, syncMv.elapsed, syncMv.T,
+         syncMv.worstLag * 100, syncMv.state == SY_LATE ? ", a joint did not quite arrive" : "");
+    animArrived = true; animArriveT = millis();
+  }
   if (!animArrived) {
     if (el < animPlanMs) return;                  // the servos are running the move themselves
     if (!animAllArrived(animIdx) && el < animPlanMs + ANIM_ARRIVE_WAIT) return;
@@ -1784,7 +1862,15 @@ void handleLog() {
   setCORS();
   String s; s.reserve(logCount * 60 + 32);
   uint8_t start = (uint8_t)((logHead + LOG_LINES - logCount) % LOG_LINES);
-  for (uint8_t i = 0; i < logCount; i++) { s += logBuf[(start + i) % LOG_LINES]; s += '\n'; }
+  // ?after=<ms>: only lines stamped later (the Studio's Debug Log follows the board with it). The board's uptime is the
+  // first line, so a restart (uptime went back) is visible to the reader.
+  bool since = server.hasArg("after"); uint32_t after = since ? strtoul(server.arg("after").c_str(), nullptr, 10) : 0;
+  if (since) { s += F("uptime "); s += millis(); s += '\n'; }
+  for (uint8_t i = 0; i < logCount; i++) {
+    const String& l = logBuf[(start + i) % LOG_LINES];
+    if (since && strtoul(l.c_str() + 1, nullptr, 10) <= after) continue;
+    s += l; s += '\n';
+  }
   server.send(200, "text/plain", s);
 }
 
@@ -2007,6 +2093,7 @@ void handleAnimLoad() {
   memcpy(anim, tmp, sizeof(AnimFrame) * got);
   animCount = got;
   animSine = !(server.hasArg("sine") && server.arg("sine") == "0");
+  if (server.hasArg("sync")) { animSync = server.arg("sync") == "1"; prefs.putBool("animSync", animSync); }
   animLoop = server.hasArg("loop") && server.arg("loop") != "0";
   lg("anim loaded: %u frames, sine %s, loop %s", animCount,
      animSine ? "on" : "off", animLoop ? "on" : "off");
@@ -2032,11 +2119,25 @@ void handleAnimPlay() {
 
 void handleAnimStop() { animStop(); okTrue(); }
 
+// GET /api/anim/sync          -> {"sync":true|false}
+// GET /api/anim/sync?on=1|0   Sync motion on/off, remembered across reboots (takes effect from the next frame)
+void handleAnimSync() {
+  if (server.hasArg("on")) { animSync = server.arg("on") == "1"; prefs.putBool("animSync", animSync); lg("Sync motion %s", animSync ? "on" : "off"); }
+  String r = F("{\"ok\":true,\"sync\":"); r += animSync ? F("true") : F("false"); r += '}';
+  okJson(r);
+}
+
 void handleAnimStatus() {
   String r = F("{\"ok\":true,\"frames\":"); r += animCount;
   r += F(",\"playing\":"); r += (animPlaying ? F("true") : F("false"));
   r += F(",\"idx\":");     r += (animPlaying ? animIdx : 0);
   r += F(",\"sine\":");    r += (animSine ? F("true") : F("false"));
+  r += F(",\"sync\":");    r += (animSync ? F("true") : F("false"));
+  if (animSync && animPlaying) {
+    r += F(",\"progress\":"); r += String(syncMv.s, 3);
+    r += F(",\"gap\":");      r += String(syncMv.lag, 3);
+    r += F(",\"waitingOn\":\""); r += syncMv.laggard >= 0 ? cfg.labels[syncSlot[syncMv.laggard]] : ""; r += '"';
+  }
   r += F(",\"loop\":");    r += (animLoop ? F("true") : F("false"));
   r += '}';
   okJson(r);
@@ -2623,6 +2724,10 @@ void guardTask(void*) {
     uint32_t t0 = millis();
     if (t0 - tw > guardWaitMs) guardWaitMs = t0 - tw;
     refreshAllFastSync();                // guardTick() for every joint at its end
+    { int vMin = 999, mA = 0;
+      for (uint8_t i = 0; i < nServos; i++) { if (servos[i].rawVoltage > 0 && servos[i].rawVoltage < vMin) vMin = servos[i].rawVoltage; if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f); }
+      powerNote(vMin < 999 ? (uint16_t)vMin : 0, (uint16_t)(mA > 65535 ? 65535 : mA), millis()); }
+    syncTick();                          // Sync motion: steer every joint from these fresh readings
     liveSend();
     if (millis() - t0 > guardPassMs) guardPassMs = millis() - t0;
   }
@@ -2646,6 +2751,7 @@ void setup() {
     lg("layout rev %u applied: %u servos, manual homes cleared", LAYOUT_REV, LAYOUT_N);
   }
   deadbandUnits = prefs.getUChar("deadband", TUNE_DEADBAND_DEFAULT);
+  animSync = prefs.getBool("animSync", false);
   applyServoConfig();
   lg("ROBO4 fw %s booting as '%s' (%u servos, bus %lu baud)",
      FW_VERSION, cfg.host, nServos, (unsigned long)cfg.baud);
@@ -2668,6 +2774,7 @@ void setup() {
   route("/api/anim/play",       handleAnimPlay);
   route("/api/anim/stop",       handleAnimStop);
   route("/api/anim/status",     handleAnimStatus);
+  route("/api/anim/sync",       handleAnimSync);
   route("/api/home/set",        handleHomeSet);
   route("/api/servo/home",      handleServoHome);
   route("/api/servo/deadband",  handleDeadband);
@@ -2713,6 +2820,11 @@ void setup() {
        prevCrumb.c_str(), (unsigned long)prevCrumbMs);
   else
     lg("no breadcrumb from the previous boot (clean power-on, or it died before one was set)");
+  if (prevPower)
+    lg("supply in its last second: servos down to %u.%u V, up to %u mA in total%s", prevVmin10 / 10, prevVmin10 % 10, prevPeakmA,
+       resetWhy.startsWith("BROWNOUT") && prevPeakmA > 2500 ? " - a motor current spike pulled the supply down" : "");
+  else if (resetWhy == "power-on")
+    lg("it was switched off or lost power completely (battery unplugged, switch, or a total supply drop)");
 
   delay(3000);                         // let the servo bus settle after power-up
   flushBus();

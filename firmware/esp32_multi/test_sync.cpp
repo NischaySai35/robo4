@@ -6,6 +6,7 @@
 // The pretend servo: position mode like an ST3215. It goes towards its goal at the asked speed, speeding up and
 // braking at accRaw so it stops exactly on the goal, but never faster than `cap` (a load makes it slower) and never
 // past `wall` (a hard stop). It counts how often it had to brake to a near stop mid-move (the old squeak).
+#ifndef ARDUINO   // laptop test only: the sketch build compiles every .cpp in this folder
 #include "sync.h"
 #include <cstdio>
 #include <cmath>
@@ -125,3 +126,4 @@ int main() {
   printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
   return fails ? 1 : 0;
 }
+#endif

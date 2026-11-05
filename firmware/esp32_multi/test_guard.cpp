@@ -3,6 +3,7 @@
 // The pretend joint: a position servo that moves towards its target at up to 60 deg/s, can push at most its torque
 // limit, and reports load = the push it needs (capped by the limit). Scenarios are Nischay's two examples, plus the
 // garbled temperature read seen on mod1 (145 C for one instant, 4 Nov 2026).
+#ifndef ARDUINO   // laptop test only: the sketch build compiles every .cpp in this folder
 #include "guard.h"
 #include <cstdio>
 #include <cmath>
@@ -94,3 +95,4 @@ int main() {
   printf(fails ? "\n%d FAILED\n" : "\nall passed\n", fails);
   return fails ? 1 : 0;
 }
+#endif

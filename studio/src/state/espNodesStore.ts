@@ -1,6 +1,6 @@
 /**
  * espNodesStore — the registry of module ESP32-C3 nodes. This laptop is the master;
- * each MODULE has its own ESP (mod1.local, mod2.local, …) carrying that module's
+ * each MODULE has its own ESP (reached at http://127.0.4.N over the ESP-NOW bridge, or modN.local on Wi-Fi) carrying that module's
  * servos. The servo layer (servoLink / ServoController) routes through here.
  *
  * A node is bound to a module via `componentId`. Servo ids are LOCAL to each
@@ -30,17 +30,37 @@ interface EspNodesState {
 }
 
 const LS_KEY = 'robo4:espNodes';
+const LS_ESPNOW = 'robo4:espNodes:espnow';   // set once the saved addresses were moved to the ESP-NOW bridge
+
+/** Module N through the ESP-NOW bridge (USB dongle, `gos robot bridge`, started with the Studio): http://127.0.4.N.
+ *  It answers like the board itself (gos/python/gos/espnow.py module_address). Nischay always plugs the dongle in
+ *  (6 Nov 2026), so this is the default; the board's Wi-Fi address (http://modN.local) still works when typed in. */
+export const espNowUrl = (n: number) => `http://127.0.4.${n}`;
+
+// Once: saved http://modN.local -> the bridge address. Only once, so a Wi-Fi address typed in later stays.
+function toEspNow(nodes: EspNode[]): EspNode[] {
+  try {
+    if (localStorage.getItem(LS_ESPNOW)) return nodes;
+    localStorage.setItem(LS_ESPNOW, '1');
+  } catch { return nodes; }
+  const moved = nodes.map((n) => {
+    const m = /^https?:\/\/mod(\d{1,3})\.local\/?$/i.exec(n.url);
+    return m ? { ...n, url: espNowUrl(Number(m[1])) } : n;
+  });
+  persist(moved);
+  return moved;
+}
 
 function load(): EspNode[] {
   try {
     const raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (Array.isArray(raw) && raw.length) {
-      return raw.map((n) => ({ ...n, connected: false, latencyMs: null, telemetry: null }));
+      return toEspNow(raw.map((n) => ({ ...n, connected: false, latencyMs: null, telemetry: null })));
     }
   } catch { /* ignore */ }
   // Seed one default node so a single-board setup works with zero configuration.
   return [{
-    id: 'esp_default', name: 'Module 1', url: 'http://mod1.local',
+    id: 'esp_default', name: 'Module 1', url: espNowUrl(1),
     componentId: null, connected: false, latencyMs: null, telemetry: null,
   }];
 }
@@ -63,7 +83,7 @@ export const useEspNodesStore = create<EspNodesState>((set, get) => ({
       const nodes = [...s.nodes, {
         id,
         name: n?.name ?? `Module ${s.nodes.length + 1}`,
-        url: n?.url ?? `http://mod${s.nodes.length + 1}.local`,
+        url: n?.url ?? espNowUrl(s.nodes.length + 1),
         componentId: n?.componentId ?? null,
         connected: false, latencyMs: null, telemetry: null,
       }];

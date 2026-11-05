@@ -7,7 +7,8 @@ import { useIntegrationStore } from '@/state/integrationStore';
 import { useThemeStore } from '@/state/themeStore';
 import { useModelStore } from '@/state/modelStore';
 import { useEspNodesStore } from '@/state/espNodesStore';
-import { servoRouting, sendServoCmd, sendServoBatch, estopAllNodes } from './servoLink';
+import { servoRouting, sendServoCmd, sendServoBatch, estopAllNodes, callAllNodes } from './servoLink';
+import TorqueSwitch from '@/components/torque/TorqueSwitch';
 import './ServoController.css';
 
 // ── Dynamic servo definitions (derived from the simulator's joints) ────────────
@@ -514,221 +515,48 @@ function ServoCard({ def, data, onCmd }: any) {
 
 // ── GroupControl ──────────────────────────────────────────────────────────────
 
-function GroupControl({ defs, onCmd, onEstop }: any) {
-  const all = defs.map((d: any) => d.id);
-  const g   = (cmd: any, extra = {}) => all.forEach((id: any) => onCmd(id, cmd, extra));
+function GroupControl({ defs, servos, online, onEstop, onHome }: any) {
 
   return (
     <div className="sc-group-strip">
-      <Button size="xs"
-        onClick={() => g('pos', { angle: 180, speed: 5, acc: 40 })}>
-        Home All
+      {/* Each board's own saved home (set on ESP-TTL with "Set current as home"), not a blind 180°. */}
+      <Button size="xs" title="Every servo goes to its saved home position" onClick={onHome}>
+        Home all
       </Button>
       {/* an emergency stop stays solid red, never a faint button */}
       <Button size="xs" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold"
         onClick={onEstop}>
         ⚡ E-STOP
       </Button>
-      <Button variant="outline" size="xs"
-        onClick={() => g('torqueon')}>
-        Torque ON
-      </Button>
-      <Button variant="outline" size="xs"
-        onClick={() => g('torqueoff')}>
-        Torque OFF
-      </Button>
+      <TorqueSwitch size="xs" online={online} onSet={on => void callAllNodes(`/api/torque?on=${on ? 1 : 0}`)}
+        torque={defs.filter((d: any) => servos[d.id]?.connected).map((d: any) => !!servos[d.id]?.torque)} />
     </div>
   );
 }
 
-// ── SequenceRecorder ──────────────────────────────────────────────────────────
-
-function SequenceRecorder({ defs, servos, onCmd }: any) {
-  const [frames,   setFrames]   = useState<any[]>([]);
-  const [playing,  setPlaying]  = useState(false);
-  const [playIdx,  setPlayIdx]  = useState(-1);
-  const [playDelay, setPlayDelay] = useState(1500);
-  const abortRef = useRef(false);
-
-  const capture = () => {
-    const frame = defs.map((d: any) => ({
-      id: d.id, label: d.label, angle: servos[d.id]?.currentAngle ?? 180,
-    }));
-    setFrames(prev => [...prev, frame]);
-  };
-
-  const play = async () => {
-    if (playing || frames.length === 0) return;
-    abortRef.current = false;
-    setPlaying(true);
-    for (let i = 0; i < frames.length; i++) {
-      if (abortRef.current) break;
-      setPlayIdx(i);
-      for (const { id, angle } of frames[i]) {
-        await onCmd(id, 'pos', { angle: Number(angle).toFixed(2), speed: 5, acc: 20 });
-      }
-      await new Promise(r => setTimeout(r, playDelay));
-    }
-    setPlayIdx(-1);
-    setPlaying(false);
-  };
-
-  const stopPlay = () => {
-    abortRef.current = true;
-    setPlaying(false);
-    setPlayIdx(-1);
-  };
-
-  const removeFrame = (i: any) => setFrames(prev => prev.filter((_, j) => j !== i));
-
-  const exportSeq = () => {
-    const blob = new Blob([JSON.stringify(frames, null, 2)], { type: 'application/json' });
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(blob), download: 'robo4_sequence.json',
-    });
-    a.click();
-  };
-
-  const importSeq = (e: any) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const data = JSON.parse((ev.target as any).result);
-        if (Array.isArray(data)) setFrames(data);
-      } catch {}
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
-
+// ── Board pill ────────────────────────────────────────────────────────────────
+/** One module board: click to change its address, × to remove it. Saved, and polled at once (espPoll reads the list every round). */
+function NodePill({ nd, canRemove }: any) {
+  const updateNode = useEspNodesStore(s => s.updateNode);
+  const removeNode = useEspNodesStore(s => s.removeNode);
+  const [edit, setEdit] = useState<string | null>(null);
+  const commit = () => { if (edit != null && edit.trim() && edit.trim() !== nd.url) updateNode(nd.id, { url: edit.trim() }); setEdit(null); };
   return (
-    <div className="sc-seq">
-      <div className="sc-seq-hdr">
-        <span>⟳ Sequence Recorder</span>
-        <span className="sc-seq-count">{frames.length} frame{frames.length !== 1 ? 's' : ''}</span>
-      </div>
-      <div className="sc-seq-controls">
-        <Button variant="outline" size="xs" onClick={capture}>+ Capture</Button>
-        {!playing
-          ? <Button size="xs" onClick={play}
-              disabled={frames.length === 0}>▶ Play</Button>
-          : <Button variant="destructive" size="xs" onClick={stopPlay}>■ Stop</Button>
-        }
-        <Button variant="outline" size="xs" onClick={exportSeq} disabled={frames.length === 0}>
-          ↓ Export
-        </Button>
-        <label className="sc-btn sc-btn-sm sc-import-label">
-          ↑ Import
-          <input type="file" accept=".json" style={{ display: 'none' }} onChange={importSeq} />
-        </label>
-        <Button variant="destructive" size="xs" onClick={() => setFrames([])}
-          disabled={frames.length === 0}>Clear</Button>
-        <label className="sc-seq-delay-label">
-          Delay
-          <Input className="tw:w-16" type="number" min="200" max="10000" step="100"
-            value={playDelay} onChange={e => setPlayDelay(Number(e.target.value))} />
-          ms
-        </label>
-      </div>
-      {frames.length > 0 && (
-        <div className="sc-seq-frames">
-          {frames.map((frame, i) => (
-            <div key={i} className={`sc-seq-frame ${playIdx === i ? 'sc-seq-frame-active' : ''}`}>
-              <span className="sc-seq-frame-num">#{i + 1}</span>
-              {frame.map(({ label, angle }: any) => (
-                <span key={label} className="sc-seq-chip">
-                  {label} {Math.round(angle)}°
-                </span>
-              ))}
-              <Button variant="ghost" size="icon-xs" onClick={() => removeFrame(i)}>×</Button>
-            </div>
-          ))}
-        </div>
+    <div className="sc-node-pill" title={`${nd.url}${nd.componentId ? '' : ' · not linked to a module yet'} · click to change the address`}>
+      <span className={`sc-dot ${nd.connected ? 'ok' : 'bad'}`} />
+      {edit != null ? (
+        <Input size="xs" className="tw:w-[150px]" autoFocus value={edit} spellCheck={false}
+               onChange={e => setEdit(e.target.value)} onBlur={commit}
+               onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEdit(null); }} />
+      ) : (
+        <button className="sc-node-name" onClick={() => setEdit(nd.url)}>
+          {nd.name}{nd.latencyMs != null ? ` · ${nd.latencyMs}ms` : ''}
+        </button>
       )}
-    </div>
-  );
-}
-
-// ── PresetPanel ───────────────────────────────────────────────────────────────
-
-function PresetPanel({ defs, servos, onApply }: any) {
-  const [presets,   setPresets]   = useState<any[]>(() => {
-    try { return JSON.parse(localStorage.getItem('sc_presets') || '[]'); }
-    catch { return []; }
-  });
-  const [nameInput, setNameInput] = useState('');
-
-  const persist = (next: any) => {
-    setPresets(next);
-    localStorage.setItem('sc_presets', JSON.stringify(next));
-  };
-
-  const savePreset = () => {
-    const name = nameInput.trim() || `Preset ${presets.length + 1}`;
-    const snapshot = defs.map((d: any) => ({
-      id: d.id, angle: servos[d.id]?.currentAngle ?? 180,
-    }));
-    persist([...presets.filter(p => p.name !== name), { name, snapshot }]);
-    setNameInput('');
-  };
-
-  const deletePreset = (name: any) => persist(presets.filter(p => p.name !== name));
-
-  const exportPresets = () => {
-    const blob = new Blob([JSON.stringify(presets, null, 2)], { type: 'application/json' });
-    const a = Object.assign(document.createElement('a'), {
-      href: URL.createObjectURL(blob), download: 'robo4_presets.json',
-    });
-    a.click();
-  };
-
-  const importPresets = (e: any) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      try {
-        const data = JSON.parse((ev.target as any).result);
-        if (Array.isArray(data)) persist([...presets, ...data.filter(p => p.name && p.snapshot)]);
-      } catch {}
-    };
-    reader.readAsText(file);
-    e.target.value = '';
-  };
-
-  return (
-    <div className="sc-presets">
-      <div className="sc-presets-hdr">
-        <span>⭐ Presets</span>
-        <span style={{ color: 'var(--text-dim)', fontWeight: 400, fontSize: 11 }}>
-          snapshots all {defs.length} servo angle{defs.length !== 1 ? 's' : ''}
-        </span>
-        <div style={{ flex: 1 }} />
-        <Button variant="outline" size="xs" onClick={exportPresets} disabled={presets.length === 0}>
-          ↓ Export
-        </Button>
-        <label className="sc-btn sc-btn-sm sc-import-label">
-          ↑ Import
-          <input type="file" accept=".json" style={{ display: 'none' }} onChange={importPresets} />
-        </label>
-      </div>
-      <div className="sc-preset-row">
-        <Input className="tw:w-auto" placeholder="preset name…"
-          value={nameInput} onChange={e => setNameInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && savePreset()} />
-        <Button variant="outline" size="xs" onClick={savePreset}>+ Save</Button>
-        {presets.map(p => (
-          <span key={p.name} className="sc-preset-chip">
-            <span onClick={() => onApply(p.snapshot)}>{p.name}</span>
-            <span className="sc-preset-del" onClick={() => deletePreset(p.name)}>×</span>
-          </span>
-        ))}
-        {presets.length === 0 && (
-          <span style={{ fontSize: 12, color: 'var(--text-dim)' }}>no presets yet</span>
-        )}
-      </div>
+      {canRemove && (
+        <button className="sc-node-del" aria-label={`Remove ${nd.name}`} title={`Remove ${nd.name}`}
+                onClick={() => { if (confirm(`Remove ${nd.name} (${nd.url})?`)) removeNode(nd.id); }}>×</button>
+      )}
     </div>
   );
 }
@@ -923,10 +751,12 @@ export default function ServoController() {
     });
   }, [pendingAngles]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const applyPreset = useCallback((snapshot: any) => {
-    pushCtrlLog('ok', 'USER', `Applying preset — ${snapshot.length} servos`);
-    for (const s of snapshot) sendCmd(s.id, 'pos', { angle: s.angle, speed: 5, acc: 20 }, 'USER');
-  }, [sendCmd, pushCtrlLog]);
+  const homeAll = useCallback(async () => {
+    pushCtrlLog('cmd', 'USER', 'Home all — every servo to its saved home');
+    const r = await callAllNodes('/api/home/manual');
+    if (r.errors.length) pushCtrlLog('error', 'ERR', `Home: ${r.errors.join('; ')}`);
+    else pushCtrlLog('ok', 'ESP', `Home sent to ${r.ok} board(s)`);
+  }, [pushCtrlLog]);
 
   const dismissAlert = useCallback((id: any) => {
     dismissRef.current.add(id);
@@ -954,12 +784,7 @@ export default function ServoController() {
           <div className="sc-topbar-space" />
           {/* Per-board status — each module's ESP32-C3 is polled continuously. */}
           <div className="sc-nodes-strip">
-            {nodes.map((nd) => (
-              <div key={nd.id} className="sc-node-pill" title={`${nd.url}${nd.componentId ? '' : ' · unbound'}`}>
-                <span className={`sc-dot ${nd.connected ? 'ok' : 'bad'}`} />
-                {nd.name}{nd.latencyMs != null ? ` · ${nd.latencyMs}ms` : ''}
-              </div>
-            ))}
+            {nodes.map((nd) => <NodePill key={nd.id} nd={nd} canRemove={nodes.length > 1} />)}
             <Button variant="outline" size="xs" onClick={() => addNode()} title="Add another module board">+ Board</Button>
           </div>
           <div className="sc-topbar-sep" />
@@ -1016,7 +841,7 @@ export default function ServoController() {
         </div>
 
         {/* ── Group control ── */}
-        <GroupControl defs={defs} onCmd={sendCmd} onEstop={estopAll} />
+        <GroupControl defs={defs} servos={servos} online={connectedNodes > 0} onEstop={estopAll} onHome={homeAll} />
 
         {/* ── Servo grid ── */}
         {defs.length === 0 ? (
@@ -1035,12 +860,6 @@ export default function ServoController() {
             ))}
           </div>
         )}
-
-        {/* ── Sequence recorder ── */}
-        <SequenceRecorder defs={defs} servos={servos} onCmd={sendCmd} />
-
-        {/* ── Presets ── */}
-        <PresetPanel defs={defs} servos={servos} onApply={applyPreset} />
 
         {/* ── Debug log ── */}
         <DebugLog log={ctrlLog} onClear={clearCtrlLog} />

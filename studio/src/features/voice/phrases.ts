@@ -70,7 +70,7 @@ export function speakForPath(path: string) {
 
 /** Phrases worth rendering ahead of time once the voice is ready. */
 export const WARM_PHRASES = [
-  'Module detected, connected!', 'Module disconnected', 'Emergency stop!', 'Torque on', 'Torque off',
+  'Module detected, connected!', 'Module disconnected', 'Error! Error! Error! Error!', 'Emergency stop!', 'Torque on', 'Torque off',
   'Going home, one eighty degrees', 'Going to manual home', 'Uploading firmware over the air',
   'Firmware uploaded. Module is rebooting', 'Home position saved', 'Scanning the bus',
 ];

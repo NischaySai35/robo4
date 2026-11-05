@@ -11,6 +11,7 @@
 import type { Document } from '@/core/model/index';
 import { useEspNodesStore, type EspNode } from '@/state/espNodesStore';
 import { boardRefusal } from '@/hardware/protocol';
+import { speakForPath } from '@/features/voice/phrases';
 
 export interface ServoRoute {
   jointId: string;
@@ -71,6 +72,7 @@ export async function sendServoCmd(
   try {
     const res = await fetch(`${route.url}/api/command?${qs}`, { signal: AbortSignal.timeout(5000) });
     if (!res.ok) throw new Error(res.statusText);
+    speakForPath(`/api/command?${qs}`);       // same spoken confirmations as the ESP-TTL page
     return { ok: true, detail: `${route.url} servo ${route.localId} ${cmd}` };
   } catch (e: any) {
     return { ok: false, detail: `${route.url} — ${e?.message ?? e}` };
@@ -105,12 +107,23 @@ export async function sendServoBatch(
   return { sent, nodes: perUrl.size, errors };
 }
 
+/** Send one board-wide request (e.g. `/api/home/manual`) to every module board at once. Returns the boards that failed. */
+export async function callAllNodes(path: string): Promise<{ ok: number; errors: string[] }> {
+  const { nodes } = useEspNodesStore.getState();
+  const errors: string[] = [];
+  await Promise.all(nodes.map(async (nd) => {
+    try {
+      const res = await fetch(`${nd.url}${path}`, { signal: AbortSignal.timeout(5000) });
+      if (!res.ok) throw new Error(await boardRefusal(res));
+    } catch (e: any) { errors.push(`${nd.name}: ${e?.message ?? e}`); }
+  }));
+  if (errors.length < nodes.length) speakForPath(path);   // said once, not once per board
+  return { ok: nodes.length - errors.length, errors };
+}
+
 /** Emergency stop across every board. */
 export async function estopAllNodes(): Promise<void> {
-  const { nodes } = useEspNodesStore.getState();
-  await Promise.all(nodes.map((nd) =>
-    fetch(`${nd.url}/api/command?servo=all&cmd=estop`, { signal: AbortSignal.timeout(5000) }).catch(() => {}),
-  ));
+  await callAllNodes('/api/command?servo=all&cmd=estop');
 }
 
 function toStr(o: Record<string, any>): Record<string, string> {

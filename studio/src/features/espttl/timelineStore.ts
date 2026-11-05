@@ -47,10 +47,15 @@ interface TimelineState {
   playIdx: number;          // which frame is currently being played into
   past: Frame[][];
   future: Frame[][];
+  /** A copied frame, waiting to be pasted (kept for this session only). */
+  clipboard: Frame | null;
 
   addFrame: (pose: Record<number, number>, name?: string) => void;
   insertAfter: (id: string, pose: Record<number, number>) => void;
   duplicate: (id: string) => void;
+  copyFrame: (id: string) => void;
+  /** Paste the copied frame after `id` (or at the end when null). */
+  pasteAfter: (id: string | null) => void;
   deleteFrame: (id: string) => void;
   moveFrame: (from: number, to: number) => void;
   updateFrame: (id: string, patch: Partial<Omit<Frame, 'id'>>) => void;
@@ -128,6 +133,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
     playIdx: -1,
     past: [],
     future: [],
+    clipboard: null,
 
     addFrame: (pose, name) => {
       const f: Frame = {
@@ -157,6 +163,22 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
       const copy: Frame = { ...src, id: uid(), name: src.name + ' copy', pose: { ...src.pose } };
       const next = [...frames];
       next.splice(i + 1, 0, copy);
+      commit(next);
+      set({ selectedId: copy.id });
+    },
+
+    copyFrame: (id) => {
+      const src = get().frames.find(f => f.id === id);
+      if (src) set({ clipboard: { ...src, pose: { ...src.pose } } });
+    },
+
+    pasteAfter: (id) => {
+      const { clipboard, frames } = get();
+      if (!clipboard) return;
+      const i = id == null ? frames.length - 1 : frames.findIndex(f => f.id === id);
+      const copy: Frame = { ...clipboard, id: uid(), pose: { ...clipboard.pose } };
+      const next = [...frames];
+      next.splice(i < 0 ? frames.length : i + 1, 0, copy);
       commit(next);
       set({ selectedId: copy.id });
     },

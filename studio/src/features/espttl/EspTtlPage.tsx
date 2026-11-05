@@ -16,6 +16,8 @@ import {
   type TtlTab, type TtlServo,
 } from '@/state/espTtlStore';
 import AnimationTab from './AnimationTab';
+import MiniTimeline from './MiniTimeline';
+import TorqueSwitch from './TorqueSwitch';
 import WalkTab from './WalkTab';
 import './EspTtl.css';
 
@@ -96,12 +98,18 @@ function useSay() {
   return { msg, say, call };
 }
 
+function readNum(key: string, dflt: number) {
+  try { const v = Number(localStorage.getItem(key)); return Number.isFinite(v) && v > 0 ? v : dflt; } catch { return dflt; }
+}
+
 // ── Control ───────────────────────────────────────────────────────────────────
 function ControlTab() {
   const tel = useEspTtlStore(s => s.tel);
-  const { msg, call } = useSay();
-  const [speed, setSpeed] = useState(5);
-  const [acc, setAcc]     = useState(20);
+  const { msg, say, call } = useSay();
+  // Remembered: the tab used to forget them on every tab switch and quietly move at 5 / 20 again.
+  const [speed, setSpeed] = useState(() => readNum('robo4:esptt:speed', 5));
+  const [acc, setAcc]     = useState(() => readNum('robo4:esptt:acc', 20));
+  useEffect(() => { try { localStorage.setItem('robo4:esptt:speed', String(speed)); localStorage.setItem('robo4:esptt:acc', String(acc)); } catch { /* private window */ } }, [speed, acc]);
   const [band, setBand] = useState('0.1');
 
   const servos = tel?.servos ?? [];
@@ -120,8 +128,8 @@ function ControlTab() {
           <label className="ettl-lbl">acc<Input size="xs" className="tw:w-auto" type="number" min={1} max={100} value={acc}
                  onChange={e => setAcc(+e.target.value)} style={{ width: 60 }} /></label>
           <span className="ettl-sep" />
-          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=1', 'torque on')}>Torque ON</Button>
-          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=0', 'torque off')}>Torque OFF (limp)</Button>
+          <TorqueSwitch say={say} />
+          <span className="ettl-sep" />
           <Button variant="outline" size="sm" onClick={() => call('/api/home', 'home 180')}>Home → 180°</Button>
           <Button size="sm" onClick={() => call('/api/home/manual', 'manual home')}>Manual home</Button>
           <Button variant="outline" size="sm" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</Button>
@@ -143,10 +151,17 @@ function ControlTab() {
         </div>
       </div>
 
+      <MiniTimeline say={say} />
+
       <div className="ettl-card">
         <h4>Servos</h4>
         <div className="ettl-wrap">
-          <table className="ettl-table">
+          {/* Fixed column widths: live numbers changing width must never move the sliders. */}
+          <table className="ettl-table ettl-servos">
+            <colgroup>
+              <col className="c-id" /><col className="c-label" /><col className="c-num" /><col className="c-num" /><col className="c-num" />
+              <col /><col className="c-sm" /><col className="c-sm" /><col className="c-sm" /><col className="c-sm" /><col className="c-mode" /><col className="c-act" />
+            </colgroup>
             <thead><tr>
               <th className="l">id</th><th className="l">label</th><th>angle</th><th>target</th><th title="actual − target · positive = pushed past it, negative = sagging below it">err°</th>
               <th className="grow">set</th>

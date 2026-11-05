@@ -13,6 +13,8 @@ import { useTimelineStore, type Frame } from './timelineStore';
 import { playTimeline, stopPlayback, gotoFrame } from './player';
 import { sendToBoard, startOnBoard, stopOnBoard } from './sender';
 import { planTimeline, peakDegPerS, type FramePlan } from './motion';
+import { recordPose } from './MiniTimeline';
+import TorqueSwitch from './TorqueSwitch';
 import { useSavedStore, type SavedAnimation } from './savedStore';
 
 export default function AnimationTab() {
@@ -41,13 +43,7 @@ export default function AnimationTab() {
   const selIdx = sel ? t.frames.indexOf(sel) : -1;
   const plans: FramePlan[] = planTimeline(t.frames, t.globalSpeed, t.globalDelayMs, t.sine, currentPose());
 
-  // ── record ──────────────────────────────────────────────────────────────────
-  const record = () => {
-    const pose = currentPose();
-    if (!Object.keys(pose).length) { say('nothing to record — no servo is reporting an angle'); return; }
-    t.addFrame(pose);
-    say(`recorded ${Object.keys(pose).length} joint(s)`);
-  };
+  const record = () => recordPose(say);
 
   // ── send the whole sequence to the board ────────────────────────────────────
   // Upload first, and only start it if the board confirms it received every frame. The
@@ -124,8 +120,8 @@ export default function AnimationTab() {
           <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold" onClick={() => call('/api/command?servo=all&cmd=estop', 'E-STOP')}>
             E-STOP ALL
           </Button>
-          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=1', 'torque on')}>Torque ON</Button>
-          <Button variant="outline" size="sm" onClick={() => call('/api/torque?on=0', 'torque off')}>Torque OFF (limp)</Button>
+          <TorqueSwitch say={say} />
+          <span className="ettl-sep" />
           <span className="ettl-sep" />
           <Button variant="outline" size="sm" onClick={() => call('/api/home', 'home 180')}>Home all → 180°</Button>
           <Button size="sm" onClick={() => call('/api/home/manual', 'manual home')}>Go to manual home</Button>

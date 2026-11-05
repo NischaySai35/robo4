@@ -13,7 +13,7 @@ import { speak, checkVoiceModel, downloadVoiceModel, warmUp } from './speech';
 import { WARM_PHRASES } from './phrases';
 import { BATT_WARN_V, warnLevel } from './battery';
 
-interface Board { url: string; name: string; online: boolean; volts: number | null }
+interface Board { url: string; name: string; online: boolean; volts: number | null; servos: any[] }
 
 const norm = (u: string) => u.replace(/\/+$/, '').toLowerCase();
 
@@ -26,14 +26,14 @@ function avgVolts(servos: any[] | undefined): number | null {
 function boards(): Board[] {
   const out = new Map<string, Board>();
   for (const n of useEspNodesStore.getState().nodes) {
-    out.set(norm(n.url), { url: n.url, name: n.name, online: n.connected, volts: avgVolts((n.telemetry as any)?.servos) });
+    out.set(norm(n.url), { url: n.url, name: n.name, online: n.connected, volts: avgVolts((n.telemetry as any)?.servos), servos: (n.telemetry as any)?.servos ?? [] });
   }
   const t = useEspTtlStore.getState();
   const k = norm(t.url);
   if (!out.has(k) || (t.online && !out.get(k)!.online)) {
     out.set(k, {
       url: t.url, name: (t.tel?.wifi?.hostname ?? 'module'), online: t.online,
-      volts: avgVolts(t.tel?.servos as any[]),
+      volts: avgVolts(t.tel?.servos as any[]), servos: (t.tel?.servos as any[]) ?? [],
     });
   }
   return [...out.values()];
@@ -103,12 +103,45 @@ function checkBattery() {
   }
 }
 
+// ── safety stop ───────────────────────────────────────────────────────────────
+// Each servo reports its guard state: ok, giving (hit its limit and backing off), held
+// (stopped after a trip) or hot. The moment any servo leaves "ok" — whatever tab is open,
+// whatever is driving it — say "Error!" four times. Once per trip: it re-arms only after
+// that servo is back to "ok". The app polls every board in the background, so this hears
+// trips from animations, MSRR experiments, sliders, anything.
+const guardWas = new Map<string, string>();
+export const SAFETY_STOP_PHRASE = 'Error! Error! Error! Error!';
+
+function checkSafetyStops() {
+  let tripped = false;
+  for (const b of boards()) {
+    if (!b.online) continue;
+    for (const sv of b.servos) {
+      if (sv?.guard == null || sv.connected === false) continue;
+      const k = `${norm(b.url)}#${sv.id}`;
+      const now = String(sv.guard), was = guardWas.get(k) ?? 'ok';
+      guardWas.set(k, now);
+      if (now !== 'ok' && was === 'ok') tripped = true;
+    }
+  }
+  // urgent: cuts off whatever is being said. One alarm for several servos tripping together.
+  if (tripped) speak(SAFETY_STOP_PHRASE, { urgent: true, key: 'safety-stop', cooldownMs: 4000 });
+}
+
 // ── start-up ──────────────────────────────────────────────────────────────────
+// Only ONE announcer per tab. When this file is swapped in by the dev server's live reload, a
+// fresh copy starts — and the old copy used to keep listening too, so a tab left open for a
+// day spoke every announcement twice or more (two voices). Now the old copy unsubscribes on
+// the swap, and a tab-wide token silences any copy that is not the newest.
 let started = false;
+const unsubs: Array<() => void> = [];
+const ME = Symbol('announcer');
+const W = window as unknown as { __tetrobotAnnouncer?: symbol };
 
 export function initVoiceAnnouncer() {
   if (started) return;
   started = true;
+  W.__tetrobotAnnouncer = ME;
 
   void checkVoiceModel().then(() => {
     const S = useVoiceStore.getState();
@@ -117,11 +150,18 @@ export function initVoiceAnnouncer() {
   });
   // When the download finishes, pre-render the common phrases.
   let prev = useVoiceStore.getState().model;
-  useVoiceStore.subscribe((s) => {
+  unsubs.push(useVoiceStore.subscribe((s) => {
     if (s.model !== prev) { prev = s.model; if (s.model === 'ready') void warmUp(WARM_PHRASES); }
-  });
+  }));
 
-  const tick = () => { checkConnections(); checkBattery(); };
-  useEspNodesStore.subscribe(tick);
-  useEspTtlStore.subscribe(tick);
+  const tick = () => {
+    if (W.__tetrobotAnnouncer !== ME) return;      // a newer copy took over
+    checkConnections(); checkBattery(); checkSafetyStops();
+  };
+  unsubs.push(useEspNodesStore.subscribe(tick), useEspTtlStore.subscribe(tick));
+}
+
+// Live reload: stop this copy before the new one starts.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => { unsubs.splice(0).forEach(u => u()); started = false; });
 }

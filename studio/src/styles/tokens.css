@@ -48,6 +48,11 @@
   --end-a: #1a2f8f;
   --end-b: #d97800;
   --locked: #007a36;
+  /* Plain buttons: a raised face that reads as a button, not a text box. hover = lighter + blue edge, active = pressed in. */
+  --btn: #f3f6fb;
+  --btn-hover: #dfe9f7;
+  --btn-active: #c6d8f1;
+  --btn-border: #8aa0c1;
   --radius: 3px;
 }
 
@@ -76,6 +81,10 @@
   --end-a: #1a2f8f;
   --end-b: #f08c00;
   --locked: #5cb85c;
+  --btn: #3a3a3a;
+  --btn-hover: #484848;
+  --btn-active: #2c4568;
+  --btn-border: #545454;
   --radius: 3px;
 }
 
@@ -103,6 +112,10 @@
   --color-end-a: var(--end-a);
   --color-end-b: var(--end-b);
   --color-locked: var(--locked);
+  --color-btn: var(--btn);
+  --color-btn-hover: var(--btn-hover);
+  --color-btn-active: var(--btn-active);
+  --color-btn-border: var(--btn-border);
   --radius-sm: var(--radius);
   --radius-md: var(--radius);
   --radius-lg: 4px;

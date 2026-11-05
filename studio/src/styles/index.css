@@ -11,8 +11,8 @@
   button, select, summary, [role="button"], [role="tab"], input[type="checkbox"], input[type="radio"], input[type="range"], input[type="color"], label:has(> input[type="checkbox"]) { cursor: pointer; }
   button:disabled, select:disabled, input:disabled { cursor: not-allowed; }
   button, [role="button"], [role="tab"] { transition: background-color .12s ease, border-color .12s ease, color .12s ease, box-shadow .12s ease, filter .12s ease, transform .07s ease; }
-  button:not(:disabled):hover, [role="button"]:hover { filter: brightness(1.15); }
-  button:not(:disabled):active, [role="button"]:active { transform: translateY(1px) scale(.98); filter: brightness(.95); }
+  button:not(:disabled):not([data-slot="button"]):hover, [role="button"]:not([data-slot="button"]):hover { filter: brightness(1.15); }
+  button:not(:disabled):not([data-slot="button"]):active, [role="button"]:not([data-slot="button"]):active { transform: translateY(1px) scale(.98); filter: brightness(.95); }
   :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   input, select, textarea { transition: border-color .12s ease, box-shadow .12s ease; }
   input:focus-visible, select:focus-visible, textarea:focus-visible { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
@@ -22,6 +22,12 @@
   /* The shared dropdown arrow (components/ui/input.tsx): mid grey, readable on light and dark. */
   :root { --select-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.5'/%3E%3C/svg%3E"); }
 }
+
+/* The open dropdown list is drawn by the operating system from the <option> colours. Dropdown boxes are partly
+   see-through in the dark theme (dark:bg-input/30), and a see-through list came out grey with faint text, so every
+   list gets solid theme colours here. Unlayered on purpose: it must win everywhere. */
+select option, select optgroup { background-color: var(--bg-panel); color: var(--text); }
+select option:disabled { color: var(--text-dim); }
 
 
 :root {

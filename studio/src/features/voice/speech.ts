@@ -115,6 +115,7 @@ function play(url: string, volume: number): Promise<void> {
 let chain: Promise<void> = Promise.resolve();
 let generation = 0;                            // bumped to drop everything still queued
 const lastSaid = new Map<string, number>();
+const SAID_PREFIX = 'tetrobot:voice:said:';
 
 export interface SpeakOpts {
   /** Interrupt whatever is playing and drop the queue (E-STOP, battery). */
@@ -136,8 +137,17 @@ export function speak(text: string, opts: SpeakOpts = {}): void {
 
   const key = opts.key ?? text;
   const now = Date.now();
-  if (now - (lastSaid.get(key) ?? 0) < (opts.cooldownMs ?? 2500)) return;
+  const cool = opts.cooldownMs ?? 2500;
+  if (now - (lastSaid.get(key) ?? 0) < cool) return;
+  // Shared with every other Studio window/tab on this computer: two open windows both watch the
+  // board, and without this each one announced "Module detected, connected!" — two voices.
+  // Only a deliberate repeat (cooldown 0, e.g. upload progress) skips the check.
+  const shared = SAID_PREFIX + key;
+  if (cool > 0) {
+    try { if (now - Number(localStorage.getItem(shared) ?? 0) < Math.max(cool, 1500)) return; } catch { /* storage blocked */ }
+  }
   lastSaid.set(key, now);
+  try { localStorage.setItem(shared, String(now)); } catch { /* storage blocked */ }
 
   if (opts.urgent) stopSpeaking();
   const gen = generation;

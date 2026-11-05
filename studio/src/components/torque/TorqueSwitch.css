@@ -1,0 +1,14 @@
+/* Torque switch (TorqueSwitch.tsx): the lit half is the servos' real state. Shared by ESP-TTL and Motor Control. */
+.ettl-torque { display: inline-flex; align-items: center; gap: 4px; }
+.ettl-torque-lbl { display: inline-flex; align-items: center; gap: 6px; margin-right: 4px; font-size: 12px; color: var(--text-dim); }
+.ettl-torque-lbl b { color: var(--text); }
+.ettl-torque-lbl i { width: 9px; height: 9px; border-radius: 50%; background: var(--text-dim); }
+.ettl-torque.on    .ettl-torque-lbl i { background: var(--success); box-shadow: 0 0 6px var(--success); }
+.ettl-torque.on    .ettl-torque-lbl b { color: var(--success); }
+.ettl-torque.off   .ettl-torque-lbl i { background: var(--warn); }
+.ettl-torque.off   .ettl-torque-lbl b { color: var(--warn); }
+.ettl-torque.mixed .ettl-torque-lbl i { background: linear-gradient(90deg, var(--success) 50%, var(--warn) 50%); }
+.ettl-torque button.on[aria-pressed="true"]  { background: var(--success); border-color: var(--success); color: #fff; font-weight: 700; }
+.ettl-torque button.off[aria-pressed="true"] { background: var(--warn); border-color: var(--warn); color: #fff; font-weight: 700; }
+[data-theme="dark"] .ettl-torque button[aria-pressed="true"] { color: #111; }
+

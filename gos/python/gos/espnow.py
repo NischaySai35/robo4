@@ -67,7 +67,7 @@ class Dongle:
         self.port, self.on_frame = port, on_frame
         self.info, self.bad, self._wlock = '', 0, threading.Lock()
         self._info_event = threading.Event()
-        self._run = True
+        self._run, self.dead = True, False     # dead: unplugged (the reader hit a USB error)
         self._thread = threading.Thread(target=self._reader, name='espnow-usb', daemon=True)
         self._thread.start()
 
@@ -94,7 +94,7 @@ class Dongle:
             # read what is there (at least 1 byte): read(4096) waits for 4096 bytes or the 50 ms timeout, which added
             # ~50 ms to every answer (health took 77 ms, measured on mod1 6 Nov)
             try: chunk = self.port.read(max(1, getattr(self.port, 'in_waiting', 0) or 0))
-            except Exception: break
+            except Exception: self.dead = True; break
             if not chunk: continue
             buf += chunk
             while True:
@@ -118,22 +118,34 @@ class Dongle:
 
 
 # ── the link ───────────────────────────────────────────────────────────────────
+# Reads several programs ask for at once (the Studio, its Debug Log, the sim's Sync): one trip over the radio serves
+# them all. Everything else (moves, torque, play) always goes on its own.
+SHARED_READS = ('/api/telemetry', '/api/health', '/api/log', '/api/anim/status', '/api/guard')
+SHARE_FOR = 0.08      # s: a read answered this recently is handed out again
+
+
 class Module:
     def __init__(self, mac):
         self.mac, self.name, self.ip, self.fw, self.rssi, self.seen, self.ch = mac, '', '', '', 0, 0.0, 0
-        self.lock = threading.Lock()   # one request at a time per module: it keeps only its last answer
-        self.answer, self.waiting, self.got = Assembly(), None, threading.Condition()
+        self.awake = True               # its hello says awake=0 while its radio naps (heat): no direct heartbeat then
+        self.got = threading.Condition()
+        self.pending = {}               # seq -> Assembly; finished answers land in self.done[seq]
+        self.done = {}
+        self.poked = 0                  # bumped by each hello: what waits is sent again at once (it listens just then)
+        self.slots = threading.Semaphore(3)   # the module keeps its last 4 answers: at most 3 requests in flight
+        self.shared = {}                # read path -> (time, result), or a threading.Event while it travels
+        self.shared_lock = threading.Lock()
         self.sent = self.resent = self.failed = 0
         self.last_ms = 0.0
 
     def as_dict(self):
         return {'name': self.name, 'mac': self.mac.hex(':'), 'ip': self.ip, 'fw': self.fw, 'rssi': self.rssi, 'channel': self.ch,
-                'seenAgoS': round(time.time() - self.seen, 2), 'requests': self.sent, 'resent': self.resent, 'failed': self.failed,
+                'seenAgoS': round(time.time() - self.seen, 2), 'awake': self.awake, 'requests': self.sent, 'resent': self.resent, 'failed': self.failed,
                 'lastMs': round(self.last_ms, 1)}
 
 
 class EspNowLink:
-    HB_EVERY = 0.1        # s; the module holds its pose after 0.5 s without one
+    HB_EVERY = 0.1        # s; a module the laptop was driving holds its pose after 0.8 s without one
     RESEND_AFTER = 0.12   # s with no new fragment of the answer -> send the request again
     STALE = 3.0           # s without a HELLO or an answer -> the module is gone
     SWEEP_DWELL = 1.1     # s per channel while looking: a resting module says hello once a second
@@ -175,7 +187,14 @@ class EspNowLink:
         hb_seq, ch_since = 0, time.time()
         while self._run:
             hb_seq = (hb_seq + 1) & 0xffff
-            try: self.dongle.send(EVERYONE, frames(HB, hb_seq)[0])
+            hb = frames(HB, hb_seq)[0]
+            known = [m for m in self.alive() if m.awake]
+            try:
+                # Straight to each awake module: the radio confirms and retries it (a broadcast it never does; 6 Nov,
+                # broadcast heartbeats went missing for >1.5 s at -85 dBm and a move was held). Broadcast twice a second
+                # for modules not known yet.
+                for m in known: self.dongle.send(m.mac, hb)
+                if not known or hb_seq % 5 == 0: self.dongle.send(EVERYONE, hb)
             except Exception: pass
             now = time.time()
             if not self._fixed and not self.alive() and now - ch_since > self.SWEEP_DWELL:
@@ -208,6 +227,10 @@ class EspNowLink:
             kv = dict(x.split('=', 1) for x in payload.decode(errors='replace').split() if '=' in x)
             m.name, m.ip, m.fw = kv.get('name', m.name), kv.get('ip', m.ip), kv.get('fw', m.fw)
             m.ch = int(kv.get('ch', 0) or 0)
+            m.awake = kv.get('awake', '1') != '0'
+            with m.got:
+                m.poked += 1                            # a napping module listens right after its hello
+                m.got.notify_all()
             # The radio also hears a neighbouring channel a little (mod1 on 13 was found from 12): enough for a hello,
             # not for a 14-piece answer. The hello says the module's real channel, so go there.
             if m.ch and m.ch != self.channel and not self._fixed and 1 <= m.ch <= 13:
@@ -217,9 +240,10 @@ class EspNowLink:
         elif kind == RESP:
             m.seen = time.time()
             with m.got:
-                if m.waiting != seq: return             # an answer we stopped waiting for
-                whole = m.answer.add(seq, idx, cnt, payload)
-                if whole is not None: m.waiting = ('done', whole)
+                a = m.pending.get(seq)
+                if a is None: return                    # an answer we stopped waiting for
+                whole = a.add(seq, idx, cnt, payload)
+                if whole is not None: m.done[seq] = whole
                 m.got.notify_all()
 
     def find(self, name):
@@ -231,39 +255,71 @@ class EspNowLink:
     def request(self, name, path, body=None, timeout=2.0):
         """Run one web-API request on a module over the radio: (http code, reply text)."""
         m = self.find(name) if isinstance(name, str) else name
+        if body is None and path.split('?')[0] in SHARED_READS: return self._shared(m, path, timeout)
+        return self._request(m, path, body, timeout)
+
+    def _shared(self, m, path, timeout):
+        while True:
+            with m.shared_lock:
+                got = m.shared.get(path)
+                if isinstance(got, tuple) and time.time() - got[0] < SHARE_FOR: return got[1]
+                if isinstance(got, threading.Event): ev, mine = got, False
+                else: ev, mine = threading.Event(), True; m.shared[path] = ev
+            if not mine:                                 # someone is asking already: wait for that answer
+                ev.wait(timeout)
+                with m.shared_lock: got = m.shared.get(path)
+                if isinstance(got, tuple): return got[1]
+                continue                                 # that one failed: ask ourselves
+            try:
+                out = self._request(m, path, None, timeout)
+                with m.shared_lock: m.shared[path] = (time.time(), out)
+                return out
+            except BaseException:
+                with m.shared_lock: m.shared.pop(path, None)
+                raise
+            finally: ev.set()
+
+    def _request(self, m, path, body, timeout):
         msg = path.encode() + (b'\n' + (body if isinstance(body, bytes) else body.encode()) if body is not None else b'')
         with self._seq_lock:
             self._seq = self._seq % 0xffff + 1
             seq = self._seq
         out = frames(REQ, seq, msg)
-        with m.lock:
-            t0 = time.perf_counter()
-            with m.got:
-                m.waiting, m.answer = seq, Assembly()
+        t0 = time.perf_counter()
+        end = t0 + timeout
+        if not m.slots.acquire(timeout=timeout): raise GosError(f'{m.name} is busy: too many requests waiting.')
+        try:
+            with m.got: m.pending[seq] = Assembly()
             m.sent += 1
-            end, tries = t0 + timeout, 0
-            while True:
-                for f in out: self.dongle.send(m.mac, f)
+            tries, done = 0, None
+            while done is None:
+                try:
+                    for f in out: self.dongle.send(m.mac, f)
+                except Exception as e:
+                    self.dongle.dead = True
+                    raise GosError(f'The ESP-NOW dongle stopped answering ({e}). Was it unplugged?') from None
                 tries += 1
                 last_progress, last_count = time.perf_counter(), 0
                 with m.got:
-                    while not isinstance(m.waiting, tuple):
+                    poked = m.poked
+                    while seq not in m.done:
                         now = time.perf_counter()
-                        if now >= end: break
-                        if m.answer.progress() != last_count: last_count, last_progress = m.answer.progress(), now
+                        if now >= end or m.poked != poked: break
+                        prog = m.pending[seq].progress()
+                        if prog != last_count: last_count, last_progress = prog, now
                         if now - last_progress >= self.RESEND_AFTER: break
                         m.got.wait(min(0.01, end - now))
-                    done = m.waiting if isinstance(m.waiting, tuple) else None
-                if done: break
-                if time.perf_counter() >= end:
-                    with m.got: m.waiting = None
-                    m.failed += 1
-                    raise GosError(f'{m.name or m.mac.hex(":")} did not answer {path.split("?")[0]} over ESP-NOW in {timeout} s ({tries} tries).')
-                m.resent += 1
+                    done = m.done.pop(seq, None)
+                if done is None:
+                    if time.perf_counter() >= end:
+                        m.failed += 1
+                        raise GosError(f'{m.name or m.mac.hex(":")} did not answer {path.split("?")[0]} over ESP-NOW in {timeout} s ({tries} tries).')
+                    m.resent += 1
             m.last_ms = (time.perf_counter() - t0) * 1000
-            with m.got: m.waiting = None
-        text = done[1].decode(errors='replace')
-        code, _, reply = text.partition('\n')
+        finally:
+            with m.got: m.pending.pop(seq, None); m.done.pop(seq, None)
+            m.slots.release()
+        code, _, reply = done.decode(errors='replace').partition('\n')
         return int(code or 0), reply
 
     def status(self):
@@ -275,7 +331,17 @@ class EspNowLink:
         self.dongle.close()
 
 
-# ── the web gateway: the board's own API, reached over the radio ───────────────
+# ── the web gateway: one address per module, radio first, Wi-Fi as the fallback ──────────────────────────────────────
+# tools/espnow/install.ps1 maps mod1.local .. mod9.local to 127.0.4.1 .. 9 in the Windows hosts file, so every program
+# that says http://mod1.local (browser, Studio, sim, build.sh) lands here and never waits for a name lookup.
+# - The module is heard over ESP-NOW: the request goes over the radio (no access point, no kicks).
+# - Not heard, no dongle, or the radio did not answer: the same request goes to the module's Wi-Fi address.
+# - The board's own web page and firmware uploads always go over Wi-Fi (they are too big for the radio).
+# Its Wi-Fi address: from its hello, else remembered (~/.gos/modules.json), else found on the network (find_modules).
+NAMES = tuple(f'mod{i}' for i in range(1, 10))
+WIFI_ONLY = ('/', '/api/ota', '/api/ota/url')
+
+
 def module_address(name):
     """The laptop-local address a module answers on through the gateway: mod1 -> 127.0.4.1, mod12 -> 127.0.4.12; other
     names get a fixed spot in 127.0.5.x. Every client that talks to http://<board>/api/... works with it unchanged."""
@@ -284,54 +350,45 @@ def module_address(name):
     return f'127.0.5.{zlib.crc32((name or "").encode()) % 254 + 1}'
 
 
-def _handler(link, fixed=None, own=None):
-    """fixed: the module this server stands for (its own address), else the first path part names it (/mod1/api/...).
-    own(name): the address to report as the board's own, so clients that switch to the board's reported address
-    (they do, to dodge slow name lookups) stay on the radio instead of jumping back to Wi-Fi."""
+def _handler(gw, fixed=None):
+    """fixed: the module this server stands for (its own address); else the first path part names it (/mod1/api/...)."""
     class H(BaseHTTPRequestHandler):
         protocol_version = 'HTTP/1.1'
         def log_message(self, *a): pass
 
-        def _send(self, code, text, ctype=None):
-            data = text.encode()
+        def _send(self, code, data, ctype=None):
+            if isinstance(data, str): data = data.encode()
             self.send_response(code)
-            self.send_header('Content-Type', ctype or ('application/json' if text[:1] in '{[' else 'text/plain'))
+            self.send_header('Content-Type', ctype or ('application/json' if data[:1] in (b'{', b'[') else 'text/plain'))
             self.send_header('Content-Length', str(len(data)))
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
             self.send_header('Access-Control-Allow-Headers', 'Content-Type, Accept')
             self.send_header('Cache-Control', 'no-store')
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                self.end_headers()
+                self.wfile.write(data)
+            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+                pass   # the asker gave up (its own timeout) before the answer came: nothing to tell it
 
-        def do_OPTIONS(self): self._send(204, '')
+        def do_OPTIONS(self): self._send(204, b'')
 
         def _forward(self, body=None):
             url = urllib.parse.urlsplit(self.path)
             if fixed: name, rest = fixed, url.path or '/'
             else:
                 parts = url.path.strip('/').split('/', 1)
-                if not parts[0]: return self._send(200, json.dumps(link.status()))
+                if not parts[0]: return self._send(200, json.dumps(gw.status()))
                 name, rest = parts[0], '/' + (parts[1] if len(parts) > 1 else '')
-            if rest.startswith('/api/ota'):
-                return self._send(501, json.dumps({'ok': False, 'error': 'firmware uploads go over Wi-Fi: use the board address'}))
-            if rest == '/':
-                return self._send(501, json.dumps({'ok': False, 'error': "the board's web page is on Wi-Fi only"}))
-            try:
-                m = link.find(name)
-                code, text = link.request(m, rest + ('?' + url.query if url.query else ''), body)
-            except GosError as e: return self._send(504, json.dumps({'ok': False, 'error': str(e)}))
-            mine = own(m.name) if own else None
-            if mine and m.ip and m.ip != '-':
-                text = text.replace(f'"{m.ip}"', f'"{mine}"')
-            if rest == '/api/health': text = re.sub(r'"live":\s*\d+', '"live":0', text)   # the UDP stream is Wi-Fi only
-            self._send(code or 502, text)
+            target = rest + ('?' + url.query if url.query else '')
+            code, data, ctype = gw.ask(name, rest, target, body, self.command, self.headers.get('Content-Type'))
+            self._send(code, data, ctype)
 
         def do_GET(self): self._forward()
 
         def do_POST(self):
             n = int(self.headers.get('Content-Length') or 0)
-            self._forward(self.rfile.read(n) if n else None)
+            self._forward(self.rfile.read(n) if n else b'')
     return H
 
 
@@ -351,37 +408,151 @@ def _start(handler, host, port, name):
 
 
 class Gateway:
-    """http://127.0.0.1:8790/<module>/api/... and http://<module address>/api/... (mod1: http://127.0.4.1) both answer like
-    the board itself. Each module gets its own address as soon as it is heard. / on 8790 lists the modules."""
-    def __init__(self, link, port=8790, host='127.0.0.1', module_port=80):
-        self.link, self.module_port, self.servers = link, module_port, {}
+    """http://mod1.local (= http://127.0.4.1 with install.ps1) and http://127.0.0.1:8790/mod1/... answer like the board
+    itself: over the radio when it hears the module, over Wi-Fi otherwise. / on 8790 lists the modules."""
+    REMEMBER = pathlib.Path(os.environ.get('GOS_HOME') or pathlib.Path.home() / '.gos') / 'modules.json'
+    FIND_EVERY = 20.0     # s between Wi-Fi searches for a module whose address is unknown
+
+    def __init__(self, link=None, port=8790, host='127.0.0.1', module_port=80, names=NAMES):
+        self.link, self.module_port, self.servers, self.errors = link, module_port, {}, {}
         self.own = lambda name: module_address(name) + ('' if module_port == 80 else f':{module_port}')
-        self.main = _start(_handler(link, own=self.own), host, port, 'espnow-gateway')
+        self.wifi = self._load()
+        self._found_at, self._finding = 0.0, False
+        self.via = {}                    # name -> 'radio' | 'wifi' (how the last answer came)
+        self.main = _start(_handler(self), host, port, 'espnow-gateway')
         self.server_address = self.main.server_address
-        self.errors, self._run = {}, True
+        for n in names: self._open(n)
+        self._run = True
         threading.Thread(target=self._watch, name='espnow-gateway-modules', daemon=True).start()
+
+    def _open(self, name):
+        if name in self.servers or name in self.errors: return
+        try: self.servers[name] = _start(_handler(self, name), module_address(name), self.module_port, f'espnow-{name}')
+        except OSError as e: self.errors[name] = str(e)
+
+    def _load(self):
+        try: return dict(json.loads(self.REMEMBER.read_text()))
+        except (OSError, ValueError): return {}
+
+    def _remember(self, name, ip):
+        if not ip or ip == '-' or ip.startswith('127.') or self.wifi.get(name) == ip: return
+        self.wifi[name] = ip
+        try: self.REMEMBER.parent.mkdir(parents=True, exist_ok=True); self.REMEMBER.write_text(json.dumps(self.wifi, indent=1))
+        except OSError: pass
 
     def _watch(self):
         while self._run:
             try:
-                for m in self.link.alive():
-                    if m.name and m.name not in self.servers and m.name not in self.errors:
-                        try: self.servers[m.name] = _start(_handler(self.link, m.name, self.own), module_address(m.name), self.module_port, f'espnow-{m.name}')
-                        except OSError as e: self.errors[m.name] = str(e)
-            except Exception as e:   # never let one bad pass end the watcher
-                self.errors['_watch'] = repr(e)
+                link = self.link
+                for m in (link.alive() if link and not link.dongle.dead else []):
+                    if m.name: self._open(m.name); self._remember(m.name, m.ip)
+            except Exception as e: self.errors['_watch'] = repr(e)   # never let one bad pass end the watcher
             time.sleep(0.2)
+
+    def _find(self):
+        """Look for the modules on the Wi-Fi networks (in the background, at most every FIND_EVERY s)."""
+        if self._finding or time.time() - self._found_at < self.FIND_EVERY: return
+        self._finding, self._found_at = True, time.time()
+        def go():
+            try:
+                from .hardware import find_modules
+                for f in find_modules(): self._remember(f['name'], f['ip'])
+            except Exception: pass
+            finally: self._finding = False
+        threading.Thread(target=go, name='espnow-find', daemon=True).start()
+
+    def radio(self, name):
+        link = self.link
+        if not link or link.dongle.dead: return None
+        try: return link.find(name)
+        except GosError: return None
+
+    def ask(self, name, path, target, body, method='GET', ctype=None):
+        """(http code, bytes, content type) for one request to module `name`."""
+        m = self.radio(name) if path not in WIFI_ONLY else None
+        if m:
+            try:
+                code, text = self.link.request(m, target, body if body else None)
+                self.via[name] = 'radio'
+                return code or 502, self._own(name, path, text, m.ip).encode(), None
+            except GosError: pass                        # the radio did not make it: Wi-Fi below
+        known = self.radio(name)
+        ip = (known.ip if known and known.ip != '-' else None) or self.wifi.get(name)
+        if not ip:
+            self._find()
+            return 504, json.dumps({'ok': False, 'error': f'{name} is not heard over ESP-NOW and its Wi-Fi address is not known yet (looking for it). Is it powered?'}).encode(), None
+        try:
+            req = urllib.request.Request(f'http://{ip}{target}', data=body if method == 'POST' else None, method=method)
+            if ctype: req.add_header('Content-Type', ctype)
+            with urllib.request.urlopen(req, timeout=180 if path == '/api/ota' else 4) as r:
+                code, data, rtype = r.status, r.read(), r.headers.get('Content-Type')
+        except urllib.error.HTTPError as e:
+            code, data, rtype = e.code, e.read(), e.headers.get('Content-Type')
+        except OSError as e:
+            self._find()
+            return 504, json.dumps({'ok': False, 'error': f'{name} answers neither over ESP-NOW nor on Wi-Fi at {ip} ({e}).'}).encode(), None
+        self.via[name] = 'wifi'
+        if rtype and ('json' in rtype or 'text/plain' in rtype):
+            data = self._own(name, path, data.decode(errors='replace'), ip).encode()
+        return code, data, rtype
+
+    def _own(self, name, path, text, ip):
+        # report this gateway as the board's address, so clients that switch to the reported address stay here
+        if ip and ip != '-': text = text.replace(f'"{ip}"', f'"{self.own(name)}"')
+        if path == '/api/health': text = re.sub(r'"live":\s*\d+', '"live":0', text)   # the UDP stream is Wi-Fi only
+        return text
 
     def address(self, name):
         return f'http://{self.own(name)}' if name in self.servers else None
 
+    def status(self):
+        link = self.link
+        out = link.status() if link and not link.dongle.dead else {'dongle': 'not plugged in', 'modules': []}
+        out['wifi'] = self.wifi
+        out['via'] = self.via
+        return out
+
     def shutdown(self):
         self._run = False
-        for s in [self.main, *self.servers.values()]: s.shutdown(); s.server_close()
+        for s_ in [self.main, *self.servers.values()]: s_.shutdown(); s_.server_close()
 
 
-def serve_gateway(link, port=8790, host='127.0.0.1', module_port=80):
-    return Gateway(link, port, host, module_port)
+def serve_gateway(link, port=8790, host='127.0.0.1', module_port=80, names=NAMES):
+    return Gateway(link, port, host, module_port, names)
+
+
+def run_bridge(port=None, http_port=8790, channel=None, parent_pid=0, say=print):
+    """gos robot bridge: the gateway runs at once (Wi-Fi works without a dongle); the dongle is picked up whenever it
+    is plugged in and dropped when unplugged. Ends when the parent program ends (parent_pid) or on Ctrl+C."""
+    try: hold_port(http_port).close()
+    except OSError: say(f'An ESP-NOW bridge already runs (port {http_port} is taken).'); return BUSY
+    gw = serve_gateway(None, http_port)
+    if gw.errors: say(f'Some module addresses could not open: {gw.errors}')
+    say('Gateway up: http://mod1.local (after tools/espnow/install.ps1) or http://127.0.4.1 ... 127.0.4.9. Waiting for the ESP-NOW dongle.')
+    seen, told, next_try = set(), False, 0.0
+    try:
+        while parent_pid <= 0 or parent_alive(parent_pid):
+            link = gw.link
+            if link and link.dongle.dead:
+                say('ESP-NOW dongle unplugged - modules go over Wi-Fi until it is back')
+                link.close(); gw.link = link = None; seen = set()
+            if not link and time.time() >= next_try:
+                try:
+                    gw.link = link = EspNowLink.open(port, channel=channel)
+                    say(f'ESP-NOW dongle ready ({link.dongle.info})'); told = False
+                except GosError as e:
+                    if not told: say(f'{e} Trying again every 3 s; Wi-Fi works meanwhile.'); told = True
+                    next_try = time.time() + 3
+            now = {m.name for m in link.alive()} if link else set()
+            for n in sorted(now - seen): say(f'+ {n} heard over ESP-NOW on channel {link.channel}: {gw.address(n) or "?"} goes over the radio')
+            for n in sorted(seen - now): say(f'- {n} not heard over ESP-NOW for {EspNowLink.STALE:.0f} s: over Wi-Fi meanwhile')
+            seen = now
+            time.sleep(0.5)
+    except KeyboardInterrupt: pass
+    finally:
+        gw.shutdown()
+        if gw.link: gw.link.close()     # the heartbeat stops: a module the laptop was driving holds its pose
+    return 0
 
 
 # ── for whoever starts the bridge (the Studio: studio/tools/robo4Net.cjs) ──────

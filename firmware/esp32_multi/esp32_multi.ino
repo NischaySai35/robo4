@@ -1422,12 +1422,14 @@ void livePoll() {
 bool radioHold  = false;   // /api/radio?awake=1: keep the radio awake for a Wi-Fi test (not saved; a reboot clears it)
 bool guardBusy();
 bool nowLinked();          // ESP-NOW link section
+bool nowAwake();
+bool nowPeeking();
 void nowStop();
 String nowJson();
 bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS || guardBusy(); }
 void radioTick() {
   if (otaBusy) return;                              // OTA owns the radio settings while it runs
-  bool want = moving() || radioHold || nowLinked();   // modem sleep would miss most ESP-NOW frames
+  bool want = moving() || radioHold || nowAwake() || nowPeeking();   // ESP-NOW: awake while commanded (heat), see ESP-NOW link
   if (want == radioAwake) return;
   radioAwake = want;
   if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
@@ -2806,22 +2808,42 @@ void guardTask(void*) {
 // - While the laptop's heartbeat is heard the radio stays awake: in modem sleep it misses most frames (radioTick).
 // - Heartbeat silent NOW_HOLD_MS while the laptop was driving moves: each joint still on its way stops where it is
 //   and holds, torque on. Never limp, never a new move. A sequence the board plays by itself keeps playing.
+// - Heat (6 Nov, Nischay: "too hot"): the radio stays awake only while the laptop gives commands (moves, torque, play...)
+//   and NOW_AWAKE_MS after; reads (telemetry, health, log) do not count. Otherwise it naps like before ESP-NOW and
+//   listens NOW_PEEK_MS after each hello; the laptop sends what waits for us the moment it hears that hello (<= 1 s).
+//   Driving keeps it awake, so the hold on silence is unaffected.
+// - Several requests may be in flight: the last NOW_CACHE answers are kept, so a resend never runs anything twice.
 #define NOW_HELLO_MS 1000
+#define NOW_AWAKE_MS 30000   // radio awake this long after the last command
+#define NOW_PEEK_MS     80   // napping: listen this long after each hello
+#define NOW_CACHE        4    // answers kept for resends
+#define NOW_RAN         32    // request numbers kept: a repeat whose answer is gone gets 'already done', never a second run
 #define NOW_LINK_MS  1500    // a heartbeat this recent = linked over ESP-NOW (the laptop sends one every 100 ms)
-#define NOW_HOLD_MS   500    // silent this long while driving -> hold
+#define NOW_HOLD_MS   800    // silent this long while driving -> hold (heartbeat is acked + retried by the radio)
 #define NOW_DRIVE_MS 3000    // a laptop move this recent = the laptop is driving
 
 struct NowIn { uint8_t mac[6]; uint8_t len; uint8_t data[r4now::FRAME_MAX]; };
 QueueHandle_t    nowQ = nullptr;
 r4now::Assembly* nowAsm = nullptr;      // 7.7 KB, made once
-bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false, nowHaveLast = false;
+bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false;
 uint8_t  nowPeer[6] = {0};
-uint32_t nowHbMs = 0, nowHelloMs = 0, nowMoveMs = 0;
+uint32_t nowHbMs = 0, nowHelloMs = 0, nowMoveMs = 0, nowActiveMs = 0, nowPeekUntil = 0;
 uint32_t nowReqs = 0, nowRepeats = 0, nowDrops = 0, nowHolds = 0;
-uint16_t nowLastSeq = 0;
-String   nowLastAnswer;
+struct NowDone { uint16_t seq; bool used; String answer; };
+NowDone  nowDone[NOW_CACHE];
+uint8_t  nowDoneNext = 0;
+uint16_t nowRan[NOW_RAN]; uint8_t nowRanN = 0, nowRanNext = 0;
+bool nowAlreadyRan(uint16_t seq) { for (uint8_t i = 0; i < nowRanN; i++) if (nowRan[i] == seq) return true; return false; }
 
 bool nowLinked() { return nowHbSeen && millis() - nowHbMs < NOW_LINK_MS; }
+bool nowAwake()  { return nowLinked() && nowActiveMs && millis() - nowActiveMs < NOW_AWAKE_MS; }
+bool nowPeeking() { return (int32_t)(nowPeekUntil - millis()) > 0; }
+int  nowFind(uint16_t seq) { for (uint8_t i = 0; i < NOW_CACHE; i++) if (nowDone[i].used && nowDone[i].seq == seq) return i; return -1; }
+// Reads do not keep the radio awake (the Studio polls all the time); everything else is a command.
+bool nowIsRead(const String& p) {
+  return p == "/api/telemetry" || p == "/api/health" || p == "/api/log" || p == "/api/anim/status" || p == "/api/guard" ||
+         p == "/api/config" || p == "/api/wifi" || p == "/api/scan/status" || p == "/api/servo/read" || p == "/api/radio";
+}
 
 void nowOnRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {   // Wi-Fi task: just queue it
   if (!nowQ || len <= 0 || len > r4now::FRAME_MAX) return;
@@ -2863,6 +2885,9 @@ void nowHello(const uint8_t* mac) {
   s += F(" fw=");  s += FW_VERSION;
   s += F(" up=");  s += millis();
   s += F(" ch=");  s += ch;
+  const bool awake = nowAwake() || moving() || radioHold;
+  s += F(" awake="); s += awake ? '1' : '0';
+  if (!awake) { nowPeekUntil = millis() + NOW_PEEK_MS; radioTick(); }   // napping: listen a moment for what waits
   nowSend(mac, r4now::HELLO, 0, s);
   nowHelloMs = millis();
 }
@@ -2886,6 +2911,7 @@ void nowRun(uint16_t seq, const uint8_t* msg, int len) {
   const Route* r = nullptr;
   for (uint8_t i = 0; i < nRoutes; i++) if (path == routes[i].path) { r = &routes[i]; break; }
   nowReqs++;
+  if (!nowIsRead(path)) nowActiveMs = millis();
   String ans;
   if (!r)             ans = F("404\n{\"ok\":false,\"error\":\"not found\"}");
   else if (!r->radio) ans = F("501\n{\"ok\":false,\"error\":\"Wi-Fi only: use the board's address\"}");
@@ -2899,8 +2925,11 @@ void nowRun(uint16_t seq, const uint8_t* msg, int len) {
     ans = String(replyCode ? replyCode : 500); ans += '\n'; ans += replyBody;
     replyBody = String();
   }
-  nowLastSeq = seq; nowHaveLast = true; nowLastAnswer = ans;
+  NowDone& d = nowDone[nowDoneNext]; nowDoneNext = (nowDoneNext + 1) % NOW_CACHE;
+  d.seq = seq; d.used = true; d.answer = ans;
+  nowRan[nowRanNext] = seq; nowRanNext = (nowRanNext + 1) % NOW_RAN; if (nowRanN < NOW_RAN) nowRanN++;
   nowSend(nowPeer, r4now::RESP, seq, ans);
+  radioTick();                                       // a command wakes the radio now, not at the end of loop()
 }
 
 // Each joint still on its way stops where it is now (plus the little it coasts), torque on. Returns how many.
@@ -2933,14 +2962,21 @@ void nowPoll() {
       nowSetPeer(m.mac);                             // only the laptop's dongle sends heartbeats
       nowHbMs = millis(); nowHbSeen = true;
       if (nowHeld) { nowHeld = false; lg("ESP-NOW: laptop back"); }
-      if (fresh) { lg("ESP-NOW: laptop heard"); nowHello(nowPeer); }
+      if (fresh) nowHello(nowPeer);
     } else if (h.type == r4now::REQ && !otaBusy) {
       nowSetPeer(m.mac);
-      if (nowHaveLast && h.seq == nowLastSeq) {      // a resend of the request just answered
-        if (h.idx == h.cnt - 1) { nowRepeats++; nowSend(nowPeer, r4now::RESP, h.seq, nowLastAnswer); }
+      nowHbMs = millis(); nowHbSeen = true;          // a request is the laptop too
+      const int done = nowFind(h.seq);
+      if (done >= 0) {                               // a resend of a request already answered: the saved answer again
+        if (h.idx == h.cnt - 1) { nowRepeats++; nowSend(nowPeer, r4now::RESP, h.seq, nowDone[done].answer); }
         continue;
       }
-      if (nowAsm->add(h, p, n)) { nowRun(h.seq, nowAsm->buf, nowAsm->len); nowAsm->reset(); }
+      if (nowAlreadyRan(h.seq)) {                    // ran long ago, answer no longer kept: say so, never run again
+        if (h.idx == h.cnt - 1) { nowRepeats++; nowSend(nowPeer, r4now::RESP, h.seq, F("208\n{\"ok\":true,\"note\":\"already done; its answer was lost on the way\"}")); }
+        continue;
+      }
+      if (h.cnt == 1) nowRun(h.seq, p, n);           // one frame: run it, and leave a half-built long request alone
+      else if (nowAsm->add(h, p, n)) { nowRun(h.seq, nowAsm->buf, nowAsm->len); nowAsm->reset(); }
     }
   }
   const uint32_t now = millis();
@@ -2957,6 +2993,7 @@ void nowPoll() {
 
 String nowJson() {
   String j = F("{\"linked\":"); j += nowLinked() ? F("true") : F("false");
+  j += F(",\"awake\":");    j += nowAwake() ? F("true") : F("false");
   j += F(",\"hbAgeMs\":");  j += nowHbSeen ? (long)(millis() - nowHbMs) : -1L;
   j += F(",\"requests\":"); j += nowReqs;
   j += F(",\"repeats\":");  j += nowRepeats;

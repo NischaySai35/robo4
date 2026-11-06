@@ -25,6 +25,7 @@
 #define USB_BAUD 921600
 #define LED_PIN  33              // AI-Thinker red LED, on when LOW
 #define FLASH_PIN 4              // the bright flash LED: keep it off
+#define CAM_PWDN_PIN 32          // camera power-down: HIGH = camera chip off (heat; 6 Nov: "master too hot")
 
 struct AirIn { uint8_t mac[6]; int8_t rssi; uint8_t len; uint8_t data[r4now::FRAME_MAX]; };
 struct TxDone { uint8_t mac[6]; uint8_t ok; };
@@ -66,9 +67,9 @@ static void setChannel(uint8_t ch) {
 }
 
 static void info() {
-  char s[160];
-  snprintf(s, sizeof s, "mac=%s ch=%u heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu",
-           WiFi.macAddress().c_str(), channel, (unsigned long)heard, (unsigned long)sent, (unsigned long)txFail,
+  char s[200];
+  snprintf(s, sizeof s, "mac=%s ch=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu",
+           WiFi.macAddress().c_str(), channel, (unsigned)getCpuFrequencyMhz(), temperatureRead(), (unsigned long)heard, (unsigned long)sent, (unsigned long)txFail,
            (unsigned long)lost, (unsigned long)badUsb);
   usbSend('I', (const uint8_t*)s, strlen(s));
 }
@@ -114,6 +115,8 @@ static void usbPoll() {
 }
 
 void setup() {
+  setCpuFrequencyMhz(80);                  // heat: 80 MHz is the lowest the radio allows; USB serial is unaffected
+  pinMode(CAM_PWDN_PIN, OUTPUT); digitalWrite(CAM_PWDN_PIN, HIGH);
   pinMode(FLASH_PIN, OUTPUT); digitalWrite(FLASH_PIN, LOW);
   pinMode(LED_PIN, OUTPUT); digitalWrite(LED_PIN, HIGH);
   Serial.setRxBufferSize(4096);

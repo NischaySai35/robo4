@@ -14,6 +14,8 @@ MAC = bytes.fromhex('a1b2c3d4e5f6')
 def _quick_and_private(tmp_path, monkeypatch):
     monkeypatch.setattr(espnow.EspNowLink, 'REMEMBER', tmp_path / 'espnow_channel')   # never the real ~/.gos
     monkeypatch.setattr(espnow.EspNowLink, 'SWEEP_DWELL', 0.25)                      # the fake answers a heartbeat at once
+    monkeypatch.setattr(espnow.Gateway, 'REMEMBER', tmp_path / 'modules.json')         # never the real ~/.gos
+    monkeypatch.setattr(espnow.Gateway, 'FIND_EVERY', 1e9)                           # no network search from a test
 
 
 class FakeAir:
@@ -22,8 +24,8 @@ class FakeAir:
         self.channel, self.tuned, self.loss, self.rng = channel, 1, loss, random.Random(seed)
         self.out, self.buf = queue.Queue(), bytearray()
         self.runs = []                       # requests the module actually ran
-        self.done = {}                       # seq -> saved answer (the module keeps only the last)
-        self.last_seq, self.last_answer = None, b''
+        self.done = {}                       # seq -> saved answer: the module keeps its last 4 (firmware NOW_CACHE)
+        self.ran = []                        # the last 32 request numbers (firmware NOW_RAN)
         self.asm = espnow.Assembly()
         self.hb_seen = self.hello_at = 0.0
         self.counter = 0
@@ -66,22 +68,25 @@ class FakeAir:
             if time.time() - self.hb_seen > 0.5 or time.time() - self.hello_at > 1.0: self._hello()   # at once after silence, then every second
             self.hb_seen = time.time()
         elif kind == espnow.REQ and mac == MAC:
-            if seq == self.last_seq:                                  # a resend of the request just answered:
-                if idx == cnt - 1:                                    # send the saved answer again, never run it twice
-                    for f in espnow.frames(espnow.RESP, seq, self.last_answer): self._to_laptop(f)
+            if seq in self.done or seq in self.ran:                   # a resend of a request already answered:
+                if idx == cnt - 1:                                    # the saved answer again (or 'already done'), never run twice
+                    again = self.done.get(seq, b'208\n{"ok": true, "ran": "already done"}')
+                    for f in espnow.frames(espnow.RESP, seq, again): self._to_laptop(f)
                 return
-            whole = self.asm.add(seq, idx, cnt, payload)
+            whole = payload if cnt == 1 else self.asm.add(seq, idx, cnt, payload)
             if whole is None: return
             self.runs.append(whole.decode())
             self.counter += 1
-            body = json.dumps({'ok': True, 'ip': '192.168.137.112', 'live': 4211, 'ran': whole.decode(), 'n': self.counter, 'pad': 'x' * (3000 if 'telemetry' in whole.decode() else 0)})
+            body = json.dumps({'ok': True, 'ip': '192.0.2.1', 'live': 4211, 'ran': whole.decode(), 'n': self.counter, 'pad': 'x' * (3000 if 'telemetry' in whole.decode() else 0)})
             answer = b'200\n' + body.encode()
-            self.last_seq, self.last_answer = seq, answer
+            self.done[seq] = answer
+            self.ran.append(seq); del self.ran[:-32]
+            while len(self.done) > 4: self.done.pop(next(iter(self.done)))
             for f in espnow.frames(espnow.RESP, seq, answer): self._to_laptop(f)
 
     def _hello(self):
         self.hello_at = time.time()
-        self._to_laptop(espnow.frames(espnow.HELLO, 0, f'name=mod1 ip=192.168.137.112 fw=0.1.0 ch={self.channel}'.encode())[0])
+        self._to_laptop(espnow.frames(espnow.HELLO, 0, f'name=mod1 ip=192.0.2.1 fw=0.1.0 ch={self.channel}'.encode())[0])
 
 
 def _link(air, **kw):
@@ -114,7 +119,7 @@ def test_finds_the_channel_and_runs_requests():
     air = FakeAir(channel=6)
     link = _link(air)
     try:
-        assert link.channel == 6 and link.find('mod1').ip == '192.168.137.112'
+        assert link.channel == 6 and link.find('mod1').ip == '192.0.2.1'
         assert espnow.EspNowLink.REMEMBER.read_text() == '6'                     # next start tries channel 6 first
         code, text = link.request('mod1', '/api/health')
         assert code == 200 and json.loads(text)['ran'] == '/api/health'
@@ -150,7 +155,7 @@ def test_silence_is_an_error_that_says_what_to_do():
 def test_gateway_answers_like_the_board():
     air = FakeAir(channel=11)
     link = _link(air)
-    srv = espnow.serve_gateway(link, port=0, module_port=8799)
+    srv = espnow.serve_gateway(link, port=0, module_port=8799, names=('mod1',))
     base = f'http://127.0.0.1:{srv.server_address[1]}'
     try:
         end = time.time() + 3
@@ -164,7 +169,96 @@ def test_gateway_answers_like_the_board():
             assert json.loads(r.read())['ran'] == '/api/batch?3=170&speed=5'
         with urllib.request.urlopen(base + '/', timeout=3) as r:
             assert json.loads(r.read())['modules'][0]['name'] == 'mod1'
-        with pytest.raises(urllib.error.HTTPError) as e: urllib.request.urlopen(base + '/mod1/api/ota?size=1', timeout=3)
-        assert e.value.code == 501
+        assert 'ota' not in ''.join(air.runs)                                    # uploads never go over the radio
     finally:
         srv.shutdown(); link.close()
+
+
+def test_several_programs_at_once_on_a_lossy_radio():
+    """The Studio, its Debug Log and the sim all ask at the same time: nothing queues behind one slow answer,
+    shared reads take one trip, and every command still runs exactly once."""
+    air = FakeAir(channel=2, loss=0.15, seed=7)
+    link = _link(air, channel=2)
+    errors, cmds = [], []
+    def reader():
+        try:
+            for _ in range(15): link.request('mod1', '/api/telemetry', timeout=3)
+        except Exception as e: errors.append(e)
+    def commander(k):
+        try:
+            for i in range(10):
+                tag = f'c{k}-{i}'; cmds.append(tag)
+                code, text = link.request('mod1', f'/api/batch?3=170&tag={tag}', timeout=3)
+                ran = json.loads(text)['ran']
+                assert ran.endswith(tag) or ran == 'already done'
+        except Exception as e: errors.append(e)
+    ts = [threading.Thread(target=reader) for _ in range(3)] + [threading.Thread(target=commander, args=(k,)) for k in range(2)]
+    try:
+        t0 = time.time()
+        for t in ts: t.start()
+        for t in ts: t.join(30)
+        assert not errors, errors
+        ran = [r for r in air.runs if 'tag=' in r]
+        assert sorted(r.split('tag=')[1] for r in ran) == sorted(cmds)              # each command once
+        assert sum('telemetry' in r for r in air.runs) < 45                           # 45 reads, fewer trips
+        assert time.time() - t0 < 20
+    finally: link.close()
+
+
+class _WifiBoard:
+    """A pretend board on Wi-Fi (a local web server): answers /api/health and the page, records what it got."""
+    def __init__(self):
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        got = self.got = []
+        class H(BaseHTTPRequestHandler):
+            def log_message(self, *a): pass
+            def _reply(self, body, ctype):
+                data = body.encode(); self.send_response(200); self.send_header('Content-Type', ctype)
+                self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+            def do_GET(self):
+                got.append(('GET', self.path))
+                if self.path == '/': self._reply('<html>board page</html>', 'text/html')
+                else: self._reply(json.dumps({'ok': True, 'ip': self.server.me, 'live': 4211, 'via': 'wifi'}), 'application/json')
+            def do_POST(self):
+                n = int(self.headers.get('Content-Length') or 0); got.append(('POST', self.path, len(self.rfile.read(n))))
+                self._reply('OK', 'text/plain')
+        self.srv = ThreadingHTTPServer(('127.0.0.1', 0), H)
+        self.ip = self.srv.me = f'127.0.0.1:{self.srv.server_address[1]}'
+        threading.Thread(target=self.srv.serve_forever, daemon=True).start()
+
+
+def test_no_dongle_goes_over_wifi_and_page_and_upload_always_do():
+    board = _WifiBoard()
+    srv = espnow.serve_gateway(None, port=0, module_port=8798, names=('mod1',))   # no dongle at all
+    try:
+        srv.wifi['mod1'] = board.ip                                               # as remembered from an earlier hello
+        with urllib.request.urlopen(srv.address('mod1') + '/api/health', timeout=3) as r: h = json.loads(r.read())
+        assert h['via'] == 'wifi' and h['ip'] == '127.0.4.1:8798' and h['live'] == 0   # still reports the gateway
+        with urllib.request.urlopen(srv.address('mod1') + '/', timeout=3) as r: assert b'board page' in r.read()
+        up = urllib.request.Request(srv.address('mod1') + '/api/ota?size=5', data=b'12345', method='POST')
+        with urllib.request.urlopen(up, timeout=3) as r: assert r.read() == b'OK'
+        assert ('POST', '/api/ota?size=5', 5) in board.got
+        assert srv.via['mod1'] == 'wifi'
+        srv.wifi.clear()
+        with pytest.raises(urllib.error.HTTPError) as e: urllib.request.urlopen(srv.address('mod1') + '/api/health', timeout=3)
+        assert e.value.code == 504 and b'not known yet' in e.value.read()
+    finally:
+        srv.shutdown(); board.srv.shutdown()
+
+
+def test_radio_first_then_wifi_when_the_radio_fails():
+    board = _WifiBoard()
+    air = FakeAir(channel=4)
+    link = _link(air, channel=4)
+    srv = espnow.serve_gateway(link, port=0, module_port=8797, names=('mod1',))
+    try:
+        srv.wifi['mod1'] = board.ip
+        with urllib.request.urlopen(srv.address('mod1') + '/api/health', timeout=5) as r: assert json.loads(r.read())['ran'] == '/api/health'
+        assert srv.via['mod1'] == 'radio' and not board.got
+        air.loss = 1.0                                                            # the radio goes quiet
+        link.find('mod1').ip = board.ip                                           # (its hello said this address)
+        time.sleep(espnow.SHARE_FOR + 0.05)                                       # past the shared-read moment
+        with urllib.request.urlopen(srv.address('mod1') + '/api/health', timeout=8) as r: assert json.loads(r.read())['via'] == 'wifi'
+        assert srv.via['mod1'] == 'wifi'
+    finally:
+        srv.shutdown(); link.close(); board.srv.shutdown()

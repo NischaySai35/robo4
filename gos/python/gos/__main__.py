@@ -286,27 +286,9 @@ def main(argv=None):
             print('\n'.join(f"{m['name']:8s} {m['ip']:16s} firmware {m['fw']}" for m in found) or 'No modules found. Are they powered and on the same Wi-Fi as this computer?')
             print(f'{len(found)} module(s).')
         elif a.cmd == 'robot' and a.action == 'bridge':
-            from .espnow import EspNowLink, serve_gateway, parent_alive, hold_port, BUSY, NO_DONGLE
-            try: srv0 = hold_port(a.port)
-            except OSError: print(f'An ESP-NOW bridge already runs (port {a.port} is taken).', flush=True); sys.exit(BUSY)
-            try: link = EspNowLink.open(a.address, channel=a.channel)
-            except GosError as e: srv0.close(); print(e, flush=True); sys.exit(NO_DONGLE if 'No ESP-NOW dongle' in str(e) else 1)
-            srv0.close()
-            srv = serve_gateway(link, a.port)
-            print(f'ESP-NOW dongle ready ({link.dongle.info}). Gateway: http://127.0.0.1:{a.port}/<module>/api/... (e.g. /mod1/api/health). Ctrl+C stops.', flush=True)
-            seen = set()
-            try:
-                while a.parent_pid <= 0 or parent_alive(a.parent_pid):
-                    time.sleep(0.5)
-                    now = {m.name for m in link.alive()}
-                    for n in sorted(now - seen):
-                        time.sleep(0.3)   # its own address opens within 0.2 s of being heard
-                        at = srv.address(n) or f'http://127.0.0.1:{a.port}/{n} (own address failed: {srv.errors.get(n, "?")})'
-                        print(f'+ {n} heard on channel {link.channel}: use {at} as its address in the Studio and the sim', flush=True)
-                    for n in sorted(seen - now): print(f'- {n} not heard for {link.STALE:.0f} s', flush=True)
-                    seen = now
-            except KeyboardInterrupt: pass
-            finally: srv.shutdown(); link.close()   # the heartbeat stops: a module the laptop was driving holds its pose
+            from .espnow import run_bridge
+            code = run_bridge(a.address, a.port, a.channel, a.parent_pid, say=lambda m: print(m, flush=True))
+            if code: sys.exit(code)
         elif a.cmd == 'robot':
             from .hardware import Esp32Robot, serve_robot
             need(a.address, 'board address, e.g. mod1.local')

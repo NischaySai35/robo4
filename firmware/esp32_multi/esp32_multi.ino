@@ -410,7 +410,8 @@ constexpr uint16_t GUARD_VER = 1;
 //                        trip  mA  calm ms  ceil hold back yield dn up clear calmMs hotMs warm hot cool
 // 5 Nov 2026 (Nischay): bend joints raised to 85 % (was trip 75 %, ceiling 80 %, 1300 mA): B1 needed 80 % / 1.5 A for
 // ordinary poses and the guard stopped the animation; 1700 mA ~ 85 % load on B1 plus a margin.
-const GuardCfg GUARD_BEND = {850, 1700, 500, 100, 850, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
+// 7 Nov 2026 (Nischay): bend/twist the SAME as the locks: trip 88 % / 1900 mA, full strength (was 85 % / 1700 mA, ceiling 85 %).
+const GuardCfg GUARD_BEND = {880, 1900, 500, 100, 1000, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
 const GuardCfg GUARD_LOCK = {880, 1900, 500, 100, 1000, 300, 34, 114, 10, 15, 1000, 500, 2000, 60, 70, 62};
 GuardSettings guardSet = {GUARD_VER, GUARD_BEND, GUARD_LOCK};
 Guard guards[MAX_SERVOS];
@@ -630,10 +631,10 @@ void tuneServoHolding(ServoState& sv) {
   // Backup for the board's guard: never ABOVE the strength ceiling (it could never fire) and never sooner than the board.
   // 7 Nov 2026: bend/twist were left at 78 % after the board went to 85 % (5 Nov), so the servo cut in BEFORE the board's
   // gentle step-back. Now = the ceiling (85 %) but 0.3 s instead of the board's 0.1 s: the board always acts first.
-  changed |= tuneByteIfDiff(sv.id, REG_OVERLOAD_PCT, lock ? 92 : 85, "overload torque %");
+  changed |= tuneByteIfDiff(sv.id, REG_OVERLOAD_PCT, 92, "overload torque %");   // every joint as the locks (7 Nov)
   changed |= tuneByteIfDiff(sv.id, REG_PROT_TIME, 30, "overload time x10ms");
   changed |= tuneByteIfDiff(sv.id, REG_PROT_TORQUE, 30, "torque after protection %");
-  changed |= tuneWordIfDiff(sv.id, REG_PROT_CURRENT, (uint16_t)((lock ? 2200 : 2000) / 6.5f), "protection current x6.5mA");
+  changed |= tuneWordIfDiff(sv.id, REG_PROT_CURRENT, (uint16_t)(2200 / 6.5f), "protection current x6.5mA");
   changed |= tuneByteIfDiff(sv.id, REG_OVERCUR_TIME, 30, "overcurrent time x10ms");
   changed |= tuneWordIfDiff(sv.id, REG_MAX_TORQUE, gc.ceiling, "max torque (power-on ceiling)");
   st.LockEprom(sv.id); delay(10);

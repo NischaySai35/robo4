@@ -3006,7 +3006,7 @@ void nowPoll() {
 }
 
 // ── Battery guard (Nischay, 7 Nov 2026: "save the battery") ─────────────────────────────────────────────────────────
-// The 3S battery at 10.2 V or lower for BATT_HOLD_MS (BATT_HOLD_LOADED_MS while the motors draw over 1 A: a heavy move
+// The 3S battery at 10.3 V or lower for BATT_HOLD_MS (BATT_HOLD_LOADED_MS while the motors draw over 1 A: a heavy move
 // dips the supply for a moment without the battery being empty) -> the module switches itself off:
 //   1. the log says why; 2. the master hears "dying=battery" (it tells the laptop); 3. a playing sequence stops;
 //   4. every servo's torque off (no motor current); 5. radio off; 6. the chip sleeps for good, no wake-up source:
@@ -3014,7 +3014,7 @@ void nowPoll() {
 // The voltage is the HIGHEST of the servos' readings: one garbled low read cannot trip it.
 // What software cannot do: cut the battery completely. The servos' own electronics and the board's regulator stay
 // connected and draw a little; zero needs a switch on the battery line (a MOSFET the ESP drives, or a BMS cut-off).
-#define BATT_CUT_V10         102     // 10.2 V
+#define BATT_CUT_V10         103     // 10.3 V (Nischay, 7 Nov)
 #define BATT_HOLD_MS        5000
 #define BATT_HOLD_LOADED_MS 20000
 uint32_t battLowSince = 0;

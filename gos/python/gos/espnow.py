@@ -13,7 +13,7 @@ Who does what (6 Nov 2026, Nischay: "the comm control of the C3s is with the mas
   channel, the module list, and the hold when the laptop program vanishes while driving;
 - the module never runs one request number twice; Wi-Fi is the fallback, and carries the web page and uploads.
 """
-import json, os, pathlib, re, socketserver, struct, threading, time, urllib.parse, zlib
+import json, os, pathlib, re, socketserver, struct, threading, time, urllib.error, urllib.parse, urllib.request, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .app import GosError

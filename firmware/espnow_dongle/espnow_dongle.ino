@@ -158,6 +158,12 @@ static void remember(const AirIn& a, const uint8_t* p, int n) {
     memcpy(known[k].mac, a.mac, 6);
   }
   Known& m = known[k];
+  if (memmem(p, n, "dying=battery", 13)) {             // the module's battery guard: it switches itself off now
+    static uint32_t toldAt = 0;
+    if (millis() - toldAt > 5000) { toldAt = millis(); char t[64]; int l = n < 63 ? n : 63; memcpy(t, p, l); t[l] = 0; say("battery empty, module switching off: %s", t); }
+    m.seen = 0;                                          // gone: no heartbeat, no replay
+    return;
+  }
   m.rssi = a.rssi; m.seen = millis(); m.len = a.len; memcpy(m.hello, a.data, a.len);
   m.ch = helloChannel(p, n);
   m.awake = !(n >= 7 && memmem(p, n, "awake=0", 7));

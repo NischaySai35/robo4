@@ -50,6 +50,7 @@
 #include <Preferences.h>
 #include <SCServo.h>
 #include <esp_system.h>
+#include <esp_sleep.h>         // Battery guard: the final sleep
 #include <driver/gpio.h>
 #include <hal/gpio_ll.h>
 #include <soc/gpio_struct.h>
@@ -3004,6 +3005,61 @@ void nowPoll() {
   }
 }
 
+// ── Battery guard (Nischay, 7 Nov 2026: "save the battery") ─────────────────────────────────────────────────────────
+// The 3S battery at 10.2 V or lower for BATT_HOLD_MS (BATT_HOLD_LOADED_MS while the motors draw over 1 A: a heavy move
+// dips the supply for a moment without the battery being empty) -> the module switches itself off:
+//   1. the log says why; 2. the master hears "dying=battery" (it tells the laptop); 3. a playing sequence stops;
+//   4. every servo's torque off (no motor current); 5. radio off; 6. the chip sleeps for good, no wake-up source:
+//   only switching the module off and on (after charging) starts it again. The next boot logs the reason.
+// The voltage is the HIGHEST of the servos' readings: one garbled low read cannot trip it.
+// What software cannot do: cut the battery completely. The servos' own electronics and the board's regulator stay
+// connected and draw a little; zero needs a switch on the battery line (a MOSFET the ESP drives, or a BMS cut-off).
+#define BATT_CUT_V10         102     // 10.2 V
+#define BATT_HOLD_MS        5000
+#define BATT_HOLD_LOADED_MS 20000
+uint32_t battLowSince = 0;
+
+void battShutdown(int v10, int mA) {
+  lg("BATTERY EMPTY: %d.%d V (%d mA) for %u s - stopping every servo and switching off to save the battery. Charge it, then switch the module off and on.",
+     v10 / 10, v10 % 10, mA, (unsigned)(millis() - battLowSince) / 1000);
+  prefs.putUShort("battCut", (uint16_t)v10);
+  if (nowUp) {                                       // tell the master (and through it the laptop), a few times
+    static const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    String s = F("name="); s += cfg.host; s += F(" dying=battery v="); s += v10 / 10; s += '.'; s += v10 % 10;
+    for (int i = 0; i < 3; i++) { nowSend(nowPeerSet ? nowPeer : all, r4now::HELLO, 0, s); if (nowPeerSet) nowSend(all, r4now::HELLO, 0, s); delay(30); }
+  }
+  animStop();
+  { BusLock L; torqueOffAll(); }
+  delay(200);                                        // the log line and the radio frames go out
+  nowStop();
+  WiFi.disconnect(true, false);
+  WiFi.mode(WIFI_OFF);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  esp_deep_sleep_start();                            // never returns
+}
+
+void battTick() {
+  static uint32_t at = 0;
+  if (millis() - at < 500) return;
+  at = millis();
+  if (otaBusy || nServos == 0) { battLowSince = 0; return; }
+  int vMax = 0, mA = 0;
+  for (uint8_t i = 0; i < nServos; i++) {
+    if (servos[i].rawVoltage > vMax) vMax = servos[i].rawVoltage;
+    if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f);
+  }
+  if (vMax <= 0 || vMax > BATT_CUT_V10) {            // no reading (servo power off) or fine
+    if (battLowSince) lg("battery back above %d.%d V - not switching off", BATT_CUT_V10 / 10, BATT_CUT_V10 % 10);
+    battLowSince = 0; return;
+  }
+  if (!battLowSince) {
+    battLowSince = millis();
+    lg("battery low: %d.%d V - the module switches itself off in %u s unless it recovers", vMax / 10, vMax % 10,
+       (unsigned)(mA > 1000 ? BATT_HOLD_LOADED_MS : BATT_HOLD_MS) / 1000);
+  }
+  if (millis() - battLowSince >= (uint32_t)(mA > 1000 ? BATT_HOLD_LOADED_MS : BATT_HOLD_MS)) battShutdown(vMax, mA);
+}
+
 String nowJson() {
   String j = F("{\"linked\":"); j += nowLinked() ? F("true") : F("false");
   j += F(",\"awake\":");    j += nowAwake() ? F("true") : F("false");
@@ -3126,6 +3182,8 @@ void setup() {
   prefs.putUChar("otaBoot", 0);
   animInterrupted = prefs.getUChar("animRun", 0) != 0;
   if (animInterrupted) { prefs.putUChar("animRun", 0); lg("boot: a sequence was playing when power was lost - it does NOT resume"); }
+  { uint16_t cut = prefs.getUShort("battCut", 0);
+    if (cut) { lg("last shutdown: the battery was empty (%u.%u V) - the module switched itself off", cut / 10, cut % 10); prefs.remove("battCut"); } }
   lg("boot complete - torque OFF, nothing moved, %u servo(s) read. Waiting for the operator.", nServos);
   // priority 2, just above loop() (1). Tried 19 (above the TCP/IP task): web replies then took ~6 s and ping ~1 s
   // (mod1, 5 Nov). The 0.2 s late guard was the flash-size reads holding the lock, not the priority.
@@ -3142,6 +3200,7 @@ void loop() {
   ArduinoOTA.handle();
   wifiTick();
   nowPoll();                            // ESP-NOW requests run here, between web requests (same handlers)
+  battTick();                           // 10.2 V: switch off to save the battery (Battery guard)
   { BusLock L; livePoll(); }            // its UDP socket is shared with the guard task's liveSend()
   radioTick();
   if (mdnsOk) { /* ESPmDNS services itself in the background */ }

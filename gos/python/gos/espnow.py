@@ -219,6 +219,7 @@ class EspNowLink:
             m.ch = int(kv.get('ch', 0) or 0)
             m.awake = kv.get('awake', '1') != '0'
             if m.ch: self.channel = m.ch
+            if kv.get('dying'): m.seen = 0                   # its battery guard switched it off: gone
         elif kind == RESP:
             m.seen = time.time()
             with m.got:
@@ -524,6 +525,9 @@ def run_bridge(port=None, http_port=8790, channel=None, parent_pid=0, say=print)
             for n in sorted(now - seen): say(f'+ {n} heard over ESP-NOW on channel {link.channel}: {gw.address(n) or "?"} goes over the radio')
             for n in sorted(seen - now): say(f'- {n} not heard over ESP-NOW for {EspNowLink.STALE:.0f} s: over Wi-Fi meanwhile')
             seen = now
+            if link:                                     # what the master did by itself (hold, E-STOP, battery, channel)
+                notes, link.dongle.said = link.dongle.said, []
+                for note in notes: say(f'master: {note}')
             time.sleep(0.5)
     except KeyboardInterrupt: pass
     finally:

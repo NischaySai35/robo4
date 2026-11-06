@@ -627,11 +627,13 @@ void tuneServoHolding(ServoState& sv) {
   bool lock = slot >= 0 && isLockSlot((uint8_t)slot);
   const GuardCfg& gc = slot >= 0 ? guardCfgFor((uint8_t)slot) : guardSet.bend;
   changed |= tuneByteIfDiff(sv.id, REG_PROT_SWITCH, 0x2D, "protections on (voltage, heat, current, overload)");
-  // must sit BELOW the strength ceiling (80 % bend/twist, or it could never fire) and above the board's trip (95 % of it)
-  changed |= tuneByteIfDiff(sv.id, REG_OVERLOAD_PCT, lock ? 92 : 78, "overload torque %");
+  // Backup for the board's guard: never ABOVE the strength ceiling (it could never fire) and never sooner than the board.
+  // 7 Nov 2026: bend/twist were left at 78 % after the board went to 85 % (5 Nov), so the servo cut in BEFORE the board's
+  // gentle step-back. Now = the ceiling (85 %) but 0.3 s instead of the board's 0.1 s: the board always acts first.
+  changed |= tuneByteIfDiff(sv.id, REG_OVERLOAD_PCT, lock ? 92 : 85, "overload torque %");
   changed |= tuneByteIfDiff(sv.id, REG_PROT_TIME, 30, "overload time x10ms");
   changed |= tuneByteIfDiff(sv.id, REG_PROT_TORQUE, 30, "torque after protection %");
-  changed |= tuneWordIfDiff(sv.id, REG_PROT_CURRENT, (uint16_t)((lock ? 2200 : 1600) / 6.5f), "protection current x6.5mA");
+  changed |= tuneWordIfDiff(sv.id, REG_PROT_CURRENT, (uint16_t)((lock ? 2200 : 2000) / 6.5f), "protection current x6.5mA");
   changed |= tuneByteIfDiff(sv.id, REG_OVERCUR_TIME, 30, "overcurrent time x10ms");
   changed |= tuneWordIfDiff(sv.id, REG_MAX_TORQUE, gc.ceiling, "max torque (power-on ceiling)");
   st.LockEprom(sv.id); delay(10);

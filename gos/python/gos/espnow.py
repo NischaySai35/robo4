@@ -164,7 +164,10 @@ class EspNowLink:
         try: import serial, serial.tools.list_ports
         except ImportError: raise GosError('The ESP-NOW dongle needs pyserial: py -3.12 -m pip install pyserial') from None
         names = [port] if port else [p.device for p in serial.tools.list_ports.comports()
-                                     if (p.vid, p.pid) in ((0x1a86, 0x7523), (0x10c4, 0xea60), (0x1a86, 0x55d4), (0x303a, 0x1001))]
+                                     # USB-serial chips of the master's carrier board (CH340, CP210x, CH343) only. Never
+                                     # 303A:1001 (an ESP32-C3's own USB): that is a module plugged in for flashing, and
+                                     # opening it every 3 s blocked the upload (7 Nov 2026).
+                                     if (p.vid, p.pid) in ((0x1a86, 0x7523), (0x10c4, 0xea60), (0x1a86, 0x55d4), (0x1a86, 0x55d3))]
         if not names: raise GosError('No ESP-NOW dongle found on USB. Plug it in, or give its port, e.g. gos robot bridge COM7.')
         for name in names:
             s = serial.Serial()
@@ -176,6 +179,14 @@ class EspNowLink:
                 continue
             link = cls(s, channel)
             info = link.dongle.ask_info(1.5)
+            if not info.startswith('mac='):
+                # Silent: opening the port can flick DTR/RTS, which on the ESP32-CAM-MB are IO0 and EN, and leave the chip
+                # waiting in its upload mode (seen twice on 7 Nov). One clean restart: EN pulsed, IO0 left high.
+                try:
+                    s.dtr = False; s.rts = True; time.sleep(0.12); s.rts = False
+                    time.sleep(1.2)
+                    info = link.dongle.ask_info(1.5)
+                except Exception: pass
             if info.startswith('mac=') and 'courier=1' in info: return link
             link.close()
             if info.startswith('mac='): raise GosError(f'The dongle on {name} runs old firmware: upload firmware/espnow_dongle to it.')

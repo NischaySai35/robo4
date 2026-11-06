@@ -2784,17 +2784,28 @@ void guardTask(void*) {
     if (now - guardWinAt > 5000) { guardGapPrev = guardGapMs; guardGapMs = 0; guardPassPrev = guardPassMs; guardPassMs = 0; guardWaitPrev = guardWaitMs; guardWaitMs = 0; guardWinAt = now; }
     prev = now;
     if (otaBusy || sc.active || nServos == 0 || guardEveryMs == 0) continue;
-    uint32_t tw = millis();
-    BusLock L;
-    uint32_t t0 = millis();
-    if (t0 - tw > guardWaitMs) guardWaitMs = t0 - tw;
-    refreshAllFastSync();                // guardTick() for every joint at its end
-    { int vMin = 999, mA = 0;
-      for (uint8_t i = 0; i < nServos; i++) { if (servos[i].rawVoltage > 0 && servos[i].rawVoltage < vMin) vMin = servos[i].rawVoltage; if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f); }
-      powerNote(vMin < 999 ? (uint16_t)vMin : 0, (uint16_t)(mA > 65535 ? 65535 : mA), millis()); }
-    syncTick();                          // Sync motion: steer every joint from these fresh readings
-    liveSend();
-    if (millis() - t0 > guardPassMs) guardPassMs = millis() - t0;
+    uint32_t tw = millis(), t0, took, missed;
+    {
+      BusLock L;
+      t0 = millis();
+      if (t0 - tw > guardWaitMs) guardWaitMs = t0 - tw;
+      const uint32_t missBefore = servoMisses;
+      refreshAllFastSync();                // guardTick() for every joint at its end
+      missed = servoMisses - missBefore;
+      { int vMin = 999, mA = 0;
+        for (uint8_t i = 0; i < nServos; i++) { if (servos[i].rawVoltage > 0 && servos[i].rawVoltage < vMin) vMin = servos[i].rawVoltage; if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f); }
+        powerNote(vMin < 999 ? (uint16_t)vMin : 0, (uint16_t)(mA > 65535 ? 65535 : mA), millis()); }
+      syncTick();                          // Sync motion: steer every joint from these fresh readings
+      liveSend();
+      took = millis() - t0;
+      if (took > guardPassMs) guardPassMs = took;
+    }
+    // 7 Nov 2026: a new board with NO servos attached hung for good. Every read waited its full time, a pass took longer
+    // than the period, vTaskDelayUntil then never waited, and this task (priority 2) held the bus all the time: loop()
+    // never ran again (no web page, no ESP-NOW, ping only). Now: after a long pass, rest as long as it took (loop() gets
+    // at least half the time); nobody answered at all (no servos, or their power off) -> look again in 0.5 s.
+    if (missed >= nServos) { vTaskDelay(pdMS_TO_TICKS(500)); last = xTaskGetTickCount(); }
+    else if (took >= (uint32_t)(guardEveryMs ? guardEveryMs : FAST_MS)) { vTaskDelay(pdMS_TO_TICKS(took)); last = xTaskGetTickCount(); }
   }
 }
 

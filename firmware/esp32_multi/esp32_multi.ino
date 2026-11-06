@@ -51,6 +51,7 @@
 #include <SCServo.h>
 #include <esp_system.h>
 #include <esp_sleep.h>         // Battery guard: the final sleep
+#include <mbedtls/base64.h>    // firmware pieces over ESP-NOW arrive as base64
 #include <driver/gpio.h>
 #include <hal/gpio_ll.h>
 #include <soc/gpio_struct.h>
@@ -1805,7 +1806,7 @@ void errJson(int code, const char* msg) {
 // bus=false: the handler never touches the servo bus and sends by itself (the page, the log, the OTA pull).
 // radio=false: the handler writes to the web connection itself (the page, the OTA pull), so it is web-only.
 struct Route { const char* path; void (*fn)(); bool bus, radio; };
-Route    routes[48];
+Route    routes[56];
 uint8_t  nRoutes = 0;
 void route(const char* path, void (*fn)(), bool bus = true, bool radio = true) {
   if (nRoutes < sizeof(routes) / sizeof(routes[0])) routes[nRoutes++] = {path, fn, bus, radio};
@@ -2755,6 +2756,91 @@ void handleOtaUrl() {
   otaEnd(false);
 }
 
+// ── The web page and firmware updates over ESP-NOW (7 Nov 2026, Nischay: "why not over ESP-NOW too?") ───────────────
+// The laptop's bridge (gos/espnow.py) fetches the page in pieces (/api/page) and caches it, and uploads firmware in
+// 2 KB pieces (/api/ota/begin -> part -> finish), base64 in the request body. Same safety as the Wi-Fi upload: servos
+// limp first (prepareForOta), size and FNV-1a checked, the new firmware only becomes active after the last piece.
+// A stalled radio upload (no piece for RADIO_OTA_STALL_MS) is dropped and the old firmware keeps running.
+#define RADIO_OTA_STALL_MS 20000
+uint32_t otaRadioMs = 0, otaRestartAt = 0, otaWantSum = 0;
+uint32_t pageSum = 0;
+
+// GET /api/page?info=1 -> {"size":N,"sum":"fnv1a hex"};  /api/page?off=K&len=M -> those bytes of the page
+void handlePage() {
+  const size_t size = sizeof(WEBUI_HTML) - 1;
+  if (rq.hasArg("info")) {
+    if (!pageSum) { uint32_t h = 2166136261u; for (size_t i = 0; i < size; i++) { h ^= (uint8_t)WEBUI_HTML[i]; h *= 16777619u; } pageSum = h; }
+    String b = F("{\"ok\":true,\"size\":"); b += (unsigned)size; b += F(",\"sum\":\""); b += String(pageSum, 16); b += F("\"}");
+    okJson(b); return;
+  }
+  size_t off = (size_t)rq.arg("off").toInt(), len = (size_t)rq.arg("len").toInt();
+  if (off > size) off = size;
+  if (len == 0 || len > 6000) len = 6000;
+  if (off + len > size) len = size - off;
+  String b; b.reserve(len); b.concat(WEBUI_HTML + off, len);
+  reply(200, "text/html", b);
+}
+
+// GET /api/ota/begin?size=N&sum=<fnv1a hex>
+void handleOtaBegin() {
+  if (otaBusy) { errJson(409, "an update is already in progress"); return; }
+  const size_t size = (size_t)rq.arg("size").toInt();
+  if (!size) { errJson(400, "need size="); return; }
+  if (ESP.getFreeSketchSpace() == 0) { errJson(500, "no OTA partition on this board - re-flash over USB with an OTA scheme"); return; }
+  prepareForOta("radio");
+  otaExpected = size; otaGot = 0; otaSum = 2166136261u;
+  otaWantSum = (uint32_t)strtoul(rq.arg("sum").c_str(), nullptr, 16);
+  otaAccepting = Update.begin(size);
+  if (!otaAccepting) {
+    lg("Update.begin failed: %s (want %u bytes)", Update.errorString(), (unsigned)size);
+    otaEnd(false); errJson(500, Update.errorString()); return;
+  }
+  otaRadioMs = millis();
+  lg("OTA over ESP-NOW: receiving %u bytes", (unsigned)size);
+  okJson(F("{\"ok\":true,\"got\":0}"));
+}
+
+// POST /api/ota/part?off=K  body: base64 of the next piece. Pieces come in order; a resend of one already written is fine.
+void handleOtaPart() {
+  if (!otaBusy || !otaAccepting) { errJson(409, "no update in progress"); return; }
+  const size_t off = (size_t)rq.arg("off").toInt();
+  String ack = F("{\"ok\":true,\"got\":");
+  if (off < otaGot) { ack += (unsigned)otaGot; ack += '}'; okJson(ack); return; }      // already have it
+  if (off > otaGot) { String b = F("{\"ok\":false,\"error\":\"out of order\",\"got\":"); b += (unsigned)otaGot; b += '}'; reply(409, "application/json", b); return; }
+  const String& in = rq.arg("plain");
+  static uint8_t buf[3072];
+  size_t n = 0;
+  if (mbedtls_base64_decode(buf, sizeof buf, &n, (const unsigned char*)in.c_str(), in.length()) != 0 || n == 0) { errJson(400, "bad base64"); return; }
+  if (Update.write(buf, n) != n) {
+    lg("Update.write failed: %s - aborting", Update.errorString());
+    Update.abort(); otaAccepting = false; otaEnd(false); errJson(500, Update.errorString()); return;
+  }
+  for (size_t i = 0; i < n; i++) { otaSum ^= buf[i]; otaSum *= 16777619u; }
+  otaGot += n; otaRadioMs = millis();
+  ack += (unsigned)otaGot; ack += '}'; okJson(ack);
+}
+
+// GET /api/ota/finish -> checks size and sum, activates the new firmware, restarts 0.6 s later (after this answer)
+void handleOtaFinish() {
+  if (!otaBusy || !otaAccepting) { errJson(409, "no update in progress"); return; }
+  if (otaGot != otaExpected || (otaWantSum && otaSum != otaWantSum)) {
+    lg("OTA over ESP-NOW: got %u of %u bytes, fnv1a %08x (want %08x) - discarded, old firmware stays", (unsigned)otaGot, (unsigned)otaExpected, otaSum, otaWantSum);
+    Update.abort(); otaAccepting = false; otaEnd(false); errJson(500, "size or checksum wrong: nothing activated, just retry"); return;
+  }
+  if (!Update.end(true)) { lg("OTA failed: %s", Update.errorString()); otaEnd(false); errJson(500, Update.errorString()); return; }
+  lg("OTA over ESP-NOW wrote %u bytes, fnv1a %08x - restarting", (unsigned)otaGot, otaSum);
+  otaRestartAt = millis() + 600;
+  okJson(F("{\"ok\":true,\"restarting\":true}"));
+}
+
+void otaRadioTick() {
+  if (otaRestartAt && (int32_t)(millis() - otaRestartAt) > 0) ESP.restart();
+  if (otaBusy && otaAccepting && otaRadioMs && millis() - otaRadioMs > RADIO_OTA_STALL_MS) {
+    lg("OTA over ESP-NOW stalled at %u of %u bytes - dropped, old firmware stays", (unsigned)otaGot, (unsigned)otaExpected);
+    Update.abort(); otaAccepting = false; otaRadioMs = 0; otaEnd(false);
+  }
+}
+
 // Configure only — begin() must wait for an IP, or its UDP bind fails and the
 // network port never appears. wifiTick() calls begin() on the first GOT_IP.
 void otaConfig() {
@@ -2837,7 +2923,7 @@ void guardTask(void*) {
 struct NowIn { uint8_t mac[6]; uint8_t len; uint8_t data[r4now::FRAME_MAX]; };
 QueueHandle_t    nowQ = nullptr;
 r4now::Assembly* nowAsm = nullptr;      // 7.7 KB, made once
-bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false;
+bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false, nowHeldSilent = false;
 uint8_t  nowPeer[6] = {0};
 uint32_t nowHbMs = 0, nowHelloMs = 0, nowMoveMs = 0, nowActiveMs = 0, nowPeekUntil = 0;
 uint32_t nowReqs = 0, nowRepeats = 0, nowDrops = 0, nowHolds = 0;
@@ -2925,7 +3011,8 @@ void nowRun(uint16_t seq, const uint8_t* msg, int len) {
   nowReqs++;
   if (!nowIsRead(path)) nowActiveMs = millis();
   String ans;
-  if (!r)             ans = F("404\n{\"ok\":false,\"error\":\"not found\"}");
+  if (otaBusy && !path.startsWith("/api/ota/")) ans = F("503\n{\"ok\":false,\"error\":\"updating firmware\"}");
+  else if (!r)        ans = F("404\n{\"ok\":false,\"error\":\"not found\"}");
   else if (!r->radio) ans = F("501\n{\"ok\":false,\"error\":\"Wi-Fi only: use the board's address\"}");
   else {
     if (path == "/api/batch" || (path == "/api/command" && target.indexOf("cmd=pos") >= 0)) nowMoveMs = millis();
@@ -2973,7 +3060,7 @@ void nowPoll() {
       const bool fresh = !nowLinked();
       nowSetPeer(m.mac);                             // only the laptop's dongle sends heartbeats
       nowHbMs = millis(); nowHbSeen = true;
-      if (nowHeld) { nowHeld = false; lg("ESP-NOW: laptop back"); }
+      if (nowHeld) { if (nowHeldSilent) lg("ESP-NOW: the master is heard again"); nowHeld = false; nowHeldSilent = false; }
       if (fresh) nowHello(nowPeer);
     } else if (h.type == r4now::HOLD || h.type == r4now::ESTOP) {   // from the dongle: laptop program gone, or its button
       static uint16_t lastSeq = 0; static uint8_t lastType = 0; static uint32_t lastMs = 0;
@@ -2988,7 +3075,7 @@ void nowPoll() {
         nowHeld = true; nowHolds++;
         lg("ESP-NOW: HOLD from the dongle - %u joint(s) stopped where they were, holding", held);
       }
-    } else if (h.type == r4now::REQ && !otaBusy) {
+    } else if (h.type == r4now::REQ) {
       nowSetPeer(m.mac);
       nowHbMs = millis(); nowHbSeen = true;          // a request is the laptop too
       const int done = nowFind(h.seq);
@@ -3010,9 +3097,9 @@ void nowPoll() {
     nowHello(nowLinked() && nowPeerSet ? nowPeer : all);
   }
   if (nowHbSeen && !nowHeld && !otaBusy && now - nowHbMs > NOW_HOLD_MS && nowMoveMs && now - nowMoveMs < NOW_DRIVE_MS + NOW_HOLD_MS) {
-    nowHeld = true; nowHolds++;
+    nowHeld = true; nowHeldSilent = true; nowHolds++;
     uint8_t held; { BusLock L; held = nowHold(); }
-    lg("ESP-NOW: laptop silent %lu ms while driving - %u joint(s) stopped where they were, holding", (unsigned long)(now - nowHbMs), held);
+    lg("ESP-NOW: master silent %lu ms while driving - %u joint(s) stopped where they were, holding", (unsigned long)(now - nowHbMs), held);
   }
 }
 
@@ -3153,6 +3240,10 @@ void setup() {
   route("/api/wifi/scan",       handleWifiScan);
   route("/api/radio",           handleRadio, false);   // radio sleep on/off for Wi-Fi tests
   route("/api/ota/url",         handleOtaUrl, false, false);
+  route("/api/page",            handlePage, false);          // the web page in pieces (ESP-NOW)
+  route("/api/ota/begin",       handleOtaBegin, false);      // firmware update over ESP-NOW
+  route("/api/ota/part",        handleOtaPart, false);
+  route("/api/ota/finish",      handleOtaFinish, false);
   server.on("/api/ota", HTTP_POST, handleOtaDone, handleOtaUpload);
   server.on("/api/ota", HTTP_OPTIONS, []() { setCORS(); server.send(204); });
   server.onNotFound([]() {
@@ -3217,6 +3308,7 @@ void loop() {
   if (mdnsOk) { /* ESPmDNS services itself in the background */ }
   delay(1);
 
+  otaRadioTick();                       // ESP-NOW update: restart after it, or drop a stalled one
   if (otaBusy) return;                 // never touch the servo bus mid-flash
 
   { BusLock L; animTick(); }           // the board owns sequence timing, not the browser

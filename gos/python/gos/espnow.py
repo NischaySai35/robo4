@@ -252,11 +252,11 @@ class EspNowLink:
         raise GosError(f'Module {name} is not heard over ESP-NOW. Heard: {", ".join(m.name for m in self.alive()) or "none"} '
                        f'(channel {self.channel or "searching"}). Check it is powered and runs the firmware with ESP-NOW.')
 
-    def request(self, name, path, body=None, timeout=None):
-        """Run one web-API request on a module through the master: (http code, reply text)."""
+    def request(self, name, path, body=None, timeout=None, raw=False):
+        """Run one web-API request on a module through the master: (http code, reply text); raw=True: reply bytes."""
         m = self.find(name) if isinstance(name, str) else name
-        if body is None and path.split('?')[0] in SHARED_READS: return self._shared(m, path)
-        return self._request(m, path, body)
+        if body is None and not raw and path.split('?')[0] in SHARED_READS: return self._shared(m, path)
+        return self._request(m, path, body, raw)
 
     def _shared(self, m, path):
         while True:
@@ -279,7 +279,7 @@ class EspNowLink:
                 raise
             finally: ev.set()
 
-    def _request(self, m, path, body):
+    def _request(self, m, path, body, raw=False):
         msg = path.encode() + (b'\n' + (body if isinstance(body, bytes) else body.encode()) if body is not None else b'')
         with self._seq_lock:
             self._seq = self._seq % 0xffff + 1
@@ -308,8 +308,8 @@ class EspNowLink:
         finally:
             with m.got: m.pending.pop(seq, None); m.done.pop(seq, None); m.failed_why.pop(seq, None)
             m.slots.release()
-        code, _, reply = done.decode(errors='replace').partition('\n')
-        return int(code or 0), reply
+        code, _, reply = done.partition(b'\n')
+        return int(code or 0), (reply if raw else reply.decode(errors='replace'))
 
     def status(self):
         return {'channel': self.channel, 'dongle': self.dongle.info, 'usbErrors': self.dongle.bad, 'masterSaid': self.dongle.said,
@@ -325,10 +325,30 @@ class EspNowLink:
 # that says http://mod1.local (browser, Studio, sim, build.sh) lands here and never waits for a name lookup.
 # - The module is heard over ESP-NOW: the request goes over the radio (no access point, no kicks).
 # - Not heard, no dongle, or the radio did not answer: the same request goes to the module's Wi-Fi address.
-# - The board's own web page and firmware uploads always go over Wi-Fi (they are too big for the radio).
+# - The board's own web page comes over the radio in pieces (cached); firmware uploads go over the radio in 2 KB pieces
+#   (the board checks size and checksum before switching). Only the board pulling an update from a URL needs Wi-Fi.
 # Its Wi-Fi address: from its hello, else remembered (~/.gos/modules.json), else found on the network (find_modules).
 NAMES = tuple(f'mod{i}' for i in range(1, 10))
-WIFI_ONLY = ('/', '/api/ota', '/api/ota/url')
+WIFI_ONLY = ('/api/ota/url',)
+OTA_PIECE = 2048        # bytes per radio piece: base64 ~2.7 KB = 12 radio frames (the master carries up to 16)
+
+
+def fnv1a(data):
+    h = 2166136261
+    for b in data: h = ((h ^ b) * 16777619) & 0xffffffff
+    return h
+
+
+def _upload_file(body, ctype):
+    """The firmware file from an upload: a multipart form (the board's page, curl -F) or the raw bytes."""
+    if ctype and ctype.startswith('multipart/'):
+        import email
+        msg = email.message_from_bytes(b'Content-Type: ' + ctype.encode() + b'\r\n\r\n' + body)
+        for part in msg.walk():
+            if part.get_filename() or part.get_content_type() == 'application/octet-stream':
+                return part.get_payload(decode=True)
+        return None
+    return body
 
 
 def module_address(name):
@@ -459,6 +479,17 @@ class Gateway:
     def ask(self, name, path, target, body, method='GET', ctype=None):
         """(http code, bytes, content type) for one request to module `name`."""
         m = self.radio(name) if path not in WIFI_ONLY else None
+        if m and path == '/':
+            try: return 200, self._page(m), 'text/html; charset=utf-8'
+            except GosError: pass                        # Wi-Fi below
+        if m and path == '/api/ota' and method == 'POST':
+            data = _upload_file(body or b'', ctype)
+            if not data: return 400, b'no firmware file in the upload', 'text/plain'
+            try: done = self._radio_ota(m, data)
+            except GosError as e:
+                return 500, f'upload over ESP-NOW failed: {e}. Nothing was activated - just retry.'.encode(), 'text/plain'
+            if done: return done
+            m = None                                     # older firmware on the board: this upload goes over Wi-Fi
         if m:
             try:
                 code, text = self.link.request(m, target, body if body else None)
@@ -484,6 +515,48 @@ class Gateway:
         if rtype and ('json' in rtype or 'text/plain' in rtype):
             data = self._own(name, path, data.decode(errors='replace'), ip).encode()
         return code, data, rtype
+
+    def _page(self, m):
+        """The board's web page over the radio: asked in pieces once per firmware (size + checksum), then cached."""
+        code, text = self.link.request(m, '/api/page?info=1')
+        if code != 200: raise GosError(f'no page over the radio ({code}): older firmware')   # -> Wi-Fi
+        info = json.loads(text)
+        key = (m.mac, info['size'], info['sum'])
+        cache = self.__dict__.setdefault('_pages', {})
+        if key not in cache:
+            page = b''
+            while len(page) < info['size']:
+                code, piece = self.link.request(m, f'/api/page?off={len(page)}&len=6000', raw=True)
+                if code != 200 or not piece: raise GosError(f'page piece at {len(page)} failed ({code})')
+                page += piece                            # bytes: a piece may end inside a multi-byte character
+            if fnv1a(page) != int(info['sum'], 16): raise GosError('the page arrived damaged')
+            cache[key] = page
+        return cache[key]
+
+    def _radio_ota(self, m, data):
+        """Firmware upload over the radio: begin -> 2 KB pieces in order -> finish. The board activates it only if the size
+        and FNV-1a checksum match; anything cut off leaves the old firmware running."""
+        import base64
+        t0, name = time.time(), m.name
+        code, text = self.link.request(m, f'/api/ota/begin?size={len(data)}&sum={fnv1a(data):08x}')
+        if code == 404: return None                      # older firmware: no radio upload yet -> Wi-Fi
+        if code != 200: raise GosError(f'the board refused the update: {text}')
+        off = 0
+        while off < len(data):
+            piece = data[off:off + OTA_PIECE]
+            for attempt in range(4):
+                try:
+                    code, text = self.link.request(m, f'/api/ota/part?off={off}', base64.b64encode(piece))
+                except GosError:
+                    if attempt == 3: raise
+                    continue
+                if code == 200: off = json.loads(text)['got']; break
+                if code == 409 and '"got"' in text: off = json.loads(text)['got']; break   # back in step
+                raise GosError(f'piece at {off}: {text}')
+        code, text = self.link.request(m, '/api/ota/finish')
+        if code != 200: raise GosError(f'finish: {text}')
+        self.via[name] = 'radio'
+        return 200, f'OK ({len(data)} bytes over ESP-NOW in {time.time() - t0:.0f} s)'.encode(), 'text/plain'
 
     def _own(self, name, path, text, ip):
         # report this gateway as the board's address, so clients that switch to the reported address stay here

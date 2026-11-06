@@ -23,7 +23,31 @@ class FakeMaster:
     """A pyserial-like port that behaves like firmware/espnow_dongle with one module (mod1) behind it: carries each
     request ('Q') to the module and brings the answer back, says the module's hello, and says 'F' when the module is
     gone. The module runs each request number once (it keeps answers), like esp32_multi."""
-    def __init__(self, give_up_after=0.3, old_firmware=False):
+    PAGE = ('<html>board page ' + 'é' * 4000 + ' end</html>').encode()   # multi-byte characters across piece borders
+
+    def _board(self, whole):
+        """The board's page pieces and radio upload (esp32_multi handlePage / handleOtaBegin / Part / Finish)."""
+        import base64, urllib.parse
+        target, _, body = whole.partition(b'\n')
+        url = urllib.parse.urlsplit(target.decode()); q = dict(urllib.parse.parse_qsl(url.query))
+        if url.path == '/api/page':
+            if 'info' in q: return b'200\n' + json.dumps({'ok': True, 'size': len(self.PAGE), 'sum': f'{espnow.fnv1a(self.PAGE):x}'}).encode()
+            off, n = int(q['off']), int(q['len']); return b'200\n' + self.PAGE[off:off + n]
+        if url.path == '/api/ota/begin':
+            self.ota = {'size': int(q['size']), 'sum': int(q['sum'], 16), 'data': b''}; return b'200\n{"ok":true,"got":0}'
+        if url.path == '/api/ota/part':
+            off, d = int(q['off']), self.ota['data']
+            if off > len(d): return b'409\n' + json.dumps({'ok': False, 'got': len(d)}).encode()
+            if off == len(d): self.ota['data'] = d + base64.b64decode(body)
+            return b'200\n' + json.dumps({'ok': True, 'got': len(self.ota['data'])}).encode()
+        if url.path == '/api/ota/finish':
+            ok = len(self.ota['data']) == self.ota['size'] and espnow.fnv1a(self.ota['data']) == self.ota['sum']
+            self.flashed = self.ota['data'] if ok else None
+            return b'200\n{"ok":true}' if ok else b'500\n{"ok":false}'
+        return None
+
+    def __init__(self, give_up_after=0.3, old_firmware=False, new_firmware=True):
+        self.new_firmware, self.ota, self.flashed = new_firmware, None, None
         self.out, self.buf = queue.Queue(), bytearray()
         self.gone, self.give_up_after, self.old = False, give_up_after, old_firmware
         self.runs, self.done, self.asm = [], {}, {}
@@ -69,10 +93,13 @@ class FakeMaster:
         whole = payload if cnt == 1 else self.asm.setdefault(seq, espnow.Assembly()).add(seq, idx, cnt, payload)
         if whole is None: return
         if seq not in self.done:
-            self.runs.append(whole.decode())
-            body = json.dumps({'ok': True, 'ip': FAKE_IP, 'live': 4211, 'ran': whole.decode(),
-                               'pad': 'x' * (3000 if 'telemetry' in whole.decode() else 0)})
-            self.done[seq] = b'200\n' + body.encode()
+            self.runs.append(whole.decode(errors='replace')[:200])
+            special = self._board(whole) if self.new_firmware else None
+            if special is not None: self.done[seq] = special
+            else:
+                body = json.dumps({'ok': True, 'ip': FAKE_IP, 'live': 4211, 'ran': whole.decode(errors='replace'),
+                                   'pad': 'x' * (3000 if 'telemetry' in whole.decode(errors='replace') else 0)})
+                self.done[seq] = b'200\n' + body.encode()
         for f in espnow.frames(espnow.RESP, seq, self.done[seq]): self._usb('R', MAC + struct.pack('b', -60) + f)
 
 
@@ -242,5 +269,40 @@ def test_radio_first_then_wifi_when_the_master_gives_up():
         time.sleep(espnow.SHARE_FOR + 0.05)                                       # past the shared-read moment
         with urllib.request.urlopen(srv.address('mod1') + '/api/health', timeout=8) as r: assert json.loads(r.read())['via'] == 'wifi'
         assert srv.via['mod1'] == 'wifi'
+    finally:
+        srv.shutdown(); link.close(); board.srv.shutdown()
+
+
+def test_page_and_firmware_upload_over_the_radio():
+    master = FakeMaster()
+    link = _link(master)
+    srv = espnow.serve_gateway(link, port=0, module_port=8796, names=('mod1',))
+    try:
+        with urllib.request.urlopen(srv.address('mod1') + '/', timeout=10) as r:
+            assert r.read() == FakeMaster.PAGE and 'text/html' in r.headers['Content-Type']   # pieces, bytes intact
+        fw = bytes(range(256)) * 40 + b'tail'                                     # 10 KB: 5 radio pieces
+        boundary = 'XyZ'
+        form = (f'--{boundary}\r\nContent-Disposition: form-data; name="f"; filename="fw.bin"\r\n'
+                'Content-Type: application/octet-stream\r\n\r\n').encode() + fw + f'\r\n--{boundary}--\r\n'.encode()
+        up = urllib.request.Request(srv.address('mod1') + f'/api/ota?size={len(fw)}', data=form, method='POST',
+                                    headers={'Content-Type': f'multipart/form-data; boundary={boundary}'})
+        with urllib.request.urlopen(up, timeout=20) as r: assert r.read().startswith(b'OK')
+        assert master.flashed == fw                                               # every byte, checksum matched
+    finally:
+        srv.shutdown(); link.close()
+
+
+def test_upload_to_older_firmware_falls_back_to_wifi():
+    board = _WifiBoard()
+    master = FakeMaster(new_firmware=False)                                       # no radio upload on the board yet
+    link = _link(master)
+    srv = espnow.serve_gateway(link, port=0, module_port=8795, names=('mod1',))
+    try:
+        link.find('mod1').ip = board.ip
+        master._board = lambda whole: b'404\n{"ok":false}' if whole.startswith(b'/api/ota/begin') else None
+        master.new_firmware = True
+        up = urllib.request.Request(srv.address('mod1') + '/api/ota?size=5', data=b'12345', method='POST')
+        with urllib.request.urlopen(up, timeout=10) as r: assert r.read() == b'OK'
+        assert ('POST', '/api/ota?size=5', 5) in board.got                         # it went over Wi-Fi
     finally:
         srv.shutdown(); link.close(); board.srv.shutdown()

@@ -66,6 +66,9 @@
 
 // Defined further down with the sequence player; estopAll() needs it before then.
 void animStop();
+// Peaks while a sequence plays (Nischay 7 Nov: "when an animation completes, log the top 2 servos by current and load").
+// Filled from the guard task's regular reads (no extra bus traffic), reset at Play, reported at "anim finished".
+uint16_t animPeakmA[MAX_SERVOS], animPeakLoad[MAX_SERVOS];
 
 #define FW_VERSION "0.1.0"
 
@@ -911,7 +914,15 @@ void animTick() {
   if (animIdx + 1 < animCount) { animBeginFrame(animIdx + 1); return; }
   if (animLoop)                { animBeginFrame(0); return; }
   animPlaying = false; prefs.putUChar("animRun", 0);
-  lg("anim finished (%u frames)", animCount);
+  int a = -1, b = -1;                                   // the two servos that drew the most current
+  for (uint8_t i = 0; i < nServos; i++) {
+    if (a < 0 || animPeakmA[i] > animPeakmA[a]) { b = a; a = i; }
+    else if (b < 0 || animPeakmA[i] > animPeakmA[b]) b = i;
+  }
+  if (a >= 0 && b >= 0)
+    lg("anim finished (%u frames) - highest current: %s %u mA (load %u %%), %s %u mA (load %u %%)", animCount,
+       cfg.labels[a], animPeakmA[a], animPeakLoad[a] / 10, cfg.labels[b], animPeakmA[b], animPeakLoad[b] / 10);
+  else lg("anim finished (%u frames)", animCount);
 }
 
 // ── Manual home positions ───────────────────────────────────────────────────
@@ -979,6 +990,17 @@ void gotoDeg(uint8_t slot, float deg) {
   cmdPos(servos[slot], deg, 10, POS_ACC_DEFAULT);
 }
 
+// Home for each joint in nominal degrees (180 = the joint's hand-set straight pose). The locks' home is OPEN, not 180:
+// Nischay 5 Nov 2026 (data/real_robot.json lock_home/lock_sign, the same on every module): LOCK1 open 225 / locked 180,
+// LOCK2 open 180 / locked 135. Before 7 Nov "Go to manual home" sent LOCK1 to 180 = locked.
+#define LOCK1_OPEN_NOM 225.0f
+#define LOCK2_OPEN_NOM 180.0f
+float homeTargetFor(uint8_t i) {
+  if (strcmp(cfg.labels[i], "LOCK1") == 0) return LOCK1_OPEN_NOM;
+  if (strcmp(cfg.labels[i], "LOCK2") == 0) return LOCK2_OPEN_NOM;
+  return 180.0f;
+}
+
 void homeAll(bool homeManual = false, bool raw180 = false) {
   lastMotionMs = millis();
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
@@ -992,7 +1014,7 @@ void homeAll(bool homeManual = false, bool raw180 = false) {
     // Straight is nominal 180 for every joint (the offset turns that into the hand-set home), so
     // "home" and "manual home" are now the same place. `homeManual` is kept so old callers work;
     // raw180 asks for the MECHANICAL 180 instead (horn assembly: seat the horn at the true middle).
-    float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : 180.0f, lo, hi);
+    float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : homeTargetFor(i), lo, hi);
     if (!guardAllows(i, nomToRaw(servos[i].id, want))) continue;
     servos[i].targetDeg = want;
     (void)homeManual;
@@ -1100,6 +1122,11 @@ void refreshAllFastSync() {
       int ld = (rx[4] | (rx[5] << 8)) & 0x3FF; if (rx[5] & 0x04) ld = -ld;   // load: bit 10 is the sign
       int cu = (rx[13] | (rx[14] << 8)) & 0x7FFF;                           // current, 6.5 mA units
       servos[i].rawLoad = ld; servos[i].rawLoadAbs = abs(ld); servos[i].rawCurrent = cu;
+      if (animPlaying) {
+        const uint16_t mA = (uint16_t)(cu * 6.5f > 65535 ? 65535 : cu * 6.5f);
+        if (mA > animPeakmA[i]) animPeakmA[i] = mA;
+        if ((uint16_t)abs(ld) > animPeakLoad[i]) animPeakLoad[i] = (uint16_t)abs(ld);
+      }
       if (rx[7] > 0 && rx[7] < 150) servos[i].rawTemp = rx[7];
       if (rx[6] > 0 && rx[6] < 200) servos[i].rawVoltage = rx[6];
     }
@@ -1883,6 +1910,7 @@ String buildJSON() {
     if (sv.rawTemp > 0) j += sv.rawTemp; else j += F("null");
     j += F(",\"home\":");     j += String(homeFor(sv.id), 1);
     j += F(",\"homeSet\":");  j += (hasHome(sv.id) ? F("true") : F("false"));
+    j += F(",\"homeAt\":");   j += String(homeTargetFor(i), 1);   // where "home" sends it (locks: open)
     j += F(",\"speedScale\":"); j += sv.speedScale;
     j += F(",\"acc\":");        j += sv.acc;
     j += F(",\"lastCommandAgeMs\":"); j += (millis() - sv.lastCommandMs);
@@ -2177,6 +2205,7 @@ void handleAnimPlay() {
   uint8_t from = rq.hasArg("from") ? (uint8_t)rq.arg("from").toInt() : 0;
   if (from >= animCount) from = 0;
   bc("anim play (%u frames)", animCount);
+  memset(animPeakmA, 0, sizeof animPeakmA); memset(animPeakLoad, 0, sizeof animPeakLoad);
   animPlaying = true; animInterrupted = false; motionLocked = false;
   prefs.putUChar("animRun", 1);         // remembered across a power cut, so the next boot can say it was interrupted
   animBeginFrame(from);
@@ -2241,7 +2270,7 @@ void handleServoHome() {
   // nominal 180 IS the straight pose, so "180" and "home" are the same place now; raw=1 is the
   // mechanical 180 (nominal 180 minus this joint's offset)
   bool raw = rq.hasArg("raw") && rq.arg("raw") != "0";
-  float target = raw ? 180.0f - offsetFor(id) : 180.0f;
+  float target = raw ? 180.0f - offsetFor(id) : homeTargetFor((uint8_t)slot);   // locks: open
   gotoDeg((uint8_t)slot, target);
   motionLocked = false;
   String r = F("{\"ok\":true,\"id\":"); r += id;

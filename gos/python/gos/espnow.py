@@ -386,6 +386,10 @@ def _handler(gw, fixed=None):
             except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
                 pass   # the asker gave up (its own timeout) before the answer came: nothing to tell it
 
+        def handle(self):
+            try: super().handle()
+            except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError): pass   # the asker left mid-request
+
         def do_OPTIONS(self): self._send(204, b'')
 
         def _forward(self, body=None):
@@ -550,11 +554,14 @@ class Gateway:
         off = 0
         while off < len(data):
             piece = data[off:off + OTA_PIECE]
-            for attempt in range(4):
+            # patient: a weak link can go quiet for seconds (7 Nov, -84 dBm: stopped at 82 % after 4 quick tries).
+            # Keep trying one piece for up to 15 s, under the board's 20 s stall limit, then continue where it got to.
+            piece_end = time.time() + 15
+            while True:
                 try:
                     code, text = self.link.request(m, f'/api/ota/part?off={off}', base64.b64encode(piece))
                 except GosError:
-                    if attempt == 3: raise
+                    if time.time() > piece_end: raise
                     continue
                 if code == 200: off = json.loads(text)['got']; break
                 if code == 409 and '"got"' in text: off = json.loads(text)['got']; break   # back in step

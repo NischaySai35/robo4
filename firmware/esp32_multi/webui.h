@@ -333,7 +333,7 @@ function rows(d){
     // e.g. "home 168", next to an angle of 180 made it look like home was wrong when it was not.)
     const hb=r.querySelector('.hb');
     if(hb&&s.home!=null){
-      const at=s.currentAngle!=null&&Math.abs(s.currentAngle-180)<=0.5;
+      const at=s.currentAngle!=null&&Math.abs(s.currentAngle-(s.homeAt!=null?s.homeAt:180))<=0.5;   // locks: home = open
       hb.textContent=at?'at home \u2713':'go home';
       hb.style.borderColor=at?'var(--ok)':'';
       hb.style.color=at?'var(--ok)':'';

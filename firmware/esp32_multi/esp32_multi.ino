@@ -2927,16 +2927,19 @@ bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false, 
 uint8_t  nowPeer[6] = {0};
 uint32_t nowHbMs = 0, nowHelloMs = 0, nowMoveMs = 0, nowActiveMs = 0, nowPeekUntil = 0;
 uint32_t nowReqs = 0, nowRepeats = 0, nowDrops = 0, nowHolds = 0;
-struct NowDone { uint16_t seq; bool used; String answer; };
+struct NowDone { uint16_t seq; bool used; uint32_t at; String answer; };
 NowDone  nowDone[NOW_CACHE];
 uint8_t  nowDoneNext = 0;
-uint16_t nowRan[NOW_RAN]; uint8_t nowRanN = 0, nowRanNext = 0;
-bool nowAlreadyRan(uint16_t seq) { for (uint8_t i = 0; i < nowRanN; i++) if (nowRan[i] == seq) return true; return false; }
+// A number counts as "already run" only for NOW_SAME_MS: resends happen within the master's 2.5 s; an older match is a
+// NEW request from a restarted laptop program that counts from somewhere else (7 Nov: one was answered "already done").
+#define NOW_SAME_MS 10000
+uint16_t nowRan[NOW_RAN]; uint32_t nowRanAt[NOW_RAN]; uint8_t nowRanN = 0, nowRanNext = 0;
+bool nowAlreadyRan(uint16_t seq) { for (uint8_t i = 0; i < nowRanN; i++) if (nowRan[i] == seq && millis() - nowRanAt[i] < NOW_SAME_MS) return true; return false; }
 
 bool nowLinked() { return nowHbSeen && millis() - nowHbMs < NOW_LINK_MS; }
 bool nowAwake()  { return nowLinked() && nowActiveMs && millis() - nowActiveMs < NOW_AWAKE_MS; }
 bool nowPeeking() { return (int32_t)(nowPeekUntil - millis()) > 0; }
-int  nowFind(uint16_t seq) { for (uint8_t i = 0; i < NOW_CACHE; i++) if (nowDone[i].used && nowDone[i].seq == seq) return i; return -1; }
+int  nowFind(uint16_t seq) { for (uint8_t i = 0; i < NOW_CACHE; i++) if (nowDone[i].used && nowDone[i].seq == seq && millis() - nowDone[i].at < NOW_SAME_MS) return i; return -1; }
 // Reads do not keep the radio awake (the Studio polls all the time); everything else is a command.
 bool nowIsRead(const String& p) {
   return p == "/api/telemetry" || p == "/api/health" || p == "/api/log" || p == "/api/anim/status" || p == "/api/guard" ||
@@ -3025,8 +3028,8 @@ void nowRun(uint16_t seq, const uint8_t* msg, int len) {
     replyBody = String();
   }
   NowDone& d = nowDone[nowDoneNext]; nowDoneNext = (nowDoneNext + 1) % NOW_CACHE;
-  d.seq = seq; d.used = true; d.answer = ans;
-  nowRan[nowRanNext] = seq; nowRanNext = (nowRanNext + 1) % NOW_RAN; if (nowRanN < NOW_RAN) nowRanN++;
+  d.seq = seq; d.used = true; d.at = millis(); d.answer = ans;
+  nowRan[nowRanNext] = seq; nowRanAt[nowRanNext] = millis(); nowRanNext = (nowRanNext + 1) % NOW_RAN; if (nowRanN < NOW_RAN) nowRanN++;
   nowSend(nowPeer, r4now::RESP, seq, ans);
   radioTick();                                       // a command wakes the radio now, not at the end of loop()
 }

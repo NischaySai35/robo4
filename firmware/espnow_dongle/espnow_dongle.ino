@@ -61,7 +61,8 @@ static uint32_t lastHelloMs = 0, searchStepMs = 0;
 static uint32_t lastUsbMs = 0, laptopMoveMs = 0;
 static bool laptopHere = false, heldForLaptop = false;
 static uint16_t ownSeq = 0;
-static r4now::Courier* courier = nullptr;     // 8 requests in flight (~32 KB), made once
+static r4now::Courier* courier = nullptr;
+static uint32_t tQfirst = 0, tQ2S = 0, tAirAcc = 0, tAirUs = 0, tSentAt = 0, tS2A = 0;   // stage timing of the last request     // 8 requests in flight (~32 KB), made once
 
 static void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   r4now::Head h; const uint8_t* p; int n;
@@ -106,11 +107,11 @@ static uint8_t aliveCount() {
 }
 
 static void info() {
-  char s[220];
-  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu",
+  char s[300];
+  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu cresent=%lu cdeliv=%lu cfail=%lu q2s=%lu air=%lu s2a=%lu",
            WiFi.macAddress().c_str(), channel, aliveCount(), (unsigned)getCpuFrequencyMhz(), temperatureRead(),
            (unsigned long)heard, (unsigned long)sent, (unsigned long)txFail, (unsigned long)lost, (unsigned long)badUsb,
-           (unsigned long)holds, (unsigned long)estops);
+           (unsigned long)holds, (unsigned long)estops, (unsigned long)courier->resent, (unsigned long)courier->delivered, (unsigned long)courier->failed, (unsigned long)tQ2S, (unsigned long)tAirUs, (unsigned long)tS2A);
   usbSend('I', (const uint8_t*)s, strlen(s));
 }
 
@@ -195,8 +196,14 @@ static bool isMove(const uint8_t* frame, int len) {
 static uint8_t rx[5 + 6 + r4now::FRAME_MAX + 1];
 static int rxN = 0, rxWant = 0;
 static void usbPoll() {
-  while (Serial.available()) {
-    uint8_t c = Serial.read();
+  // Read what has arrived in one go: Serial.read() one byte at a time cost ~50 us each at 80 MHz, so a 3.2 KB firmware
+  // piece took 184 ms to come in (measured 7 Nov, the laptop sent it in 38 ms) and updates crawled at ~7 KB/s.
+  static uint8_t chunk[512];
+  int got;
+  while ((got = Serial.available()) > 0) {
+   got = Serial.read(chunk, got < (int)sizeof chunk ? got : (int)sizeof chunk);
+   for (int ci = 0; ci < got; ci++) {
+    uint8_t c = chunk[ci];
     if (rxN == 0 && c != 0xA5) continue;
     if (rxN == 1 && c != 0x5A) { rxN = c == 0xA5 ? 1 : 0; continue; }
     rx[rxN++] = c;
@@ -212,11 +219,13 @@ static void usbPoll() {
     const bool wasAway = !laptopHere;
     lastUsbMs = millis(); laptopHere = true;
     if (wasAway) { heldForLaptop = false; replayKnown(); }
+    if (type == 'Q' && n > 6 && p[6 + 6] == 0) tQfirst = millis();             // fragment 0 of a request
     if (type == 'Q' && n > 6) { if (isMove(p + 6, n - 6)) laptopMoveMs = millis(); courier->request(p, p + 6, n - 6, millis()); }
     else if (type == 'P') { /* presence only */ }
     else if (type == 'S' && n > 6) { if (isMove(p + 6, n - 6)) laptopMoveMs = millis(); airSend(p, p + 6, n - 6); }
     else if (type == 'C' && n == 1) { setChannel(p[0]); searchStepMs = millis(); info(); }
     else if (type == 'I') info();
+   }
   }
 }
 
@@ -242,7 +251,10 @@ static void buttonWatch() {
   }
 }
 
-static void courierSend(const uint8_t* mac, const uint8_t* f, int n) { airSend(mac, f, n); }
+static void courierSend(const uint8_t* mac, const uint8_t* f, int n) {
+  uint32_t a = micros(); airSend(mac, f, n); tAirAcc += micros() - a;
+  if (f[6] == f[7] - 1) { tQ2S = millis() - tQfirst; tAirUs = tAirAcc; tAirAcc = 0; tSentAt = millis(); }   // last fragment out
+}
 static void courierFail(const uint8_t* mac, uint16_t seq, const char* why) {
   uint8_t head[8]; memcpy(head, mac, 6); head[6] = (uint8_t)(seq & 0xff); head[7] = (uint8_t)(seq >> 8);
   usbSend('F', head, 8, (const uint8_t*)why, strlen(why));
@@ -298,7 +310,7 @@ void loop() {
     r4now::Head h; const uint8_t* p; int n;
     if (r4now::parse(a.data, a.len, h, p, n)) {
       if (h.type == r4now::HELLO) remember(a, p, n);
-      else if (h.type == r4now::RESP) courier->answer(a.mac, h, millis());
+      else if (h.type == r4now::RESP) { uint32_t d0 = courier->delivered; courier->answer(a.mac, h, millis()); if (courier->delivered != d0) tS2A = millis() - tSentAt; }
     }
     if (laptopHere) {
       uint8_t head[7]; memcpy(head, a.mac, 6); head[6] = (uint8_t)a.rssi;

@@ -78,7 +78,11 @@ class Dongle:
     def _write(self, kind, payload=b''):
         with self._wlock: self.port.write(_usb(kind, payload))
 
-    def deliver(self, mac, frame): self._write('Q', mac + frame)
+    def deliver(self, mac, frames):
+        """All fragments of one request in ONE USB write: each separate write waited ~20 ms for its USB round trip,
+        so a 12-fragment firmware piece took 245 ms (measured 7 Nov; the radio itself resent only 8 of 90)."""
+        data = b''.join(_usb('Q', mac + f) for f in frames)
+        with self._wlock: self.port.write(data)
     def here(self): self._write('P')
     def send(self, mac, frame): self._write('S', mac + frame)
     def channel(self, ch): self._write('C', bytes([ch]))
@@ -195,7 +199,9 @@ class EspNowLink:
     def __init__(self, port, channel=None):
         self.modules = {}                  # mac -> Module
         self._mods_lock = threading.Lock()
-        self._seq, self._seq_lock = 0, threading.Lock()
+        # a random start: a restarted program must not reuse the numbers a module still remembers (it answers those
+        # "already done" for 10 s without running them)
+        self._seq, self._seq_lock = int.from_bytes(os.urandom(2), 'little'), threading.Lock()
         self.channel = channel or 0        # the master follows the modules by itself; this only reports it
         self.dongle = Dongle(port, self._heard, self._gave_up)
         self._run = True
@@ -292,7 +298,7 @@ class EspNowLink:
             with m.got: m.pending[seq] = Assembly()
             m.sent += 1
             try:
-                for f in out: self.dongle.deliver(m.mac, f)          # once: the master resends over the air
+                self.dongle.deliver(m.mac, out)                   # once, one USB write: the master resends over the air
             except Exception as e:
                 self.dongle.dead = True
                 raise GosError(f'The ESP-NOW dongle stopped answering ({e}). Was it unplugged?') from None

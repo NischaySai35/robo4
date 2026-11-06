@@ -2816,7 +2816,7 @@ void guardTask(void*) {
 #define NOW_HELLO_MS 1000
 #define NOW_AWAKE_MS 30000   // radio awake this long after the last command
 #define NOW_PEEK_MS     80   // napping: listen this long after each hello
-#define NOW_CACHE        4    // answers kept for resends
+#define NOW_CACHE        8    // answers kept for resends (4 was too few: a big answer retried at 20 % loss got pushed out, test_now 7)
 #define NOW_RAN         32    // request numbers kept: a repeat whose answer is gone gets 'already done', never a second run
 #define NOW_LINK_MS  1500    // a heartbeat this recent = linked over ESP-NOW (the laptop sends one every 100 ms)
 #define NOW_HOLD_MS   800    // silent this long while driving -> hold (heartbeat is acked + retried by the radio)
@@ -2963,6 +2963,19 @@ void nowPoll() {
       nowHbMs = millis(); nowHbSeen = true;
       if (nowHeld) { nowHeld = false; lg("ESP-NOW: laptop back"); }
       if (fresh) nowHello(nowPeer);
+    } else if (h.type == r4now::HOLD || h.type == r4now::ESTOP) {   // from the dongle: laptop program gone, or its button
+      static uint16_t lastSeq = 0; static uint8_t lastType = 0; static uint32_t lastMs = 0;
+      if (h.seq == lastSeq && h.type == lastType && millis() - lastMs < 2000) continue;   // sent to us and to everyone: once
+      lastSeq = h.seq; lastType = h.type; lastMs = millis();
+      if (h.type == r4now::ESTOP) {                  // button held 2 s: the same as the Studio's E-STOP ALL
+        { BusLock L; estopAll(); }
+        lg("ESP-NOW: E-STOP from the dongle's button - all servos limp");
+      } else if (!otaBusy) {
+        animStop();
+        uint8_t held; { BusLock L; held = nowHold(); }
+        nowHeld = true; nowHolds++;
+        lg("ESP-NOW: HOLD from the dongle - %u joint(s) stopped where they were, holding", held);
+      }
     } else if (h.type == r4now::REQ && !otaBusy) {
       nowSetPeer(m.mac);
       nowHbMs = millis(); nowHbSeen = true;          // a request is the laptop too

@@ -114,18 +114,23 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - [ ] `docs/RESTRUCTURING.md` / `docs/GOS_PARITY.md`: add the firmware guard and the G10 progress when they change.
 - [ ] Option B (a GOS client inside the firmware): only if the laptop translator (`gos robot serve`) proves too slow. Not needed so far.
 
-### ESP-NOW link (6 Nov, on mod1, read-only checks)
-- [x] **Dongle:** ESP32-CAM (AI-Thinker, CH340 = COM7, flashes with no button) runs `firmware/espnow_dongle`; only the radio.
-  - Camera + SD tested first (`firmware/espcam_test`, `tools/espcam/grab.py`): OV3660, 640x480 JPEG in 0.19 s.
-- [x] **mod1** runs the ESP-NOW firmware: every web-API handler also answers over the radio (`rq` + route table), repeats get the saved answer.
-- [x] **Laptop:** `gos robot bridge COM7` -> `http://127.0.0.1:8790/mod1/api/...` answers like the board. Channel found by itself (mod1's hello names it; remembered in `~/.gos/espnow_channel`).
-- [x] Measured: health 19 ms median (Wi-Fi: 250-600 ms), telemetry 4.3 KB in 95 ms; 60 s non-stop: 1,565 reads, worst 123 ms, 0 resends, no 2 s pauses.
-- [x] **Each module has its own laptop address** through the bridge: mod1 = `http://127.0.4.1` (modN = 127.0.4.N). It reports that address as the board's own, so the Studio and the sim (which switch to the board's reported address) stay on the radio. GOS driver checked: 9 joints, 156 reads in 80 s, worst 146 ms.
-- [x] **Starts with the Studio:** `studio/tools/robo4Net.cjs` `supervise()` runs both ROBO4-NET and the bridge (`npm run dev` and the installed app); no dongle = checks every 10 s; a second copy waits and takes over; stops with the Studio (`--parent-pid`). Log: `<data>/logs/espnow_bridge.log`. `ESPNOW_BRIDGE=0` turns it off.
-- [x] Heat with the radio awake: 65.3 -> 66.3 C over 80 s, steady.
-- [ ] **To switch over:** type `127.0.4.1` as M1 in the Sync box and `http://127.0.4.1` as mod1's address in the connection window (both stay on Wi-Fi until then).
-- [ ] **Hold on silence** untested (moves a motor): `py -3.12 tools/espnow/hold_test.py --yes` with Nischay at the robot, torque on, Studio bridge stopped.
-- [ ] Dongle reception is weak-ish (-76..-80 dBm at mod1); a dongle with an external antenna would give more margin.
+### ESP-NOW master (6-7 Nov)
+**Setup (Nischay):** power the modules, plug the ESP32-CAM into the laptop. `http://mod1.local` works everywhere (browser, Studio, sim, `build.sh`), Studio running or not.
+- **Who does what:** the laptop decides; it talks ONLY to the master (ESP32-CAM, AI-Thinker, CH340 = COM7, `firmware/espnow_dongle`) over USB, which does not drop. The master owns the radio:
+  - heartbeat straight to each awake module every 100 ms (acked + retried by the radio; broadcast heartbeats got lost at -85 dBm and held a move);
+  - delivery: `r4now::Courier` resends each request until the whole answer is back, wakes napping modules on their hello, says "failed" after 2.5 s (`test_now.cpp` 7-9: 200 requests at 20 % loss both ways, each ran once);
+  - its own module list + channel search (follows the hellos), handed to the laptop the moment it connects;
+  - laptop program silent 0.4 s while driving -> HOLD to every module; IO0 button: short = HOLD, 2 s = E-STOP;
+  - 80 MHz, camera chip powered down (heat).
+- **Modules (`esp32_multi`):** every web-API handler also answers over the radio (`rq` + route table); last 8 answers + last 32 request numbers kept, so nothing runs twice; any request counts as the laptop; hold after 0.8 s silence while driving; radio awake only for 30 s after a command (reads do not count), else naps and listens 80 ms after each hello (heat). HOLD/ESTOP frames from the master.
+- **Laptop (`gos/python/gos/espnow.py`, `gos robot bridge`):** hands each request to the master once ('Q'), says it is here ('P'); up to 3 requests in flight per module; identical reads at the same moment share one trip. Gateway on `127.0.4.1..9:80`: radio first, the module's Wi-Fi when not heard or the master gives up; web page + uploads always Wi-Fi; Wi-Fi addresses remembered in `~/.gos/modules.json`. Waits for the dongle, survives unplugging.
+- **One-time setup:** `powershell -ExecutionPolicy Bypass -File tools\espnow\install.ps1` (hosts: mod1..9.local -> 127.0.4.1..9, admin once; Startup launcher, log `~/.gos/espnow_bridge.log`). `-Remove` undoes it. The Studio also starts a bridge (`studio/tools/robo4Net.cjs`); a second copy just waits.
+- [x] Measured on mod1 (before the master took over delivery): health 19 ms median, telemetry 4.3 KB in 95 ms, 60 s non-stop: 1,565 reads, worst 123 ms.
+- [x] Master firmware uploaded and answering (courier=1, own heartbeat, channel search).
+- [ ] **mod1 firmware with all of the above is built, not uploaded** (mod1 was off). Check torque off, then OTA.
+- [ ] Nischay runs `install.ps1` once.
+- [ ] **Hold tests (move a motor):** `tools/espnow/hold_test.py --yes`; the IO0 button (short = hold, 2 s = E-STOP).
+- [ ] Reception is weak-ish (-76..-85 dBm); an ESP32 with an external antenna would give margin.
 
 ---
 

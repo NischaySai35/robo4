@@ -4,13 +4,14 @@ REUSE-CHECKED: no ESP-NOW code existed (6 Nov 2026). The frame layout mirrors fi
 change both together. The modules run every request through the same handlers as their web API, so the gateway
 answers exactly like the board's own http://<board>/api/... does.
 
-    gos robot bridge COM7                 # then: http://127.0.0.1:8790/mod1/api/telemetry
+    gos robot bridge                      # then: http://mod1.local (tools/espnow/install.ps1) or http://127.0.4.1
     link = EspNowLink.open('COM7'); link.request('mod1', '/api/health')
 
-The laptop is the brain, the dongle only the radio:
-- a heartbeat goes out every 100 ms; a module that misses it for 0.5 s holds its pose (and the laptop's moves stop);
-- every request is numbered and resent until its answer arrives; the module never runs one number twice;
-- the Wi-Fi channel is found by itself (the modules stay on ROBO4-NET's channel for uploads and their web page).
+Who does what (6 Nov 2026, Nischay: "the comm control of the C3s is with the master, the laptop talks only to it"):
+- the laptop decides what to do; it talks only to the master (the ESP32-CAM on USB, which does not drop);
+- the master owns the radio: heartbeat to each module, resends until each answer is back (r4now::Courier), the
+  channel, the module list, and the hold when the laptop program vanishes while driving;
+- the module never runs one request number twice; Wi-Fi is the fallback, and carries the web page and uploads.
 """
 import json, os, pathlib, re, socketserver, struct, threading, time, urllib.parse, zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -62,24 +63,29 @@ def _usb(kind, payload=b''):
 
 
 class Dongle:
-    """Reads and writes the dongle's USB frames. `port` is a pyserial port (or anything with read/write)."""
-    def __init__(self, port, on_frame):
-        self.port, self.on_frame = port, on_frame
+    """The master's USB side (firmware/espnow_dongle). `port` is a pyserial port (or anything with read/write).
+    The laptop only talks to the master: it hands over requests ('Q'), says it is here ('P'), and hears answers ('R'),
+    give-ups ('F') and what the master did by itself ('L')."""
+    def __init__(self, port, on_frame, on_fail=None):
+        self.port, self.on_frame, self.on_fail = port, on_frame, on_fail
         self.info, self.bad, self._wlock = '', 0, threading.Lock()
+        self.said = []                         # the master's own notes ('L'), newest last
         self._info_event = threading.Event()
         self._run, self.dead = True, False     # dead: unplugged (the reader hit a USB error)
         self._thread = threading.Thread(target=self._reader, name='espnow-usb', daemon=True)
         self._thread.start()
 
-    def send(self, mac, frame):
-        with self._wlock: self.port.write(_usb('S', mac + frame))
+    def _write(self, kind, payload=b''):
+        with self._wlock: self.port.write(_usb(kind, payload))
 
-    def channel(self, ch):
-        with self._wlock: self.port.write(_usb('C', bytes([ch])))
+    def deliver(self, mac, frame): self._write('Q', mac + frame)
+    def here(self): self._write('P')
+    def send(self, mac, frame): self._write('S', mac + frame)
+    def channel(self, ch): self._write('C', bytes([ch]))
 
     def ask_info(self, wait=1.0):
         self._info_event.clear()
-        with self._wlock: self.port.write(_usb('I'))
+        self._write('I')
         self._info_event.wait(wait)
         return self.info
 
@@ -113,8 +119,11 @@ class Dongle:
 
     def _got(self, kind, body):
         if kind == 'R' and len(body) >= 7: self.on_frame(body[:6], struct.unpack('b', body[6:7])[0], body[7:])
+        elif kind == 'F' and len(body) >= 8 and self.on_fail:
+            self.on_fail(body[:6], body[6] | body[7] << 8, body[8:].decode(errors='replace'))
         elif kind == 'I': self.info = body.decode(errors='replace'); self._info_event.set()
-        # 'T' (the radio's own delivery report) is not needed: the answer to each request is the real acknowledgement
+        elif kind == 'L': self.said = (self.said + [f'{time.strftime("%H:%M:%S")} {body.decode(errors="replace")}'])[-20:]
+        # 'T' (the radio's own delivery report) is the master's business
 
 
 # ── the link ───────────────────────────────────────────────────────────────────
@@ -127,29 +136,28 @@ SHARE_FOR = 0.08      # s: a read answered this recently is handed out again
 class Module:
     def __init__(self, mac):
         self.mac, self.name, self.ip, self.fw, self.rssi, self.seen, self.ch = mac, '', '', '', 0, 0.0, 0
-        self.awake = True               # its hello says awake=0 while its radio naps (heat): no direct heartbeat then
+        self.awake = True               # its hello says awake=0 while its radio naps (heat)
         self.got = threading.Condition()
-        self.pending = {}               # seq -> Assembly; finished answers land in self.done[seq]
-        self.done = {}
-        self.poked = 0                  # bumped by each hello: what waits is sent again at once (it listens just then)
-        self.slots = threading.Semaphore(3)   # the module keeps its last 4 answers: at most 3 requests in flight
+        self.pending = {}               # seq -> Assembly; finished answers land in self.done[seq], give-ups in failed_why
+        self.done, self.failed_why = {}, {}
+        self.slots = threading.Semaphore(3)   # the module keeps its last 8 answers; the master carries 8 requests
         self.shared = {}                # read path -> (time, result), or a threading.Event while it travels
         self.shared_lock = threading.Lock()
-        self.sent = self.resent = self.failed = 0
+        self.sent = self.failed = 0
         self.last_ms = 0.0
 
     def as_dict(self):
         return {'name': self.name, 'mac': self.mac.hex(':'), 'ip': self.ip, 'fw': self.fw, 'rssi': self.rssi, 'channel': self.ch,
-                'seenAgoS': round(time.time() - self.seen, 2), 'awake': self.awake, 'requests': self.sent, 'resent': self.resent, 'failed': self.failed,
+                'seenAgoS': round(time.time() - self.seen, 2), 'awake': self.awake, 'requests': self.sent, 'failed': self.failed,
                 'lastMs': round(self.last_ms, 1)}
 
 
 class EspNowLink:
-    HB_EVERY = 0.1        # s; a module the laptop was driving holds its pose after 0.8 s without one
-    RESEND_AFTER = 0.12   # s with no new fragment of the answer -> send the request again
-    STALE = 3.0           # s without a HELLO or an answer -> the module is gone
-    SWEEP_DWELL = 1.1     # s per channel while looking: a resting module says hello once a second
-    REMEMBER = pathlib.Path(os.environ.get('GOS_HOME') or pathlib.Path.home() / '.gos') / 'espnow_channel'
+    """The laptop's side: hands requests to the master and waits for the answer. The master (firmware/espnow_dongle)
+    owns the radio: heartbeat, resends, channel, the module list, the hold when this program vanishes."""
+    HERE_EVERY = 0.1      # s: "the laptop program is here"; the master holds a driven robot after 0.4 s of silence
+    STALE = 3.0           # s without a hello or an answer -> the module is gone
+    BACKSTOP = 1.5        # s past the master's own 2.5 s give-up, in case even its "failed" got lost
 
     @classmethod
     def open(cls, port=None, baud=921600, channel=None):
@@ -167,60 +175,42 @@ class EspNowLink:
                 if port: raise GosError(f'Cannot open {name}: {e}. Close the Arduino serial monitor or other programs using it.') from None
                 continue
             link = cls(s, channel)
-            if link.dongle.ask_info(1.5).startswith('mac='): return link
+            info = link.dongle.ask_info(1.5)
+            if info.startswith('mac=') and 'courier=1' in info: return link
             link.close()
+            if info.startswith('mac='): raise GosError(f'The dongle on {name} runs old firmware: upload firmware/espnow_dongle to it.')
         raise GosError(f'No ESP-NOW dongle answered on {", ".join(names)}. Upload firmware/espnow_dongle to it.')
 
     def __init__(self, port, channel=None):
         self.modules = {}                  # mac -> Module
         self._mods_lock = threading.Lock()
         self._seq, self._seq_lock = 0, threading.Lock()
-        self.channel, self._fixed = channel or self._remembered() or 1, bool(channel)
-        self.dongle = Dongle(port, self._heard)
+        self.channel = channel or 0        # the master follows the modules by itself; this only reports it
+        self.dongle = Dongle(port, self._heard, self._gave_up)
         self._run = True
-        self.dongle.channel(self.channel)
-        self._thread = threading.Thread(target=self._beat, name='espnow-heartbeat', daemon=True)
+        if channel: self.dongle.channel(channel)
+        self._thread = threading.Thread(target=self._here, name='espnow-here', daemon=True)
         self._thread.start()
 
-    # heartbeat + finding the channel
-    def _beat(self):
-        hb_seq, ch_since = 0, time.time()
+    def _here(self):
         while self._run:
-            hb_seq = (hb_seq + 1) & 0xffff
-            hb = frames(HB, hb_seq)[0]
-            known = [m for m in self.alive() if m.awake]
-            try:
-                # Straight to each awake module: the radio confirms and retries it (a broadcast it never does; 6 Nov,
-                # broadcast heartbeats went missing for >1.5 s at -85 dBm and a move was held). Broadcast twice a second
-                # for modules not known yet.
-                for m in known: self.dongle.send(m.mac, hb)
-                if not known or hb_seq % 5 == 0: self.dongle.send(EVERYONE, hb)
+            try: self.dongle.here()
             except Exception: pass
-            now = time.time()
-            if not self._fixed and not self.alive() and now - ch_since > self.SWEEP_DWELL:
-                self.channel = self.channel % 13 + 1
-                self.dongle.channel(self.channel)
-                ch_since = now
-            time.sleep(self.HB_EVERY)
-
-    def _remembered(self):
-        try: return int(self.REMEMBER.read_text().strip())
-        except (OSError, ValueError): return 0
-
-    def _remember(self, ch):
-        try: self.REMEMBER.parent.mkdir(parents=True, exist_ok=True); self.REMEMBER.write_text(str(ch))
-        except OSError: pass
+            time.sleep(self.HERE_EVERY)
 
     def alive(self):
         now = time.time()
         return [m for m in self.modules.values() if now - m.seen < self.STALE]
 
+    def _module(self, mac):
+        with self._mods_lock:
+            return self.modules.get(mac) or self.modules.setdefault(mac, Module(mac))
+
     def _heard(self, mac, rssi, frame):
         p = parse(frame)
         if not p: return
         kind, seq, idx, cnt, payload = p
-        with self._mods_lock:
-            m = self.modules.get(mac) or self.modules.setdefault(mac, Module(mac))
+        m = self._module(mac)
         m.rssi = rssi
         if kind == HELLO:
             m.seen = time.time()
@@ -228,15 +218,7 @@ class EspNowLink:
             m.name, m.ip, m.fw = kv.get('name', m.name), kv.get('ip', m.ip), kv.get('fw', m.fw)
             m.ch = int(kv.get('ch', 0) or 0)
             m.awake = kv.get('awake', '1') != '0'
-            with m.got:
-                m.poked += 1                            # a napping module listens right after its hello
-                m.got.notify_all()
-            # The radio also hears a neighbouring channel a little (mod1 on 13 was found from 12): enough for a hello,
-            # not for a 14-piece answer. The hello says the module's real channel, so go there.
-            if m.ch and m.ch != self.channel and not self._fixed and 1 <= m.ch <= 13:
-                self.channel = m.ch
-                self.dongle.channel(m.ch)
-            if m.ch and m.ch != self._remembered(): self._remember(m.ch)
+            if m.ch: self.channel = m.ch
         elif kind == RESP:
             m.seen = time.time()
             with m.got:
@@ -246,19 +228,25 @@ class EspNowLink:
                 if whole is not None: m.done[seq] = whole
                 m.got.notify_all()
 
+    def _gave_up(self, mac, seq, why):
+        m = self._module(mac)
+        with m.got:
+            if seq in m.pending: m.failed_why[seq] = why
+            m.got.notify_all()
+
     def find(self, name):
         for m in self.alive():
             if m.name == name or m.mac.hex(':') == name.lower(): return m
         raise GosError(f'Module {name} is not heard over ESP-NOW. Heard: {", ".join(m.name for m in self.alive()) or "none"} '
-                       f'(channel {self.channel}). Check it is powered and runs the firmware with ESP-NOW.')
+                       f'(channel {self.channel or "searching"}). Check it is powered and runs the firmware with ESP-NOW.')
 
-    def request(self, name, path, body=None, timeout=2.0):
-        """Run one web-API request on a module over the radio: (http code, reply text)."""
+    def request(self, name, path, body=None, timeout=None):
+        """Run one web-API request on a module through the master: (http code, reply text)."""
         m = self.find(name) if isinstance(name, str) else name
-        if body is None and path.split('?')[0] in SHARED_READS: return self._shared(m, path, timeout)
-        return self._request(m, path, body, timeout)
+        if body is None and path.split('?')[0] in SHARED_READS: return self._shared(m, path)
+        return self._request(m, path, body)
 
-    def _shared(self, m, path, timeout):
+    def _shared(self, m, path):
         while True:
             with m.shared_lock:
                 got = m.shared.get(path)
@@ -266,12 +254,12 @@ class EspNowLink:
                 if isinstance(got, threading.Event): ev, mine = got, False
                 else: ev, mine = threading.Event(), True; m.shared[path] = ev
             if not mine:                                 # someone is asking already: wait for that answer
-                ev.wait(timeout)
+                ev.wait(4.5)
                 with m.shared_lock: got = m.shared.get(path)
                 if isinstance(got, tuple): return got[1]
                 continue                                 # that one failed: ask ourselves
             try:
-                out = self._request(m, path, None, timeout)
+                out = self._request(m, path, None)
                 with m.shared_lock: m.shared[path] = (time.time(), out)
                 return out
             except BaseException:
@@ -279,51 +267,40 @@ class EspNowLink:
                 raise
             finally: ev.set()
 
-    def _request(self, m, path, body, timeout):
+    def _request(self, m, path, body):
         msg = path.encode() + (b'\n' + (body if isinstance(body, bytes) else body.encode()) if body is not None else b'')
         with self._seq_lock:
             self._seq = self._seq % 0xffff + 1
             seq = self._seq
         out = frames(REQ, seq, msg)
+        if len(out) > 16: raise GosError(f'Request too long for the radio ({len(msg)} bytes, at most {16 * PAYLOAD_MAX}).')
         t0 = time.perf_counter()
-        end = t0 + timeout
-        if not m.slots.acquire(timeout=timeout): raise GosError(f'{m.name} is busy: too many requests waiting.')
+        if not m.slots.acquire(timeout=5): raise GosError(f'{m.name} is busy: too many requests waiting.')
         try:
             with m.got: m.pending[seq] = Assembly()
             m.sent += 1
-            tries, done = 0, None
-            while done is None:
-                try:
-                    for f in out: self.dongle.send(m.mac, f)
-                except Exception as e:
-                    self.dongle.dead = True
-                    raise GosError(f'The ESP-NOW dongle stopped answering ({e}). Was it unplugged?') from None
-                tries += 1
-                last_progress, last_count = time.perf_counter(), 0
-                with m.got:
-                    poked = m.poked
-                    while seq not in m.done:
-                        now = time.perf_counter()
-                        if now >= end or m.poked != poked: break
-                        prog = m.pending[seq].progress()
-                        if prog != last_count: last_count, last_progress = prog, now
-                        if now - last_progress >= self.RESEND_AFTER: break
-                        m.got.wait(min(0.01, end - now))
-                    done = m.done.pop(seq, None)
-                if done is None:
-                    if time.perf_counter() >= end:
-                        m.failed += 1
-                        raise GosError(f'{m.name or m.mac.hex(":")} did not answer {path.split("?")[0]} over ESP-NOW in {timeout} s ({tries} tries).')
-                    m.resent += 1
+            try:
+                for f in out: self.dongle.deliver(m.mac, f)          # once: the master resends over the air
+            except Exception as e:
+                self.dongle.dead = True
+                raise GosError(f'The ESP-NOW dongle stopped answering ({e}). Was it unplugged?') from None
+            end = t0 + 2.5 + self.BACKSTOP
+            with m.got:
+                while seq not in m.done and seq not in m.failed_why and time.perf_counter() < end:
+                    m.got.wait(min(0.05, max(0.001, end - time.perf_counter())))
+                done, why = m.done.pop(seq, None), m.failed_why.pop(seq, None)
+            if done is None:
+                m.failed += 1
+                raise GosError(f'{m.name or m.mac.hex(":")} did not answer {path.split("?")[0]} over ESP-NOW: {why or "the master went quiet"}.')
             m.last_ms = (time.perf_counter() - t0) * 1000
         finally:
-            with m.got: m.pending.pop(seq, None); m.done.pop(seq, None)
+            with m.got: m.pending.pop(seq, None); m.done.pop(seq, None); m.failed_why.pop(seq, None)
             m.slots.release()
         code, _, reply = done.decode(errors='replace').partition('\n')
         return int(code or 0), reply
 
     def status(self):
-        return {'channel': self.channel, 'dongle': self.dongle.info, 'usbErrors': self.dongle.bad,
+        return {'channel': self.channel, 'dongle': self.dongle.info, 'usbErrors': self.dongle.bad, 'masterSaid': self.dongle.said,
                 'modules': [m.as_dict() for m in self.alive()]}
 
     def close(self):

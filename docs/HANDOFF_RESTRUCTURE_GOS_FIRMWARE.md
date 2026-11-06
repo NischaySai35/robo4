@@ -127,9 +127,14 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - **One-time setup:** `powershell -ExecutionPolicy Bypass -File tools\espnow\install.ps1` (hosts: mod1..9.local -> 127.0.4.1..9, admin once; Startup launcher, log `~/.gos/espnow_bridge.log`). `-Remove` undoes it. The Studio also starts a bridge (`studio/tools/robo4Net.cjs`); a second copy just waits.
 - [x] Measured on mod1 (before the master took over delivery): health 19 ms median, telemetry 4.3 KB in 95 ms, 60 s non-stop: 1,565 reads, worst 123 ms.
 - [x] Master firmware uploaded and answering (courier=1, own heartbeat, channel search).
-- [ ] **mod1 firmware with all of the above is built, not uploaded** (mod1 was off). Check torque off, then OTA.
-- [ ] Nischay runs `install.ps1` once.
-- [ ] **Hold tests (move a motor):** `tools/espnow/hold_test.py --yes`; the IO0 button (short = hold, 2 s = E-STOP).
+- [x] **7 Nov, new mod1 board** (old C3 died: 3V3-GND short) flashed by USB, homes restored from `firmware/backups/mod1-homes-2026-11-04.json` (the board had another module's homes). Everything below verified on it.
+- [x] `install.ps1` run: mod1..9.local -> bridge; bridge starts at login (Startup), waits for the dongle.
+- [x] **Hold tests passed:** bridge killed 0.42 s into a 60 deg T3 move -> master HOLD, T3 stopped after 22 deg, torque on; IO0 short = HOLD, 2 s = E-STOP (all limp).
+- [x] **Web page + firmware updates over ESP-NOW** (`/api/page`, `/api/ota/begin|part|finish`): 1.3 MB in 60 s (was 2 min 50 s: the master read USB a byte at a time). `build.sh mod1` and the board page's upload both use it via mod1.local.
+- [x] **Battery guard** at 10.3 V (5 s; 20 s above 1 A): log -> master told -> torque off -> radio off -> deep sleep. Not yet seen trip for real.
+- [x] Fixed on the way: a board with no servos hung (guardTask starved loop()); the bridge opened a C3's own USB while hunting for the dongle; opening COM7 could leave the master in upload mode (now restarted cleanly); a restarted bridge's request numbers were answered "already done" (random start + 10 s memory).
+- Decided: the C3 keeps joining Wi-Fi (house Wi-Fi is fine, ROBO4-NET not needed): only a joined radio can nap (modem sleep); without a network ESP-NOW would listen all the time = hotter.
+- **Hardware (Nischay):** many C3s died with 3V3-GND shorts, 99 % when the ESP was powered first and the servo cable plugged in after: latch-up from the hot-plugged 5 V servo line (ST3215 data is 5 V-referenced, the C3 pin max is 3.6 V). Fix: a 1 kohm series resistor on GPIO5, never hot-plug servo cables; 5.1 V zener + polyfuse on the ESP's 5 V; TVS + 470-1000 uF on the battery. The BSS138 I2C level shifter (10 k pull-ups) is too slow for the 1 Mbaud bus.
 - [ ] Reception is weak-ish (-76..-85 dBm); an ESP32 with an external antenna would give margin.
 
 ---

@@ -474,3 +474,38 @@
   opacity: 0.85;
 }
 .msrr-notes li { margin: 2px 0; }
+
+/* ── split view (Nischay 5 Nov): left the ideal robot, right the real copy ── */
+.msrr-split { position: absolute; inset: 0; pointer-events: none; }
+.msrr-split-line { position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px; background: var(--hud-border); }
+.msrr-split-tag {
+  position: absolute; bottom: 140px; max-width: calc(50% - 24px);
+  padding: 4px 8px; border-radius: 4px; border: 1px solid var(--hud-border);
+  background: var(--hud-bg); color: var(--hud-text); font: 11px/1.4 var(--font-ui);
+}
+.msrr-split-tag--left { left: 12px; }
+.msrr-split-tag--right { left: calc(50% + 12px); }
+.msrr-split-tag b { color: var(--hud-warn); font-weight: 600; }
+.msrr-split-status { color: var(--hud-label); margin-top: 2px; }
+
+/* the right half while its real copy is being built */
+.msrr-split-loading {
+  position: absolute; left: 75%; top: 45%; transform: translate(-50%, -50%); width: min(300px, 40%);
+  display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 16px; border-radius: 6px;
+  border: 1px solid var(--hud-border); background: var(--hud-bg); color: var(--hud-text); font: 12px/1.4 var(--font-ui); text-align: center;
+}
+.msrr-split-spinner { width: 22px; height: 22px; border-radius: 50%; border: 3px solid var(--hud-border); border-top-color: var(--accent); animation: msrr-spin 0.9s linear infinite; }
+@keyframes msrr-spin { to { transform: rotate(360deg); } }
+.msrr-split-bar { width: 100%; height: 4px; border-radius: 2px; background: var(--hud-border); overflow: hidden; }
+.msrr-split-bar > div { height: 100%; background: var(--accent); transition: width 0.5s linear; }
+.msrr-split-hint { color: var(--hud-label); font-size: 11px; }
+
+/* Planner v2 Goal tab (7 Nov): four steps, one open at a time */
+.msrr-step { border-bottom: 1px solid var(--border); }
+.msrr-step-head {
+  display: block; width: 100%; text-align: left; padding: 8px 2px;
+  background: none; border: 0; cursor: pointer;
+  font: 600 12px var(--font-ui); color: var(--text-dim, #9aa0ab);
+}
+.msrr-step-head:hover { color: var(--accent); }
+.msrr-step-head.open { color: var(--accent); }

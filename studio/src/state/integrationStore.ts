@@ -45,6 +45,10 @@ interface IntegrationState {
   stats: { queued: number; sent: number; failed: number };
   avgVoltage: number | null;
   totalCurrentMA: number | null;
+  /** Hottest ESP chip temperature (°C) across connected boards, from telemetry chipC; null if none report it. */
+  maxChipC: number | null;
+  /** One row per ESP board (module), sorted by module number: the header shows the worst one, hover lists all. */
+  boards: BoardStat[];
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   overcurrentServos: any[];
   setEspUrl: (url: string) => void;
@@ -52,6 +56,8 @@ interface IntegrationState {
   setServoOnlineCount: (n: number) => void;
   setAvgVoltage: (v: number | null) => void;
   setTotalCurrentMA: (v: number | null) => void;
+  setMaxChipC: (v: number | null) => void;
+  setBoards: (b: BoardStat[]) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setOvercurrentServos: (arr: any[]) => void;
   queueAngles: (angles: Angles, labels?: Record<string, string>) => boolean;
@@ -65,6 +71,17 @@ interface IntegrationState {
   clearSimLog: () => void;
   clearCtrlLog: () => void;
   resetStats: () => void;
+}
+
+/** One ESP board's live figures (espPoll). num = module number from its name (mod3.local -> 3). */
+export interface BoardStat {
+  num: number;
+  url: string;
+  online: boolean;
+  servos: number;          // servos answering on this board
+  volt: number | null;     // average servo voltage = this module's battery
+  mA: number | null;       // total servo current on this board
+  chipC: number | null;    // ESP chip temperature
 }
 
 export const useIntegrationStore = create<IntegrationState>((set, get) => ({
@@ -90,6 +107,8 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
   // ── ESP config ──────────────────────────────────────────────────────────────
   avgVoltage:       null,   // average voltageV across all online servos
   totalCurrentMA:   null,   // sum of currentmA across all online servos
+  maxChipC:         null,   // hottest ESP chip temperature across connected boards
+  boards:           [],
   overcurrentServos: [],    // servos drawing > 700 mA: [{ id, label, currentmA }]
 
   setEspUrl:             (url)       => set({ espUrl: url }),
@@ -97,6 +116,9 @@ export const useIntegrationStore = create<IntegrationState>((set, get) => ({
   setServoOnlineCount:   (n)         => set({ servoOnlineCount: n }),
   setAvgVoltage:         (v)         => set({ avgVoltage: v }),
   setTotalCurrentMA:     (v)         => set({ totalCurrentMA: v }),
+  setMaxChipC:           (v)         => set({ maxChipC: v }),
+  // polled ~8x/s: only replace the array when something shown actually changed
+  setBoards:             (b)         => { if (JSON.stringify(b) !== JSON.stringify(get().boards)) set({ boards: b }); },
   setOvercurrentServos:  (arr)       => set({ overcurrentServos: arr }),
 
   // ── Angle queue (called by SimTransmitPanel every 500ms) ────────────────────

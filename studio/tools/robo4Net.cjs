@@ -9,7 +9,8 @@
  *   - Windows only; elsewhere it logs and does nothing.
  *   - Runs hidden; restarts 3 s after a crash.
  *   - Only one copy runs: a second copy exits with code 3 (BUSY), so `npm run dev` + the app together don't
- *     fight — the second launcher checks again every 10 s and takes over when the first one closes.
+ *     fight — the second launcher checks again every 10 s and takes over when the first one closes (the bridge: by
+ *     knocking on its port 8790, without starting a process).
  *   - The bridge exits with code 4 when no dongle is plugged in: checked again every 10 s, said once.
  *   - Stopped when the Studio closes — or, if the Studio is killed outright, by the helper itself (it watches
  *     the parent pid).        ROBO4_NET=0 / ESPNOW_BRIDGE=0 -> don't manage that one.
@@ -23,11 +24,21 @@
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const net = require('node:net');
+
+/** true when something already listens on 127.0.0.1:port (a cheap knock - no process started) */
+function portTaken(port) {
+  return new Promise((done) => {
+    const sock = net.connect({ host: '127.0.0.1', port });
+    const end = (v) => { sock.destroy(); done(v); };
+    sock.once('connect', () => end(true)); sock.once('error', () => end(false)); sock.setTimeout(800, () => end(false));
+  });
+}
 
 const BUSY = 3;        // another copy owns it (robo4-net.ps1, gos robot bridge)
 const NOTHING = 4;     // nothing to run it on yet (bridge: no dongle plugged in)
 
-function supervise({ tag, command, args, logFile, log, upMsg, nothingMsg, env }) {
+function supervise({ tag, command, args, logFile, log, upMsg, nothingMsg, env, taken }) {
   let child = null; let stopped = false; let waiting = false; let idle = false;
   const run = () => {
     if (stopped || child) return;
@@ -42,7 +53,12 @@ function supervise({ tag, command, args, logFile, log, upMsg, nothingMsg, env })
       if (code === BUSY) {
         if (!waiting) log(`[${tag}] already running elsewhere - will take over when that one closes`);
         waiting = true;
-        setTimeout(run, 10000);
+        // taken(): watch the other copy by knocking on its port and start ours only once it is gone - starting a whole new
+        // process every 10 s just to hear 'busy' again was wasteful (7 Nov, Nischay: why open it every few seconds?)
+        if (taken) {
+          const watch = async () => { if (stopped) return; if (await taken()) setTimeout(watch, 3000); else run(); };
+          setTimeout(watch, 3000);   // a knock costs ~1 ms: check often, so a closed bridge is replaced within ~3 s
+        } else setTimeout(run, 10000);
         return;
       }
       if (code === NOTHING) {
@@ -94,6 +110,7 @@ function startEspNowBridge({ logDir, gosPath, log = console.log }) {
     logFile: path.join(logDir, 'espnow_bridge.log'), log,
     upMsg: 'ESP-NOW bridge is up: modules answer at http://127.0.4.<N> (mod1 = 127.0.4.1)',
     nothingMsg: 'no ESP-NOW dongle plugged in - checking every 10 s (modules stay on Wi-Fi)',
+    taken: () => portTaken(8790),           // the bridge's gateway port (gos/python/gos/espnow.py): another bridge owns it
   });
 }
 

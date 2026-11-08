@@ -5,7 +5,7 @@
  * `view` every frame; everything else updates it through `show()`.
  */
 import { create } from 'zustand';
-import { type PhysPrepared, type PhysRun, type ReceiverMark, preparePhys, prepareRaw, haveOffsets, physFrame, physDuration, receiverMarks, receiversIndexAt } from '@/features/msrr2/physicsView';
+import { type PhysPrepared, type PhysRun, type ReceiverMark, preparePhys, prepareRaw, haveOffsets, physFrame, frameIndexAt, physDuration, receiverMarks, receiversIndexAt } from '@/features/msrr2/physicsView';
 import { CONFIG, isFloorRef } from '@/robotics/msrr2/model';
 import { toSimScene, toSimPlan, physicsFetch } from '@/robotics/msrr2/simScene';
 import { type Config, type Edge, type ModulePose, STRAIGHT, cloneConfig } from '@/robotics/msrr2/model';
@@ -27,7 +27,12 @@ export interface ManualState {
   start: { scene: Record<string, any>; opts: { seed: number; randomize: boolean; disturb: boolean; judge: string; ideal?: boolean } };
   mode: 'move' | 'lock' | 'connect'; pick: string[]; hover: { id: string; x: number; y: number } | null; err: string;
 }
-export type V2Tab = 'robot' | 'shapes' | 'plan' | 'ask' | 'run' | 'manual';
+/** 7 Nov (Nischay: six tabs were confusing): three tabs by what you are doing - Live (the running sim + real robot),
+ *  Build (a robot set up by hand + Check), Goal (say it -> pick a shape -> plan -> dry run, one flow of steps) */
+export type V2Tab = 'live' | 'build' | 'goal';
+export type GoalStep = 'ask' | 'shapes' | 'plan' | 'run';
+/** the old six tab names still work (scripts, links inside panels): each opens its new home */
+type OldTab = 'robot' | 'manual' | GoalStep;
 
 const D = (deg: number) => 180 + deg;
 
@@ -77,11 +82,28 @@ export const PRESETS: { id: string; label: string; config: Config }[] = [
   },
 ];
 
+export interface TwinState {
+  /** still being built in the background: seconds so far */
+  starting?: boolean; elapsed?: number; error?: string;
+  on: boolean; t: number; behind: number; speed: number; seed: number; last: string; locks: string[]; finite: boolean;
+  /** copy = the sim of the real robot; telemetry = the REAL robot (Sync on) rebuilt from its encoders + predicted flex */
+  source?: 'copy' | 'telemetry'; modules?: string[];
+  /** telemetry: does the board answer now, and for how long it has been quiet (s) */
+  contact?: boolean; quiet_s?: number | null;
+  feedback?: { mode: string; uses: string[]; err_mm: Record<string, number> } | null;
+}
+
+const SPLIT_KEY = 'tetro.msrr.split';
+const splitSaved = (): boolean => { try { return localStorage.getItem(SPLIT_KEY) === '1'; } catch { return false; } };
+
 interface V2State {
   mode: V2Mode;
   setMode: (m: V2Mode) => void;
   tab: V2Tab;
-  setTab: (t: V2Tab) => void;
+  setTab: (t: V2Tab | OldTab) => void;
+  /** the Goal tab's open step (one at a time) */
+  goalStep: GoalStep;
+  setGoalStep: (s: GoalStep) => void;
   /** the Plan tab's chosen target (the Ask tab sets it) */
   planTargetId: string;
   setPlanTargetId: (id: string) => void;
@@ -128,6 +150,14 @@ interface V2State {
   physics: { pp: PhysPrepared; t: number; playing: boolean; withPlan: boolean; live?: { id: string; fetching: boolean; manual?: boolean } } | null;
   // ── MANUAL tab: a live physics session driven by hand (C:\TETROBOT\sim\manual.py) ──
   manual: ManualState | null;
+  /** SPLIT view (Nischay 5 Nov): left the ideal robot, right the REAL robot as the sim expects it - a realistic copy (sag, gear play,
+   *  random robot, room) driven by exactly what Sync sends a board (real_sync.Twin). Only while a manual session runs. */
+  split: boolean;
+  setSplit: (on: boolean) => void;
+  twin: { pp: PhysPrepared | null; state: TwinState | null; err: string } | null;
+  /** what the right half draws */
+  view2: { modules: FittedModule[]; sig: number };
+  twinStart: () => Promise<void>;
   manualStart: (scene: Record<string, any>, opts: { seed: number; randomize: boolean; disturb: boolean; judge: string; ideal?: boolean }) => Promise<void>;
   manualCmd: (cmd: Record<string, any>) => Promise<Record<string, any> | null>;
   manualStop: () => void;
@@ -230,8 +260,11 @@ let sig = 0;
 export const useV2Store = create<V2State>((set, get) => ({
   mode: 'v2',
   setMode: (m) => set({ mode: m }),
-  tab: 'robot',
-  setTab: (t) => set({ tab: t }),
+  tab: 'live',
+  setTab: (t) => set(t === 'robot' ? { tab: 'build' } : t === 'manual' ? { tab: 'live' }
+    : t === 'live' || t === 'build' || t === 'goal' ? { tab: t } : { tab: 'goal', goalStep: t }),
+  goalStep: 'ask',
+  setGoalStep: (s) => set({ goalStep: s }),
   planTargetId: '',
   setPlanTargetId: (id) => set({ planTargetId: id }),
 
@@ -293,6 +326,24 @@ export const useV2Store = create<V2State>((set, get) => ({
 
   physics: null, physBusy: false, physErr: '', physRandom: true, physSeed: 1,
   manual: null,
+  split: splitSaved(),
+  twin: null,
+  view2: { modules: [], sig: 0 },
+  setSplit: (on) => {
+    try { localStorage.setItem(SPLIT_KEY, on ? '1' : '0'); } catch { /* per-viewer convenience only */ }
+    set({ split: on });
+    if (on && get().manual && !get().twin) void get().twinStart();
+    if (!on && get().twin) { void get().manualCmd({ kind: 'twin', on: false }); set({ twin: null, view2: { modules: [], sig: ++sig } }); }
+  },
+  twinStart: async () => {
+    const m = get().manual; if (!m) return;
+    set({ twin: { pp: null, state: null, err: '' } });
+    get().pushLog(`split view: building the REAL copy in the background (random robot #${get().physSeed}, sag + gear play + lock play + room)`);
+    const r = await get().manualCmd({ kind: 'twin', on: true, seed: get().physSeed });
+    if (!get().split || get().manual?.id !== m.id) return;                        // switched off / another session meanwhile
+    if (!r?.ok) set({ twin: { pp: null, state: null, err: r?.error ?? 'physics service not reachable' } });
+    // the drawing is prepared when /manual/step brings twin_init (the copy is built in the background, 20-90 s)
+  },
   manualStart: async (scene, opts) => {
     const old = get().manual; if (old) physicsFetch(`/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: old.id, cmd: { kind: 'close' } }) }).catch(() => {});
     set({ physBusy: true, physErr: '', playing: false });
@@ -303,7 +354,8 @@ export const useV2Store = create<V2State>((set, get) => ({
       const run = { ...st, frames: [], events: [], randomized: opts.randomize, seed: opts.seed, finite: true } as PhysRun;
       const pp = prepareRaw(run, assemblyToFitted(assemble(PRESETS.find((p) => p.id === 'standing')!.config))[0]);
       set({ physics: { pp, t: 0, playing: true, withPlan: false, live: { id: st.id, fetching: false, manual: true } }, physBusy: false, receivers: receiverMarks(st.receivers),
-            manual: { id: st.id, ports: st.ports, state: st.state, mode: 'move', pick: [], hover: null, err: '', start: { scene, opts } } });
+            manual: { id: st.id, ports: st.ports, state: st.state, mode: 'move', pick: [], hover: null, err: '', start: { scene, opts } }, twin: null, view2: { modules: [], sig: ++sig } });
+      if (get().split) void get().twinStart();
       get().pushLog(`manual session: ${scene.modules.length} module(s), real physics (${opts.ideal ? 'IDEAL robot: no errors, no randomness, no room' : `${opts.randomize ? `random robot #${opts.seed}` : 'nominal robot'}${opts.disturb ? ', room disturbances on' : ''}`})`);
     } catch (e) {
       set({ physBusy: false, physErr: `the physics service could not start (see data/logs/verify_service_console.log) (${(e as Error).message})` });
@@ -324,7 +376,7 @@ export const useV2Store = create<V2State>((set, get) => ({
   manualStop: () => {
     const m = get().manual;
     if (m) physicsFetch(`/manual/cmd`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: m.id, cmd: { kind: 'close' } }) }).catch(() => {});
-    set({ manual: null, physics: null }); get().show(get().config);
+    set({ manual: null, physics: null, twin: null, view2: { modules: [], sig: ++sig } }); get().show(get().config);
   },
   manualSet: (patch) => { const m = get().manual; if (m) set({ manual: { ...m, ...patch } }); },
   manualPick: (portId) => {
@@ -364,7 +416,9 @@ export const useV2Store = create<V2State>((set, get) => ({
       set({ physBusy: false, physErr: `the physics service could not start (see data/logs/verify_service_console.log) (${(e as Error).message})` });
     }
   },
-  gravityOff: () => { set({ physics: null }); get().show(get().config); },   // a live session just stops being stepped
+  // a live session just stops being stepped. A MANUAL session is closed outright (7 Nov: this only paused it, so the split
+  // view, SPLIT button and frozen robot stayed as if it still ran)
+  gravityOff: () => { if (get().manual) { get().manualStop(); return; } set({ physics: null }); get().show(get().config); },
   buildShape: async (index) => {
     const s = get();
     set({ physBusy: true, physErr: '', playing: false });
@@ -423,6 +477,20 @@ useV2Store.setState((st) => ({ tickers: [...st.tickers, (dt: number) => {
           }
           if (j.frames) ph.pp.run.frames.push(...j.frames);
           const fr = ph.pp.run.frames; if (fr.length > 2000) fr.splice(0, fr.length - 1500);   // a manual session runs for as long as you like
+          let tw = useV2Store.getState().twin;
+          if (live.manual && tw && !tw.pp && j.twin_init) {                      // the copy is ready: prepare its drawing once
+            const run = { bodies: j.twin_init.bodies, frame0: j.twin_init.frame0, frames: [], events: [], fps: ph.pp.run.fps, randomized: true, seed: useV2Store.getState().physSeed, finite: true } as PhysRun;
+            tw = { pp: prepareRaw(run, assemblyToFitted(assemble(PRESETS.find((p) => p.id === 'standing')!.config))[0]), state: j.twin ?? null, err: '' };
+            useV2Store.setState({ twin: tw });
+          }
+          if (live.manual && tw && !tw.pp && j.twin) useV2Store.setState({ twin: { ...tw, state: j.twin, err: j.twin.error ?? '' } });   // still building: its seconds so far
+          if (live.manual && tw?.pp) {                                                   // the split view's real copy, same clock
+            const tf = tw.pp.run.frames;
+            if (j.twin_frames?.length && tf.length && j.twin_frames[0].t < tf[tf.length - 1].t - 0.05) tf.length = 0;
+            if (j.twin_frames) tf.push(...j.twin_frames);
+            if (tf.length > 2000) tf.splice(0, tf.length - 1500);
+            if (j.twin) useV2Store.setState({ twin: { ...tw, state: j.twin } });
+          }
           if (live.manual && /no such manual session/.test(j.error ?? '')) {
             const m = useV2Store.getState().manual;
             if (m && m.id === live.id) { useV2Store.getState().pushLog('the physics service restarted and lost the session - starting the same setup again'); useV2Store.getState().manualStart(m.start.scene, m.start.opts); }
@@ -452,10 +520,13 @@ useV2Store.setState((st) => ({ tickers: [...st.tickers, (dt: number) => {
     const man = s.manual, fr = ph.pp.run.frames;
     let dots = {};
     if (ph.live.manual && man && fr.length) {
-      const k = Math.max(0, Math.min(fr.length - 1, Math.round(t * ph.pp.run.fps))), x = fr[k].x;
+      const k = frameIndexAt(ph.pp.run, t), x = fr[k].x;
       if (x && x.length === man.ports.length && portsShown.k !== k) { portsShown.k = k; dots = { manual: { ...man, ports: man.ports.map((q, i) => ({ ...q, p: x[i] })) } }; }
     }
-    useV2Store.setState({ physics: { ...ph, t }, view: { modules: physFrame(ph.pp, t), overlay: null, sig: ++sig }, ...dots });
+    // the right half: the real copy at the SAME moment (the ideal session waits for it, so it is never far behind)
+    const tpp = s.split ? s.twin?.pp : null;
+    const right = tpp && tpp.run.frames.length ? { view2: { modules: physFrame(tpp, Math.min(t, tpp.run.frames[tpp.run.frames.length - 1].t)), sig: ++sig } } : {};
+    useV2Store.setState({ physics: { ...ph, t }, view: { modules: physFrame(ph.pp, t), overlay: null, sig: ++sig }, ...dots, ...right });
     return;
   }
   const t = Math.min(physDuration(ph.pp), ph.t + dt * s.playSpeed);

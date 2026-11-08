@@ -75,8 +75,14 @@ export function getConnectorWorld(doc: Document, bodyId: string, connectorId: st
   const conns: Connector[] = bodyConnectors(body);
   const con = conns.find((c) => c.id === connectorId);
   if (!con) return null;
-  const M = bodyWorldMatrix(doc, bodyId, fk);
-  const bodyQ = new THREE.Quaternion().setFromRotationMatrix(M);
+  return connectorWorldFrom(con, bodyWorldMatrix(doc, bodyId, fk));
+}
+
+/** One connector in the world, given its body's world matrix: THE connector maths for every viewport (the Editor through
+ *  getConnectorWorld, MSRR from its drawn part poses), so plugs sit in the same place on the same part everywhere.
+ *  The matrix may carry a uniform scale (MSRR draws in cubes); only its rotation turns the normal and key. */
+export function connectorWorldFrom(con: Connector, M: THREE.Matrix4): ConnectorWorld {
+  const bodyQ = new THREE.Quaternion(); M.decompose(new THREE.Vector3(), bodyQ, new THREE.Vector3());
   const localNormal = new THREE.Vector3(...con.normal);
   const position = new THREE.Vector3(...con.position).applyMatrix4(M);
   const normal = localNormal.clone().applyQuaternion(bodyQ).normalize();

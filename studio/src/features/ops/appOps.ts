@@ -130,7 +130,7 @@ const sel = () => useSelectionStore.getState();
 const bodySelected = () => objectMode() && sel().kind === 'body' && !!sel().selectedId;
 const axisModal = () => !!useTransformHudStore.getState().axis;
 
-let ui = { togglePalette: () => {}, toggleHelp: () => {}, toggleConn: () => {} };
+let ui = { togglePalette: () => {}, toggleHelp: () => {}, toggleConn: () => {}, openConn: () => {} };
 export const setUiActions = (a: typeof ui) => { ui = a; };
 
 // ── operators ──────────────────────────────────────────────────────────────────
@@ -143,6 +143,8 @@ defineOperator({ id: 'view.toggleTheme', label: 'Switch light or dark theme', gr
 defineOperator({ id: 'ui.palette', label: 'Command palette', group: 'App', hidden: true, exec: () => ui.togglePalette() });
 defineOperator({ id: 'ui.help', label: 'Keyboard shortcuts', group: 'App', exec: () => ui.toggleHelp() });
 defineOperator({ id: 'ui.connection', label: 'Toggle connection window', group: 'Hardware', exec: () => ui.toggleConn() });
+// opens it, never closes it (Nischay 5 Nov: turning Sync on again CLOSED the open SIM -> ESP window)
+defineOperator({ id: 'ui.connection.open', label: 'Open connection window', group: 'Hardware', hidden: true, exec: () => ui.openConn() });
 
 defineOperator({ id: 'edit.undo', label: 'Undo', group: 'Edit', poll: () => useHistoryStore.getState().canUndo, exec: () => bridge.undo?.() });
 defineOperator({ id: 'edit.redo', label: 'Redo', group: 'Edit', poll: () => useHistoryStore.getState().canRedo, exec: () => bridge.redo?.() });

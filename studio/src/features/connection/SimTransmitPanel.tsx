@@ -2,8 +2,8 @@
  * SimTransmitPanel — what Sync sends to the robot, live.
  *
  * Sync ON (the viewport's SYNC switch, hardwareStore.streaming) samples the sim every 50 ms:
- *   - Editor / Animation: the model's movable joints (180 + jointServoDegrees) -> integrationStore.queueAngles, which
- *     ServoController relays to each joint's module board (sendServoBatch).
+ *   - EVERY other page (Editor, Analysis, Training, Animation, ESP-TTL, Motor ...): the shared model's joints -> the physics
+ *     service's real_sync.PoseSync (poseSync.ts), the SAME robot link as MSRR (directions, smooth speed, hold, E-STOP).
  *   - MSRR live robot: the physics service sends the corrected angles itself (sim/real_sync.py); this panel shows them,
  *     switches that sender on / off with Sync, and holds the board addresses and the emergency stop.
  * With no board online every change is still listed, as "would send" (Nischay 3 Nov).
@@ -15,10 +15,10 @@ import { Input } from '@/components/ui/input';
 import { useEffect, useRef } from 'react';
 import { useIntegrationStore } from '@/state/integrationStore';
 import { useHardwareStore } from '@/state/hardwareStore';
-import { useModelStore } from '@/state/modelStore';
 import { usePageStore } from '@/state/pageStore';
 import { useV2Store } from '@/state/msrrV2Store';
-import { jointServoDegrees } from '@/hardware/protocol';
+import { hardwareBridge } from '@/features/hardware/HardwareBridge';
+import { usePoseSync, poseCmd } from './poseSync';
 
 const INTERVAL_MS = 50;
 
@@ -37,10 +37,9 @@ const SRC_COLOR = {
 };
 
 /** the MSRR live session's sender state (sim/real_sync.py), when that is what the viewport shows */
-const msrrSync = (): any => (usePageStore.getState().page === 'msrr' ? (useV2Store.getState().manual?.state as any)?.sync ?? null : null);
+const msrrSync = (): any => (usePageStore.getState().page === 'msrr' ? (useV2Store.getState().manual?.state as any)?.sync ?? null : usePoseSync.getState().sync);
 
 export default function SimTransmitPanel() {
-  const queueAngles = useIntegrationStore(s => s.queueAngles);
   const noteAngles  = useIntegrationStore(s => s.noteAngles);
   const simLog      = useIntegrationStore(s => s.simLog);
   const espOnline   = useIntegrationStore(s => s.connected);
@@ -51,14 +50,27 @@ export default function SimTransmitPanel() {
   const espUrl      = useIntegrationStore(s => s.espUrl);
   const streaming   = useHardwareStore(s => s.streaming);
   const page        = usePageStore(s => s.page);
-  const sync        = useV2Store(s => (page === 'msrr' ? (s.manual?.state as any)?.sync ?? null : null));
+  const msrrState   = useV2Store(s => (page === 'msrr' ? (s.manual?.state as any)?.sync ?? null : null));
+  const poseState   = usePoseSync(s => s.sync);
+  const isMsrr      = page === 'msrr';
+  // every page has the same box: MSRR's live session, or the shared pose sender (poseSync.ts) on every other page
+  const sync        = isMsrr ? msrrState : poseState;
   const logBodyRef = useRef<any>(null);
 
   // MSRR: the service's sender follows the Sync switch
-  const haveSync = !!sync;
+  // A NEW session (or a restarted physics service) always starts with Sync OFF, even if the button was left ON:
+  // the robot never moves just because a session started (Nischay 4 Nov). Only a press turns it on.
+  const haveSync = isMsrr && !!sync;
+  const sessionId = useV2Store(s => (page === 'msrr' ? (s.manual as any)?.id ?? null : null));
+  const seenSession = useRef<any>(null);
   useEffect(() => {
-    if (haveSync) useV2Store.getState().manualCmd({ kind: 'sync', op: streaming ? 'on' : 'off' });
-  }, [streaming, haveSync]);
+    if (!haveSync) return;
+    if (seenSession.current !== sessionId) {
+      seenSession.current = sessionId;
+      if (streaming) { hardwareBridge.setStreaming(false); return; }   // the effect runs again with streaming off and sends 'off'
+    }
+    useV2Store.getState().manualCmd({ kind: 'sync', op: streaming ? 'on' : 'off' });
+  }, [streaming, haveSync, sessionId]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -70,13 +82,11 @@ export default function SimTransmitPanel() {
         noteAngles(angles, labels, Object.values<any>(ms.modules).some((m) => m.online && !m.held));
         return;
       }
-      const doc = useModelStore.getState().doc;
-      const angles: Record<string, number> = {}, labels: Record<string, string> = {};
-      for (const j of Object.values(doc.joints)) if (j.type !== 'fixed') { angles[j.id] = 180 + jointServoDegrees(j); labels[j.id] = j.name ?? j.id; }
-      queueAngles(angles, labels);
+      // no sync state yet (service not answering): nothing is sent from the browser any more (the old sender had no
+      // directions, smoothing or hold); the box says why
     }, INTERVAL_MS);
     return () => clearInterval(id);
-  }, [queueAngles, noteAngles]);
+  }, [noteAngles]);
 
   // Auto-scroll log to bottom
   useEffect(() => {
@@ -87,7 +97,8 @@ export default function SimTransmitPanel() {
   const recent = simLog.slice(-40);
   const hostname = sync ? Object.values<any>(sync.modules).map((m) => m.host).join(', ') : (() => { try { return new URL(espUrl).hostname; } catch { return espUrl; } })();
   const connected = sync ? Object.values<any>(sync.modules).some((m) => m.online) : espOnline;
-  const cmd = (op: string, extra?: Record<string, any>) => useV2Store.getState().manualCmd({ kind: 'sync', op, ...extra });
+  const cmd = (op: string, extra?: Record<string, any>) => (isMsrr ? useV2Store.getState().manualCmd({ kind: 'sync', op, ...extra }) : op === 'hosts' ? undefined : poseCmd(op as any));
+  const poseErr = usePoseSync(s => s.err);
 
   return (
     <div className="stp-panel" data-ui="a">
@@ -116,19 +127,23 @@ export default function SimTransmitPanel() {
       </div>
 
       {/* ── MSRR live robot: each module's board, its address, the emergency stop ── */}
+      {!sync && !isMsrr && poseErr && <div className="stp-target" style={{ color: '#f97316' }}>{poseErr}</div>}
       {sync && (
         <div className="stp-target" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 4 }}>
           {Object.entries<any>(sync.modules).map(([mid, m]) => (
             <div key={mid} style={{ display: 'flex', alignItems: 'center', gap: 6 }} data-testid={`sync-status-${mid}`}>
               <span className={`stp-dot ${m.online && !m.held ? 'stp-dot-ok' : 'stp-dot-off'}`} />
               <span style={{ width: 26 }}>{mid}</span>
-              <Input size="xs" className="tw:flex-1 tw:min-w-0" defaultValue={m.host} aria-label={`${mid} address`}
+              <Input size="xs" className="tw:flex-1 tw:min-w-0" defaultValue={m.host} readOnly={!isMsrr} aria-label={`${mid} address`}
                 onBlur={(e) => { if (e.target.value !== m.host) cmd('hosts', { hosts: { [mid]: e.target.value } }); }} />
               <span style={{ color: m.held ? '#ef4444' : m.online ? '#22c55e' : '#f97316' }} title={m.error || undefined}>{m.held ? 'HOLD' : m.online ? 'online' : 'offline'}</span>
+              {m.board && !m.signs_known && <span style={{ color: '#ef4444' }} title="this board's joint directions are not in data/real_robot.json yet: do the one-joint direction test">{m.board}: untested</span>}
             </div>
           ))}
-          {Object.values<any>(sync.modules).find((m) => m.held) && <div style={{ color: '#ef4444' }}>{Object.values<any>(sync.modules).find((m) => m.held).held}</div>}
-          {streaming && !sync.signs_checked && <div style={{ color: '#ef4444' }}>joint directions not checked yet: keep a hand on E-STOP</div>}
+          {Object.values<any>(sync.modules).find((m) => m.held) && <div style={{ color: '#ef4444' }}>{Object.values<any>(sync.modules).find((m) => m.held).held}
+            {streaming && <Button variant="outline" size="xs" style={{ marginLeft: 6 }} data-testid="sync-resume" onClick={() => cmd('on')} title="checked the robot: start sending again (it creeps to the sim pose at 15 deg/s)">Resume</Button>}</div>}
+          {streaming && !sync.signs_checked && <div style={{ color: '#ef4444' }}>bend/twist directions not tested on this module yet: keep a hand on E-STOP</div>}
+          {streaming && sync.signs_checked && !sync.locks_checked && <div style={{ color: '#f59e0b' }}>only the locks L1/L2 are untested: don't lock or unlock yet</div>}
           <Button size="sm" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/80" data-testid="sync-estop" onClick={() => cmd('stop')} title="the boards' emergency stop on every module">■ E-STOP ALL</Button>
         </div>
       )}

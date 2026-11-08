@@ -13,7 +13,7 @@ import { useV2Store } from '@/state/msrrV2Store';
 export default function IkIndicator() {
   const ikDrag = useEditorStore((s) => s.ikDrag);
   const page = usePageStore((s) => s.page);
-  // MSRR: the Manual tab's live robot (MsrrCanvas drags its end connectors; the sim's DIK + VSEPR move them)
+  // MSRR: the Manual tab's live robot (MsrrCanvas drags its end connectors; the sim's DIK moves them; no VSEPR on hand moves, 7 Nov)
   const msrrLive = useV2Store((s) => !!s.manual);
   const hasMovable = useModelStore(
     (s) => Object.values(s.doc.joints).some((j) => j.type !== 'fixed'),

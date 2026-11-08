@@ -14,7 +14,7 @@ from ui_shot import open_studio
 
 PAGES = [('editor', 'Editor'), ('analysis', 'Analysis'), ('training', 'Training'), ('animation', 'Animation'),
          ('esptt', 'ESP-TTL'), ('motor', 'Motor Control')]
-MSRR_TABS = ['Robot', 'Shapes', 'Plan', 'Ask', 'Run', 'Manual']
+MSRR_TABS = ['Live', 'Build', 'Goal']   # 7 Nov: six tabs became three
 # The default module, through the same builder and command as the Add Module button: an empty scene shows no Home or VSEPR.
 ADD_MODULE = """async () => {
   const { useModelStore } = await import('/src/state/modelStore.ts');

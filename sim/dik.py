@@ -42,6 +42,7 @@ LOCK_COST = float(os.environ.get('DIK_LOCK', '1e4'))   # closed locks: near-hard
 #   moving the end - the real lock does not bend, so the end never moved and it stalled 0.6 mm off)
 AROUND_MAX = float(os.environ.get('DIK_AROUND', '0.25'))   # m: furthest the aim moves out in front while the end comes around
 AROUND_AX = float(os.environ.get('DIK_AROUND_AX', '0.02'))   # m: closer than this in front of the receiver's face counts as beside it
+AROUND_RAMP = float(os.environ.get('DIK_AROUND_RAMP', '0.02'))   # m: the 'come around' push fades in over this depth (a switch made the aim chatter)
 CLEAR_R = float(os.environ.get('DIK_CLEAR', '0.14'))   # m: how far off the receiver's axis the tip must be to pass the body behind it
 COLL_MIN = float(os.environ.get('DIK_COLL_MIN', '-0.003'))   # m: closest two modules' coarse boxes may come; negative: each box sticks out 2-4 mm past its part (measured 2 Nov: lying boxes 2-4 mm into the floor), at +2 mm they blocked a clean line-up at M1.S2B
 FLOOR_IN = float(os.environ.get('DIK_FLOOR_IN', '0.006'))   # m: deepest a coarse box may sit in the floor (they overstate the parts)
@@ -59,6 +60,58 @@ def locks_as_now(m, d, eqs):
         mujoco.mju_mat2Quat(q, (R1.T @ d.xmat[b2].reshape(3, 3)).ravel()); m.eq_data[i, 3:6] = R1.T @ (d.xpos[b2] - d.xpos[b1]); m.eq_data[i, 6:10] = q
 
 
+TORQUE = float(os.environ.get('DIK_TORQUE', '0.6'))   # no move may need more than this share of a servo's real strength (0 = off); the firmware caps at 70 %, the rest is for the motion itself (8 Nov ceiling: 0.8 let M2 tilt until it gave way)
+
+
+class TorqueLimit(mink.Limit):
+    """servo strength as a QP limit, PREDICTED (8 Nov, ceiling: the ideal robot docks by holding M2's top half out sideways;
+    the real servos cannot, M2.B1 hit 100 % and M2 fell back into M1's path - the old 'stop at 90 %' bound reacts only after).
+    Torque after the move = the servo's MEASURED torque now + how gravity's pull on that joint changes with the move,
+    d(gravity torque)/dq from the model under the REAL gravity vector (floor, wall, ceiling alike). Each servo stays under
+    TORQUE x its strength; one already over may only be relieved. Always feasible (no move satisfies it)."""
+    def __init__(self, dik):
+        self.k, m = dik, dik.m; w = dik.w
+        self.dd = mujoco.MjData(m); self.J = []
+        for mid in dik.mods:
+            # the side each joint HOLDS UP: past it (toward B) - unless the module is anchored by its B end, then the A side
+            # (the same moment as real_sync.Correction.load; the module's tree starts at its A end)
+            footB = any(k_.startswith('F:') and k_.endswith(f'{mid}.B') or f'|{mid}.B' in k_ and 'F:' in k_ for k_ in w.engaged)
+            root = m.body_rootid[m.body(f'{mid}_EndA_LockModule').id]
+            mb = np.array([b for b in range(m.nbody) if m.body_rootid[b] == root])
+            for a in w.mod[mid]['act']:
+                j = m.actuator_trnid[a, 0]; jb = m.jnt_bodyid[j]
+                sub = np.array([b for b in mb if self._under(m, b, jb)])
+                self.J.append((j, (np.setdiff1d(mb, sub), 1.0) if footB else (sub, -1.0)))
+
+    @staticmethod
+    def _under(m, x, b):
+        while x:
+            if x == b: return True
+            x = m.body_parentid[x]
+        return False
+
+    def _grav(self, q):
+        """the static torque each servo needs to hold its load side against the real gravity"""
+        m, dd = self.k.m, self.dd; dd.qpos[:] = q; mujoco.mj_kinematics(m, dd); g = m.opt.gravity
+        return np.array([sg * float(dd.xaxis[j] @ np.cross(dd.xipos[S] - dd.xanchor[j], m.body_mass[S, None] * g).sum(0)) for j, (S, sg) in self.J])
+
+    def compute_qp_inequalities(self, configuration, dt):
+        m = self.k.m; q0 = configuration.q.copy(); g0 = self._grav(q0); h_ = 1e-3
+        K = np.zeros((len(self.J), m.nv)); dv = np.zeros(m.nv)
+        for j in self.k.F_all:                                          # every joint + free body DIK moves
+            dv[:] = 0.0; dv[j] = h_; q1 = q0.copy(); mujoco.mj_integratePos(m, q1, dv, 1.0); K[:, j] = (self._grav(q1) - g0) / h_
+        f = self.k.w.d.actuator_force[self.k.acts]; cap = TORQUE * self.k.fmax
+        if os.environ.get('DIK_TQ_DEBUG') and int(self.k.w.d.time * 10) % 20 == 0:
+            print('TQ model ', ' '.join(f'{x:5.2f}' for x in g0), '\nTQ servo ', ' '.join(f'{x:5.2f}' for x in f), flush=True)
+        return mink.Constraint(G=np.vstack([K, -K]), h=np.r_[np.maximum(cap - f, 0.0), np.maximum(cap + f, 0.0)])
+
+
+def up(m):
+    """'up' = against the REAL gravity (walls, ceilings, slopes rotate it), unit vector; +z when there is none"""
+    g = np.asarray(m.opt.gravity, float); n = float(np.linalg.norm(g))
+    return -g / n if n > 1e-9 else np.array([0.0, 0.0, 1.0])
+
+
 def vsepr_null_step(m, data, act_dofs, roots, rows, bodies, pairs, q, lower, upper, flat=0.0):
     """Nischay's VSEPR as part of the physics: the joint motion that lowers the VSEPR energy most among those that keep the
     rows (the goal and/or every closed lock) unchanged = the energy gradient projected into their null space, over the joints
@@ -69,7 +122,7 @@ def vsepr_null_step(m, data, act_dofs, roots, rows, bodies, pairs, q, lower, upp
     if rows:
         J = np.vstack([r[:, F] for r in rows]); N = N - np.linalg.pinv(J, rcond=1e-4) @ J
     Jb = V.body_jacobians(m, data, bodies, F)
-    Jb[:, 2, :] *= 1.0 - float(flat)
+    u = up(m); Jb -= float(flat) * u[None, :, None] * np.einsum('k,bkf->bf', u, Jb)[:, None, :]   # no lifting AGAINST GRAVITY (8 Nov: world z was floor thinking; on a ceiling 'up' is -z)
     vs = (-N @ V.gradient(data.xpos[bodies], Jb, pairs))[:nA]
     vs[(q <= lower + 1e-6) & (vs < 0)] = 0; vs[(q >= upper - 1e-6) & (vs > 0)] = 0
     return vs if np.abs(vs).max() > 1e-9 else None
@@ -153,6 +206,7 @@ class DIK:
         hops = {module: lock-graph distance from the docking module} (far = expensive)
         share = per-joint weight in [0, 1] (len 7 * len(mods)): low = that joint is expensive to move"""
         import copy
+        self.inside = False     # going straight in (going_in): the tip drag never goes in, it crashed reading this (5 Nov)
         # its own copy of the model: mink keeps only locks that are on in the model's start state, ours switch on at run time
         m = copy.deepcopy(w.m); eqs = [w.eq[k] for k in sorted(w.engaged)]; m.eq_active0[:] = 0; m.eq_active0[eqs] = 1   # the closed locks (held by their fins in the sim, a constraint here)
         self.w, self.m, self.mods, self.dock, self.tname, self.offset, self.eqs = w, m, list(mods), dock, target, offset, eqs
@@ -201,6 +255,8 @@ class DIK:
         self.qa_all = np.array([qa for mid in self.mods for qa in w.mod[mid]['qa']]); self.margin = math.radians(float(os.environ.get('DIK_MARGIN', '8')))
         self.limits = [self.cl, vl] + self._collision_limits(m, w, eqs)
         self.acts = np.array([a for mid in self.mods for a in w.mod[mid]['act']]); self.fmax = np.maximum(np.abs(w.m.actuator_forcerange[self.acts, 1]), 1e-6)
+        self.F_all = sorted(set(self.act_dofs) | set(self.roots))
+        if TORQUE > 0 and not getattr(w, 'exact', False): self.limits.append(TorqueLimit(self))   # the ideal robot sets its angles exactly: no strength to run out of
         self.k = None; self.relax_on = True; self.funnel = FUNNEL; self.lift = []
 
     def _collision_limits(self, m, w, eqs):
@@ -256,7 +312,11 @@ class DIK:
             # held in the anchor body's frame (3 Nov: in world terms a lying chain on a slippery floor slid away from it as its joints
             # moved, 600 mm); point_local is set by the caller from the mouse in world terms
             b = m.body(self.tbody).id; Ra, pa = d.xmat[b].reshape(3, 3), d.xpos[b]
-            return mink.SE3.from_rotation_and_translation(mink.SO3.from_matrix(Ra.T @ d.site_xmat[self.E['tip']].reshape(3, 3)), np.asarray(self.point, float))
+            # point_world: the mouse stays where it is in the room (5 Nov: held in the anchor's frame, the anchor - a lying end - rolled
+            # as the robot moved and the target swung from 75 mm up to 6 mm up; slid along with the anchor, a sliding robot chased its
+            # own target 1.4 m away)
+            tr = Ra.T @ (np.asarray(self.point_world, float) - pa) if getattr(self, 'point_world', None) is not None else np.asarray(self.point, float)
+            return mink.SE3.from_rotation_and_translation(mink.SO3.from_matrix(Ra.T @ d.site_xmat[self.E['tip']].reshape(3, 3)), tr)
         tb = self.RX['bid']; Rt, pt = d.xmat[tb].reshape(3, 3), d.xpos[tb]
         seat, z, R = w.rx_frame(self.RX, Rt, pt)
         Rb = d.xmat[self.E['body']].reshape(3, 3); Rs = d.site_xmat[self.E['tip']].reshape(3, 3); Rsl = Rb.T @ Rs
@@ -275,7 +335,9 @@ class DIK:
         # how far round it still has to go; it shrinks back to the stand-off as the tip comes in front. Live, from where it is now
         ax = float(v @ z)
         if self.offset >= 0.03 and ax < self.offset:
-            pd = pd + min(max(0.0, -ax) + lat, AROUND_MAX) * z
+            # faded in over AROUND_RAMP, not switched on (8 Nov: with the target turned to face the docker, the tip arrives AT the
+            # stand-off depth 40 mm off the axis; the aim jumped 40 mm out and back every few ticks - no progress for 7 s, walls)
+            pd = pd + min(max(0.0, -ax) + lat, AROUND_MAX) * min(1.0, (self.offset - ax) / AROUND_RAMP) * z
             # behind the receiver's face the way forward runs through the module that holds it: first out sideways, past its body, on
             # the side the tip already is (2 Nov, M1.A -> M2.S2B: wedged 13 mm behind it, 73 mm off the axis)
             if ax < AROUND_AX and lat > 1e-6: pd = pd + max(CLEAR_R - lat, 0.0) * (v - ax * z) / lat   # beside it too (3 Nov: 3 mm in front, 80 mm off, against M2's housing)
@@ -330,7 +392,7 @@ class DIK:
         for b in bodies:
             name = self.m.body(b).name; T = self.cfg.get_transform_frame_to_world(name, 'body')
             t = mink.FrameTask(name, 'body', position_cost=np.array([0.0, 0.0, LIFT_COST]), orientation_cost=0.0)
-            t.set_target(mink.SE3.from_rotation_and_translation(T.rotation(), T.translation() + np.array([0.0, 0.0, dz])))
+            t.set_target(mink.SE3.from_rotation_and_translation(T.rotation(), T.translation() + up(self.m) * dz))
             self.lift.append(t)
 
     def end_joints_only(self, ends, k=3, factor=100.0):
@@ -371,7 +433,7 @@ class DIK:
         out = np.zeros(self.m.nv); out[A] = back[:len(A)] * VNULL
         if heavy > 0:                                                   # too heavy to hold up: the spare motion lets the body down, like gravity -
             # gentler for a standing group (DOWN_STAND): full strength held a standing M1 off M2.S2B, none let M1 arch out and stall (3 Nov)
-            down = -V.body_jacobians(self.m, cfg.data, self.spread.b, F)[:, 2, :].sum(0); down = (down - np.linalg.pinv(J, rcond=1e-4) @ (J @ down))[:len(A)]
+            down = -np.einsum('k,bkf->f', up(self.m), V.body_jacobians(self.m, cfg.data, self.spread.b, F)); down = (down - np.linalg.pinv(J, rcond=1e-4) @ (J @ down))[:len(A)]
             down[(q <= self.cl.lower[ia] + 1e-6) & (down < 0)] = 0; down[(q >= self.cl.upper[ia] - 1e-6) & (down > 0)] = 0
             if np.abs(down).max() > 1e-9: out[A] += down / np.abs(down).max() * VNULL * heavy * max(0.1, min(1.0, err / 0.10)) * (1.0 if getattr(self, 'lying', True) else DOWN_STAND)
         if vs is not None and not getattr(self, 'vs_yield', False):   # yields while the goal is stuck (coop_connect sets it)

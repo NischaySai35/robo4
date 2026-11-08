@@ -43,17 +43,6 @@ export class ConnectorRenderer {
     this._picker.params.Line = { threshold: 0.01 };
   }
 
-  _bodySize(body: any): number {
-    const g = body?.visual?.geometry ?? {};
-    const s = body?.transform?.scale ?? [1, 1, 1];
-    const a = Math.abs(s[0]), b = Math.abs(s[1]), c = Math.abs(s[2]);
-    switch (g.type) {
-      case 'sphere': return (g.radius ?? 0.5) * 2 * Math.max(a, b, c);
-      case 'box': { const sz = g.size ?? [1, 1, 1]; return Math.hypot(sz[0] * a, sz[1] * b, sz[2] * c); }
-      case 'cylinder': case 'capsule': { const r = g.radius ?? 0.5, l = g.length ?? 1; return Math.hypot(2 * r * Math.max(a, b), l * c); }
-      default: return 0.4 * Math.max(a, b, c);
-    }
-  }
 
   sync(doc: Document, fk?: any) {
     this._lastDoc = doc;
@@ -83,8 +72,7 @@ export class ConnectorRenderer {
       const world = getConnectorWorld(doc, ref.bodyId, ref.connectorId, fk);
       if (!body || !world) continue;
 
-      const size = this._bodySize(body);
-      const aLen = Math.min(Math.max(size * 0.35, 0.03), 0.12);
+      const aLen = connectorMarkerLength(body);
       // Scoped by body+connector together, not connector id alone — a duplicated
       // module's connectors can share ids with the original's (pre-existing
       // projects saved before ids were regenerated on copy), and matching by id
@@ -161,6 +149,24 @@ export class ConnectorRenderer {
     }
     this.group.parent?.remove(this.group);
   }
+}
+
+/** a body's rough size (m), from its visual */
+function bodySize(body: any): number {
+    const g = body?.visual?.geometry ?? {};
+    const s = body?.transform?.scale ?? [1, 1, 1];
+    const a = Math.abs(s[0]), b = Math.abs(s[1]), c = Math.abs(s[2]);
+    switch (g.type) {
+      case 'sphere': return (g.radius ?? 0.5) * 2 * Math.max(a, b, c);
+      case 'box': { const sz = g.size ?? [1, 1, 1]; return Math.hypot(sz[0] * a, sz[1] * b, sz[2] * c); }
+      case 'cylinder': case 'capsule': { const r = g.radius ?? 0.5, l = g.length ?? 1; return Math.hypot(2 * r * Math.max(a, b), l * c); }
+      default: return 0.4 * Math.max(a, b, c);
+    }
+  }
+
+/** how long a connector marker is drawn on this body (m): the same rule in every viewport (the Editor here, MSRR) */
+export function connectorMarkerLength(body: any): number {
+  return Math.min(Math.max(bodySize(body) * 0.35, 0.03), 0.12);
 }
 
 export interface ConnectorPose { position: THREE.Vector3; normal: THREE.Vector3; roll?: THREE.Vector3 | null }

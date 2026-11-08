@@ -87,11 +87,20 @@ export function preparePhys(run: PhysRun, nominal: FittedModule[]): PhysPrepared
   return { run, nominal, K };
 }
 
+/** the frame nearest time t, by its own time stamp: a live session's buffer is trimmed at the front and the split view's real
+ *  copy starts mid-session, so frame k is NOT at k / fps */
+export function frameIndexAt(run: PhysRun, t: number): number {
+  const fr = run.frames; let lo = 0, hi = fr.length - 1;
+  if (hi < 0) return -1;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (fr[mid].t < t) lo = mid + 1; else hi = mid; }
+  return lo > 0 && Math.abs(fr[lo - 1].t - t) < Math.abs(fr[lo].t - t) ? lo - 1 : lo;
+}
+
 /** The robot as MuJoCo has it at time t (seconds of simulated time). */
 export function physFrame(pp: PhysPrepared, t: number): FittedModule[] {
   const fr = pp.run.frames;
   if (!fr.length) return pp.nominal;
-  const k = Math.max(0, Math.min(fr.length - 1, Math.round(t * pp.run.fps)));
+  const k = frameIndexAt(pp.run, t);
   const flat = fr[k].p;
   const poses = new Map<string, Record<string, { position: Vec3; quaternion: Quat }>>();
   pp.run.bodies.forEach(([mid, name], i) => {

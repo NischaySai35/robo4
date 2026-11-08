@@ -85,3 +85,6 @@
 .view-controls--icons .view-btn--sync { padding: 0; }
 .view-controls--icons .view-sync-word { padding: 8px; }
 .view-controls--icons .view-sync-state { padding: 8px 6px; font-size: 9px; }
+
+/* a button whose feature is not available here yet (MSRR SPLIT before a Manual session) */
+.view-btn:disabled { opacity: 0.4; cursor: not-allowed; }

@@ -584,6 +584,9 @@ class H(BaseHTTPRequestHandler):
             gp = tpath('logs/gpu_transform_summary.json')
             if os.path.exists(gp): r['measured'] = json.load(open(gp))
             return self._send(200, r)
+        if self.path.startswith('/boards'):                        # the boards Sync talks to, for the Studio's top bar (real_sync.boards_now)
+            import real_sync
+            return self._send(200, {'ok': True, 'boards': real_sync.boards_now()})
         if self.path.startswith('/health'):
             return self._send(200, {'ok': True, 'mujoco': mujoco.__version__, 'calibration_mm': CAL['worst_mm'], 'sim': HERE, 'pid': os.getpid(), 'started': STARTED,
                                     'live_sessions': sum(1 for S in getattr(sys.modules.get('manual'), 'SESS', {}).values() if time.time() - getattr(S, 'seen', 0) < 20)})
@@ -610,6 +613,10 @@ class H(BaseHTTPRequestHandler):
                     if hit: sh = hit                                   # with its collision-free dock order
                 r = shape_build.build(sh, int(body.get('seed', 1)), bool(body.get('randomize', True)), record=20, log=lambda *a: None)
                 return self._send(200, r)
+            if self.path.startswith('/sync/pose'):
+                # Sync from EVERY other tab: the page's joint angles -> the real robot, the same link as MSRR (real_sync.PoseSync)
+                import real_sync
+                return self._send(200, real_sync.pose_sync(body))
             if self.path.startswith('/manual/'):
                 # the Studio's MANUAL tab: a live session driven by hand (manual.py): start / step (frames + state) / cmd
                 import manual

@@ -30,14 +30,16 @@ export function ManualTab() {
   // ONE random-robot setting: the physics bar's (Nischay 1 Nov: two boxes, 2 and 1, looked like the wrong robot)
   const seed = useV2Store((s) => s.physSeed);
   const randomize = useV2Store((s) => s.physRandom);
-  const [disturb, setDisturb] = useState(true);
-  const [ideal, setIdeal] = useState(false);
   const [mod, setMod] = useState('M1');
   const last = useRef(0);
+  const [drag, setDrag] = useState<{ j: string; v: number } | null>(null);   // the slider follows the command, except the one being dragged
   const st = man?.state as any;
   const starts = [...MANUAL_PRESETS.filter((p) => ((p.id !== 'stand_tested' && p.id !== 'end_end_tested') || n === 2) && (n > 1 || (p.id !== 'chain' && p.id !== 'stand_chain' && p.id !== 'stand_lying'))), ...libraryStarts(n)];
-  // ideal (Nischay 2 Nov): no random robot, no room, no plastic flex / gear play - only the physics itself (gravity, friction, contact)
-  const start = () => manualStart(manualScene(n, preset), ideal ? { seed, randomize: false, disturb: false, judge: 'truth', ideal: true } : { seed, randomize, disturb, judge: 'truth' });   // the sim knows where everything is (Nischay 1 Nov: no blind mode in the sim)
+  // ALWAYS ideal (7 Nov, Nischay: "why the ideal and room boxes when split shows both?"): the session is the plan - no random
+  // robot, no room, no plastic flex / gear play, only the physics itself. Every error lives in the SPLIT view's right half
+  // (the real copy: the bar's random robot + sag + gear play + room) or comes from the real robot over Sync.
+  // Unticked "ideal" + room on made the LEFT half swing too. The sim knows where everything is (1 Nov: no blind mode).
+  const start = () => manualStart(manualScene(n, preset), { seed, randomize: false, disturb: false, judge: 'truth', ideal: true });
   const sendJoint = (j: string, v: number) => {
     const now = performance.now(); if (now - last.current < 80) return; last.current = now;      // the servos follow; don't flood the service
     manualCmd({ kind: 'joints', module: mod, joints: { [j]: v } });
@@ -46,16 +48,13 @@ export function ManualTab() {
   const cur = st?.modules?.[mod];
   return (
     <>
-      <Section title="Manual control (real physics)" info={<p className="msrr-note">Everything is real MuJoCo physics: gravity, contact and friction,
-        magnets, ST3215 servo speed/torque limits, PLA sag and gear play, the MPU-6050s, a random robot and the room disturbances (table shake,
-        bumps, air, cardboard play). A lock only closes if the end is really seated; end↔end turns BOTH centre rotors, end↔side only the end's.</p>}>
+      <Section title="Live robot (real physics)" info={<p className="msrr-note">The robot here is the IDEAL one: real MuJoCo physics (gravity, contact,
+        friction, magnets, servo limits) but no random robot, no room, no plastic flex. Press <b>SPLIT</b> for the real side next to it: a copy with
+        a random robot, sag, gear play and the room (table shake, bumps, air), driven by exactly what Sync sends - or the real robot itself when
+        Sync is on. A lock only closes if the end is really seated; end↔end turns BOTH centre rotors, end↔side only the end's.</p>}>
         <Row label="modules"><NativeSelect size="xs" data-testid="man-n" value={n} onChange={(e) => { const v = +e.target.value; setN(v); setPreset('chain'); }}>{[1, 2, 3, 4].map((k) => <option key={k} value={k}>{k}</option>)}</NativeSelect></Row>
         <Row label="start as"><NativeSelect size="xs" data-testid="man-preset" value={preset} onChange={(e) => setPreset(e.target.value as ManualPreset)}>{starts.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}</NativeSelect></Row>
-        <div className="msrr-row-btns">
-          <span className="msrr-note dim">{randomize ? `random robot #${seed}` : 'nominal robot'} (set in the bar above)</span>
-          <label className="msrr-note"><input type="checkbox" checked={disturb && !ideal} disabled={ideal} onChange={(e) => setDisturb(e.target.checked)} /> room disturbances</label>
-          <label className="msrr-note" title="no random robot, no room disturbances, no plastic flex or gear play, no friction: only gravity, contacts, magnets and the servo limits. Press Start/Restart after changing."><input type="checkbox" data-testid="man-ideal" checked={ideal} onChange={(e) => setIdeal(e.target.checked)} /> ideal robot (no errors)</label>
-        </div>
+        <p className="msrr-note dim">ideal robot here · SPLIT shows the real side ({randomize ? `random robot #${seed}` : 'nominal robot'} + room, set in the bar above)</p>
         <div className="msrr-row-btns">
           <label className="msrr-note dim"><input type="checkbox" disabled /> camera (one, any angle) · next</label>
         </div>
@@ -88,9 +87,24 @@ export function ManualTab() {
             {cur && JN.map((j, k) => (
               <div key={j} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 150px', gap: 6, alignItems: 'center' }}>
                 <span className="msrr-note">{j}</span>
-                <input type="range" min={-LIMIT(j)} max={LIMIT(j)} step={1} defaultValue={cur.target[k]} key={`${man.id}-${mod}-${j}`} data-testid={`man-j-${j}`}
-                  onChange={(e) => sendJoint(j, +e.target.value)} onMouseUp={(e) => manualCmd({ kind: 'joints', module: mod, joints: { [j]: +(e.target as HTMLInputElement).value } })} />
+                <input type="range" min={-LIMIT(j)} max={LIMIT(j)} step={1} value={drag?.j === j ? drag.v : cur.target[k]} data-testid={`man-j-${j}`}
+                  onChange={(e) => { setDrag({ j, v: +e.target.value }); sendJoint(j, +e.target.value); }}
+                  onPointerUp={(e) => { setDrag(null); manualCmd({ kind: 'joints', module: mod, joints: { [j]: +(e.target as HTMLInputElement).value } }); }}
+                  onKeyUp={(e) => { setDrag(null); manualCmd({ kind: 'joints', module: mod, joints: { [j]: +(e.target as HTMLInputElement).value } }); }} />
                 <span className="msrr-note dim">cmd {cur.target[k]}° · is {cur.q[k]}° · {cur.load[k]}%</span>
+              </div>
+            ))}
+            {cur?.lock && (['L1', 'L2'] as const).map((j, k) => (
+              // lock rotors (Nischay 5 Nov): to check their direction on the real robot with Sync on. 0 = open (board 180);
+              // the sim locks End A at -45 and End B at +45; the board gets real_sync.lock_board_deg (data/real_robot.json lock_home + lock_sign)
+              <div key={j} style={{ display: 'grid', gridTemplateColumns: '28px 1fr 150px', gap: 6, alignItems: 'center' }}
+                title={`${j === 'L1' ? 'End A' : 'End B'} lock rotor: 0 = open; the sim locks it at ${j === 'L1' ? '-45' : '+45'}°`}>
+                <span className="msrr-note">{j}</span>
+                <input type="range" min={-45} max={45} step={1} value={drag?.j === j ? drag.v : cur.lock.target[k]} data-testid={`man-j-${j}`}
+                  onChange={(e) => { setDrag({ j, v: +e.target.value }); sendJoint(j, +e.target.value); }}
+                  onPointerUp={(e) => { setDrag(null); manualCmd({ kind: 'joints', module: mod, joints: { [j]: +(e.target as HTMLInputElement).value } }); }}
+                  onKeyUp={(e) => { setDrag(null); manualCmd({ kind: 'joints', module: mod, joints: { [j]: +(e.target as HTMLInputElement).value } }); }} />
+                <span className="msrr-note dim">{j === 'L1' ? 'End A' : 'End B'} · cmd {cur.lock.target[k]}° · is {cur.lock.q[k]}°</span>
               </div>
             ))}
           </Section>

@@ -55,7 +55,7 @@ export function RunTab() {
     pushLog(r.ok ? `dry run reached ${plan.target.name}: ${r.events.length} steps executed, ${r.replans} replan(s)` : `dry run stopped: ${r.why}`);
   };
 
-  if (!plan?.ok) return <Section title="Run"><p className="msrr-note">Make or load a plan in the Plan tab first.</p></Section>;
+  if (!plan?.ok) return <Section title="Run"><p className="msrr-note">Make or load a plan in step 3 (Plan to it) first.</p></Section>;
 
   return (
     <>

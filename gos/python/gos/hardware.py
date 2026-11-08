@@ -6,7 +6,7 @@ Safety first, because this moves motors:
 - Servo IDs 1-9 are the module's joints in physical order (LOCK1 ... LOCK2); the board reports each servo's
   home. Directions (SIGN) are still unconfirmed defaults of +1, so check them on the robot before trusting a pose.
 """
-import json, math, time, urllib.error, urllib.parse, urllib.request
+import json, math, os, time, urllib.error, urllib.parse, urllib.request
 
 from .app import GosError, Result
 
@@ -220,6 +220,22 @@ def serve_robot(app, robot, name='mod1', rate=20):
     return stop
 
 
+def _arp_table_windows():
+    """IPv4 addresses in Windows' ARP table, read with GetIpNetTable (iphlpapi) - no `arp` process, so no console window"""
+    import ctypes, socket, struct
+    api = ctypes.windll.iphlpapi; size = ctypes.c_ulong(0)
+    api.GetIpNetTable(None, ctypes.byref(size), False)                     # asks how big the table is
+    buf = ctypes.create_string_buffer(size.value + 1024); size = ctypes.c_ulong(len(buf))
+    if api.GetIpNetTable(buf, ctypes.byref(size), False) != 0: raise OSError('GetIpNetTable failed')
+    raw = buf.raw; n = struct.unpack_from('<I', raw, 0)[0]
+    # MIB_IPNETROW: index, mac length (DWORD each), mac (8 bytes), address (DWORD, network order), type (DWORD) = 24 bytes
+    out = set()
+    for k in range(n):
+        o = 4 + k * 24; maclen, typ = struct.unpack_from('<I', raw, o + 4)[0], struct.unpack_from('<I', raw, o + 20)[0]
+        if maclen and typ in (3, 4): out.add(socket.inet_ntoa(raw[o + 16:o + 20]))   # dynamic / static, as `arp -a` lists (2 = invalid)
+    return out
+
+
 def find_modules(timeout=4.0):
     """Every TETROBOT module on this computer's local networks: [{"name", "ip", "fw"}], sorted by name.
     Works where mod1.local does not: first a quick knock on port 80 of every address of each local /24 network,
@@ -247,10 +263,16 @@ def find_modules(timeout=4.0):
         except Exception:
             return None
     def neighbours():
-        # devices this computer talked to lately (arp -a on Windows and macOS, ip neigh on Linux): a slow board is in it
+        # devices this computer talked to lately (the ARP table): a slow board is in it
         import re, subprocess
+        # Windows: read the table IN this process (iphlpapi), no program started. The bridge ran `arp -a` every 20 s and, being
+        # windowless (pyw), Windows opened a console for each one - it flashed on screen (Nischay, 7 Nov)
+        if os.name == 'nt':
+            try: return {ip for ip in _arp_table_windows() if ip in set(hosts)}
+            except OSError: pass
+        hide = {'creationflags': subprocess.CREATE_NO_WINDOW} if hasattr(subprocess, 'CREATE_NO_WINDOW') else {}
         for cmd in (['arp', '-a'], ['ip', 'neigh']):
-            try: out = subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+            try: out = subprocess.run(cmd, capture_output=True, text=True, timeout=5, **hide).stdout
             except (OSError, subprocess.SubprocessError): continue
             return {ip for ip in re.findall(r'\d+\.\d+\.\d+\.\d+', out) if ip in set(hosts)}
         return set()

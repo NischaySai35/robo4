@@ -23,7 +23,10 @@
  */
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { buildConnectorMarker, orientConnectorMarker, CONNECTOR_COLOR, CONNECTOR_SEL_COLOR } from '@/viewport/renderers/ConnectorRenderer';
+import { buildConnectorMarker, orientConnectorMarker, connectorMarkerLength, CONNECTOR_COLOR, CONNECTOR_SEL_COLOR } from '@/viewport/renderers/ConnectorRenderer';
+import { connectorWorldFrom } from '@/assembly/connectorSnap';
+import { restConnectors, STUDIO_TO_MODEL_QUAT } from '@/robotics/msrr/restLayout';
+import type { FittedModule } from '@/robotics/msrr/fitModules';
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import floorReceiverUrl from '@/assets/msrr/floor_receiver.stl?url';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
@@ -71,6 +74,7 @@ export default function MsrrCanvas() {
     const sm = new SceneManager(canvas, 'msrr');
     const vp = sm.viewport;
     sm.applyTheme(useThemeStore.getState().theme);
+    sm.setRealFloor(true);                       // the robots stand on a real floor at height 0 (the physics floor)
     const unsubTheme = useThemeStore.subscribe((s) => { sm.applyTheme(s.theme); sm.requestRender(3); });
     const { renderer, camera, controls } = sm;
     const scene = new THREE.Group(); scene.name = 'msrr';
@@ -119,7 +123,9 @@ export default function MsrrCanvas() {
       ghosts: new THREE.Group(),
       overlay: new THREE.Group(),
     };
-    scene.add(groups.modules, groups.ghosts, groups.overlay);
+    // the split view's right half: the REAL copy's parts (drawn only in that half, see sm.split below)
+    const realGroup = new THREE.Group(); realGroup.name = 'msrr-real'; realGroup.visible = false;
+    scene.add(groups.modules, groups.ghosts, groups.overlay, realGroup);
 
     // Shared geometry/materials — one allocation, reused by every cube.
     const boxGeo = new THREE.BoxGeometry(0.92, 0.92, 0.92);
@@ -213,13 +219,20 @@ export default function MsrrCanvas() {
       renderer, scene, camera, controls, groups, mats, makeCube, ghostBox, grid, ground,
       raycaster, pointer, builtMats,
       rodGeo, ballGeo, domeGeo, DOME_UP, partMats,
+      sm, realGroup,
       /** pooled meshes for real module geometry */
       partPool: [] as THREE.Mesh[],
+      /** the split view's right half: pooled meshes of the real copy, and what they show */
+      realPool: [] as THREE.Mesh[],
+      realSig: -1,
       /** signature of what partPool currently shows, so FK is not re-run per frame */
       partSig: '',
       /** what the VSEPR score measures: every body drawn, in metres */
       bodyCentres: [] as [number, number, number][],
       limitsFor: -1,
+      /** the manual setup the camera was last framed for (a new one gets a clean 3/4 view) */
+      framedScene: null as unknown,
+      frameAt: 0,
       cubePool: [] as THREE.Group[],
       ghostPool: [] as THREE.LineSegments[],
       /** translucent cubes showing where a click/drag would place */
@@ -263,6 +276,12 @@ export default function MsrrCanvas() {
       const before = st.partSig;
       syncScene(st);
       if (st.partSig !== before) sm.requestRender(2);
+      if (syncSplit(st)) sm.requestRender(2);
+      // a NEW manual setup (not Reset - same setup): frame it from a clean 3/4 angle once its parts are drawn (Nischay 7 Nov)
+      const man = useV2Store.getState().manual;
+      // (0.8 s after it first moves: the very first draw can still be the previous robot -> it framed empty floor)
+      if (man && man.start.scene !== st.framedScene && st.partSig !== before) { st.framedScene = man.start.scene; st.frameAt = now + 800; }
+      if (st.frameAt && now > st.frameAt) { st.frameAt = 0; sm.fitCamera({ fresh: true }); }
       // zoom limits follow the robot's size, like the Editor's (else min distance stays 10 cm = one module)
       if (st.bodyCentres.length !== st.limitsFor) { st.limitsFor = st.bodyCentres.length; sm.updateCameraLimits(); }
       grid.visible = useV2Store.getState().mode !== 'v2';
@@ -308,8 +327,10 @@ export default function MsrrCanvas() {
     const aimRay = (ev: PointerEvent | MouseEvent) => {
       const st = stateRef.current;
       const rect = canvas.getBoundingClientRect();
+      // split view: the left half is the ideal robot you click; the right half (the real copy) only shows
+      const w = st.sm.split ? rect.width / 2 : rect.width;
       st.pointer.set(
-        ((ev.clientX - rect.left) / rect.width) * 2 - 1,
+        ev.clientX - rect.left > w ? 9 : ((ev.clientX - rect.left) / w) * 2 - 1,
         -((ev.clientY - rect.top) / rect.height) * 2 + 1,
       );
       st.raycaster.setFromCamera(st.pointer, st.camera);
@@ -405,18 +426,42 @@ export default function MsrrCanvas() {
       return hit ? hit.userData.port : null;
     };
 
+    /** the END plug nearest the pointer on screen (left half in split view), if within GRAB_PX */
+    const GRAB_PX = 70;
+    const nearestEnd = (ev: PointerEvent, man: ManualState): string | null => {
+      const st = stateRef.current; const rect = canvas.getBoundingClientRect();
+      const w = st.sm.split ? rect.width / 2 : rect.width; const px = ev.clientX - rect.left, py = ev.clientY - rect.top;
+      if (px > w) return null;
+      let best: string | null = null, bd = GRAB_PX;
+      for (const q of man.ports) {
+        if (q.kind !== 'end') continue;
+        const node = st.portNodes.get(q.id)?.node; if (!node) continue;
+        const v = node.getWorldPosition(new THREE.Vector3()).project(st.camera);
+        const sx = (v.x + 1) / 2 * w, sy = (1 - v.y) / 2 * rect.height, dd = Math.hypot(sx - px, sy - py);
+        if (v.z < 1 && dd < bd) { bd = dd; best = q.id; }
+      }
+      return best;
+    };
+
     const onDown = (ev: PointerEvent) => {
       const st = stateRef.current;
       if (!st) return;
       if (ev.button === 0 && useV2Store.getState().manual) {
         const id = pickPort(ev);
         const man = useV2Store.getState().manual!;
-        // the shared Drag tip switch (IkIndicator, editorStore.ikDrag): grab an end connector, the sim's DIK + VSEPR move it
-        if (id && useEditorStore.getState().ikDrag && man.mode === 'move' && man.ports.find((q) => q.id === id)?.kind === 'end') {
-          const node = st.portNodes.get(id)?.node; if (!node) return;
+        // the shared Drag tip switch (IkIndicator, editorStore.ikDrag): grab an end connector, the sim's DIK + VSEPR move it.
+        // 5 Nov: only a press exactly on the few-pixel plug grabbed it, anywhere else panned - now the END plug nearest the press
+        // on screen, within ~70 px, is taken
+        const endId = useEditorStore.getState().ikDrag && man.mode === 'move' ? nearestEnd(ev, man) : null;
+        if (endId) {
+          const node = st.portNodes.get(endId)?.node; if (!node) return; const id = endId;
           const at = node.getWorldPosition(new THREE.Vector3());
           st.tipDrag = { id, plane: new THREE.Plane().setFromNormalAndCoplanarPoint(st.camera.getWorldDirection(new THREE.Vector3()), at), last: 0 };
-          st.controls.enableRotate = false; canvas.setPointerCapture?.(ev.pointerId); return;
+          // the camera must not move while a tip is dragged (5 Nov: the orbit controls took the same press, the view turned with the
+          // mouse and the drag plane with it - the end went the wrong way): this press is ours, the controls are off until let go
+          ev.stopImmediatePropagation(); ev.preventDefault(); st.controls.enabled = false;
+          useV2Store.getState().manualSet({ hover: null });      // no connector menu popping up over the drag
+          canvas.setPointerCapture?.(ev.pointerId); return;
         }
         if (id) { useV2Store.getState().manualPick(id); return; }
       }
@@ -462,7 +507,7 @@ export default function MsrrCanvas() {
       const st = stateRef.current;
       if (st?.tipDrag) {                                         // let go: the sim stops steering the tip
         useV2Store.getState().manualCmd({ kind: 'drag', end: st.tipDrag.id, p: null });
-        st.tipDrag = null; st.controls.enableRotate = true; canvas.releasePointerCapture?.(ev.pointerId); return;
+        st.tipDrag = null; st.controls.enabled = true; canvas.releasePointerCapture?.(ev.pointerId); return;
       }
       if (!st?.drag) return;
       const cells = runCells(st.drag.from, st.drag.normal, st.drag.count);
@@ -498,13 +543,13 @@ export default function MsrrCanvas() {
     };
 
     canvas.addEventListener('pointermove', onMove);
-    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointerdown', onDown, true);   // capture: before the orbit controls see the press (tip drag)
     canvas.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('pointerup', onUp);
     canvas.addEventListener('pointerleave', onLeave);
     return () => {
       canvas.removeEventListener('pointermove', onMove);
-      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointerdown', onDown, true);
       canvas.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('pointerleave', onLeave);
@@ -519,9 +564,95 @@ export default function MsrrCanvas() {
       <div className="top-right-cluster"><NavigationGizmo /><ViewControls /></div>
       <div className="vp-hud-stack"><SpreadHud source="viewport" /><ViewportStats /></div>
       {v2Mode && <ManualPortMenu />}
+      {v2Mode && <SplitLabels />}
       {!v2Mode && <div className="msrr-canvas-hint">
         click the ground or a cube face to add one · drag to extrude a run · right-click a cube to delete
       </div>}
+    </div>
+  );
+}
+
+// ── split view: left ideal, right the real copy ──────────────────────────────
+
+/** which material a module part gets: the two OUTER end connectors in their own colours (the module is symmetric: which end is
+ *  on the floor?), rotors in the module's colour. Shared by the ideal robot and the split view's real copy. */
+function partMat(st: any, body: { kind: string; name: string }, tint: THREE.Material): THREE.Material {
+  return body.kind === 'rotor' ? tint
+    : body.name === 'EndA_LockModule' ? st.partMats.endA
+      : body.name === 'EndB_LockModule' ? st.partMats.endB
+        : body.kind === 'spine' ? st.partMats.spine : st.partMats.pla;
+}
+
+/** Split on/off (SceneManager draws the scene twice) and the real copy's parts. True = something changed. */
+function syncSplit(st: any): boolean {
+  const v2 = useV2Store.getState();
+  const on = v2.mode === 'v2' && v2.split && !!v2.manual;
+  let changed = false;
+  if (on !== !!st.sm.split) {
+    // left = the normal state (the SceneManager also restores it after each draw); right = only the real copy + the floor
+    const hideOnRight = () => [st.groups.overlay, st.portGroup, st.v2Group].filter(Boolean);
+    if (!on) { st.realGroup.visible = false; st.groups.overlay.visible = true; if (st.v2Group) st.v2Group.visible = true; }
+    st.sm.setSplit(on ? {
+      left: () => { st.realGroup.visible = false; for (const g of hideOnRight()) g.visible = !(g === st.portGroup && st.portsHidden); },
+      right: () => { st.realGroup.visible = true; for (const g of hideOnRight()) g.visible = false; },
+    } : null);
+    changed = true;
+  }
+  if (!on || v2.view2.sig === st.realSig) return changed;
+  st.realSig = v2.view2.sig;
+  const meshGeos = moduleMeshGeometries(); let n = 0;
+  v2.view2.modules.forEach((m, i) => {
+    const tint = st.builtMats[i % st.builtMats.length];
+    for (const body of moduleBodies(m)) {
+      const geo = meshGeos.get(body.name); if (!geo) continue;
+      if (n >= st.realPool.length) { const mm = new THREE.Mesh(geo); st.realGroup.add(mm); st.realPool.push(mm); }
+      const mesh: THREE.Mesh = st.realPool[n++];
+      mesh.geometry = geo; mesh.material = partMat(st, body, tint); mesh.visible = true;
+      mesh.position.set(body.position[0], body.position[1], body.position[2]);
+      mesh.quaternion.set(body.quaternion[0], body.quaternion[1], body.quaternion[2], body.quaternion[3]);
+    }
+  });
+  for (let i = n; i < st.realPool.length; i++) st.realPool[i].visible = false;
+  if (n && !st.realShown) st.sm.fitCamera();            // the real copy's first frame: frame both robots for their halves
+  st.realShown = n > 0;
+  return true;
+}
+
+/** the two halves' names, and how the real copy is doing (speed, its last lock result) */
+function SplitLabels() {
+  const on = useV2Store((s) => s.split && !!s.manual);
+  const tw = useV2Store((s) => s.twin);
+  const seed = useV2Store((s) => s.physSeed);
+  const ideal = useV2Store((s) => !!s.manual?.start.opts.ideal);   // the label must not say IDEAL when it is not (7 Nov)
+  if (!on) return null;
+  const st = tw?.state;
+  const real = st?.source === 'telemetry';
+  const what = real ? "the real robot's world" : 'the real copy';
+  const building = !tw?.err && (!tw?.pp || !!st?.starting);
+  const status = tw?.err ? `could not start: ${tw.err}`
+    : building ? `building ${what}… ${(st?.elapsed ?? 0).toFixed(0)} s`
+      // 5 Nov: with Sync on the right half is ONLY the real robot - no contact = its last real pose stays (never the copy's guess)
+      : real && st?.contact === false ? `NO CONTACT for ${(st.quiet_s ?? 0).toFixed(0)} s - showing its last real pose`
+        : st ? `${!real && st.speed ? `${st.speed.toFixed(2)}× speed (both halves wait for the real copy)` : 'live'}${st.last ? ` · ${st.last.replace(/^REAL (copy|robot): /, '')}` : ''}` : 'running';
+  return (
+    <div className="msrr-split" aria-hidden>
+      <div className="msrr-split-line" />
+      {building && (
+        // the copy is built in the background (20 s on a quiet laptop, up to ~90 s when it is busy): show it is alive
+        <div className="msrr-split-loading" role="status">
+          <div className="msrr-split-spinner" />
+          <div>Building {what}… {(st?.elapsed ?? 0).toFixed(0)} s</div>
+          <div className="msrr-split-bar"><div style={{ width: `${Math.min(95, ((st?.elapsed ?? 0) / 40) * 100)}%` }} /></div>
+          <div className="msrr-split-hint">the left (ideal) side keeps working meanwhile, a little slower</div>
+        </div>
+      )}
+      <div className="msrr-split-tag msrr-split-tag--left">{ideal ? 'IDEAL · what the sim plans' : 'SIM with errors (random robot + room) · Shapes demo'}</div>
+      <div className="msrr-split-tag msrr-split-tag--right">
+        {st?.source === 'telemetry'
+          ? <><b>REAL robot{st.modules?.length ? ` (${st.modules.join(', ')})` : ''}</b> · its own encoder angles + predicted plastic flex / gear play / lock play; gravity and the floor place it (nothing taken from the ideal side)</>
+          : <><b>REAL (sim of the real robot)</b> · random robot #{seed}, sag + gear play + lock play + room, gets exactly what Sync sends</>}
+        <div className="msrr-split-status">{status}{st?.feedback && st.feedback.mode !== 'off' ? ` · live correction: ${st.feedback.mode}, off by ${Math.max(0, ...Object.values(st.feedback.err_mm)).toFixed(1)} mm` : ''}</div>
+      </div>
     </div>
   );
 }
@@ -588,7 +719,10 @@ function syncScene(st: any) {
   const cells = v2On ? [] : cellsOf(baseConfig);
   syncV2Overlay(st, v2On ? v2.view.overlay : null);
   syncReceivers(st, v2On ? v2.receivers : null);
-  syncPorts(st, v2On && v2.manual && v2.physics?.live?.manual && v2.physics.live.id === v2.manual.id ? v2.manual : null);   // dots only while that live session is what is drawn (3 Nov: stopped physics left the old session's dots over another robot)
+  // plugs: ALWAYS from the module document's connectors on the drawn parts (the Editor's / Animation's own data and maths);
+  // a live session only adds which plug is locked / picked / hovered, and the floor receivers
+  syncPorts(st, v2On ? v2.view.modules : null, v2On ? v2.view.sig : -1,
+    v2On && v2.manual && v2.physics?.live?.manual && v2.physics.live.id === v2.manual.id ? v2.manual : null);   // dots only while that live session is what is drawn (3 Nov: stopped physics left the old session's dots over another robot)
 
   // Grow the pool as needed; extras are hidden rather than destroyed.
   while (st.cubePool.length < cells.length) {
@@ -725,27 +859,13 @@ function syncScene(st: any) {
           addCentre(body.position);
           const geo = meshGeos.get(body.name);
           if (!geo) continue;
-          // the two OUTER end connectors in their own colours (the module is symmetric: which end is on the floor?)
-          const mat = highlight ? st.mats.moving
-            : body.kind === 'rotor' ? tint
-              : body.name === 'EndA_LockModule' ? st.partMats.endA
-                : body.name === 'EndB_LockModule' ? st.partMats.endB
-                  : body.kind === 'spine' ? st.partMats.spine : st.partMats.pla;
+          const mat = highlight ? st.mats.moving : partMat(st, body, tint);
           const mesh = nextMesh(geo, mat);
           mesh.position.set(body.position[0], body.position[1], body.position[2]);
           mesh.quaternion.set(body.quaternion[0], body.quaternion[1], body.quaternion[2], body.quaternion[3]);
           mesh.scale.setScalar(1);
         }
-        // Connector markers: a small cap at each of the six connection points,
-        // flat face outward, so the receivers read on the real parts.
-        for (const c of shownModules[i].bodyPoses ? [] : g.connectors) {   // physics-driven parts carry their own pose
-          const mesh = nextMesh(st.domeGeo, c.isEnd ? st.partMats.dome : st.partMats.sideDome);
-          const n = new THREE.Vector3(c.normal[0], c.normal[1], c.normal[2]);
-          if (n.lengthSq() > 1e-8) mesh.quaternion.setFromUnitVectors(st.DOME_UP, n.normalize().multiplyScalar(-1));
-          else mesh.quaternion.identity();
-          mesh.position.set(c.at[0], c.at[1], c.at[2]);
-          mesh.scale.setScalar(c.isEnd ? 0.1 : 0.08);
-        }
+        // (no connector domes: Nischay 5 Nov 'remove all these hemispheres' - the plugs, drawn from the module document, show them)
         return;
       }
 
@@ -761,29 +881,6 @@ function syncScene(st: any) {
         mesh.position.set(j.at[0], j.at[1], j.at[2]);
         mesh.scale.setScalar(j.radius);
         mesh.quaternion.identity();
-      }
-      for (const c of g.connectors) {
-        const mesh = nextMesh(st.domeGeo, c.isEnd ? st.partMats.dome : st.partMats.sideDome);
-        // THE BULGE POINTS INWARD, THE FLAT FACE OUTWARD — this is what makes
-        // a lock look like a lock. Two locked connectors are coincident with
-        // antiparallel normals, so their two flat faces meet and the pair
-        // reads as ONE COMPLETE SPHERE straddling the joint. Orienting the
-        // bulge outward instead (the obvious-looking reading of "outward
-        // normal") makes two mating domes meet curve-to-curve, which is both
-        // wrong and unmistakable on screen.
-        //
-        // The hemisphere's pole is local +Y and its flat rim sits at the
-        // local origin, so the pole is rotated onto MINUS the connector
-        // normal and the origin left exactly at c.at — the same reference
-        // point the clearance math uses (REQUIRED_DOME_CLEARANCE = 2*radius
-        // between two of these, in modulink.ts), which is precisely the
-        // separation at which two of these domes form one sphere.
-        const n = new THREE.Vector3(c.normal[0], c.normal[1], c.normal[2]);
-        if (n.lengthSq() > 1e-8) {
-          mesh.quaternion.setFromUnitVectors(st.DOME_UP, n.normalize().multiplyScalar(-1));
-        } else mesh.quaternion.identity();
-        mesh.position.set(c.at[0], c.at[1], c.at[2]);
-        mesh.scale.setScalar(c.radius);
       }
     });
 
@@ -901,38 +998,56 @@ function syncReceivers(st: any, list: import('@/features/msrr2/physicsView').Rec
     let dx = r.p[0] - cx, dz = r.p[2] - cz; const dn = Math.hypot(dx, dz);
     if (dn < 1e-6) { dx = 0; dz = 1; } else { dx /= dn; dz /= dn; }
     const out = R * 2.6;
-    g.add(textSprite(r.label, [r.p[0] + dx * out, r.p[1] + H + 0.12, r.p[2] + dz * out], 0.28));
+    g.add(textSprite(r.label, [r.p[0] + dx * out, r.p[1] + H + 0.12, r.p[2] + dz * out], 0.022));
   }
 }
 
 /** MANUAL tab: every connector of the live session, drawn with the SAME marker as every other viewport (ConnectorRenderer's
  *  buildConnectorMarker: dot, crosshair, outward arrow); hover it for its menu, click it in connect mode. Locked = green,
  *  picked / hovered = yellow. Markers are kept and only moved each frame; rebuilt when their colour changes. */
-function syncPorts(st: any, man: ManualState | null) {
-  const key = man ? man.ports : null;
+function syncPorts(st: any, modules: FittedModule[] | null, viewSig: number, man: ManualState | null) {
   if (!st.portGroup) { st.portGroup = new THREE.Group(); st.scene.add(st.portGroup); st.portNodes = new Map(); }
   const g: THREE.Group = st.portGroup; const nodes: Map<string, { node: THREE.Group; col: number }> = st.portNodes;
-  const sig = man ? `${man.pick.join(',')}|${man.hover?.id ?? ''}|${man.mode}` : '';
-  if (st.portSrc === key && st.portSig === sig) return;
-  st.portSrc = key; st.portSig = sig;
+  const sig = `${viewSig}|${man ? `${man.pick.join(',')}|${man.hover?.id ?? ''}|${man.mode}|${man.ports.map((p) => p.locked ?? '').join(',')}` : ''}|${modules?.length ?? 0}`;
+  if (st.portSig === sig && st.portSrc === man?.ports) return;
+  st.portSig = sig; st.portSrc = man?.ports;
   g.visible = !st.portsHidden;
   const drop = (id: string) => { const n = nodes.get(id)!; g.remove(n.node); n.node.traverse((o: any) => { o.geometry?.dispose(); o.material?.dispose(); }); nodes.delete(id); };
   const seen = new Set<string>();
+  const state = new Map((man?.ports ?? []).map((p) => [p.id, p]));
+  const colour = (id: string) => (man && (man.pick.includes(id) || man.hover?.id === id) ? CONNECTOR_SEL_COLOR : state.get(id)?.locked ? 0x2ecc71 : CONNECTOR_COLOR);
+  const place = (id: string, pose: { position: THREE.Vector3; normal: THREE.Vector3; roll?: THREE.Vector3 | null }, len: number) => {
+    const col = colour(id); seen.add(id); const had = nodes.get(id);
+    if (had && had.col === col) { had.node.position.copy(pose.position); orientConnectorMarker(had.node, pose); return; }
+    if (had) drop(id);
+    const node = buildConnectorMarker(pose, len, col); node.userData.port = id;
+    nodes.set(id, { node, col }); g.add(node);
+  };
+  // module plugs: each drawn part's own connectors from the module document, through connectorSnap's maths. The part's matrix
+  // = its drawn pose x the mesh bake (moduleMeshes: Studio frame -> model frame, metres -> cubes), so the plug rides the mesh.
+  const conns = restConnectors(); const bake = new THREE.Matrix4().compose(new THREE.Vector3(), new THREE.Quaternion(...STUDIO_TO_MODEL_QUAT), new THREE.Vector3(CUBES_PER_METRE, CUBES_PER_METRE, CUBES_PER_METRE));
+  const M = new THREE.Matrix4(), P = new THREE.Vector3(), Q = new THREE.Quaternion(), ONE = new THREE.Vector3(1, 1, 1);
+  for (const m of modules ?? []) for (const b of moduleBodies(m)) {
+    const c = conns.get(b.name); if (!c) continue;
+    M.compose(P.set(b.position[0], b.position[1], b.position[2]), Q.set(b.quaternion[0], b.quaternion[1], b.quaternion[2], b.quaternion[3]), ONE).multiply(bake);
+    for (const con of c.connectors) place(`${m.id}.${portOfConnector(con.id)}`, connectorWorldFrom(con, M), connectorMarkerLength(c.body) * CUBES_PER_METRE);
+  }
+  // floor receivers have no module part: their plugs come from the session
   for (const p of man?.ports ?? []) {
-    const col = man!.pick.includes(p.id) || man!.hover?.id === p.id ? CONNECTOR_SEL_COLOR : p.locked ? 0x2ecc71 : CONNECTOR_COLOR;
+    if (p.kind !== 'floor') continue;
     const v = toView([p.p[0], p.p[1], p.p[2]]), w = toView([p.p[0] + p.n[0], p.p[1] + p.n[1], p.p[2] + p.n[2]]);
-    const pose = { position: new THREE.Vector3(v[0], v[1], v[2]), normal: new THREE.Vector3(w[0] - v[0], w[1] - v[1], w[2] - v[2]).normalize() };
-    seen.add(p.id); const had = nodes.get(p.id);
-    if (had && had.col === col) { had.node.position.copy(pose.position); orientConnectorMarker(had.node, pose); continue; }
-    if (had) drop(p.id);
-    const node = buildConnectorMarker(pose, 0.08 * CUBES_PER_METRE, col); node.userData.port = p.id;
-    nodes.set(p.id, { node, col }); g.add(node);
+    place(p.id, { position: new THREE.Vector3(v[0], v[1], v[2]), normal: new THREE.Vector3(w[0] - v[0], w[1] - v[1], w[2] - v[2]).normalize() }, 0.03 * CUBES_PER_METRE);
   }
   for (const id of [...nodes.keys()]) if (!seen.has(id)) drop(id);
 }
 
+/** the module document's connector id -> the port name the physics and planner use (conn-endA -> A, conn-s1a -> S1A) */
+const portOfConnector = (id: string) => id.replace(/^conn-/, '').replace(/^end/, '').toUpperCase();
+
 /** a label that always faces the camera and is drawn on top; the canvas is sized to the text so nothing is cut off */
-function textSprite(text: string, p: number[], height = 0.4): THREE.Sprite {
+/** a label that keeps ONE size on screen at any zoom (Nischay 5 Nov: zoomed in, the receiver labels filled the view):
+ *  `screen` = its height as a share of the view's height-ish (sizeAttenuation off) */
+function textSprite(text: string, p: number[], screen = 0.026): THREE.Sprite {
   const font = 'bold 34px sans-serif';
   const m = document.createElement('canvas').getContext('2d')!; m.font = font;
   const w = Math.ceil(m.measureText(text).width) + 24, h = 64;
@@ -940,8 +1055,11 @@ function textSprite(text: string, p: number[], height = 0.4): THREE.Sprite {
   const x = c.getContext('2d')!;
   x.fillStyle = 'rgba(20,24,32,0.75)'; x.fillRect(0, 0, w, h);
   x.fillStyle = '#ffd34d'; x.font = font; x.textAlign = 'center'; x.textBaseline = 'middle'; x.fillText(text, w / 2, 34);
-  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true }));
-  sp.position.set(p[0], p[1], p[2]); sp.scale.set(height * w / h, height, 1); sp.renderOrder = 11;
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthTest: false, transparent: true, sizeAttenuation: false }));
+  // the MSRR root group is scaled 1/UNITS_PER_M (cubes -> metres) and that scale applies to a screen-sized sprite too
+  // (5 Nov: the labels came out an 'ant', 5.5x too small) - undo it
+  const k = screen * UNITS_PER_M;
+  sp.position.set(p[0], p[1], p[2]); sp.scale.set(k * w / h, k, 1); sp.renderOrder = 11;
   return sp;
 }
 

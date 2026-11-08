@@ -8,6 +8,7 @@ import { useBusyStore } from '@/state/busyStore';
 import { useEditModeStore } from '@/state/editModeStore';
 import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { useHardwareStore } from '@/state/hardwareStore';
+import { useV2Store } from '@/state/msrrV2Store';
 
 export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onHelpOpen: helpOpen }: any) {
   // A page that passes no handlers (the MSRR canvas) still gets working KEYS and SYNC buttons: the shared commands.
@@ -15,7 +16,9 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
   const onConnToggle = connToggle ?? (() => runOperator('ui.connection'));
   const streaming = useHardwareStore((s) => s.streaming);
   // ONE switch (Nischay 3 Nov: a SYNC word plus an ON/OFF pill inside it made no sense): on = stream + show what is sent
-  const toggleSync = () => { hardwareBridge.setStreaming(!streaming); if (!streaming && !isConnOpen) onConnToggle(); };
+  // turning Sync ON opens the SIM -> ESP window if it is closed; it never closes it (5 Nov: on the MSRR page it could not tell
+  // whether the window was open, so every second ON toggled it shut). Turning Sync OFF leaves the window as it is.
+  const toggleSync = () => { hardwareBridge.setStreaming(!streaming); if (!streaming) runOperator('ui.connection.open'); };
   const [wireframe, setWireframe] = useState(false);
   const [connectorsVisible, setConnectorsVisible] = useState(true);
 
@@ -25,6 +28,9 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
 
   const camActive = useDockStore((s) => s.active === 'camera');
   const page = usePageStore((s) => s.page);
+  // MSRR only: split the view, left the ideal robot, right the real one as Sync would drive it (Nischay 5 Nov)
+  const split = useV2Store((s) => s.split);
+  const session = useV2Store((s) => !!s.manual);   // the right half needs a live Manual session (its real copy runs inside it)
 
   // Responsive reflow: measure the space between the toolbar's top and the bottom
   // of its canvas area, then pick a layout that fits — a single labelled column,
@@ -32,7 +38,7 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
   // resize (window, split view, or a new panel appearing).
   const ref = useRef<HTMLDivElement>(null);
   const [mode, setMode] = useState<'col' | 'grid' | 'icons'>('col');
-  const N_BTNS = 6;
+  const N_BTNS = page === 'msrr' ? 7 : 6;
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
@@ -130,6 +136,21 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
         </svg>
         <span className="view-btn-label">PLUGS</span>
       </button>
+
+      {page === 'msrr' && (
+        <button
+          className={`view-btn${split && session ? ' view-btn--active' : ''}`}
+          disabled={!session}
+          onClick={() => useV2Store.getState().setSplit(!split)}
+          title={session ? 'Split the view: left the IDEAL robot, right the REAL robot as the sim expects it (sag, gear play, random robot) when Sync sends it these angles.' : 'Start a Manual session first (Planner v2 > Manual > Start): the right half is a real copy that runs inside it'}
+        >
+          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+            <rect x="1" y="2" width="12" height="10" rx="1" stroke="currentColor" strokeWidth="1.3" fill="none"/>
+            <line x1="7" y1="2" x2="7" y2="12" stroke="currentColor" strokeWidth="1.3"/>
+          </svg>
+          <span className="view-btn-label">SPLIT</span>
+        </button>
+      )}
 
       <button
         className="view-btn"

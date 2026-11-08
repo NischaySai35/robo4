@@ -163,7 +163,7 @@ export function PlanTab() {
               {!config.edges.some((e) => e.locked && 'floor' in e.a) && (
                 <p className="msrr-note">This planner only knows the floor-receiver board (bend / dock / peel with a module held by a receiver). From a chain
                   lying on the floor it has no moves yet: lifting a module needs the floor skills (tip first, base curled into a C), which run in{' '}
-                  <a style={{ cursor: 'pointer' }} onClick={() => useV2Store.getState().setTab('manual')}><b>Manual → Become a shape</b></a> and Shapes → ▶ Live.</p>
+                  <a style={{ cursor: 'pointer' }} onClick={() => useV2Store.getState().setTab('manual')}><b>Live → Become a shape</b></a> and Goal → 2 · Pick a shape → ▶ Live.</p>
               )}
             </>
           )}

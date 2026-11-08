@@ -1,3 +1,4 @@
+import { useV2Store } from '@/state/msrrV2Store';
 import { useState, useCallback, useEffect, useRef } from 'react';
 import './App.css';
 import SimTransmitPanel from '@/features/connection/SimTransmitPanel';
@@ -32,6 +33,8 @@ import { initMotionRuntime } from '@/control/motionRuntime';
 // inspection (e.g. `tetrobotModel.getState().doc`). The model is the platform's
 // source of truth going forward; it does not yet drive rendering (Phase 1).
 if (typeof window !== 'undefined') window.tetrobotModel = useModelStore;
+// the MSRR planner store, for scripted UI checks (tools/ui_shot.py: start a session, press SPLIT, connect)
+if (typeof window !== 'undefined') (window as any).tetrobotV2 = useV2Store;
 
 // Top-level workspace pages. The 3D scene is shared across editor/analysis/training/
 // animation; msrr has its own viewport built from the same components; motor is the hardware page.
@@ -83,42 +86,79 @@ function ThemeToggle() {
 
 // ── Battery indicator ─────────────────────────────────────────────────────────
 
-function BatteryIcon({ pct, color, width = 28, height = 13 }: any) {
-  const nubW  = 2.5;
+/** Battery outline with the % written INSIDE it (Nischay 5 Nov). The text has a dark outline so it reads over
+ *  both the coloured fill and the empty part, in both themes. */
+function BatteryIcon({ pct, color, width = 46, height = 21 }: any) {
+  const nubW  = 3;
   const bodyW = width - nubW;
-  const pad   = 1.8;
+  const pad   = 2.2;
   const fillW = Math.max(0, (bodyW - pad * 2) * pct / 100);
   const nubY  = (height - height * 0.45) / 2;
   return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flexShrink: 0 }}>
-      <rect x={0.75} y={0.75} width={bodyW - 1.5} height={height - 1.5} rx={2}
-        fill="none" stroke={color} strokeWidth={1.5} />
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ flexShrink: 0 }} aria-label={`battery ${pct.toFixed(0)}%`}>
+      <rect x={0.9} y={0.9} width={bodyW - 1.8} height={height - 1.8} rx={3}
+        fill="none" stroke={color} strokeWidth={1.8} />
       <rect x={bodyW} y={nubY} width={nubW} height={height * 0.45} rx={1} fill={color} />
       {fillW > 0 && (
-        <rect x={pad} y={pad} width={fillW} height={height - pad * 2} rx={1} fill={color} />
+        <rect x={pad} y={pad} width={fillW} height={height - pad * 2} rx={1.5} fill={color} opacity={0.85} />
       )}
+      <text x={bodyW / 2} y={height / 2 + 0.5} textAnchor="middle" dominantBaseline="middle"
+        fontSize={11.5} fontWeight={800} fill="#fff" stroke="#000" strokeWidth={2.4} strokeOpacity={0.55}
+        paintOrder="stroke" style={{ fontFamily: 'inherit' }}>
+        {pct.toFixed(0)}%
+      </text>
     </svg>
   );
 }
 
+/** The (n) after a figure: which module (mod<n>.local) it belongs to. */
+function ModTag({ num }: { num: number }) {
+  return <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-dim)' }}>({num})</span>;
+}
+
+/** Hover panel shared by the battery / current / board chips: every module's figures, worst ones coloured. */
+function BoardsHover() {
+  const boards = useIntegrationStore(s => s.boards);
+  if (boards.length === 0) return null;
+  return (
+    <div className="app-chip-pop" role="tooltip">
+      <div className="app-chip-pop-head">modules ({boards.filter(b => b.online).length}/{boards.length} online)</div>
+      {boards.map(b => {
+        const pct = b.volt != null ? batteryPct(b.volt) : null;
+        return (
+          <div key={b.url} className={`app-chip-pop-row ${b.online ? '' : 'is-off'}`}>
+            <span className="app-chip-pop-name">mod{b.num}</span>
+            {b.online ? (<>
+              <span style={{ color: pct == null ? undefined : pct < 10 ? 'var(--danger)' : pct < 30 ? 'var(--warn)' : undefined }}>
+                {pct != null ? `${pct.toFixed(0)}% ${b.volt!.toFixed(1)}V` : 'no battery'}</span>
+              <span>{b.mA != null ? (b.mA >= 1000 ? `${(b.mA / 1000).toFixed(2)} A` : `${Math.round(b.mA)} mA`) : '--'}</span>
+              <span style={{ color: b.chipC == null ? undefined : b.chipC > 65 ? 'var(--danger)' : b.chipC > 55 ? 'var(--warn)' : undefined }}>
+                {b.chipC != null ? `${Math.round(b.chipC)}°C` : '--'}</span>
+              <span className="app-chip-pop-dim">{b.servos} servos</span>
+            </>) : <span className="app-chip-pop-dim">offline</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function BatteryChip() {
-  const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
-  const avgVoltage       = useIntegrationStore(s => s.avgVoltage);
+  const boards = useIntegrationStore(s => s.boards);
+  // the module with the LEAST battery is the one that matters
+  const low = boards.filter(b => b.online && b.volt != null).sort((a, b) => a.volt! - b.volt!)[0];
+  if (!low) return null;
 
-  if (servoOnlineCount === 0 || avgVoltage == null) return null;
-
-  const pct   = batteryPct(avgVoltage);
+  const volt  = low.volt!;
+  const pct   = batteryPct(volt);
   const color = pct < 10 ? '#ef4444' : pct < 30 ? '#f97316' : '#22c55e';
 
   return (
-    <div className="app-status-chip" title={`Battery: ${avgVoltage.toFixed(2)} V avg · ${pct.toFixed(0)}%`}>
+    <div className="app-status-chip app-chip-hoverable" aria-label={`Lowest battery: module ${low.num}, ${volt.toFixed(2)} V, ${pct.toFixed(0)}%`}>
       <BatteryIcon pct={pct} color={color} />
-      <span style={{ fontSize: 13, fontWeight: 700, color, transition: 'color 0.4s', letterSpacing: '0.03em' }}>
-        {pct.toFixed(0)}%
-      </span>
-      <span className="hdr-opt-2" style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginLeft: 1 }}>
-        {avgVoltage.toFixed(1)}V
-      </span>
+      <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{volt.toFixed(1)}V</span>
+      <ModTag num={low.num} />
+      <BoardsHover />
     </div>
   );
 }
@@ -142,28 +182,27 @@ function ServoCountChip() {
 }
 
 function CurrentChip() {
-  const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
-  const totalCurrentMA   = useIntegrationStore(s => s.totalCurrentMA);
+  const boards = useIntegrationStore(s => s.boards);
+  // the module drawing the MOST current
+  const hi = boards.filter(b => b.online && b.mA != null).sort((a, b) => b.mA! - a.mA!)[0];
+  if (!hi) return null;
 
-  if (servoOnlineCount === 0 || totalCurrentMA == null) return null;
-
-  const orangeThresh = 250 * servoOnlineCount;
-  const redThresh    = 450 * servoOnlineCount;
-  const color = totalCurrentMA > redThresh ? '#ef4444'
-              : totalCurrentMA > orangeThresh ? '#f97316'
-              : '#22c55e';
-  const label = totalCurrentMA >= 1000
-    ? `${(totalCurrentMA / 1000).toFixed(2)} A`
-    : `${Math.round(totalCurrentMA)} mA`;
+  const mA = hi.mA!;
+  const orangeThresh = 250 * hi.servos;
+  const redThresh    = 450 * hi.servos;
+  const color = mA > redThresh ? '#ef4444' : mA > orangeThresh ? '#f97316' : '#22c55e';
+  const label = mA >= 1000 ? `${(mA / 1000).toFixed(2)} A` : `${Math.round(mA)} mA`;
 
   return (
-    <div className="app-status-chip hdr-opt-5" title={`Total current draw: ${totalCurrentMA.toFixed(0)} mA · orange>${orangeThresh}mA · red>${redThresh}mA`}>
+    <div className="app-status-chip app-chip-hoverable hdr-opt-5" aria-label={`Highest current: module ${hi.num}, ${mA.toFixed(0)} mA`}>
       <svg width="11" height="17" viewBox="0 0 11 17" fill="none" style={{ flexShrink: 0 }}>
         <path d="M6.5 1L1 9.5H5.5L4.5 16L10 7.5H5.5L6.5 1Z" fill={color} />
       </svg>
       <span style={{ fontSize: 13, fontWeight: 700, color, transition: 'color 0.4s', letterSpacing: '0.03em' }}>
         {label}
       </span>
+      <ModTag num={hi.num} />
+      <BoardsHover />
     </div>
   );
 }
@@ -238,25 +277,18 @@ function AppHeader({ page, setPage }: any) {
     setPage(id);
   };
 
-  const connected        = useIntegrationStore(s => s.connected);
-  const servoOnlineCount = useIntegrationStore(s => s.servoOnlineCount);
   const boardName        = useHardwareStore(s => s.boardName);
   const hwSignal         = useHardwareStore(s => s.signal)();
+  const chipC            = useIntegrationStore(s => s.maxChipC);
+  // orange from 55 °C; above 65 °C big red blinking (.app-chip-hot, Nischay 5 Nov)
+  const chipHot   = chipC != null && chipC > 65;
+  const chipColor = chipC == null ? '' : chipC > 55 ? 'var(--warn)' : 'var(--text-dim)';
 
-  let dotColor, statusText;
-  if (!connected) {
-    dotColor   = '#ef4444';
-    statusText = 'Offline';
-  } else if (servoOnlineCount === 0) {
-    dotColor   = '#f59e0b';
-    statusText = 'No servos';
-  } else if (servoOnlineCount < 6) {
-    dotColor   = '#f59e0b';
-    statusText = `${servoOnlineCount}/6 live`;
-  } else {
-    dotColor   = '#22c55e';
-    statusText = 'All OK';
-  }
+  const boards      = useIntegrationStore(s => s.boards);
+  const onlineCount = boards.filter(b => b.online).length;
+  // one module online is enough to be OK (Nischay 5 Nov); the (n) says how many are online
+  const dotColor   = onlineCount > 0 ? '#22c55e' : '#ef4444';
+  const statusText = onlineCount > 0 ? 'All OK' : 'Offline';
 
   return (
     <header className="app-header">
@@ -300,7 +332,7 @@ function AppHeader({ page, setPage }: any) {
         <VoiceControl />
         <BatteryChip />
         <CurrentChip />
-        <div className="app-status-chip" title={`${boardName}: ${statusText}${hwSignal != null ? ` · signal ${hwSignal}%` : ''}`}>
+        <div className="app-status-chip app-chip-hoverable" aria-label={`${boardName}: ${onlineCount} online, ${statusText}`}>
           <span style={{
             width: 10, height: 10, borderRadius: '50%', display: 'inline-block', flexShrink: 0,
             background: dotColor,
@@ -308,12 +340,20 @@ function AppHeader({ page, setPage }: any) {
             transition: 'background 0.4s, box-shadow 0.4s',
           }} />
           <span className="app-board-name">{boardName}</span>
+          <ModTag num={onlineCount} />
           <span className="hdr-opt-4" style={{ fontSize: 12, color: dotColor, marginLeft: 2, fontWeight: 700, transition: 'color 0.4s' }}>
             · {statusText}
           </span>
+          {onlineCount > 0 && chipC != null && (
+            <span className={chipHot ? 'app-chip-hot' : undefined}
+                  style={chipHot ? { marginLeft: 4 } : { fontSize: 12, fontWeight: 600, color: chipColor, marginLeft: 4, transition: 'color 0.4s' }}>
+              {Math.round(chipC)}°C
+            </span>
+          )}
           {hwSignal != null && (
             <span className="hdr-opt-3" style={{ fontSize: 11, color: 'var(--text-dim)', marginLeft: 4 }}>{hwSignal}%</span>
           )}
+          <BoardsHover />
         </div>
         <ServoCountChip />
         <ThemeToggle />
@@ -392,7 +432,7 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  useEffect(() => { setUiActions({ togglePalette: () => setPaletteOpen(v => !v), toggleHelp: () => setHelpOpen(v => !v), toggleConn }); }, [toggleConn]);
+  useEffect(() => { setUiActions({ togglePalette: () => setPaletteOpen(v => !v), toggleHelp: () => setHelpOpen(v => !v), toggleConn, openConn: () => setConnOpen(true) }); }, [toggleConn]);
 
   if (VIEW_ONLY) return (
     <div className="app-shell">

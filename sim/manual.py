@@ -193,7 +193,9 @@ LIFT_ENDS = float(os.environ.get('LIFT_ENDS', '0'))   # m: lying connectors rise
 LOOKAHEAD = os.environ.get('LOOKAHEAD', '0') == '1'     # the real-physics look-ahead on the GPU at the stand-off
 IDEAL_LEAD = math.radians(float(os.environ.get('IDEAL_LEAD_DEG', '3')))   # ideal: how far a command may run ahead of its loaded joint
 ANTI_ERROR = os.environ.get('ANTI_ERROR', '0') == '1'   # pre-compensate this robot's known servo droop + deadband in every move
-VSEPR_IDLE = os.environ.get('VSEPR_IDLE', '1') == '1'   # VSEPR keeps relaxing locked groups when no job runs
+# VSEPR keeps relaxing locked groups when no job runs. OFF (Nischay 7 Nov): VSEPR moves the robot only in AUTOMATIC jobs (docking,
+# connector snap, shape skills) - never after or during your own moves. VSEPR_IDLE=1 brings it back for experiments.
+VSEPR_IDLE = os.environ.get('VSEPR_IDLE', '0') == '1'
 MOVE_STEP = float(os.environ.get('MOVE_STEP', '0.035'))      # rad per 60 ms tick into the planned shape (~0.6 rad/s)
 LINE_UP_DEG = float(os.environ.get('LINE_UP_DEG', '2.5'))   # max connector tilt before going in (Nischay 2 Nov: 2.5 deg)
 INTEG_MAX = float(os.environ.get('INTEG_MAX', '0.08'))   # rad: cap of the catch-up push (was 0.12 and never faded)
@@ -254,13 +256,21 @@ class GpuPeer:
 # ---------- the live session ----------
 class Manual:
     def __init__(self, scene, seed=1, randomize=True, disturb=True, fps=25, judge='off', pace=True, log=None, ideal=False):
-        self.anchors = list(scene.get('anchors', [])); ids = [mm['id'] for mm in scene['modules']]
+        self.scene = scene; self.anchors = list(scene.get('anchors', [])); ids = [mm['id'] for mm in scene['modules']]
         init = [canon(l['a'], l['b']) for l in scene.get('locks', [])]
         old = DIST.ON; DIST.ON = bool(disturb)
         try:
             # ideal (Nischay 2 Nov: 'forget all errors'): the flex / gear-play joints are left out of the model (rigid=True)
             self.w = w = PhysWorld(ids, self.anchors, randomize=randomize, seed=seed, locks=all_locks(ids, self.anchors) + init, rigid=bool(ideal))
         finally: DIST.ON = old
+        # the surface the floor connectors are on (Nischay 7 Nov: walls, ceilings, slopes): 0 = floor, 90 = wall, 180 = ceiling. Only
+        # gravity turns - sag, magnets, servo loads, falling, the real-robot correction and the IMU all follow from the physics. The
+        # split copy is built from the same scene, so it gets the same gravity. ('Stay close to the floor' rules mean the surface.)
+        sd = math.radians(float(scene.get('surface_deg', os.environ.get('SURFACE_DEG', 0.0))))
+        if sd:
+            g = w.m.opt.gravity.copy(); c, s_ = math.cos(sd), math.sin(sd)
+            w.m.opt.gravity[:] = [g[0], c * g[1] - s_ * g[2], s_ * g[1] + c * g[2]]   # turned about the floor's x axis
+        self.surface_deg = math.degrees(sd)
         self.ideal = bool(ideal)
         if self.ideal:          # with randomize/disturb off
             m_ = w.m
@@ -272,7 +282,11 @@ class Manual:
             m_.eq_solimp[:] = [0.99, 0.999, 0.001, 0.5, 2.0]
             # (contacts keep MuJoCo's normal stiffness: 'as hard as possible' + ~190 fin contacts per lock + exact joints blew the
             # solver up at the first move, 2 Nov)
-            m_.geom_friction[:, 0] *= float(os.environ.get('IDEAL_FRIC', '0.2'))   # 20 % sliding friction (2 Nov: zero let parts jitter at rest; 1.0 = normal: much slower to simulate)
+            # REAL friction (8 Nov, Nischay: real physics, no shortcuts). It was 20 %: with real friction the no-slip pass fought the exact
+            # joints (slow, then the sim blew up) - so the no-slip pass is off instead. At 20 % the base slid and Cobra leaned 49 deg
+            # (NOT reached); real friction + no no-slip: Cobra DONE, 15 deg. (Also what the GPU look-ahead has: no no-slip solver there.)
+            m_.geom_friction[:, 0] *= float(os.environ.get('IDEAL_FRIC', '1.0'))
+            m_.opt.noslip_iterations = int(os.environ.get('IDEAL_NOSLIP', '0'))
             # ideal servos: 50 kg.cm (Nischay 2 Nov; the real ST3215 is 2.7 N.m) - the load % is reported against this. Their angle is
             # set exactly every step (phys_world._exact); the 5x stiffer motor only keeps the physics step close to it
             A_ = w.all_act; m_.actuator_gainprm[A_, 0] *= 5; m_.actuator_biasprm[A_, 1] *= 5; m_.actuator_biasprm[A_, 2] *= 2.2
@@ -325,6 +339,9 @@ class Manual:
     def _tick(self):
         if self.abort: self.abort = False; raise Abort()
         if self.sync: self.sync.tick()
+        tw = getattr(self.sync, 'twin', None)
+        # split view: the ideal robot waits for the real copy (slower than real time), so both halves show the same moment
+        while tw is not None and tw.alive and self.alive and not self.abort and tw.behind() > 0.3 and not self.sync.on: time.sleep(0.01)
         self._rec()
         while self.paused and not self.abort and self.alive: time.sleep(0.05); self.wall0 = time.time() - (float(self.w.d.time) - self.sim0)
         if self.pace:
@@ -353,7 +370,9 @@ class Manual:
     def joints(self, mid, js):
         if time.time() - self._last_j > 1.5: self.mark(f'joints {mid}')       # a burst of slider moves = one step
         self._last_j = time.time(); i = self.w.ids.index(mid)
-        for j, deg in js.items(): self.w.tgt[i * 9 + JN.index(j)] = math.radians(float(deg))
+        for j, deg in js.items():                                     # L1 / L2 = the lock rotors (Nischay 5 Nov: sliders to check their direction on the real robot)
+            k = 7 if j == 'L1' else 8 if j == 'L2' else JN.index(j)
+            self.w.tgt[i * 9 + k] = math.radians(float(np.clip(deg, -45, 45)) if k >= 7 else float(deg))
 
     def do(self, cmd):
         k = cmd['kind']
@@ -398,7 +417,8 @@ class Manual:
         try: w, ex = PhysWorld.load(self.slot)
         finally: DIST.ON = old
         w.rec = {'dt': 1.0 / self.fps, 'last': -1.0, 'frames': []}; w.on_tick = self._tick
-        self.w = w; self.cur = list(ex['cur']); self.traj, self.marks = [], []; self._rec()
+        w.comfort = getattr(self.w, "comfort", None)                        # a restored world moves as smoothly as before
+        self.w = w; self.cur = list(ex["cur"]); self.traj, self.marks = [], []; self._rec()
         self.wall0, self.sim0 = time.time(), float(w.d.time)
         self.log(f'state restored (t {w.d.time:.1f} s, locks {[lock_key(L) for L in self.cur]})')
 
@@ -409,6 +429,16 @@ class Manual:
         if name == 'straight':
             # Nischay 1 Nov: it snapped straight at full servo speed out of a just-unlocked ring. Now as a real undock: any end
             # still sitting in a connector slides straight out first, then every joint goes to 0 smoothly, together
+            # a closed loop of module-to-module locks (a ring) cannot go straight: say which lock to open instead of fighting it (5 Nov)
+            par = {m_: m_ for m_ in w.ids}
+            def root(x):
+                while par[x] != x: x = par[x]
+                return x
+            for L_ in self.cur:
+                if 'module' not in L_['a'] or 'module' not in L_['b']: continue
+                ra, rb = root(L_['a']['module']), root(L_['b']['module'])
+                if ra == rb: return self.log(f'straighten: NOT possible - lock {lock_key(L_)} closes a ring; unlock it first (click it in the locked list)')
+                par[ra] = rb
             for (mid_, e_, rx_) in self.plugged()[:4]: self.unplug(mid_, e_, rx_)
             worst = self.drive_to({mid: np.zeros(7) for mid in w.ids})
             self.log(f'straighten: every joint to 0, smoothly (worst {worst:.0f} deg off)'); return
@@ -479,13 +509,19 @@ class Manual:
             parts = [f'{m_}_{b_}' for m_ in mods for b_ in ('EndA_LockModule', 'T2_Ring_B3Fork', 'EndB_LockModule') if not (m_ == mid and b_.startswith('End' + e))]
             anchor = max(parts, key=lambda n_: float(np.linalg.norm(w.d.xpos[w.m.body(n_).id] - tip)))
             dik = DIK(w, mods, (mid, e), None, {m_: 0 for m_ in mods}, anchor=anchor); dik.relax_on = False
+            dik.spread = None                       # your hand moves it: no VSEPR spreading the other joints (Nischay 7 Nov: VSEPR = auto only)
+            # your hand decides the dragged module's height (5 Nov: 'keep the middle parts low' held it down - an upward drag only slid
+            # the chain along the floor); the other modules still stay low
+            dik.low = [t for t in dik.low if not t.frame_name.startswith(mid + '_')]
             self.mark(f'drag {end}'); self.drag = dict(end=end, dik=dik, mods=mods)
         dik = self.drag['dik']; b = w.m.body(dik.tbody).id
         dik.point = w.d.xmat[b].reshape(3, 3).T @ (pt - w.d.xpos[b])               # the mouse, in the anchor's frame
+        dik.point_world = np.asarray(pt, float).copy()                            # ...used as a fixed point in the room (DIK._target)
 
     def _drag_tick(self):
         """one 60 ms step of the drag: DIK moves the tip toward the mouse, VSEPR shapes the rest (its null space), physics decides"""
         w = self.w; D = self.drag; dik = D['dik']
+        self._drag_twist(D)
         vel, _, _ = dik.step(0.06); dq = np.concatenate([vel[m_] for m_ in D['mods']]) * 0.06
         mx = np.abs(dq).max(); dq = dq * (0.035 / mx) if mx > 0.035 else dq
         tix = np.array([w.ids.index(m_) * 9 + k for m_ in D['mods'] for k in range(7)]); qadr = np.array([qa for m_ in D['mods'] for qa in w.mod[m_]['qa']])
@@ -493,10 +529,31 @@ class Manual:
         q = w.d.qpos[qadr]; w.tgt[tix] = np.clip(q + (dq if self.ideal else dq * 2.0), lo, hi)
         w.run(0.06)
 
+    def _drag_twist(self, D):
+        """twist first (5 Nov: a lying module bends only flat along the floor; pulled up, its tip has no way up the step-by-step
+        solver can see - straight out, a twist does not move the tip at all - so it slid sideways and lifted 18 mm of 120): when the
+        mouse pulls out of the module's bend plane, turn the twist at the far end (T1 for End B, T3 for End A) so the bend plane
+        faces the mouse, 3 deg per tick at most. Then DIK bends it there."""
+        w = self.w; d = w.d; m = w.m; mid, e = D['end'].split('.'); dik = D['dik']
+        if dik.point is None: return
+        target = np.asarray(dik.point_world, float)
+        tip = d.site_xpos[w.mod[mid]['end'][e]['tip']]; dv = target - tip; n = float(np.linalg.norm(dv))
+        if n < 0.02: return
+        dh = dv / n; acts = w.mod[mid]['act']; k = 0 if e == 'B' else 6
+        u = d.xaxis[m.actuator_trnid[acts[k], 0]]; a = d.xaxis[m.actuator_trnid[acts[2], 0]]   # the twist's axis, a bend's axis (B2)
+        if abs(float(a @ dh)) < 0.5: return                           # the mouse is (mostly) in the bend plane: bending reaches it
+        phi = math.atan2(-float(a @ dh), float(np.cross(u, a) @ dh))   # turn that puts the bend axis across the pull
+        if abs(phi) > math.pi / 2: phi -= math.copysign(math.pi, phi)  # the bend plane is the same either way round: the short turn
+        i = w.ids.index(mid); lo, hi = m.jnt_range[m.actuator_trnid[acts[k], 0]] * 0.97
+        w.tgt[i * 9 + k] = float(np.clip(w.tgt[i * 9 + k] + np.clip(phi, -0.05, 0.05), lo, hi))
+
     def _vsepr_idle(self):
         """VSEPR as part of the physics (dik.VseprIdle): every locked group keeps relaxing toward a lower VSEPR score, locks kept
         closed, along the floor, slowly; paused 5 s after a hand move so it never fights the user"""
         from dik import VseprIdle
+        # 7 Nov (Nischay: "the ideal robot is swinging"): it rolled a just-started lying chain at up to 200 mm/s for a <=4 deg gain,
+        # then again every ~7 s. Now: nothing before your first action, and after a try with no real gain it rests until you act again
+        if not self.marks: return
         w = self.w; key = frozenset(lock_key(L) for L in self.cur)
         if getattr(self, '_idle_key', None) != key:
             self._idle_key, self._idle, seen = key, [], set()
@@ -507,17 +564,17 @@ class Manual:
                 if len(g) > 1: self._idle.append(VseprIdle(w, g))
         for R in self._idle:
             # rest when there is nothing worth improving (2 Nov: a straight chain is already spread; endless tiny nudges shook it):
-            # if the score fell < 0.2 % over the last 2 s, send nothing and look again in 5 s
+            # if the score fell < 0.2 % over the last 2 s, send nothing until the next action of yours (a new mark; was: 5 s)
             now = float(w.d.time); E_ = vsepr.energy(w.d.xpos[R.bodies]); hist = getattr(R, 'hist', [])
-            if now < getattr(R, 'rest_until', -1.0): continue
+            if getattr(R, 'rest_mark', -1) == len(self.marks): continue
             hist = [h for h in hist if now - h[0] <= 2.0] + [(now, E_)]; R.hist = hist
-            if now - hist[0][0] >= 1.9 and hist[0][1] - E_ < 0.002 * hist[0][1]: R.rest_until = now + 5.0; R.hist = []; continue
+            if now - hist[0][0] >= 1.9 and hist[0][1] - E_ < 0.002 * hist[0][1]: R.rest_mark = len(self.marks); R.hist = []; continue
             # VSEPR is like gravity (Nischay 2 Nov): it pushes toward the rounder shape, but a lock - like a floor - stops it, it
             # never forces through. A step that moved any closed lock beyond its slack is taken back, and it rests
             dr = w.lock_drift()
             if getattr(R, 'last', None) and any(mm > LOCK_SLACK[0] or deg > LOCK_SLACK[1] for mm, deg in dr.values()):
                 for i, dq in R.last: w.tgt[i:i + 7] -= dq
-                R.last = None; R.rest_until = now + 5.0; R.hist = []; continue
+                R.last = None; R.rest_mark = len(self.marks); R.hist = []; continue
             v = R.step()
             if not v: continue
             R.last = []
@@ -640,6 +697,29 @@ class Manual:
             self.log(f"    after turning: {c['why']} - next")
         return None
 
+    def _crawl_near(self, dm, de, tname, gd, gt, anchored):
+        """8 Nov (Nischay: two lying modules into a snake / T): with real friction a lying module cannot slide over to its partner,
+        and bending alone reaches ~25 cm. If the target is further, a single FREE lying module (the docker's, else the target's)
+        crawls (floor_skills.crawl_to) until the docking end is CRAWL_NEAR from a point CRAWL_OUT in front of the target connector."""
+        import floor_skills as FS
+        w = self.w; d = w.d; out = float(os.environ.get('CRAWL_OUT', '0.12')); E = w.mod[dm]['end'][de]
+        def rx():
+            w._refresh_rx(); return next(x for x in w.rx if x['name'] == tname)
+        tip = lambda: d.site_xpos[E['tip']].copy()
+        front = lambda: (lambda R: R['seat'] + out * R['z'])(rx())
+        far = float(np.linalg.norm((front() - tip())[:2]))
+        if far < float(os.environ.get('CRAWL_REACH', '0.20')): return
+        free = lambda g: len(g) == 1 and not anchored(g)
+        B = FS.Brain(w, log=self.log)
+        if free(gd):
+            self.log(f'  {tname} is {far * 1000:.0f} mm away - {dm} crawls over first'); FS.crawl_to(B, dm, tip, front, log=self.log)
+        elif free(gt):
+            mt = next(iter(gt)); self.log(f'  {tname} is {far * 1000:.0f} mm away - {mt} crawls over first')
+            # the target moves: its connector's front point goes to the docking end (same distance, other way round)
+            FS.crawl_to(B, mt, front, tip, log=self.log)
+        elif not (anchored(gd) or anchored(gt)):                           # a standing side reaches by standing: nothing to say then
+            self.log(f'  {tname} is {far * 1000:.0f} mm away and neither side is a single free module - no crawl (yet)')
+
     def coop_connect(self, a, b):
         """1 Nov, Nischay: "both should bend", "use my VSEPR theory", "it's a sim, use the truth". Every 60 ms: read where
         the two connectors REALLY are, solve one damped least-squares step over EVERY joint of both groups (they meet in the
@@ -659,6 +739,7 @@ class Manual:
             if anch(other['module']) and not anch(dm): tname = f'{dm}.{de}'; dm, de = other['module'], other['port']
         gd = set(group_of(w, self.cur, dm)); gt = set(group_of(w, self.cur, tname.split('.')[0])) if not tname.startswith('F:') else set()
         anchored = lambda g: any('floor' in Lk['a'] and Lk['b']['module'] in g for Lk in self.cur)
+        if gt and gd != gt: self._crawl_near(dm, de, tname, gd, gt, anchored)
         # steering: DIK (dik.py) for a lying docker (rings, lying chains: the old steering cannot close a 3-ring), the old
         # DLS when the docker stands on a floor connector (DIK still misses the standing side dock, 1 Nov). COOP_STEER=dik|old forces one
         steer = os.environ.get('COOP_STEER', 'dik'); use_dik = steer != 'old'   # 3 Nov (Nischay: nothing preplanned): every docker, standing too, steers live; 'old' = the planned stand-up
@@ -696,7 +777,10 @@ class Manual:
         for c, mid in enumerate(mods):
             if mid not in gd:
                 foot = next((Lk['b']['port'] for Lk in self.cur if 'floor' in Lk['a'] and Lk['b']['module'] == mid), None)
-                share[c * 7:c * 7 + 7] = 1.0 if self.ideal else 0.08; share[c * 7 + (0 if foot == 'A' else 6)] = 1.0   # ideal (50 kg.cm, exact joints): the target bends freely too
+                # the target bends freely too; how far its servos can hold it is now physics' call (dik.TorqueLimit: the torque each
+                # move needs, from the real gravity), no longer a fixed 8 % (8 Nov, ceiling: at 8 % M2 only twisted, into its stop)
+                import dik as dikmod
+                share[c * 7:c * 7 + 7] = 1.0 if (self.ideal or dikmod.TORQUE > 0) else 0.08; share[c * 7 + (0 if foot == 'A' else 6)] = 1.0
         if dik is None and use_dik: dik = DIK(*dik_args, offset=0.03, share=share)
         if dik is not None: dik.lying = not any(anchored({x}) for x in mods)
         # seat: the real robot presses 0.6 mm past it and checks loosely; the ideal one aims at exactly 0 and must be within 20 um -
@@ -704,7 +788,13 @@ class Manual:
         # few um under it (2 Nov, M1.A -> M2.S2B: 9 um, 128 contact points). The steering is exact; the true numbers are logged
         # (2 Nov, fin-held locks: the printed parts carry ~0.1 mm tolerance, so fully pushed in = touching within 0.1 mm of the
         # nominal seat; the fins turning the full 45 deg (lock()) is the real test)
-        press, seat_mm = (0.0, (float(os.environ.get('SEAT_IDEAL_MM', '0.02')),) * 2) if self.ideal else (-0.0006, (0.8, 1.5))
+        press, seat_mm = (0.0, (float(os.environ.get('SEAT_IDEAL_MM', '0.02')),) * 2) if self.ideal else (None, (0.8, 1.5))
+        if os.environ.get('DOCK_PUSH') == 'dynamic': press = None          # test switch: the ideal robot pushes the dynamic way too
+        # press None = the robot with errors pushes DYNAMICALLY (Nischay 7 Nov: on a wall or ceiling gravity does not help, a fixed
+        # 0.6 mm past the seat is floor thinking): the aim leads the end and keeps going in while the end goes deeper; blocked, the lead
+        # grows until a servo is at its real strength (85 %, the anti-windup's limit) - gravity, magnets and contacts decide how much
+        # push that is. When the end stops going deeper past the seat, the lock is tried: the fins turning home are the real test.
+        lead, deep_best, deep_stall = 0.0, 1e9, 0
         # going in, the sideways allowance (mm) = a + b * gap: the real robot leans on chamfers + magnets (2 mm at the seat); the ideal
         # one must be centred BEFORE the pads touch (2 Nov: touching 0.4 mm off, friction held it there): 0.01 mm at the seat
         # (a + b * (gap - c)): ideal is centred to 0.15 mm (the pads' clearance is ~0.25 mm per side) from 15 mm out, in free air, before the pads enter the slot at ~9 mm: in the slot
@@ -712,7 +802,7 @@ class Manual:
         funnel = (0.15, 0.05, 15.0) if self.ideal else (2.0, 0.06, 0.0)
         best_phase = 'line up'
         glide0 = getattr(w, 'glide', False) and os.environ.get('GLIDE_CONNECT', '0') == '1'   # 3 Nov: gliding joints lag DIK's commands, the final line-up crawled (2-ring 30 s vs 12 s); the Studio's playback is smooth on its own now
-        planned = False; end_fix = None; hold = 0; la_done = False; redo = 0
+        planned = False; end_fix = None; hold = 0; la_done = False; redo = 0; unwound = set()
         groups = {}
         for mid in mods:
             if any(mid in g.mods for g in groups.values()): continue
@@ -798,7 +888,8 @@ class Manual:
                 dq += (np.eye(len(dofs)) - Jp @ J) @ (-0.002 * g * min(1.0, np.linalg.norm(ep) / 0.10))   # shape first, precision last: the spread fades over the last 10 cm
             cap_ = 0.035 * min(1.0, max(0.25, np.linalg.norm(ep) / 0.03))   # small, calm corrections near the target, no overshoot (2 Nov)
             q = d.qpos[qadr]; mx = np.abs(dq).max(); dq = dq * (cap_ / mx) if mx > cap_ else dq   # scale the whole step (direction kept), like the brain's vclip
-            if os.environ.get('COOP_DEBUG') and (os.environ.get('COOP_DEBUG') == '2' or int((float(d.time) - t0) / 0.06) % 10 == 0): print(f'COOP t {float(d.time) - t0:5.1f} {phase} aim {offset * 1000:5.1f} pos {np.linalg.norm(ep) * 1000:6.1f} mm ang {math.degrees(np.linalg.norm(np.cross(nE, -z))):5.1f} slot {math.degrees(sl):5.1f} |dq| {mx:.3f} q-tgt {np.abs(w.tgt[tix] - q).max():.3f}' + (f' | DIK sees {dik_e:.1f} mm {dik_a:.1f} deg' if dik is not None else '') + (f' WHY {dik.why()}' if dik is not None and dik_e < float(os.environ.get('COOP_WHY_MM', '25')) and os.environ.get('COOP_WHY') else ''), file=sys.stderr, flush=True)
+            if os.environ.get('COOP_DEBUG') and (os.environ.get('COOP_DEBUG') == '2' or int((float(d.time) - t0) / 0.06) % 10 == 0): print(f'COOP t {float(d.time) - t0:5.1f} {phase} aim {offset * 1000:5.1f} pos {np.linalg.norm(ep) * 1000:6.1f} mm ang {math.degrees(np.linalg.norm(np.cross(nE, -z))):5.1f} slot {math.degrees(sl):5.1f} |dq| {mx:.3f} q-tgt {np.abs(w.tgt[tix] - q).max():.3f} load ' + ' '.join(f'{x:.2f}' for x in np.abs(d.actuator_force[acts]) / np.maximum(np.abs(m.actuator_forcerange[acts, 1]), 1e-6)) + (f' | DIK sees {dik_e:.1f} mm {dik_a:.1f} deg' if dik is not None else '') + (f' WHY {dik.why()}' if dik is not None and dik_e < float(os.environ.get('COOP_WHY_MM', '25')) and os.environ.get('COOP_WHY') else ''), file=sys.stderr, flush=True)
+            if os.environ.get('COOP_DEBUG') == '3' and int((float(d.time) - t0) / 0.06) % 10 == 0: print(f'COOPQ t {float(d.time) - t0:5.1f} q ' + ' '.join(f'{x:5.0f}' for x in np.degrees(q)) + ' | dq ' + ' '.join(f'{x:6.3f}' for x in dq), file=sys.stderr, flush=True)
             # the catch-up push: grows while a joint stays short (friction), but now LEAKS (5 %/tick) and is capped at ~2 deg - it used to
             # build up to 7 deg over a long line-up and then slide the end sideways while going in (2 Nov)
             if phase == 'line up': integ = np.clip(integ + 0.15 * dq, -0.12, 0.12)   # line-up: the full push (it moves the end sideways through friction)
@@ -807,7 +898,9 @@ class Manual:
                 load = np.abs(d.actuator_force[acts]) / np.maximum(np.abs(m.actuator_forcerange[acts, 1]), 1e-6)   # push grow made it stick, then slip and fling the curl (1 Nov, 3-ring)
                 integ = np.where(load > 0.85, integ * 0.8, integ)
             tick = dict(t=float(d.time) - t0, phase=phase, mods=mods, q=q.copy(), dq=dq.copy(), tip=tip.copy(), seat=R['seat'].copy(), z=z.copy(), Rt=R['R'].copy(), nE=nE.copy(), slot=sl)
-            if self.policy: dq = np.asarray(self.policy(tick), float)       # the model's step replaces DIK's (DIK still ran: its view is what the model learned from)
+            if self.policy:                                                # the model's step replaces DIK's (DIK still ran: its view is what the model learned from)
+                dq = np.asarray(self.policy(tick), float); mx = np.abs(dq).max()
+                dq = dq * (cap_ / mx) if mx > cap_ else dq                 # the same step limit as DIK's (3 Nov: uncapped, 10 % model ticks broke 4 of 6 docks)
             if self.recorder: self.recorder(tick)
             # ideal: the joints go exactly where DIK says (no push-ahead, no catch-up). Each step adds to the last COMMAND, not to where the joint
             # sits: a loaded joint sits a hair under its command, and once DIK's step was that small it never moved again (3 Nov, chain3
@@ -835,10 +928,11 @@ class Manual:
                 # already lined up but closer than the stand-off - IN FRONT of the target (2 Nov: a straight chain is 'lined up' 1.35 m
                 # BEHIND it, and this sent it straight to 'go in') (1 Nov, round 2-ring: ends face to face, 2 deg, touching, 14 mm
                 # 'short' of a stand-off point behind them): the stand-off is only a waypoint -> go in from here
-                elif os.environ.get('COOP_GATE2', '1') == '1' and aerr < LINE_UP_DEG and abs(math.degrees(sl)) < LINE_UP_TURN and lat_ < 0.003 and -0.001 < ax_ < offset + 0.006: phase = 'go in'; integ[:] = 0.0; offset = max(min(offset, ax_), press)   # as the brain's blind hover gate (6 mm): magnets and chamfers finish it; self.log(f'  lined up at the stand-off ({float(d.time) - t0:.1f} s): {perr:.1f} mm, {aerr:.1f} deg -> going in')
+                elif os.environ.get('COOP_GATE2', '1') == '1' and aerr < LINE_UP_DEG and abs(math.degrees(sl)) < LINE_UP_TURN and lat_ < 0.003 and -0.001 < ax_ < offset + 0.006: phase = 'go in'; integ[:] = 0.0; offset = max(min(offset, ax_), press if press is not None else -1.0)   # as the brain's blind hover gate (6 mm): magnets and chamfers finish it; self.log(f'  lined up at the stand-off ({float(d.time) - t0:.1f} s): {perr:.1f} mm, {aerr:.1f} deg -> going in')
                 if phase == 'line up' and planned and not la_done and perr < 60 and self.gpu is not None:
                     la_done = True
                     if self._true_align(dm, de, tname, offset): phase = 'go in'
+                if phase == 'go in': self._wait_real('stand-off', 2.0, 8.0)
             else:
                 r = w.end_vs(dm, de, tname)
                 # peg-in-hole: advance only while centred; drifted sideways (1 Nov: 9.6 mm, the rims landed on each other) -> back
@@ -860,19 +954,34 @@ class Manual:
                     self.log(f'  drifted {r["radial_mm"]:.1f} mm off the side going in -> back to the stand-off, lining up again ({redo}/2)')
                 elif centred or (hold > 25 and r['radial_mm'] < 1.5 * tol):
                     # in through the air fast, slowly only near the seat (2 Nov: a flat 0.5 mm/tick took ~5 s for 40 mm): 15 % of the gap per tick
-                    step_ = min(GO_IN_MAX, max(GO_IN_STEP, 0.15 * max(r['axial_mm'], 0.0) / 1000)); offset = max(offset - (step_ if centred else step_ / 2), press)   # just over the allowance for 1.5 s: on, slowly
+                    step_ = min(GO_IN_MAX, max(GO_IN_STEP, 0.15 * max(r['axial_mm'], 0.0) / 1000))
+                    if press is not None: offset = max(offset - (step_ if centred else step_ / 2), press)   # just over the allowance for 1.5 s: on, slowly
+                    else:
+                        # first to the nominal seat exactly as before (pushing earlier wedged the pads on the rim, 7 Nov test: 26 s
+                        # instead of 12); only there, if the end stopped short, aim a little deeper each blocked tick while every servo
+                        # still has strength left - how much push that becomes is up to gravity, magnets and contacts
+                        offset = max(offset - (step_ if centred else step_ / 2), -lead)
+                        if offset <= 0.0:
+                            gap = r['axial_mm'] / 1000
+                            if gap < deep_best - 0.0001: deep_best, deep_stall = gap, 0      # still going deeper (0.1 mm)
+                            else: deep_stall += 1
+                            strong = float(np.max(np.abs(d.actuator_force[acts]) / np.maximum(np.abs(m.actuator_forcerange[acts, 1]), 1e-6)))
+                            if deep_stall and strong < 0.85: lead += GO_IN_STEP / 5             # blocked: push a little harder
                 if 0 < hold <= 25: stall = 0                                   # the 1.5 s of waiting on purpose is not 'no progress'
                 # (removed 2 Nov: 'resting on the rim -> lift 3 mm' kept pulling the aim back while it should go in)
-                if offset <= press and abs(r['axial_mm']) < seat_mm[0] and r['radial_mm'] < seat_mm[1]:
+                # pushed as far as physics lets it: past the nominal seat aim, no deeper for 0.5 s (8 ticks)
+                pushed = press is None and offset <= 0.0 and deep_stall >= 8
+                if r['radial_mm'] < seat_mm[1] and (pushed or (offset <= (press or 0.0) and abs(r['axial_mm']) < seat_mm[0])):
                     sp = vsepr.spread_from_points([d.xpos[m.body(f'{x}_{p_}').id] for x in mods for p_ in ('EndA_LockModule', 'Spine1_B1B2', 'T2_Ring_B3Fork', 'Spine2_B3B4', 'EndB_LockModule')])
                     self.log(f'  VSEPR spread: energy {sp["energy"]}, closest parts {sp["minGapMM"]} mm, mean {sp["meanGapMM"]} mm')
                     self.log(f'  seated ({float(d.time) - t0:.1f} s): gap {r["axial_mm"]:.6f} mm, side {r["radial_mm"]:.6f} mm -> lock')
+                    self._wait_real('seat', 1.0, 6.0)
                     if self.lock(conn_a, conn_b): return True
                     # seated but the rotors did not turn home (1 Nov, robot 4: rotor 5 of 45 deg, gap grew to 0.8 mm): keep pressing
                     # in and try again, as a person would; give up after 3 tries
                     lock_tries += 1
                     if lock_tries >= 3: return False
-                    stall = 0
+                    stall = 0; deep_stall = 0                                  # give the next push its own 0.5 s
             # progress: lining up = closer to the stand-off; going in = the gap shrinking (2 Nov: measured to the MOVING aim it stayed
             # at 0.5 mm while going in steadily, and the 7-s 'no progress' stop fired 6 mm before the seat)
             if phase == 'line up': prog = perr
@@ -883,6 +992,18 @@ class Manual:
             # line-up stuck 1.5 s with only the end joints: every joint may help (2 Nov, end-to-side: 14 mm sideways out of the
             # end joints' bend plane, it sat 7 s and gave up)
             if phase == 'line up' and stall == 25 and dik is not None: dik.posture.set_cost(dik.cost0)
+            # a twist wound up against its stop (8 Nov, ceiling: M2.T1 at -169 deg, the receiver had to turn on past -180): no small
+            # step gets out - swing it round to the far side of its range once, as a person unwinds a cable, then steer on
+            if phase == 'line up' and stall == 30 and dik is not None:
+                for c in [c for c in range(len(qadr)) if c % 7 in (0, 3, 6) and c not in unwound]:
+                    jlo, jhi = m.jnt_range[m.dof_jntid[dofs[c]]]; qc = float(d.qpos[qadr[c]]); near = math.radians(15)
+                    if qc - jlo < near or jhi - qc < near:
+                        mid_ = mods[c // 7]; goal_ = d.qpos[np.array(w.mod[mid_]['qa'])].copy()
+                        goal_[c % 7] = float(np.clip(qc + (2 * math.pi if qc < 0 else -2 * math.pi), jlo + math.radians(12), jhi - math.radians(12)))
+                        self.log(f'  {mid_}.{JN[c % 7]} wound up at {math.degrees(qc):.0f} deg (its stop): turning it round to {math.degrees(goal_[c % 7]):.0f} deg')
+                        # straight first, then turn: turning while bent swung M2's bent half round into M1 (8 Nov, twist at 100 %)
+                        straight = d.qpos[np.array(w.mod[mid_]['qa'])].copy(); straight[[1, 2, 4, 5]] = 0.0
+                        unwound.add(c); self.drive_to({mid_: straight}); goal_[[1, 2, 4, 5]] = 0.0; self.drive_to({mid_: goal_}); stall = 0; best = 1e9; break
             # VSEPR is a wish, like gravity it gives way to what blocks it (3 Nov: its push held a standing M1 96 mm off M2.S2B; off, it
             # locked in 3.8 s): 1.5 s without progress -> it pauses until the end moves on again
             if dik is not None: dik.vs_yield = stall >= 25
@@ -905,7 +1026,30 @@ class Manual:
         for k in lk0 - {lock_key(L) for L in self.cur}: a_, b_ = k.split('|'); self.lock(a_, b_)
         self.traj = self.traj[:1]; self.marks = []; self.log(f'home: back at the start, locks {[lock_key(L) for L in self.cur]}')
 
+    def _wait_real(self, where, tol_mm, max_s):
+        """Nischay 5 Nov: the real robot must match the ideal one before it goes in / locks. With a real robot or the split view's
+        real copy on Sync, the ideal robot holds still here until the live feedback (real_sync.Feedback) says every part is within
+        tol_mm of where it should be - the real one keeps correcting meanwhile. Nothing connected: no wait."""
+        sy = self.sync
+        if sy is None or not sy.has_feedback(): return True
+        d = self.w.d; t0 = float(d.time)
+        while float(d.time) - t0 < max_s:
+            if sy.settled(tol_mm):
+                if float(d.time) - t0 > 0.1: self.log(f'  waited {float(d.time) - t0:.1f} s at the {where} for the real robot to match (within {tol_mm} mm)')
+                return True
+            self.w.run(0.06)
+        self.log(f'  real robot still off at the {where} after {max_s:.0f} s (feedback says {sy.fbk.err_mm} mm) - going on anyway')
+        return False
+
     def connect(self, a, b):
+        """docking runs on the bare servos: it steers by tiny corrections every 60 ms and must see them happen at once (5 Nov:
+        with the smooth path on, 0 of 14 locked). The smooth path is for the user's own moves; it comes back afterwards."""
+        comfort, self.w.comfort = getattr(self.w, 'comfort', None), None
+        try: return self._connect(a, b)
+        finally:
+            self.w.comfort = comfort; self.w.cs = None                     # the smooth path starts again from where the servos are
+
+    def _connect(self, a, b):
         if os.environ.get('MANUAL_CONNECT', 'coop') == 'coop': return self.coop_connect(a, b)
         """pick who docks, pre-shape the group, then the docking brain does the last part and the lock"""
         from phys_dock import PhysDockEnv, dock
@@ -1010,7 +1154,9 @@ class Manual:
         for mid in w.ids:
             qa = np.array(w.mod[mid]['qa']); a = w.mod[mid]['act']; i = w.ids.index(mid)
             mods[mid] = dict(q=[round(math.degrees(v), 1) for v in d.qpos[qa]], target=[round(math.degrees(v), 1) for v in w.tgt[i * 9:i * 9 + 7]],
-                             load=[round(float(abs(d.actuator_force[x]) / abs(m.actuator_forcerange[x, 1])) * 100) for x in a])
+                             load=[round(float(abs(d.actuator_force[x]) / abs(m.actuator_forcerange[x, 1])) * 100) for x in a],
+                             lock=dict(target=[round(math.degrees(v), 1) for v in w.tgt[i * 9 + 7:i * 9 + 9]],
+                                       q=[round(math.degrees(d.qpos[w.mod[mid]['lockq'][e]]), 1) for e in ('A', 'B')]))
         return dict(t=round(float(d.time), 2), job=self.job, queued=self.q.qsize(), paused=self.paused, steps=len(self.marks), saved=bool(getattr(self, 'slot', None)), locks=[lock_key(L) for L in self.cur], modules=mods, log=self.lines[-12:], sync=self.sync.state() if self.sync else None)
 
     def frames(self):
@@ -1020,6 +1166,8 @@ class Manual:
 def _close(S):
     S.alive = False
     if S.sync: S.sync.close()                                         # its boards stop being talked to as well
+    if getattr(S.sync, 'twin', None): S.sync.twin.close()
+    if getattr(S.sync, 'telw', None): S.sync.telw.close()
 
 
 def start(scene, **kw):
@@ -1031,9 +1179,30 @@ def start(scene, **kw):
         _close(SESS.pop(k_))
     while len(SESS) >= 6:
         _close(SESS.pop(next(iter(SESS))))
-    S = Manual(scene, **kw); S.sync = RealSync(S.w); S.seen = time.time(); sid = uuid.uuid4().hex[:12]; SESS[sid] = S
+    S = Manual(scene, **kw)
+    # Studio sessions move smoothly (Nischay 5 Nov): at most 60 deg/s, soft start and stop (phys_world._comfort)
+    S.w.comfort = (math.radians(float(os.environ.get('SMOOTH_DEG_S', '60'))), math.radians(float(os.environ.get('SMOOTH_DEG_S2', '150'))))
+    S.sync = RealSync(S.w); S.seen = time.time(); sid = uuid.uuid4().hex[:12]; SESS[sid] = S
     from phys_world import receivers_of
     return dict(id=sid, bodies=S.w.view_names, frame0=S.frame0, fps=S.fps, receivers=receivers_of(S.w, scene), ports=S.ports(), state=S.state())
+
+
+def _quiet_s(S):
+    """seconds since the slowest Sync'd board last answered"""
+    hs = [L.heard for L in S.sync.links.values() if getattr(L, 'heard', 0)]
+    return round(time.time() - min(hs), 1) if hs else None
+
+
+def _start_real_world(S):
+    """build the REAL robot's world (real_sync.Twin mode 'telemetry') in the background, like the copy"""
+    job = S.telw_job = dict(t0=time.time(), error='')
+    def build():
+        from real_sync import Twin
+        try: tl = Twin(S.scene, S.cur, lambda: (float(S.w.d.time), S.w.tgt.copy()), 1, S.log, mode='telemetry')
+        except Exception as e: job['error'] = f'real robot world could not start: {type(e).__name__}: {e}'; return
+        if S.telw_job is not job or not S.alive: tl.close(); return
+        S.sync.telw = tl; S.log(f"REAL robot world on after {time.time() - job['t0']:.0f} s: your encoders + predicted plastic flex, physics puts it on the floor")
+    threading.Thread(target=build, daemon=True).start()
 
 
 def step(sid, wait=0.5):
@@ -1041,7 +1210,26 @@ def step(sid, wait=0.5):
     if S is None: return dict(error='no such manual session (service restarted?)')
     S.seen = time.time()                                              # the Studio is watching it: the service is not replaced meanwhile
     time.sleep(max(0.0, min(2.0, float(wait))))
-    return dict(frames=S.frames(), t=round(float(S.w.d.time), 3), ports=S.ports(), state=S.state(), finite=bool(np.isfinite(S.w.d.qpos).all()))
+    tw = getattr(S.sync, 'twin', None); right = {}; job = getattr(S, 'twin_job', None)
+    if job and not tw:                                                # still building (or failed)
+        right = dict(twin=dict(starting=not job['error'], error=job['error'], elapsed=round(time.time() - job['t0'], 1)))
+    if tw and job and job.get('init'): right['twin_init'] = job['init']   # the Studio prepares its drawing from these (sent until it has them)
+    if tw and S.sync.on:
+        # the split view's right half with Sync ON: the REAL robot, from its telemetry only (real_sync.RealSync._feed_real). It is
+        # never swapped for the copy, not even for a missed reply (5 Nov: that swap was the 90 deg jump and the flicker): no
+        # contact = its last real pose stays, and the box says so.
+        tw.frames(); tl = getattr(S.sync, 'telw', None); live = S.sync.real_live()
+        if tl is None or not tl.alive:
+            if not getattr(S, 'telw_job', None) or S.telw_job.get('error'): _start_real_world(S)
+            j = S.telw_job; right.update(twin=dict(starting=not j['error'], error=j['error'], elapsed=round(time.time() - j['t0'], 1), source='telemetry'))
+        else:
+            tst = tl.state(); tst['feedback'] = tw.state().get('feedback')
+            right.update(twin_frames=S.sync.real_frames(), twin=dict(tst, source='telemetry', modules=sorted(live),
+                         contact=bool(live), quiet_s=_quiet_s(S)))
+    elif tw:
+        S.sync.real_frames()
+        right.update(twin_frames=tw.frames(), twin=dict(tw.state(), source='copy'))
+    return dict(frames=S.frames(), t=round(float(S.w.d.time), 3), ports=S.ports(), state=S.state(), finite=bool(np.isfinite(S.w.d.qpos).all()), **right)
 
 
 def command(sid, cmd):
@@ -1055,6 +1243,27 @@ def command(sid, cmd):
         if S.job: return dict(ok=False, error=f'busy: {S.job}')
         S.set_drag(cmd.get('end'), cmd.get('p')); return dict(ok=True)
     if k == 'stop': S.abort = True; return dict(ok=True)
+    if k == 'twin':                                                   # the split view's right half: the real robot as Sync would drive it
+        old = getattr(S.sync, 'twin', None)
+        if old: old.close(); S.sync.twin = None
+        tl = getattr(S.sync, 'telw', None)
+        if tl: tl.close(); S.sync.telw = None
+        S.telw_job = None
+        S.twin_job = None
+        if not cmd.get('on', True): return dict(ok=True, twin=None)
+        # built in the BACKGROUND (5 Nov: 20-90 s on a busy laptop, and the Studio sat frozen with no sign of life): this answers at
+        # once, the session keeps running, /manual/step reports 'starting' with the seconds so far, then twin_init + frames
+        seed = int(cmd.get('seed', 1)); job = S.twin_job = dict(t0=time.time(), seed=seed, error='', init=None)
+        def build():
+            from real_sync import Twin, FB_MODE
+            try: tw = Twin(S.scene, S.cur, lambda: (float(S.w.d.time), S.w.tgt.copy()), seed, S.log)
+            except Exception as e: job['error'] = f'real copy could not start: {type(e).__name__}: {e}'; return
+            if S.twin_job is not job or not S.alive: tw.close(); return    # switched off / closed meanwhile
+            tw.fbk = S.sync.fbk; S.sync.twin = tw                         # the copy shows the live feedback's numbers
+            job['init'] = dict(bodies=tw.w.view_names, frame0=tw.w.nominal_poses)
+            S.log(f"REAL copy on after {time.time() - job['t0']:.0f} s: random robot #{seed}, sag + gear play + lock play + room, driven by Sync's angles + live feedback ({FB_MODE})")
+        threading.Thread(target=build, daemon=True).start()
+        return dict(ok=True, starting=True)
     if k == 'close': _close(SESS.pop(sid)); return dict(ok=True)
     if k in ('skill', 'back', 'home', 'save', 'restore'): S.q.put(cmd); return dict(ok=True, queued=S.q.qsize())
     if k == 'pause': S.paused = bool(cmd.get('on', True)); return dict(ok=True, paused=S.paused)
@@ -1069,9 +1278,13 @@ if __name__ == '__main__':
     scenes = json.load(open(sys.argv[1])); sc = dict(scenes[sys.argv[2]]); a, b = sys.argv[3], sys.argv[4]
     if os.environ.get('NO_ANCHORS', '1') == '1' and not any('floor' in l['a'] for l in sc['locks']): sc['anchors'] = []
     from snap import Snapper
-    t0 = time.time(); S = Manual(sc, seed=int(os.environ.get('SEED', '1')), pace=False, judge=os.environ.get('JUDGE', 'off'), log=print)
-    Sn = Snapper(S.w, tpath('logs/snaps'), f'manual_{sys.argv[2]}_{a}_{b}'.replace('.', '').replace(':', ''))
+    # one name per run (8 Nov: three surfaces overwrote each other's pictures) and the log kept in a file next to them
+    tag = f'manual_{sys.argv[2]}_{a}_{b}_surf{int(float(os.environ.get("SURFACE_DEG", 0)))}_seed{os.environ.get("SEED", "1")}'.replace('.', '').replace(':', '')
+    logf = open(tpath(f'logs/{tag}.log'), 'w', encoding='utf-8')
+    def say(*x): print(*x, flush=True); print(*x, file=logf, flush=True)
+    t0 = time.time(); S = Manual(sc, seed=int(os.environ.get('SEED', '1')), pace=False, judge=os.environ.get('JUDGE', 'off'), log=say)
+    Sn = Snapper(S.w, tpath('logs/snaps'), tag)
     S.w.run(2.0); print('picture', Sn.shot('start'))
-    S.connect(a, b); S.w.run(3.0)
-    print('picture', Sn.shot(f'connect {a} + {b}: locks {[lock_key(L) for L in S.cur]}'))
-    print(f'wall {time.time() - t0:.0f} s')
+    ok = S.connect(a, b); S.w.run(3.0)
+    say('picture', Sn.shot(f'connect {a} + {b}: locks {[lock_key(L) for L in S.cur]}'))
+    say(f'RESULT {tag}: {"LOCKED" if ok else "NOT locked"} | wall {time.time() - t0:.0f} s | log data/logs/{tag}.log')

@@ -16,8 +16,12 @@
   "backlash_deg": "gear slop guess, refine from video",
   "flex_k": "PLA bracket stiffness, tuned so tip error under load is 2-4 deg like the real module",
   "flex_c": "light damping so it rings after a move and settles",
-  "friction_twist": "PLA-on-PLA ring bearing"
+  "friction_twist": "PLA-on-PLA ring bearing",
+  "lock_play_deg": "Nischay 5 Nov: standing locked in a floor connector, pushed at the top tip it wobbles ~2.5 deg (PLA in the lock area); more when lifting / horizontal",
+  "lock_play_k": "weak centring spring (N*m/rad): a hand push or gravity on a lifted module takes up the whole play"
  },
  "backlash_twist_deg": 0.5,
- "flex_k_in": 67.56908344885683
+ "flex_k_in": 67.56908344885683,
+ "lock_play_deg": 2.5,
+ "lock_play_k": 5.0
 }

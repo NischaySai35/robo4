@@ -23,12 +23,19 @@ CAL = json.load(open(os.path.join(HERE, 'v2_calib_fit.json')))
 R_BM = np.array(CAL['R']); T_BM = np.array(CAL['t']); SIGNS = np.array(CAL['signs'], float)
 C = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], float)          # Studio v2 (Y up) -> MuJoCo (Z up)
 IMU_ON = os.environ.get('IMU', '1') == '1'
-IMU_POS = (-0.024, 0.080, -0.019)      # Spine2 body frame (m): centre of the S2B-side frame bar (x -24), mid-spine (y 80), on its outer face (z -17.5) + half the board
+# the MPU-6050 (GY-521), as Nischay mounted it on the real robot (3 Nov, try5 picture): flat on the spine's face, in the middle of a
+# side receiver's ring, long side along the module. WHICH receiver: YET TO BE TOLD by Nischay (4 Nov) - S2B below is only a
+# placeholder (Spine2's -x side, where the 29 Oct frame-bar board was); set IMU_RX when he says.
+# Board frame = the sensor's frame: z out of the spine (chip side out), y along the module (Spine +y), x = y cross z.
+# The real chip's printed X/Y may differ by a turn/flip: imu.mount_from_gravity() measures that once it is wired (2 still poses)
+IMU_RX = os.environ.get('IMU_RX', 'S2B')   # PLACEHOLDER - side yet to be told
+IMU_STANDOFF = 0.0005                   # m: board back off the spine face (tape / glue)
 IMU_HALF = (0.008, 0.0105, 0.0015)     # GY-521 board 16 x 21 x 3 mm (long side along the module)
 SPINE_RX = {'S1A': 'srx0', 'S1B': 'srx1', 'S2A': 'srx2', 'S2B': 'srx3'}   # measured: v2_connector_check.py
 LOCK_SIGN = {'A': -1.0, 'B': 1.0}
 END_PAD = RX_TOP - RX_GAP
 STALL = 2.7
+COMFORT_WN = float(os.environ.get("SMOOTH_WN", "8"))   # 1/s: how quickly the smooth path closes on a command (phys_world._comfort)
 VIEW_BODIES = ['EndA_LockModule', 'L1_LockRotor_A', 'T1_Housing_B1Fork', 'Spine1_B1B2', 'T2_Housing_B2Fork_GROUND',
                'T2_Ring_B3Fork', 'Spine2_B3B4', 'T3_Housing_B4Fork', 'EndB_LockModule', 'L2_LockRotor_B']
 
@@ -210,12 +217,17 @@ class PhysWorld:
             import camera as CAM
             tips = {(mid, e): list(spec.site(f'{mid}_{e}_padtip').pos) for mid in self.ids for e in 'AB'}
             self.markers = CAM.add_markers(spec, self.ids, anchors, tips, anchor_frames)
-        if IMU_ON:                                                                 # the MPU-6050 Nischay mounts on Spine2's frame bar (29 Oct)
+        if IMU_ON:                                                                 # the MPU-6050 in a side receiver's ring (3 Nov; was Spine2's frame bar, 29 Oct)
             for mid in self.ids:
-                sb = spec.body(f'{mid}_Spine2_B3B4')
-                g = sb.add_geom(); g.name = f'{mid}_imu_board'; g.type = mujoco.mjtGeom.mjGEOM_BOX; g.size = list(IMU_HALF); g.pos = list(IMU_POS)
+                rx = spec.body(f'{mid}_{SPINE_RX[IMU_RX]}'); sb = rx.parent                       # the receiver and the spine it sits on
+                Rr = np.zeros(9); mujoco.mju_quat2Mat(Rr, np.array(rx.quat, float)); n = Rr.reshape(3, 3)[:, 2]   # receiver's outward normal, spine frame
+                # srx origin is 1 mm off the spine face (spine +-24 mm, srx at +-25): board back on the face + standoff, centred on the ring
+                pos = np.array(rx.pos, float) + n * (IMU_STANDOFF + IMU_HALF[2] - 0.001)
+                yb = np.array([0.0, 1.0, 0.0]); Rb = np.stack([np.cross(yb, n), yb, n], 1); qb = np.zeros(4); mujoco.mju_mat2Quat(qb, Rb.ravel())
+                self.imu_spec = dict(rx=IMU_RX, body=sb.name, pos=pos, R=Rb)                          # board -> spine (imu.py)
+                g = sb.add_geom(); g.name = f'{mid}_imu_board'; g.type = mujoco.mjtGeom.mjGEOM_BOX; g.size = list(IMU_HALF); g.pos = list(pos); g.quat = list(qb)
                 g.contype = 0; g.conaffinity = 0; g.group = 2; g.mass = 0; g.rgba = [0.1, 0.3, 0.85, 1]   # visual (2 g: inside the CAD body mass)
-                st = sb.add_site(); st.name = f'{mid}_imu'; st.pos = list(IMU_POS)            # sensor axes = Spine2 body axes (mounting error: imu.py)
+                st = sb.add_site(); st.name = f'{mid}_imu'; st.pos = list(pos); st.quat = list(qb)   # sensor axes = board axes (mounting error: imu.py)
                 for typ, nm in ((mujoco.mjtSensor.mjSENS_ACCELEROMETER, 'acc'), (mujoco.mjtSensor.mjSENS_GYRO, 'gyro')):
                     sn = spec.add_sensor(); sn.type = typ; sn.objtype = mujoco.mjtObj.mjOBJ_SITE; sn.objname = st.name; sn.name = f'{mid}_imu_{nm}'
         if CAD_COLLIDE: _add_cad_colliders(spec, self.ids)
@@ -225,6 +237,21 @@ class PhysWorld:
             g.size = [0.001] * 3; g.mass = 0; g.contype = 0; g.conaffinity = 0; g.group = 4   # an end into M2's housing (3 Nov); sized after compile
         vis = os.environ.get('VISUAL_MESH') == '1'
         if vis: _add_visual_meshes(spec, self.ids)                                  # your real part meshes, for pictures only
+        # LOCK-AREA PLAY (Nischay 5 Nov): the PLA around each end's lock stays loose even when locked tight - standing locked in a
+        # floor connector and pushed at the top tip it wobbles ~2.5 deg, and more when it lifts or lies horizontal (gravity pushes it
+        # to the end of the play). Two bend axes (x, z: across the module's long axis y) at both lock areas: End A <-> T1 housing,
+        # T3 housing <-> End B. A weak centring spring, light damping (it shakes), range = half the play each way. Named '_flex' so
+        # the ideal robot drops it and real_sync.Correction predicts it like the other flex. Each random robot's play differs +-30 %.
+        PHYS_ = json.load(open(os.path.join(HERE, 'physics_params.json'))); lp = float(os.environ.get('LOCK_PLAY_DEG', PHYS_.get('lock_play_deg', 2.5))) / 2; prng = np.random.default_rng(seed + 7771)
+        for mid in (self.ids if lp > 0 else []):
+            for bname, jn in (('T1_Housing_B1Fork', 'J_LA_lockplay'), ('EndB_LockModule', 'J_LB_lockplay')):
+                b = spec.body(f'{mid}_{bname}')
+                for ax, nm in (([1, 0, 0], 'flexx'), ([0, 0, 1], 'flexz')):
+                    r_ = lp * (prng.uniform(0.7, 1.3) if randomize else 1.0)
+                    j = b.add_joint(); j.name = f'{mid}_{jn}_{nm}'; j.type = mujoco.mjtJoint.mjJNT_HINGE; j.axis = ax
+                    j.range = [-r_, r_]; j.limited = mujoco.mjtLimited.mjLIMITED_TRUE
+                    j.stiffness = [PHYS_.get('lock_play_k', 5.0), 0, 0]; j.damping = [0.01, 0, 0]; j.armature = 0.002
+                    j.solref_limit = [0.004, 1.0]
         # what the real robot's plastic and gears do, kept even when the ideal robot leaves them out: real_sync.py corrects for them
         self.sag_spec = [dict(name=j.name, body=j.parent.name, axis=np.array(j.axis, float), k=float(j.stiffness[0]), rng=float(j.range[1])) for j in spec.joints if '_flex' in j.name or j.name.endswith('_bl')]
         if rigid:
@@ -232,6 +259,11 @@ class PhysWorld:
             # limit each gave ~0.02 deg under load, and 81 of them put a 3-ring's tip 8 mm off a perfect plan
             for j in list(spec.joints):
                 if '_flex' in j.name or j.name.endswith('_bl'): spec.delete(j)
+        # MuJoCo's scratch pad per data copy (contacts, constraints): multi_train.xml asks 200 MB, and Windows reserves all of it for EVERY
+        # copy (DIK, one per module for the planner, ...) - 4 teacher workers ran out of RAM / paging file (3 Nov). A docking run uses ~4 MB
+        # (2 modules), the pile-up at time 0 before place() ~24 MB; 64 MB = 15x headroom. 'Insufficient arena' at Time = 0 is that pile-up
+        # grows with the robot (7 Nov: 3 modules curling into Two heads made ~900 contacts and overflowed 64 MB - a crash, not a result)
+        spec.memory = int(float(os.environ.get('ARENA_MB', max(64, 48 * len(module_ids)))) * 2 ** 20)
         self.engine = world_engine(spec); self.m, self.d = self.engine.model, self.engine.data; m = self.m
         for g in [g for g in range(m.ngeom) if m.geom(g).name.endswith('_coarse') and any(k_ in m.geom(g).name for k_ in COARSE_ADD)]:
             o = [h for h in range(m.ngeom) if m.geom_bodyid[h] == m.geom_bodyid[g] and h != g]
@@ -345,7 +377,7 @@ class PhysWorld:
             q = np.array([d.qpos[a] for a in self.mod[mid]['qa']])
             self.tgt[i * 9:i * 9 + 7] = q
         self.set_locks(scene['locks'], snap=True)
-        self.sp[:] = self.tgt; self.spv[:] = 0
+        self.sp[:] = self.tgt; self.spv[:] = 0; self.cs = None
         d.ctrl[self.all_act] = self.sp
         mujoco.mj_forward(m, d)
         self.nominal_poses = self.body_poses()             # exactly the Studio's drawn pose (before any settling)
@@ -510,7 +542,9 @@ class PhysWorld:
         F = d.actuator_force[self.all_act].reshape(nM, 9)
         I = 1.8 + np.abs(F).sum(1) / KT; sag = np.maximum(self.volt - 0.08 * I, 9.0) / self.volt; sag9 = np.repeat(sag, 9)
         w0 = self.w0 * sag9; glide = getattr(self, 'tgt_eff', None) is not None
-        tg = self.tgt_eff if glide else self.tgt; e = tg - self.sp
+        tg = self.tgt_eff if glide else self.tgt
+        if getattr(self, 'comfort', None): tg = self._comfort(tg, dt)
+        e = tg - self.sp
         if self.disturb is not None: e = np.where(np.abs(e) < DIST.DEADBAND, 0.0, e)     # servo deadband
         if glide and getattr(self, 'exact', False):
             # ideal + gliding command: the joint follows the moving command exactly, at most at its top speed
@@ -526,6 +560,23 @@ class PhysWorld:
         w = d.qvel[self.all_dof]; tau = d.actuator_force[self.all_act]
         lim = sag9 * np.where(tau * w > 0, self.fr0 * np.clip(1 - np.abs(w) / w0, 0.08, 1.0), self.fr0)
         m.actuator_forcerange[self.all_act, 0] = -lim; m.actuator_forcerange[self.all_act, 1] = lim
+
+    def _comfort(self, tg, dt):
+        """SMOOTH motion (Nischay 5 Nov: 'smooth, not jerk to that position' - sliders, Straighten, every button): a command is
+        not jumped to at the servo's full 270 deg/s; a gentle path to it starts softly, cruises at most COMFORT_V and slows
+        down before it arrives (at most COMFORT_A). The servo then follows that path, so the real robot (real_sync.py sends the
+        sim's joints) moves the same way. Studio sessions only (manual.start); teacher / GPU runs keep the bare servo."""
+        v, a = self.comfort
+        if getattr(self, 'cs', None) is None or len(self.cs) != len(tg): self.cs = self.sp.copy(); self.cv = np.zeros_like(self.sp)
+        # a critically damped spring to the command (follows a dragged slider without stopping at each update), its push
+        # capped at COMFORT_A and its speed at COMFORT_V (a big jump: soft start, cruise, soft landing)
+        e = tg - self.cs; wn = COMFORT_WN
+        acc = np.clip(wn * wn * e - 2 * wn * self.cv, -a, a)
+        self.cv = np.clip(self.cv + acc * dt, -v, v); self.cs += self.cv * dt
+        near = (np.abs(e) < 2e-4) & (np.abs(self.cv) < 2e-3)
+        self.cs[near] = tg[near]; self.cv[near] = 0.0
+        lock = np.arange(len(tg)) % 9 >= 7; self.cs[lock] = tg[lock]; self.cv[lock] = 0.0   # the lock rotors keep their own timing
+        return self.cs
 
     def _exact(self):
         """IDEAL robot (Nischay 2 Nov: 'just real rotation, math'): after every physics step each arm joint IS its command - set
@@ -580,8 +631,9 @@ class PhysWorld:
         self.tgt_eff = None
         return peak, True
 
-    def body_poses(self):
-        d = self.d; out = []
+    def body_poses(self, d=None):
+        """every drawn part's pose (Studio frame); d = another MjData of this model (e.g. real_sync's telemetry rebuild)"""
+        d = self.d if d is None else d; out = []
         for b in self.view_bodies:
             pos = C.T @ d.xpos[b]; R = C.T @ d.xmat[b].reshape(3, 3); q = mat2q(R)
             out += [round(float(v), 5) for v in (*pos, q[1], q[2], q[3], q[0])]

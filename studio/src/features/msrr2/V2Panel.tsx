@@ -1,20 +1,17 @@
 /**
  * V2Panel — the MSRR page's Transformation Planner v2 (docs/TRANSFORM_PLANNER_V2_PROMPT.md).
  *
- * Tabs:
- *   Robot   the robot as it is now: modules, locks, joint angles, and the static Check
- *   Shapes  the shape library (topology + pose + measured tags) and the generator
- *   Plan    target ranking and the verb plan from the current robot to a target
- *   Ask     words -> capability tags (LLM) -> targets
- *   Run     execute a plan (DRY_RUN) with replanning
- *   Manual  drive the robot by hand in live real physics (joints, lock / unlock, connect two connectors)
+ * Tabs (7 Nov: six became three, by what you are doing):
+ *   Live    drive the robot by hand in live real physics (joints, lock / unlock, connect, become a shape); SPLIT + SYNC
+ *   Build   set up a robot by hand: modules, locks, joint angles, and the static Check
+ *   Goal    one flow of steps: 1 say it (words -> tags, LLM) · 2 pick a shape (library) · 3 plan to it · 4 dry run
  */
 import { NativeSelect, Input } from '@/components/ui/input';
 import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
 import { runOperator } from '@/core/ops/registry';
 import { useState } from 'react';
-import { useV2Store, PRESETS, type V2Tab } from '@/state/msrrV2Store';
+import { useV2Store, PRESETS, type V2Tab, type GoalStep } from '@/state/msrrV2Store';
 import {
   type Edge, type PortId, type ModulePose, JOINTS, PORTS, PLAN_BEND_DEG, CONFIG, isBend,
 } from '@/robotics/msrr2/model';
@@ -33,12 +30,16 @@ import type { PhysRun } from './physicsView';
 const op = (id: string, props?: any) => { const r = runOperator(id, props); if (!r.ok) alert(r.error); };
 
 const TABS: { id: V2Tab; label: string }[] = [
-  { id: 'robot', label: 'Robot' },
-  { id: 'shapes', label: 'Shapes' },
-  { id: 'plan', label: 'Plan' },
-  { id: 'ask', label: 'Ask' },
-  { id: 'run', label: 'Run' },
-  { id: 'manual', label: 'Manual' },
+  { id: 'live', label: 'Live' },
+  { id: 'build', label: 'Build' },
+  { id: 'goal', label: 'Goal' },
+];
+
+const STEPS: { id: GoalStep; label: string; body: () => React.ReactNode }[] = [
+  { id: 'ask', label: '1 · Say what it should become', body: () => <AskTab /> },
+  { id: 'shapes', label: '2 · Pick a shape', body: () => <ShapesTab /> },
+  { id: 'plan', label: '3 · Plan to it', body: () => <PlanTab /> },
+  { id: 'run', label: '4 · Dry run (nothing sent)', body: () => <RunTab /> },
 ];
 
 export default function V2Panel() {
@@ -49,14 +50,28 @@ export default function V2Panel() {
       <TabBar size="sm" value={tab} onChange={setTab} tabs={TABS.map((t) => ({ id: t.id, label: t.label }))} />
       <GravityBar />
       <div className="msrr-body">
-        {tab === 'robot' && <RobotTab />}
-        {tab === 'shapes' && <ShapesTab />}
-        {tab === 'plan' && <PlanTab />}
-        {tab === 'ask' && <AskTab />}
-        {tab === 'run' && <RunTab />}
-        {tab === 'manual' && <ManualTab />}
+        {tab === 'live' && <ManualTab />}
+        {tab === 'build' && <RobotTab />}
+        {tab === 'goal' && <GoalTab />}
       </div>
       <V2Log />
+    </>
+  );
+}
+
+/** the Goal tab: four steps, one open at a time (the old Ask / Shapes / Plan / Run tabs, unchanged inside) */
+function GoalTab() {
+  const step = useV2Store((s) => s.goalStep);
+  const setStep = useV2Store((s) => s.setGoalStep);
+  return (
+    <>
+      {STEPS.map((s) => (
+        <div key={s.id} className="msrr-step">
+          <button className={`msrr-step-head${step === s.id ? ' open' : ''}`} data-testid={`goal-${s.id}`} aria-expanded={step === s.id}
+            onClick={() => setStep(s.id)}>{step === s.id ? '▾' : '▸'} {s.label}</button>
+          {step === s.id && s.body()}
+        </div>
+      ))}
     </>
   );
 }
@@ -277,14 +292,20 @@ function GravityBar() {
   const gravity = useV2Store((s) => s.gravity);
   const off = useV2Store((s) => s.gravityOff);
   const ev = physics?.pp.run.events ?? [];
+  // Live has its own Start / Stop (a manual session); two different Stop buttons for one session was the 7 Nov bug.
+  // There the bar only keeps the random robot: it is the split view's REAL copy (the left half is always ideal).
+  const live = useV2Store((s) => s.tab === 'live');
+  const manual = useV2Store((s) => !!s.manual);
+  const own = !(live || manual);
   return (
     <div style={{ padding: '6px 10px', borderBottom: '1px solid var(--border)', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', flexShrink: 0 }} data-testid="gravity-bar">
-      <Button size="sm" variant={physics ? 'destructive' : 'default'} data-testid="gravity" disabled={busy}
-        onClick={() => op(physics ? 'planner.physics.stop' : 'planner.physics')}>{busy ? 'Simulating…' : physics ? '■ Stop real physics' : '▶ Real physics (gravity)'}</Button>
-      {plan?.ok && !physics && <Button variant="outline" size="sm" data-testid="gravity-plan" disabled={busy} onClick={() => op('planner.physics', { withPlan: true })} title="run the loaded plan in MuJoCo the way the robot would: the real docking brain does every dock (stand-off, align, straight in, lock)">▶ Real physics: run this plan</Button>}
-      {physics && <Button variant="ghost" size="xs" onClick={() => useV2Store.setState({ physics: { ...physics, t: 0, playing: true } })}>replay</Button>}
-      <label className="msrr-note" title="every robot slightly different: PLA flex, backlash, servo strength, masses, friction, magnets, floor tilt (the GPU runs' ranges)">
-        <input type="checkbox" checked={random} onChange={(e) => setRandom(e.target.checked)} /> random robot
+      {own && <Button size="sm" variant={physics ? 'destructive' : 'default'} data-testid="gravity" disabled={busy}
+        onClick={() => op(physics ? 'planner.physics.stop' : 'planner.physics')}>{busy ? 'Simulating…' : physics ? '■ Stop real physics' : '▶ Real physics (gravity)'}</Button>}
+      {own && plan?.ok && !physics && <Button variant="outline" size="sm" data-testid="gravity-plan" disabled={busy} onClick={() => op('planner.physics', { withPlan: true })} title="run the loaded plan in MuJoCo the way the robot would: the real docking brain does every dock (stand-off, align, straight in, lock)">▶ Real physics: run this plan</Button>}
+      {own && physics && <Button variant="ghost" size="xs" onClick={() => useV2Store.setState({ physics: { ...physics, t: 0, playing: true } })}>replay</Button>}
+      <label className="msrr-note" title={own ? "every robot slightly different: PLA flex, backlash, servo strength, masses, friction, magnets, floor tilt (the GPU runs' ranges)"
+        : 'the SPLIT view\'s right half (the real copy): every robot slightly different - PLA flex, backlash, servo strength, masses, friction, magnets, floor tilt'}>
+        <input type="checkbox" checked={random} onChange={(e) => setRandom(e.target.checked)} /> random robot{own ? '' : ' (real copy)'}
       </label>
       {random && <Input size="xs" type="number" style={{ width: 56 }} value={seed} onChange={(e) => setSeed(Number(e.target.value))} title="which random robot" />}
       {physics && <span className="msrr-note dim" data-testid="phys-caption">{physics.live

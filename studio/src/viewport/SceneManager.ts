@@ -471,7 +471,7 @@ export class SceneManager {
     ground.receiveShadow = true;
     ground.userData.isGround = true;
     this.scene.add(ground);
-    this.ground = ground;
+    this.ground = ground; this._groundY0 = GROUND_Y;
 
     // Infinite grid: a large plane that follows the camera, with grid lines
     // computed in WORLD space (so they stay put while the plane tracks the view)
@@ -547,14 +547,39 @@ export class SceneManager {
     const dark = theme === 'dark';
     this._theme = theme;
     this.scene.background = new THREE.Color(dark ? 0x2b2b2b : 0xf4f2ee);
-    if (this.ground) {
-      this.ground.material.color.set(dark ? 0x1d1d1d : 0xd2ccc2);
-      this.ground.material.opacity = dark ? 0.18 : 0.13;
-    }
+    this._paintGround();
     if (this.grid) {
       this.grid.material.uniforms.uColor.value.set(dark ? 0x404040 : 0xa7b9d2);
       this.grid.material.uniforms.uColorMajor.value.set(dark ? 0x5a5a5a : 0x8499b8);
     }
+  }
+
+  /** REAL FLOOR (Nischay 5 Nov: every tab and viewport except the Editor): a solid floor at height 0 - where the physics floor
+   *  is and the robots stand - that catches their shadows, the grid lying on it. Off (Editor): the old faint plane below. */
+  realFloor = false;
+  setRealFloor(on: boolean) {
+    this.realFloor = on;
+    const y = on ? 0 : this._groundY0;
+    if (this.ground) {
+      const gm = this.ground.material;
+      this.ground.position.y = y; gm.transparent = !on; gm.depthWrite = on;
+      // the grid lies ON the floor: push the floor back in depth so the grid always wins (far away the two were one depth and
+      // the solid floor hid the grid in MSRR)
+      gm.polygonOffset = on; gm.polygonOffsetFactor = 4; gm.polygonOffsetUnits = 4; gm.needsUpdate = true;
+      this.ground.renderOrder = on ? -1 : 0;
+    }
+    if (this.grid) this.grid.position.y = y + (on ? 0.0005 : 0.01);
+    // a solid floor cannot be looked through: the camera stays above it (5 Nov: zooming toward the floor went under it - all grey)
+    this.controls.maxPolarAngle = on ? Math.PI / 2 - 0.03 : Math.PI;
+    this._paintGround();
+    this.requestRender(3);
+  }
+
+  _paintGround() {
+    if (!this.ground) return;
+    const dark = this._theme === 'dark';
+    if (this.realFloor) { this.ground.material.color.set(dark ? 0x323232 : 0xe4dfd6); this.ground.material.opacity = 1; }
+    else { this.ground.material.color.set(dark ? 0x1d1d1d : 0xd2ccc2); this.ground.material.opacity = dark ? 0.18 : 0.13; }
   }
 
   // Keep the infinite ground + grid centred on the view and sized to the zoom.
@@ -673,7 +698,7 @@ export class SceneManager {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     if (w === 0 || h === 0) return;
-    this.camera.aspect = w / h;
+    this.camera.aspect = (this.split ? Math.floor(w / 2) : w) / h;   // split view: each half has half the width
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
@@ -757,8 +782,10 @@ export class SceneManager {
    * Fit the camera to frame all model bodies. Preserves current azimuth, sets a
    * clean elevation, and sizes distance so content fills ~70% of the viewport.
    * No content → no-op.
+   * fresh (a new robot / session, Nischay 7 Nov): also pick a clean 3/4 angle - 30° above the floor, 35° off square to the
+   * robot's longest floor direction (the side nearer the camera now). Looking down a lying chain's length made it look standing.
    */
-  fitCamera() {
+  fitCamera(opts?: { fresh?: boolean }) {
     const pts = this._fitPoints?.() as THREE.Vector3[] | null;
     if (!pts) return;
     const box = new THREE.Box3().setFromPoints(pts);
@@ -769,6 +796,21 @@ export class SceneManager {
     const offset = this.camera.position.clone().sub(this.controls.target);
     const sp = new THREE.Spherical().setFromVector3(offset);
     sp.phi = Math.max(0.35, Math.min(Math.PI * 0.44, sp.phi));
+    if (opts?.fresh) {
+      // the robot's longest direction on the floor (2x2 principal axis of x, z); a robot spread evenly keeps the azimuth
+      let xx = 0, zz = 0, xz = 0;
+      for (const p of pts) { const dx = p.x - center.x, dz = p.z - center.z; xx += dx * dx; zz += dz * dz; xz += dx * dz; }
+      const half = Math.atan2(2 * xz, xx - zz) / 2;                  // angle of the long axis from +x
+      const tr = xx + zz, det = xx * zz - xz * xz, gap = Math.sqrt(Math.max(0, tr * tr / 4 - det));
+      const l1 = tr / 2 + gap, l2 = tr / 2 - gap;
+      if (l1 > 1.5 * Math.max(l2, 1e-12)) {
+        const axis = Math.atan2(Math.cos(half), Math.sin(half));     // the same axis as a Spherical theta (atan2(x, z))
+        const cands = [55, 125, 235, 305].map((d) => axis + THREE.MathUtils.degToRad(d));
+        const dist = (a: number) => Math.abs(Math.atan2(Math.sin(a - sp.theta), Math.cos(a - sp.theta)));
+        sp.theta = cands.reduce((b, a) => (dist(a) < dist(b) ? a : b));
+      }
+      sp.phi = THREE.MathUtils.degToRad(60);                          // 30° above the floor
+    }
     sp.radius = 1;
     const back = new THREE.Vector3().setFromSpherical(sp);          // centre → camera, unit
     const fwd = back.clone().negate();
@@ -814,8 +856,42 @@ export class SceneManager {
     return !!this._pathTracer; // Cycles keeps accumulating between input events
   }
 
+  /** Side-by-side view (MSRR split, Nischay 5 Nov): the SAME scene and camera drawn twice, left half then right half; each
+   *  callback shows/hides what belongs to its half just before it is drawn; left() is also the state kept between draws.
+   *  null = one full view. */
+  split: { left: () => void; right: () => void } | null = null;
+
+  /** switch the side-by-side view on/off: the camera's aspect becomes that of ONE half (so Fit, zoom limits and picking frame
+   *  the robot for the half it is drawn in), then the robot is framed again */
+  setSplit(sp: { left: () => void; right: () => void } | null) {
+    this.split = sp;
+    this._onResize();
+    this.fitCamera();
+    this.requestRender(3);
+  }
+
+  /** one draw of the scene: whole canvas, or the two halves of a split view (same camera: both halves orbit and zoom together) */
+  _draw() {
+    const r = this.renderer, sp = this.split;
+    if (!sp) { r.render(this.scene, this.camera); return; }
+    const size = r.getSize(new THREE.Vector2()), w = size.x, h = size.y, half = Math.floor(w / 2);
+    r.setScissorTest(true);
+    try {
+      r.setViewport(0, 0, half, h); r.setScissor(0, 0, half, h); sp.left(); r.render(this.scene, this.camera);
+      r.setViewport(half, 0, w - half, h); r.setScissor(half, 0, w - half, h); sp.right(); r.render(this.scene, this.camera);
+    } finally {
+      sp.left();                                                    // the normal (left) state between draws: fit / picking see the ideal robot
+      r.setScissorTest(false); r.setViewport(0, 0, w, h);
+    }
+  }
+
   render() {
     this.controls.update();
+    if (this.realFloor) {                                 // zoom-to-cursor can still dolly the camera through it: keep it above
+      const minY = 0.02;
+      if (this.camera.position.y < minY) this.camera.position.y = minY;
+      if (this.controls.target.y < 0) this.controls.target.y = 0;
+    }
     this._updateGround();
 
     if (ENGINES[this._engineMode]?.tracer && this._pathTracer) {
@@ -831,7 +907,7 @@ export class SceneManager {
       // whole frame). This outer catch is only a last-resort guard for an error thrown
       // outside that path; it evicts cached material properties and retries once.
       try {
-        this.renderer.render(this.scene, this.camera);
+        this._draw();
         // TEMP DIAGNOSTIC (same opt-in flag as frameProfiler): render() alone was ~100-150ms/frame
         // even with gravity off and physics idle, and switching shadow map type/size barely moved
         // it — so the cost isn't (only) shadow filtering. Dump renderer.info once a second to see

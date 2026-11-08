@@ -23,6 +23,8 @@
  */
 import doc from '@/core/factory/single-module-demo.json';
 import { type Vec3, type Quat, UNITS_PER_M } from './modulink';
+import { bodyConnectors } from '@/core/model/index';
+import type { Connector } from '@/core/model/index';
 
 /** Studio -> MSRR rotation as a quaternion, see the header. */
 export const STUDIO_TO_MODEL_QUAT: Quat = (() => {
@@ -114,4 +116,19 @@ export function restBodies(): RestBody[] {
     } as RestBody;
   });
   return cache;
+}
+
+
+let connCache: Map<string, { body: unknown; connectors: Connector[] }> | null = null;
+
+/** Every body's connectors, straight from the SAME module document the Editor and Animation draw (body.meta.connectors,
+ *  body-local, metres): MSRR places its plugs from these on its drawn parts, so a plug sits on the same spot everywhere. */
+export function restConnectors(): Map<string, { body: unknown; connectors: Connector[] }> {
+  if (connCache) return connCache;
+  connCache = new Map();
+  for (const b of Object.values((doc as any).bodies) as any[]) {
+    const c = bodyConnectors(b);
+    if (c.length) connCache.set(b.name, { body: b, connectors: c });
+  }
+  return connCache;
 }

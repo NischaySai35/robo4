@@ -2958,6 +2958,7 @@ r4now::Assembly* nowAsm = nullptr;      // 7.7 KB, made once
 bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false, nowHeldSilent = false;
 uint8_t  nowPeer[6] = {0};
 uint32_t nowHbMs = 0, nowHelloMs = 0, nowMoveMs = 0, nowActiveMs = 0, nowPeekUntil = 0;
+bool     bootDone = false;                // set at the end of setup(); ESP-NOW runs before that (hello, heartbeat)
 uint32_t nowReqs = 0, nowRepeats = 0, nowDrops = 0, nowHolds = 0;
 struct NowDone { uint16_t seq; bool used; uint32_t at; String answer; };
 NowDone  nowDone[NOW_CACHE];
@@ -3046,7 +3047,8 @@ void nowRun(uint16_t seq, const uint8_t* msg, int len) {
   nowReqs++;
   if (!nowIsRead(path)) nowActiveMs = millis();
   String ans;
-  if (otaBusy && !path.startsWith("/api/ota/")) ans = F("503\n{\"ok\":false,\"error\":\"updating firmware\"}");
+  if (!bootDone) ans = F("503\n{\"ok\":false,\"error\":\"starting: servos not read yet, ask again in a moment\"}");
+  else if (otaBusy && !path.startsWith("/api/ota/")) ans = F("503\n{\"ok\":false,\"error\":\"updating firmware\"}");
   else if (!r)        ans = F("404\n{\"ok\":false,\"error\":\"not found\"}");
   else if (!r->radio) ans = F("501\n{\"ok\":false,\"error\":\"Wi-Fi only: use the board's address\"}");
   else {
@@ -3302,7 +3304,10 @@ void setup() {
   else if (resetWhy == "power-on")
     lg("it was switched off or lost power completely (battery unplugged, switch, or a total supply drop)");
 
-  delay(3000);                         // let the servo bus settle after power-up
+  // let the servo bus settle after power-up; meanwhile ESP-NOW already runs, so the master hears this module ~1 s after
+  // power-on instead of ~4 s (Nischay 9 Nov: "detected in a fraction of a second"). Requests get "starting" until boot ends.
+  nowInit();
+  { const uint32_t t = millis(); while (millis() - t < 3000) { nowPoll(); delay(5); } }
   flushBus();
   // Boot LIMP, deliberately. This used to call homeAll(), which energised every servo and
   // drove it to 180 the instant the board powered up — a moving arm nobody asked for, before
@@ -3321,6 +3326,7 @@ void setup() {
   if (animInterrupted) { prefs.putUChar("animRun", 0); lg("boot: a sequence was playing when power was lost - it does NOT resume"); }
   { uint16_t cut = prefs.getUShort("battCut", 0);
     if (cut) { lg("last shutdown: the battery was empty (%u.%u V) - the module switched itself off", cut / 10, cut % 10); prefs.remove("battCut"); } }
+  bootDone = true;
   lg("boot complete - torque OFF, nothing moved, %u servo(s) read. Waiting for the operator.", nServos);
   // priority 2, just above loop() (1). Tried 19 (above the TCP/IP task): web replies then took ~6 s and ping ~1 s
   // (mod1, 5 Nov). The 0.2 s late guard was the flash-size reads holding the lock, not the priority.

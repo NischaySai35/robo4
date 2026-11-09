@@ -34,6 +34,7 @@
 #include <esp_wifi.h>
 #include <esp_now.h>
 #include "r4now.h"
+#include <Preferences.h>
 
 #define USB_BAUD 921600
 #define LED_PIN  33              // AI-Thinker red LED, on when LOW
@@ -54,6 +55,7 @@ struct Known { uint8_t mac[6]; int8_t rssi; uint8_t ch; bool awake; uint32_t see
 static QueueHandle_t airQ, txQ;
 static uint32_t heard = 0, sent = 0, txFail = 0, lost = 0, badUsb = 0, holds = 0, estops = 0;
 static uint8_t channel = 1;
+static Preferences prefs;                   // "r4master": ch = the channel the modules were last heard on
 static uint32_t ledOffAt = 0;
 static Known known[MAX_MODULES];
 static uint8_t nKnown = 0;
@@ -170,7 +172,10 @@ static void remember(const AirIn& a, const uint8_t* p, int n) {
   m.awake = !(n >= 7 && memmem(p, n, "awake=0", 7));
   courier->hello(m.mac);                                 // it listens right now: what waits for it goes out
   lastHelloMs = millis();
-  if (m.ch && m.ch != channel) { setChannel(m.ch); say("following the modules to channel %u", m.ch); }
+  if (m.ch && m.ch != channel) {
+    setChannel(m.ch); say("following the modules to channel %u", m.ch);
+    if (prefs.getUChar("ch", 0) != channel) prefs.putUChar("ch", channel);   // a restart starts here (~1 s, not ~17 s)
+  }
 }
 
 // The laptop program just (re)connected: what we know, at once, as the hellos it would have heard.
@@ -295,6 +300,8 @@ void setup() {
   esp_now_init();
   esp_now_register_recv_cb(onRecv);
   esp_now_register_send_cb(onSent);
+  prefs.begin("r4master", false);
+  channel = prefs.getUChar("ch", 1);       // where the modules were last time: no 13-channel search after a restart
   setChannel(channel);
   const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   esp_now_peer_info_t peer = {}; memcpy(peer.peer_addr, all, 6); peer.ifidx = WIFI_IF_STA;

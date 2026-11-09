@@ -616,8 +616,8 @@ def run_bridge(port=None, http_port=8790, channel=None, parent_pid=0, say=print)
                     gw.link = link = EspNowLink.open(port, channel=channel)
                     say(f'ESP-NOW dongle ready ({link.dongle.info})'); told = False
                 except GosError as e:
-                    if not told: say(f'{e} Trying again every 3 s; Wi-Fi works meanwhile.'); told = True
-                    next_try = time.time() + 3
+                    if not told: say(f'{e} Trying again every second; Wi-Fi works meanwhile.'); told = True
+                    next_try = time.time() + 1
             now = {m.name for m in link.alive()} if link else set()
             for n in sorted(now - seen): say(f'+ {n} heard over ESP-NOW on channel {link.channel}: {gw.address(n) or "?"} goes over the radio')
             for n in sorted(seen - now): say(f'- {n} not heard over ESP-NOW for {EspNowLink.STALE:.0f} s: over Wi-Fi meanwhile')

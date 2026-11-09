@@ -25,7 +25,9 @@
 namespace r4now {
 
 // GRP: modules of one group talk to each other (broadcast, groupsync.h): GO / where I am / STOP. The master ignores it.
-enum Type : uint8_t { HB = 1, REQ = 2, RESP = 3, HELLO = 4, HOLD = 5, ESTOP = 6, GRP = 7 };
+// NOTE: a module tells the master (and through it the laptop) something that just happened: a finished animation and
+// its top currents, a hold, an E-STOP, a low battery. Text, one line. gos/python/gos/espnow.py keeps the same numbers.
+enum Type : uint8_t { HB = 1, REQ = 2, RESP = 3, HELLO = 4, HOLD = 5, ESTOP = 6, GRP = 7, NOTE = 8 };
 
 constexpr uint8_t  VERSION     = 1;
 constexpr int      FRAME_MAX   = 250;

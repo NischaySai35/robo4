@@ -137,6 +137,13 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - **Hardware (Nischay):** many C3s died with 3V3-GND shorts, 99 % when the ESP was powered first and the servo cable plugged in after: latch-up from the hot-plugged 5 V servo line (ST3215 data is 5 V-referenced, the C3 pin max is 3.6 V). Fix: a 1 kohm series resistor on GPIO5, never hot-plug servo cables; 5.1 V zener + polyfuse on the ESP's 5 V; TVS + 470-1000 uF on the battery. The BSS138 I2C level shifter (10 k pull-ups) is too slow for the 1 Mbaud bus.
 - [ ] Reception is weak-ish (-76..-85 dBm); an ESP32 with an external antenna would give margin.
 
+### GOS knows the fleet (9 Nov) — built and tested on the laptop, NOT yet on the hardware
+- **Stop all:** `gos robot stop` (hold) / `gos robot stop --limp` (E-STOP), `hardware.stop_all()`, service `/modules/stop`. Through the bridge (`/_stop` on 8790) and the master's new USB commands `H` / `E` (= its button; info says `stop=1`; an older master gets the frames via `S`). No master: Wi-Fi `/api/hold` (new on the module) or the E-STOP to every address in `~/.gos/modules.json`.
+- **Status:** the module's hello now also says `bat=` (V), `held=`, `anim=`. **Notes:** `note()` in the module = `lg()` + an r4now `NOTE` frame (type 8) to the master, for: animation finished (top 2 currents) / stopped, HOLD, E-STOP, master silent, battery low / back. The bridge keeps them (`/_events?after=N`) and prints them in its log.
+- **GOS:** `gos robot status` (modules + last events), `gos robot modules` publishes `/modules`, `/modules/events`, serves `/modules/stop`. `hardware.ModuleGroup([1, 2])`: load / play / stop / status, same format as the Studio's `sender.ts` (group play, `groupsync.h`).
+- **Kept in step:** `test_message_types_and_sizes_match_the_firmware` reads `r4now.h`.
+- [ ] Upload the master (COM7, stop the bridge first) and mod1; then try `gos robot stop` while a slow move runs, and check an animation's "highest current" note shows in `gos robot status`.
+
 ---
 
 ## 4. Key files
@@ -170,6 +177,9 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 gos robot list
 gos robot serve mod1.local          # or: gos robot serve 192.168.137.x --name mod1
 gos topic echo /mod1/joint_states
+gos robot status                    # every module the bridge hears (battery, holding, playing) + recent events
+gos robot stop                      # every module stops and holds; --limp = E-STOP
+gos robot modules                   # the fleet on the GOS network: /modules, /modules/events, /modules/stop
 
 # GOS tests
 cd D:\robo4-restructure\gos\python

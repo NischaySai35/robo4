@@ -220,6 +220,178 @@ def serve_robot(app, robot, name='mod1', rate=20):
     return stop
 
 
+# ── all the modules at once, through the ESP-NOW bridge (gos robot bridge, gos/espnow.py) ─────────────────────────────
+# The bridge owns the master on USB, so programs ask it (http://127.0.0.1:8790) rather than opening the port themselves.
+BRIDGE = 'http://127.0.0.1:8790'
+
+
+def _bridge(path, bridge=BRIDGE, timeout=3.0):
+    try:
+        with urllib.request.urlopen(bridge.rstrip('/') + path, timeout=timeout) as r: return json.loads(r.read() or b'{}')
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        raise GosError(f'The ESP-NOW bridge at {bridge} does not answer ({e}). Start it with: gos robot bridge') from None
+
+
+def stop_all(limp=False, bridge=BRIDGE):
+    """Every module stops where it is and holds; limp=True: E-STOP, every servo limp (it may drop!). Like the master's
+    button. Through the bridge and the master when they run; otherwise over Wi-Fi to every module address remembered."""
+    what = 'E-STOP (limp)' if limp else 'Stop and hold'
+    try: r = _bridge('/_stop' + ('?limp=1' if limp else ''), bridge)
+    except GosError:
+        from .espnow import Gateway, stop_over_wifi
+        try: known = dict(json.loads(Gateway.REMEMBER.read_text()))
+        except (OSError, ValueError): known = {}
+        if not known: return Result(False, f'{what} could NOT be sent: no bridge running and no module address known. Cut the power if a robot is moving.')
+        r = stop_over_wifi(known, limp)
+    mods = ', '.join(r.get('modules') or []) or 'no module heard'
+    if r.get('failed'): return Result(False, f'{what} over {r["via"]} reached {mods}; FAILED for {"; ".join(r["failed"])}. Cut the power if a robot is moving.', r)
+    return Result(True, f'{what} sent over {r["via"]} to every module ({mods}).', r)
+
+
+def modules(bridge=BRIDGE):
+    """The modules the bridge hears: [{"name", "battery" (V), "held", "playing", "rssi", "seenAgoS", ...}]."""
+    return _bridge('/', bridge).get('modules', [])
+
+
+def events(after=0, bridge=BRIDGE):
+    """What happened (module notes: animation finished + its top currents, hold, E-STOP, battery; master notes; stops):
+    (last number, [{"n", "t", "source", "text"}]). Pass the last number back to get only newer ones."""
+    r = _bridge(f'/_events?after={int(after)}', bridge)
+    return r.get('last', 0), r.get('events', [])
+
+
+def serve_modules(app, bridge=BRIDGE, rate=2.0):
+    """Put the whole fleet on the GOS network, like a ROS diagnostics + safety node:
+    /modules          [{"name", "battery", "held", "playing", ...}] whenever it changes (and every 5 s)
+    /modules/events   {"n", "t", "source", "text"} for each thing that happened
+    /modules/stop     service {"limp": false}: every module stops and holds (limp: E-STOP); always allowed
+    Returns a function that stops serving."""
+    import threading
+    fleet, happened = app.topic('/modules'), app.topic('/modules/events')
+    done = threading.Event()
+
+    def loop():
+        last, said_at, seen = None, 0.0, None     # seen: the last event number handed out (None: not asked yet)
+        while not done.is_set():
+            try:
+                now = [{k: m.get(k) for k in ('name', 'battery', 'held', 'playing', 'rssi', 'awake', 'channel')} for m in modules(bridge)]
+                n, new = events(seen or 0, bridge)
+                if seen is not None and n >= seen:      # the first round: what happened before is history, not news
+                    for e in new: happened.publish(e)
+                seen = n                                # (n < seen: the bridge restarted and counts from 0 again)
+            except GosError as e:
+                now = [{'error': str(e)}]
+            if now != last or time.time() - said_at > 5:
+                fleet.publish(now); last, said_at = now, time.time()
+            done.wait(1 / rate)
+
+    def on_stop(req):
+        r = stop_all(bool((req or {}).get('limp')), bridge)
+        return {'ok': r.ok, 'message': r.message}
+
+    app.services.advertise('/modules/stop', on_stop)
+    threading.Thread(target=loop, name='gos-modules', daemon=True).start()
+    return done.set
+
+
+class ModuleGroup:
+    """Several modules play one animation together, like the Studio's timeline does (studio/src/features/espttl/sender.ts:
+    the same wire format and steps, here for Python programs; firmware groupsync.h keeps them in step).
+
+        g = ModuleGroup([1, 2])
+        g.load([{'pose': {1: {3: 170, 4: 190}, 2: {3: 175}}, 'time_ms': 1500}, {'pose': {1: {3: 180}, 2: {3: 180}}}])
+        g.play()                         # module 1 says GO over the radio: both start at the same instant
+        g.stop()
+
+    A frame: {"pose": {module: {servo_id: degrees}}, "time_ms" (0 = auto), "speed" 1-10, "hold_ms"}. A module missing
+    from a frame keeps its last angles, so every board has every frame and they stay in step. Moves motors: play()
+    only after a person checked the robot is free to move."""
+    def __init__(self, mods, address=lambda n: f'http://mod{n}.local', timeout=20.0):
+        self.mods, self.address, self.timeout = sorted(int(m) for m in mods), address, timeout
+        self.group = 0
+
+    @staticmethod
+    def checksum(text):
+        h = 0
+        for ch in text.encode(): h = (h * 31 + ch) & 0xffffffff   # the firmware's handleAnimLoad sum
+        return h
+
+    @classmethod
+    def payload(cls, mod, frames, speed=5, time_ms=0, hold_ms=0):
+        """(header line, frame lines) for one module (the firmware's V2 format)."""
+        per = [{int(k): float(v) for k, v in (f.get('pose', {}).get(mod) or f.get('pose', {}).get(str(mod)) or {}).items()} for f in frames]
+        carry = dict(next((p for p in per if p), {}))
+        lines = []
+        for f, p in zip(frames, per):
+            carry.update(p)
+            joints = ' '.join(f'{i}:{d:.1f}' for i, d in carry.items())
+            lines.append(f'{round(f.get("time_ms", time_ms))} {round(f.get("speed", speed))} {round(f.get("hold_ms", hold_ms))} {joints}')
+        body = '\n'.join(lines) + '\n'
+        return f'V2 {len(frames)} {cls.checksum(body)}', body
+
+    def _ask(self, mod, path, body=None, timeout=None):
+        url = self.address(mod).rstrip('/') + path
+        req = urllib.request.Request(url, data=body.encode() if body is not None else None, method='POST' if body is not None else 'GET')
+        if body is not None: req.add_header('Content-Type', 'text/plain')
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r: return json.loads(r.read() or b'{}')
+        except urllib.error.HTTPError as e:
+            try: why = json.loads(e.read() or b'{}').get('error')
+            except ValueError: why = None
+            raise GosError(f'Module {mod} refused {path.split("?")[0]}: {why or e.reason}.') from None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise GosError(f'Module {mod} does not answer at {url} ({e}).') from None
+
+    def _each(self, mods, fn):
+        from concurrent.futures import ThreadPoolExecutor
+        def one(m):
+            try: return fn(m)
+            except GosError as e: return e
+        with ThreadPoolExecutor(max(1, len(mods))) as pool: out = dict(zip(mods, pool.map(one, mods)))
+        bad = [str(e) for e in out.values() if isinstance(e, GosError)]
+        if bad: raise GosError(' '.join(bad))
+        return out
+
+    def load(self, frames, sine=True, loop=False, **defaults):
+        """Upload to every module, with one fresh group number. Nothing moves yet."""
+        if not frames: raise GosError('No frames to load.')
+        self.group = int.from_bytes(os.urandom(4), 'little') % 0xfffffffe + 1 if len(self.mods) > 1 else 0
+        self.loop = loop
+        q = f'?sine={int(sine)}&loop={int(loop)}' + (f'&group={self.group}' if self.group else '')
+        def up(m):
+            head, body = self.payload(m, frames, **defaults)
+            return self._ask(m, '/api/anim/load' + q, head + '\n' + body)
+        self._each(self.mods, up)
+        return Result(True, f'Loaded {len(frames)} frames on module(s) {", ".join(map(str, self.mods))}' +
+                      (f' as group {self.group}.' if self.group else '.'))
+
+    def play(self, start=0):
+        """Start: the first module says GO over the radio and they all start together. A module that did not hear GO
+        (another radio channel, or firmware without group play) is started directly a moment later, and the result says so."""
+        lead = self.mods[0]
+        self._ask(lead, f'/api/anim/play?from={start}&loop={int(getattr(self, "loop", False))}', timeout=8)
+        if not self.group: return Result(True, f'Module {lead} plays.')
+        time.sleep(0.4)
+        late = []
+        def check(m):
+            s = self._ask(m, '/api/anim/status', timeout=3)
+            if not s.get('playing') and s.get('group') in (self.group, None):
+                late.append(m); self._ask(m, f'/api/anim/play?from={start}&loop={int(getattr(self, "loop", False))}', timeout=8)
+        self._each(self.mods[1:], check)
+        return Result(True, f'Modules {", ".join(map(str, self.mods))} play together.' +
+                      (f' Module(s) {", ".join(map(str, sorted(late)))} did not hear GO over the radio: started directly, a little late.' if late else ''),
+                      {'late': sorted(late)})
+
+    def stop(self):
+        """Stop the animation on every module (each stops; the group's STOP also reaches the others over the radio)."""
+        self._each(self.mods, lambda m: self._ask(m, '/api/anim/stop', timeout=6))
+        return Result(True, f'Stopped on module(s) {", ".join(map(str, self.mods))}.')
+
+    def status(self):
+        """{module: its /api/anim/status} (playing, frame, group, waitingFor ...)."""
+        return self._each(self.mods, lambda m: self._ask(m, '/api/anim/status', timeout=3))
+
+
 def _arp_table_windows():
     """IPv4 addresses in Windows' ARP table, read with GetIpNetTable (iphlpapi) - no `arp` process, so no console window"""
     import ctypes, socket, struct

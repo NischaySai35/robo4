@@ -260,6 +260,17 @@ void lg(const char* fmt, ...) {
   va_end(ap);
   logStore(b, portMAX_DELAY);
 }
+// lg() + the same line to the master at once (r4now NOTE), so the laptop hears what happened without reading /api/log
+// (GOS: /modules/events). For moments that matter: animation finished, hold, E-STOP, battery.
+void nowNote(const char* text);
+void note(const char* fmt, ...) {
+  char b[180];
+  va_list ap; va_start(ap, fmt);
+  vsnprintf(b, sizeof(b), fmt, ap);
+  va_end(ap);
+  logStore(b, portMAX_DELAY);
+  nowNote(b);
+}
 // The Wi-Fi chip's own messages (ESP-IDF log, errors only in this build) into the same log, so /api/log shows why the
 // radio did something (5 Nov 2026: the laptop kicks the board every 120.6 s and the board gives no reason). Called on
 // the Wi-Fi task: it never waits for the log lock, a line is dropped instead.
@@ -741,7 +752,7 @@ bool grpArmed() { return grp.on() && animCount && (int32_t)(grpArmedUntil - mill
 
 void grpSay(uint8_t kind);
 void animStop() {
-  if (animPlaying) lg("anim stopped at frame %u", animIdx + 1);
+  if (animPlaying) note("anim stopped at frame %u", animIdx + 1);
   if (animPlaying && grp.on() && !grpQuiet) grpSay(GK_STOP);   // the others stop too
   if (animPlaying) prefs.putUChar("animRun", 0);
   animPlaying = false; animInterrupted = false;
@@ -948,9 +959,9 @@ void animTick() {
     else if (b < 0 || animPeakmA[i] > animPeakmA[b]) b = i;
   }
   if (a >= 0 && b >= 0)
-    lg("anim finished (%u frames) - highest current: %s %u mA (load %u %%), %s %u mA (load %u %%)", animCount,
+    note("anim finished (%u frames) - highest current: %s %u mA (load %u %%), %s %u mA (load %u %%)", animCount,
        cfg.labels[a], animPeakmA[a], animPeakLoad[a] / 10, cfg.labels[b], animPeakmA[b], animPeakLoad[b] / 10);
-  else lg("anim finished (%u frames)", animCount);
+  else note("anim finished (%u frames)", animCount);
 }
 
 // ── Manual home positions ───────────────────────────────────────────────────
@@ -2255,6 +2266,17 @@ void handleAnimPlay() {
 
 void handleAnimStop() { animStop(); okTrue(); }
 
+// GET /api/hold -> {"ok":true,"held":N}: stop every joint where it is and hold (torque stays on), like the master's
+// HOLD. For the laptop's stop-all when the master is not plugged in (gos robot stop goes over Wi-Fi then).
+uint8_t nowHold();
+void handleHold() {
+  animStop();
+  const uint8_t held = nowHold();
+  note("HOLD from the laptop (Wi-Fi) - %u joint(s) stopped where they were, holding", held);
+  String r = F("{\"ok\":true,\"held\":"); r += held; r += '}';
+  okJson(r);
+}
+
 // GET /api/anim/sync          -> {"sync":true|false}
 // GET /api/anim/sync?on=1|0   Sync motion on/off, remembered across reboots (takes effect from the next frame)
 void handleAnimSync() {
@@ -3057,6 +3079,12 @@ void nowSendRaw(const uint8_t* mac, uint8_t type, uint16_t seq, const uint8_t* m
 void nowSend(const uint8_t* mac, uint8_t type, uint16_t seq, const String& msg) {
   nowSendRaw(mac, type, seq, (const uint8_t*)msg.c_str(), msg.length());
 }
+void nowNote(const char* text) {                     // see note(): to the master we talk to, else everyone
+  if (!nowUp) return;
+  static const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  static uint16_t seq = 0;
+  nowSendRaw(nowPeerSet ? nowPeer : all, r4now::NOTE, ++seq, (const uint8_t*)text, strlen(text));
+}
 
 // ── Group play over the radio (groupsync.h) ──────────────────────────────────
 // Broadcast to every module on the channel (the broadcast peer is added in nowInit). Runs in loop().
@@ -3099,6 +3127,10 @@ void nowHello(const uint8_t* mac) {
   s += F(" ch=");  s += ch;
   const bool awake = nowAwake() || moving() || radioHold;
   s += F(" awake="); s += awake ? '1' : '0';
+  int v10 = 0; for (uint8_t i = 0; i < nServos; i++) if (servos[i].rawVoltage > v10) v10 = servos[i].rawVoltage;
+  if (v10 > 0) { s += F(" bat="); s += v10 / 10; s += '.'; s += v10 % 10; }     // volts, the highest servo reading
+  s += F(" held="); s += nowHeld ? '1' : '0';
+  s += F(" anim="); s += animPlaying ? '1' : '0';
   if (!awake) { nowPeekUntil = millis() + NOW_PEEK_MS; radioTick(); }   // napping: listen a moment for what waits
   nowSend(mac, r4now::HELLO, 0, s);
   nowHelloMs = millis();
@@ -3181,14 +3213,14 @@ void nowPoll() {
       static uint16_t lastSeq = 0; static uint8_t lastType = 0; static uint32_t lastMs = 0;
       if (h.seq == lastSeq && h.type == lastType && millis() - lastMs < 2000) continue;   // sent to us and to everyone: once
       lastSeq = h.seq; lastType = h.type; lastMs = millis();
-      if (h.type == r4now::ESTOP) {                  // button held 2 s: the same as the Studio's E-STOP ALL
+      if (h.type == r4now::ESTOP) {                  // the master's button held 2 s, or the laptop's stop --limp
         { BusLock L; estopAll(); }
-        lg("ESP-NOW: E-STOP from the dongle's button - all servos limp");
+        note("ESP-NOW: E-STOP from the master - all servos limp");
       } else if (!otaBusy) {
         animStop();
         uint8_t held; { BusLock L; held = nowHold(); }
         nowHeld = true; nowHolds++;
-        lg("ESP-NOW: HOLD from the dongle - %u joint(s) stopped where they were, holding", held);
+        note("ESP-NOW: HOLD from the master - %u joint(s) stopped where they were, holding", held);
       }
     } else if (h.type == r4now::GRP) {                // another module of a group (broadcast)
       if (n == (int)sizeof(GroupMsg) && h.cnt == 1) { GroupMsg g; memcpy(&g, p, sizeof g); groupHeard(g); }
@@ -3216,7 +3248,7 @@ void nowPoll() {
   if (nowHbSeen && !nowHeld && !otaBusy && now - nowHbMs > NOW_HOLD_MS && nowMoveMs && now - nowMoveMs < NOW_DRIVE_MS + NOW_HOLD_MS) {
     nowHeld = true; nowHeldSilent = true; nowHolds++;
     uint8_t held; { BusLock L; held = nowHold(); }
-    lg("ESP-NOW: master silent %lu ms while driving - %u joint(s) stopped where they were, holding", (unsigned long)(now - nowHbMs), held);
+    note("ESP-NOW: master silent %lu ms while driving - %u joint(s) stopped where they were, holding", (unsigned long)(now - nowHbMs), held);
   }
 }
 
@@ -3264,12 +3296,12 @@ void battTick() {
     if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f);
   }
   if (vMax <= 0 || vMax > BATT_CUT_V10) {            // no reading (servo power off) or fine
-    if (battLowSince) lg("battery back above %d.%d V - not switching off", BATT_CUT_V10 / 10, BATT_CUT_V10 % 10);
+    if (battLowSince) note("battery back above %d.%d V - not switching off", BATT_CUT_V10 / 10, BATT_CUT_V10 % 10);
     battLowSince = 0; return;
   }
   if (!battLowSince) {
     battLowSince = millis();
-    lg("battery low: %d.%d V - the module switches itself off in %u s unless it recovers", vMax / 10, vMax % 10,
+    note("battery low: %d.%d V - the module switches itself off in %u s unless it recovers", vMax / 10, vMax % 10,
        (unsigned)(mA > 1000 ? BATT_HOLD_LOADED_MS : BATT_HOLD_MS) / 1000);
   }
   if (millis() - battLowSince >= (uint32_t)(mA > 1000 ? BATT_HOLD_LOADED_MS : BATT_HOLD_MS)) battShutdown(vMax, mA);
@@ -3327,6 +3359,7 @@ void setup() {
   route("/api/anim/load",       handleAnimLoad);
   route("/api/anim/play",       handleAnimPlay);
   route("/api/anim/stop",       handleAnimStop);
+  route("/api/hold",            handleHold);
   route("/api/anim/status",     handleAnimStatus);
   route("/api/anim/sync",       handleAnimSync);
   route("/api/home/set",        handleHomeSet);

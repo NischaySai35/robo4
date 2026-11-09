@@ -110,7 +110,7 @@ static uint8_t aliveCount() {
 
 static void info() {
   char s[300];
-  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu cresent=%lu cdeliv=%lu cfail=%lu q2s=%lu air=%lu s2a=%lu",
+  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 stop=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu cresent=%lu cdeliv=%lu cfail=%lu q2s=%lu air=%lu s2a=%lu",
            WiFi.macAddress().c_str(), channel, aliveCount(), (unsigned)getCpuFrequencyMhz(), temperatureRead(),
            (unsigned long)heard, (unsigned long)sent, (unsigned long)txFail, (unsigned long)lost, (unsigned long)badUsb,
            (unsigned long)holds, (unsigned long)estops, (unsigned long)courier->resent, (unsigned long)courier->delivered, (unsigned long)courier->failed, (unsigned long)tQ2S, (unsigned long)tAirUs, (unsigned long)tS2A);
@@ -230,6 +230,9 @@ static void usbPoll() {
     else if (type == 'S' && n > 6) { if (isMove(p + 6, n - 6)) laptopMoveMs = millis(); airSend(p, p + 6, n - 6); }
     else if (type == 'C' && n == 1) { setChannel(p[0]); searchStepMs = millis(); info(); }
     else if (type == 'I') info();
+    // the laptop's stop-all (gos robot stop, the GOS /modules/stop service): exactly what the button does
+    else if (type == 'H') { holds++; toAll(r4now::HOLD); say("laptop: every module stops and holds"); }
+    else if (type == 'E') { estops++; toAll(r4now::ESTOP); say("laptop: E-STOP sent to every module (limp)"); }
    }
   }
 }

@@ -224,7 +224,7 @@ def main(argv=None):
     s.add_parser('doctor', help='check this computer for what GOS needs')
     w = s.add_parser('ws', help='build or test every package in a workspace (like colcon)'); w.add_argument('action', choices=['build', 'test']); w.add_argument('folder', nargs='?', default='.')
     s.add_parser('plugins', help='commands added by other packages or gos-NAME programs')
-    rb = s.add_parser('robot', help='put a real module on the GOS network (its board keeps its own firmware)'); rb.add_argument('action', choices=['serve', 'list', 'bridge']); rb.add_argument('address', nargs='?', help='serve: the board, e.g. mod1.local or 192.168.1.40; bridge: the ESP-NOW dongle port, e.g. COM7 (default: find it)'); rb.add_argument('--port', type=int, default=8790, help='bridge: web gateway port'); rb.add_argument('--channel', type=int, help='bridge: Wi-Fi channel of the modules (default: search)'); rb.add_argument('--parent-pid', type=int, default=0, help='bridge: stop when this program ends (the Studio starts it so)'); rb.add_argument('--name', help='topic prefix (default: the board name, e.g. mod1)'); rb.add_argument('--rate', type=float, default=20, help='joint states per second')
+    rb = s.add_parser('robot', help='put a real module on the GOS network (its board keeps its own firmware)'); rb.add_argument('action', choices=['serve', 'list', 'bridge', 'stop', 'status', 'modules'], help='stop: every module stops and holds (--limp: E-STOP); status: what the bridge hears + recent events; modules: put the fleet on the GOS network (/modules, /modules/events, /modules/stop)'); rb.add_argument('--limp', action='store_true', help='stop: E-STOP, every servo limp (it may drop)'); rb.add_argument('address', nargs='?', help='serve: the board, e.g. mod1.local or 192.168.1.40; bridge: the ESP-NOW dongle port, e.g. COM7 (default: find it)'); rb.add_argument('--port', type=int, default=8790, help='bridge: web gateway port'); rb.add_argument('--channel', type=int, help='bridge: Wi-Fi channel of the modules (default: search)'); rb.add_argument('--parent-pid', type=int, default=0, help='bridge: stop when this program ends (the Studio starts it so)'); rb.add_argument('--name', help='topic prefix (default: the board name, e.g. mod1)'); rb.add_argument('--rate', type=float, default=20, help='joint states per second')
     a = p.parse_args(argv)
     need = lambda x, what: x if x is not None else (_ for _ in ()).throw(GosError(f'Give the {what}.'))
     try:
@@ -285,6 +285,28 @@ def main(argv=None):
             found = find_modules()
             print('\n'.join(f"{m['name']:8s} {m['ip']:16s} firmware {m['fw']}" for m in found) or 'No modules found. Are they powered and on the same Wi-Fi as this computer?')
             print(f'{len(found)} module(s).')
+        elif a.cmd == 'robot' and a.action == 'stop':
+            from .hardware import stop_all
+            r = stop_all(a.limp)
+            print(r.message)
+            if not r.ok: return 1
+        elif a.cmd == 'robot' and a.action == 'status':
+            from .hardware import modules, events
+            mods = modules()
+            for m in mods:
+                bat = f"{m['battery']:.1f} V" if m.get('battery') else 'battery ?'
+                state = 'playing' if m.get('playing') else 'holding' if m.get('held') else 'idle'
+                print(f"{m.get('name') or m.get('mac'):8s} {bat:10s} {state:8s} signal {m.get('rssi')} dBm, heard {m.get('seenAgoS')} s ago")
+            print(f'{len(mods)} module(s) heard over ESP-NOW.')
+            for e in events()[1][-10:]: print(f"  {time.strftime('%H:%M:%S', time.localtime(e['t']))} {e['source']}: {e['text']}")
+        elif a.cmd == 'robot' and a.action == 'modules':
+            from .hardware import serve_modules
+            with App(headless=True, transport='zenoh', listen=[a.connect], domain=a.domain, name='modules') as app:
+                serve_modules(app)
+                print('Serving the fleet: /modules, /modules/events, /modules/stop ({"limp": false}). Ctrl+C stops serving.', flush=True)
+                try:
+                    while True: time.sleep(1)
+                except KeyboardInterrupt: pass
         elif a.cmd == 'robot' and a.action == 'bridge':
             from .espnow import run_bridge
             code = run_bridge(a.address, a.port, a.channel, a.parent_pid, say=lambda m: print(m, flush=True))

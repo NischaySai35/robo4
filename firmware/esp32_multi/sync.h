@@ -15,6 +15,8 @@
 //   brakes mid-pose, it just flows (the old 50 Hz stream put the goal on the joint: fifty start-stops a second).
 //
 //   A joint that makes no progress for stallS while the module waits on it: STALLED, the pose stops (never hangs).
+//   Several modules (groupsync.h): peerS = the slowest other module's clock; being ahead of it slows this clock the
+//   same way a lagging joint does. It never stalls the pose (a silent module simply drops out of peerS).
 //   Joints that move less than minMoveRaw are sent straight to their target and not waited for.
 #pragma once
 #include <stdint.h>
@@ -58,6 +60,8 @@ struct SyncMove {
   int8_t   laggard = -1;           // the joint the module is waiting on (-1 = nobody)
   float    lag = 0, worstLag = 0;  // now, and the worst in this pose (0..1)
   float    elapsed = 0;
+  float    peerS = 2;              // the slowest other module's clock on this pose (groupsync.h); 2 = alone
+  float    peerLag = 0;            // how far this module's clock is ahead of it now
 
   float ease(float u) const { return sine ? 0.5f - 0.5f * cosf(SYNC_PI * u) : u; }
   float easeInv(float y) const { if (y <= 0) return 0; if (y >= 1) return 1; return sine ? acosf(1 - 2 * y) / SYNC_PI : y; }
@@ -89,9 +93,12 @@ struct SyncMove {
     laggard = lag > c.lagOk ? who : -1;
     if (lag > worstLag && s < 1) worstLag = lag;
 
-    // the clock: full speed while nobody lags, slower the more the slowest lags, never stopped
+    // the clock: full speed while nobody lags, slower the more the slowest lags, never stopped. Another module of the
+    // group counts like one more joint: ahead of its clock = slower (the slowest module itself never waits).
+    peerLag = peerS < 2 ? s - peerS : 0; if (peerLag < 0) peerLag = 0;
+    float lagAll = lag > peerLag ? lag : peerLag;
     float rate = 1;
-    if (lag > c.lagOk) rate = lag >= c.lagMax ? c.minRate : 1 - (1 - c.minRate) * (lag - c.lagOk) / (c.lagMax - c.lagOk);
+    if (lagAll > c.lagOk) rate = lagAll >= c.lagMax ? c.minRate : 1 - (1 - c.minRate) * (lagAll - c.lagOk) / (c.lagMax - c.lagOk);
     if (s < 1) { s += rate * dt / T; if (s > 1) s = 1; }
 
     // stalled: the module waits on a joint that gains nothing

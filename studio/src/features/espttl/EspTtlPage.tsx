@@ -1,7 +1,8 @@
 /**
- * EspTtlPage — the laptop-side console for a module's ESP32-C3.
+ * EspTtlPage — the Studio's console for the module boards (ESP32-C3). The boards only send data and take commands.
  *
- * Everything the board's own web page can do, done from here instead: live control,
+ * The module strip on top lists every module (found by the radio gateway, or typed in); the per-module tabs (Control,
+ * Servo tools, Config, Wi-Fi, Log) show the one picked. Animation works on ALL online modules at once. Live control,
  * servo discovery and renumbering, config, Wi-Fi, firmware upload, log — plus
  * the pose timeline, which only exists here because it needs memory the board does not
  * have. The board stays a thin executor; the thinking is on this side of the wire.
@@ -19,6 +20,9 @@ import AnimationTab from './AnimationTab';
 import MiniTimeline from './MiniTimeline';
 import TorqueSwitch from './TorqueSwitch';
 import WalkTab from './WalkTab';
+import ModuleStrip, { sortedNodes } from '@/features/servo/ModuleStrip';
+import { useEspNodesStore, type EspNode } from '@/state/espNodesStore';
+import { estopAllNodes } from '@/features/servo/servoLink';
 import './EspTtl.css';
 
 const TABS: { id: TtlTab; label: string }[] = [
@@ -33,27 +37,18 @@ const TABS: { id: TtlTab; label: string }[] = [
 ];
 
 export default function EspTtlPage() {
-  const { url, tab, tel, online, latencyMs, lastError, setUrl, setTab } = useEspTtlStore();
-  const [draftUrl, setDraftUrl] = useState(url);
+  const { nodeId, tab, tel, online, latencyMs, lastError, select, setTab } = useEspTtlStore();
 
-  // Poll only while this page is mounted — the board serves one client at a time and has
-  // no spare attention for a console nobody is looking at.
+  // Show the modules while this page is open. The shared reader (espPoll) does the asking and the finding.
   useEffect(() => { const stop = startTtlPoll(); return () => { stop(); stopTtlPoll(); }; }, []);
-  useEffect(() => { setDraftUrl(url); }, [url]);
 
   return (
     <div className="ettl" data-ui="a">
       <header className="ettl-head">
         <span className="ettl-title">ESP-TTL</span>
+        <ModuleStrip selectedId={nodeId} onSelect={select} />
         <span className={`ettl-dot ${online ? 'on' : 'off'}`} />
         <span className="ettl-dim">{online ? 'connected' : (lastError || 'offline')}</span>
-        <Input size="xs" className="tw:w-[190px]"
-          value={draftUrl}
-          onChange={e => setDraftUrl(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter') setUrl(draftUrl); }}
-          onBlur={() => draftUrl !== url && setUrl(draftUrl)}
-          spellCheck={false}
-        />
         {tel && <>
           <span className="ettl-chip">fw {tel.fw}</span>
           <span className="ettl-chip">{tel.wifi.hostname}.local · {tel.wifi.ip}</span>
@@ -67,7 +62,7 @@ export default function EspTtlPage() {
         </>}
         <span style={{ flex: 1 }} />
         <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold"
-                onClick={() => ttlTry('/api/command?servo=all&cmd=estop')}>E-STOP</Button>
+                title="every module, not just the one shown" onClick={() => void estopAllNodes()}>E-STOP ALL</Button>
       </header>
 
       <TabBar value={tab} onChange={setTab} tabs={TABS.map((t) => ({ id: t.id, label: t.label }))} />
@@ -551,54 +546,80 @@ function WifiTab() {
 
 // ── Firmware ──────────────────────────────────────────────────────────────────
 function OtaTab() {
-  const tel = useEspTtlStore(s => s.tel);
-  const [pct, setPct] = useState(0);
-  const [stat, setStat] = useState('idle');
-  const [err, setErr] = useState(false);
+  const nodes = sortedNodes(useEspNodesStore(s => s.nodes));
+  const shown = useEspTtlStore(s => s.nodeId);
+  const [pick, setPick] = useState<Set<string>>(() => new Set(shown ? [shown] : []));
+  const [rows, setRows] = useState<Record<string, { pct: number; stat: string; err: boolean }>>({});
+  const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const row = (id: string, r: { pct: number; stat: string; err: boolean }) => setRows(x => ({ ...x, [id]: r }));
+  const space = (n: EspNode) => (n.telemetry as any)?.otaSpace ?? 0;
 
-  const upload = () => {
-    const f = fileRef.current?.files?.[0];
-    if (!f) { setStat('pick a .bin first'); return; }
+  /** One module: POST the file, report progress. Resolves when the board answered (or the link dropped). */
+  const uploadOne = (n: EspNode, f: File) => new Promise<boolean>(resolve => {
     const fd = new FormData(); fd.append('f', f, f.name);
     const x = new XMLHttpRequest();
-    x.open('POST', `${ttlUrl()}/api/ota?size=${f.size}`);
-    setErr(false);
-    speak('Uploading firmware over the air', { key: 'ota-start', cooldownMs: 0 });
-    let said = 0;                                   // spoken 25/50/75 % milestones
+    x.open('POST', `${n.url.replace(/\/+$/, '')}/api/ota?size=${f.size}`);
     x.upload.onprogress = e => {
       const p = (e.loaded / e.total) * 100;
-      const ms = Math.floor(p / 25);
-      if (ms > said && ms < 4) { said = ms; speak(`${ms * 25} percent`, { key: 'ota-pct', cooldownMs: 0 }); }
-      setPct(p);
-      setStat(p >= 100 ? 'sent 100% — board is verifying…' : `${p.toFixed(0)}% (${(e.loaded / 1024) | 0}/${(e.total / 1024) | 0} kB)`);
+      row(n.id, { pct: p, err: false, stat: p >= 100 ? 'sent 100% — board is verifying…' : `${p.toFixed(0)}% (${(e.loaded / 1024) | 0}/${(e.total / 1024) | 0} kB)` });
     };
     x.onload = () => {
-      if (x.status === 200) { setStat('written OK — board is rebooting'); speak('Firmware uploaded. Module is rebooting', { key: 'ota-done', cooldownMs: 0 }); }
-      else { setErr(true); setStat(`FAILED (${x.status}): ${x.responseText}`); speak('Firmware upload failed', { key: 'ota-fail', cooldownMs: 0 }); }
+      const ok = x.status === 200;
+      row(n.id, { pct: 100, err: !ok, stat: ok ? 'written OK — board is rebooting' : `FAILED (${x.status}): ${x.responseText}` });
+      resolve(ok);
     };
-    x.onerror = () => { setErr(true); setStat('connection dropped mid-upload'); speak('Upload failed. Connection dropped', { key: 'ota-fail', cooldownMs: 0 }); };
+    x.onerror = () => { row(n.id, { pct: 0, err: true, stat: 'connection dropped mid-upload' }); resolve(false); };
     x.send(fd);
+  });
+
+  // One module after another, never all at once: the radio and the Wi-Fi carry one big upload well, several badly,
+  // and a module that fails does not stop the others.
+  const upload = async () => {
+    const f = fileRef.current?.files?.[0];
+    const todo = nodes.filter(n => pick.has(n.id));
+    if (!f || !todo.length) return;
+    setBusy(true);
+    speak(`Uploading firmware to ${todo.length} module${todo.length === 1 ? '' : 's'}`, { key: 'ota-start', cooldownMs: 0 });
+    let ok = 0;
+    for (const n of todo) { row(n.id, { pct: 0, err: false, stat: 'waiting…' }); }
+    for (const n of todo) { if (await uploadOne(n, f)) ok++; }
+    setBusy(false);
+    speak(ok === todo.length ? 'Firmware uploaded. Modules are rebooting' : `Firmware failed on ${todo.length - ok} module${todo.length - ok === 1 ? '' : 's'}`,
+          { key: ok === todo.length ? 'ota-done' : 'ota-fail', cooldownMs: 0 });
   };
 
-  const space = tel?.otaSpace ?? 0;
   return (
     <div className="ettl-card">
       <h4>Firmware update</h4>
-      <div className={`ettl-${space > 0 ? 'ok' : 'warn'}line`}>
-        {space > 0
-          ? `OTA ready — free partition ${(space / 1048576).toFixed(2)} MB`
-          : 'No OTA partition on this board — wireless upload will fail. Re-flash over USB with a "with OTA" partition scheme.'}
-      </div>
       <div className="ettl-row">
         <input type="file" accept=".bin" ref={fileRef} />
-        <Button size="sm" onClick={upload} disabled={space === 0}>Upload &amp; reboot</Button>
+        <Button size="sm" onClick={upload} disabled={busy || !pick.size}>
+          {busy ? 'Uploading…' : `Upload & reboot ${pick.size} module${pick.size === 1 ? '' : 's'}`}
+        </Button>
+        <Button variant="outline" size="sm" disabled={busy} onClick={() => setPick(new Set(nodes.filter(n => n.connected && space(n) > 0).map(n => n.id)))}>all online</Button>
       </div>
-      <div className="ettl-bar"><i style={{ width: `${pct}%` }} /></div>
-      <div className={err ? 'ettl-warnline' : 'ettl-dim'}>{stat}</div>
+      <table className="ettl-table">
+        <tbody>
+          {nodes.map(n => {
+            const r = rows[n.id], sp = space(n);
+            return (
+              <tr key={n.id}>
+                <td className="l"><label className="ettl-lbl">
+                  <input type="checkbox" checked={pick.has(n.id)} disabled={busy}
+                         onChange={e => setPick(p => { const q = new Set(p); if (e.target.checked) q.add(n.id); else q.delete(n.id); return q; })} />
+                  {n.name}</label></td>
+                <td className="ettl-dim">{!n.connected ? 'offline' : sp > 0 ? `fw ${(n.telemetry as any)?.fw ?? '?'} · OTA ${(sp / 1048576).toFixed(2)} MB free` : 'no OTA partition — re-flash over USB'}</td>
+                <td className="grow"><div className="ettl-bar"><i style={{ width: `${r?.pct ?? 0}%` }} /></div></td>
+                <td className={r?.err ? 'ettl-warnline' : 'ettl-dim'}>{r?.stat ?? ''}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
       <p className="ettl-hint">
-        A weak link is the usual cause of a failed upload — the board verifies the image and
-        refuses to boot a damaged one, so a failure costs nothing but the attempt.
+        Modules update one after another. A weak link is the usual cause of a failed upload — the board verifies the
+        image and refuses to boot a damaged one, so a failure costs nothing but the attempt.
       </p>
     </div>
   );

@@ -1,169 +1,75 @@
 /**
- * player — runs a timeline on the real hardware.
+ * player — every motion button of the timeline (play, play from here, go), on ALL modules, in step.
  *
- * Two movement modes, and the difference is worth stating plainly:
- *
- *  LINEAR  one /api/batch per frame. The servo's own trapezoidal profile does the moving:
- *          it accelerates at `acc`, runs at the speed cap, decelerates at the end. Cheap
- *          (one request per frame) and perfectly fine for posing.
- *
- *  SINE    the laptop streams intermediate setpoints along a raised-cosine curve, so
- *          velocity starts at zero, peaks mid-path and returns to zero. The servo is never
- *          asked to jump, so the motion reads as smooth rather than as a series of starts.
- *          This is why the sequencer lives on the laptop: streaming ~25 setpoints a second
- *          across a dozen joints is nothing here and would be real work on the ESP.
- *
- * The speed cap is passed on every batch either way, so SINE can never exceed what LINEAR
- * would have done — the eased path is slower everywhere except its midpoint, where it at
- * most matches. A short move simply never gets near the cap, which is the "common sense"
- * case: there is no time to accelerate, so it does not try.
+ * Nothing is streamed from the laptop any more: a laptop cannot keep two boards in step over Wi-Fi (each request has
+ * its own delay, and a napping radio adds up to a second). Every motion is uploaded to the boards first and started by
+ * one GO over the radio; the boards keep each other in step (sender.ts, firmware groupsync.h).
+ *   play / play from here  the whole timeline, from that frame
+ *   go                     a one-frame animation to that frame's pose, at a gentle speed
+ * The highlighted frame follows what the first module reports.
  */
-import { ttlUrl } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
-import { planFrame, profile } from './motion';
-import { currentPose } from '@/state/espTtlStore';
-import { boardRefusal } from '@/hardware/protocol';
+import { sendToBoard, startOnBoard, stopOnBoard, boardStatus } from './sender';
 
+let watch: number | null = null;
 
-/** How often we push a setpoint while easing. 25 Hz is smooth and leaves the bus idle. */
-const STEP_MS = 40;
-
-/** A move shorter than this is not worth streaming — just send it and let the servo go. */
-const MIN_EASE_MS = 120;
-
-let abort: AbortController | null = null;
-let running = false;
-
-const sleep = (ms: number, signal: AbortSignal) => new Promise<void>((resolve, reject) => {
-  const t = setTimeout(resolve, ms);
-  signal.addEventListener('abort', () => { clearTimeout(t); reject(new DOMException('stopped', 'AbortError')); },
-    { once: true });
-});
-
-/** POST-free: the board's API is all GET query strings. */
-async function sendPose(pose: Record<number, number>, speed: number, acc: number, signal: AbortSignal) {
-  const parts = Object.entries(pose).map(([id, deg]) => `${id}=${(+deg).toFixed(1)}`);
-  if (!parts.length) return;
-  const url = `${ttlUrl()}/api/batch?${parts.join('&')}&speed=${speed}&acc=${acc}`;
-  const res = await fetch(url, { cache: 'no-store', signal });
-  if (!res.ok) throw new Error(await boardRefusal(res));   // e.g. locked after power-on: stop the sequence and say why
-}
-
-/** Angles the arm should be at right now, per the frame we are leaving. */
-function poseOf(f: Frame) { return f.pose; }
-
-/** Blend two poses. Joints missing from either side are carried through unchanged. */
-function lerpPose(a: Record<number, number>, b: Record<number, number>, k: number) {
-  const out: Record<number, number> = {};
-  for (const key of Object.keys(b)) {
-    const id = Number(key);
-    const from = a[id];
-    out[id] = from == null ? b[id] : from + (b[id] - from) * k;
-  }
-  return out;
-}
-
-export function isPlaying() { return running; }
-
-export function stopPlayback() {
-  if (abort) abort.abort();
-  abort = null;
-  running = false;
+function follow() {
+  if (watch !== null) window.clearInterval(watch);
   const st = useTimelineStore.getState();
-  st.setPlaying(false);
-  st.setPlayIdx(-1);
-}
-
-/**
- * Play the timeline from `startIdx`. Resolves when it finishes or is stopped.
- * `onError` is called with a human-readable reason rather than throwing, because a board
- * that stops answering mid-sequence is an expected event, not an exception.
- */
-export async function playTimeline(startIdx = 0, onError?: (msg: string) => void) {
-  if (running) return;
-  const st = useTimelineStore.getState();
-  const frames = st.frames;
-  if (!frames.length) return;
-
-  abort = new AbortController();
-  const signal = abort.signal;
-  running = true;
   st.setPlaying(true);
+  let misses = 0;
+  watch = window.setInterval(async () => {
+    const s = await boardStatus();
+    if (!s) { if (++misses > 10) endFollow(); return; }
+    misses = 0;
+    if (!s.playing) { endFollow(); return; }
+    useTimelineStore.getState().setPlayIdx(s.idx);
+  }, 300);
+}
 
-  const acc = 30;
+function endFollow() {
+  if (watch !== null) { window.clearInterval(watch); watch = null; }
+  const st = useTimelineStore.getState();
+  st.setPlaying(false); st.setPlayIdx(-1);
+}
 
-  try {
-    do {
-      // Where the arm actually is right now is unknown to us mid-sequence, so the first
-      // frame is always a plain move: ease from an unknown start would be a guess.
-      let prev: Record<number, number> | null = null;
+export function isPlaying() { return useTimelineStore.getState().playing; }
 
-      for (let i = startIdx; i < frames.length; i++) {
-        if (signal.aborted) break;
-        const live = useTimelineStore.getState();
-        const f = live.frames[i];
-        if (!f) break;
+/** Stop every module and the highlight. */
+export function stopPlayback() {
+  endFollow();
+  void stopOnBoard();
+}
 
-        useTimelineStore.getState().setPlayIdx(i);
+/** Upload, then start together. `say` gets the outcome in words (errors included). */
+async function run(frames: Frame[], from: number, say?: (msg: string) => void, what = 'playing') {
+  const up = await sendToBoard(frames);
+  if (!up.ok) { say?.(`could not upload: ${up.error}`); return; }
+  const go = await startOnBoard(from);
+  if (!go.ok) { say?.(`uploaded but could not start: ${go.error}`); return; }
+  say?.(`${what} on ${up.modules} module${up.modules === 1 ? '' : 's'}${go.note ? ' — ' + go.note : ''}`);
+  follow();
+}
 
-        const speed = f.speed ?? live.globalSpeed;
-        const target = poseOf(f);
-        // Time is the control, speed only a cap: the planner (same maths as the board) says
-        // how long this move really takes, and 0 means "as fast as the cap allows".
-        const plan = planFrame(prev ?? currentPose(), target, speed, f.delayMs ?? live.globalDelayMs, live.sine);
-        const dwell = plan.ms;
-        const hold = f.holdMs ?? live.globalHoldMs;
-
-        if (live.sine && prev && dwell >= MIN_EASE_MS) {
-          // Spend the dwell moving, not waiting: the frame's time budget IS the move.
-          const steps = Math.max(2, Math.round(dwell / STEP_MS));
-          for (let k = 1; k <= steps; k++) {
-            if (signal.aborted) break;
-            const t0 = performance.now();
-            await sendPose(lerpPose(prev, target, profile(k / steps, true)), speed, acc, signal);
-            const spent = performance.now() - t0;
-            // Subtract the request time so a slow board stretches the move rather than
-            // silently running the whole sequence late.
-            await sleep(Math.max(0, STEP_MS - spent), signal);
-          }
-        } else {
-          await sendPose(target, speed, acc, signal);
-          await sleep(dwell, signal);
-        }
-        if (hold > 0) await sleep(hold, signal);
-
-        prev = { ...(prev || {}), ...target };
-      }
-      startIdx = 0;
-    } while (!signal.aborted && useTimelineStore.getState().loop);
-  } catch (e: any) {
-    if (e?.name !== 'AbortError') onError?.(e?.message || String(e));
-  } finally {
-    running = false;
-    abort = null;
-    const s = useTimelineStore.getState();
-    s.setPlaying(false);
-    s.setPlayIdx(-1);
-  }
+/** Play the timeline from `startIdx` on every module in it. */
+export async function playTimeline(startIdx = 0, say?: (msg: string) => void) {
+  const frames = useTimelineStore.getState().frames;
+  if (!frames.length) return;
+  await run(frames, startIdx, say, startIdx ? `playing from frame ${startIdx + 1}` : 'playing');
 }
 
 /**
- * "go" previews a frame, so it deliberately moves at a fraction of the sequence speed.
- * A preview jumps from wherever the arm happens to be — often a long, unplanned move — and
- * at playback speed that arrives as a lurch. Slow is the right default for a jog you are
- * watching; playback itself is unaffected.
+ * "go" previews a frame, so it moves at a fraction of the sequence speed: it starts from wherever the arm happens to
+ * be — often a long, unplanned move — and at playback speed that arrives as a lurch.
  */
 const GOTO_SPEED_FRACTION = 0.4;
 
-/** Jump straight to one frame's pose (used by the "go" button on a frame card). */
-export async function gotoFrame(f: Frame, onError?: (msg: string) => void) {
+/** Move every module to one frame's pose (joints missing from it keep the angle earlier frames gave them). */
+export async function gotoFrame(f: Frame, say?: (msg: string) => void) {
   const st = useTimelineStore.getState();
-  const base = f.speed ?? st.globalSpeed;
-  const speed = Math.max(1, Math.round(base * GOTO_SPEED_FRACTION));
-  const ctl = new AbortController();
-  try {
-    await sendPose(f.pose, speed, 20, ctl.signal);   // lower acc too: ease in, do not snap
-  } catch (e: any) {
-    onError?.(e?.message || String(e));
-  }
+  const idx = st.frames.findIndex(x => x.id === f.id);
+  const pose: Record<string, number> = {};
+  for (const x of idx >= 0 ? st.frames.slice(0, idx + 1) : [f]) Object.assign(pose, x.pose);
+  const speed = Math.max(1, Math.round((f.speed ?? st.globalSpeed) * GOTO_SPEED_FRACTION));
+  await run([{ ...f, pose, speed, delayMs: 0, holdMs: 0 }], 0, say, `going to ${f.name}`);
 }

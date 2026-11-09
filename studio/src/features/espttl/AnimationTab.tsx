@@ -8,17 +8,18 @@
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import React, { useRef, useState } from 'react';
-import { useEspTtlStore, currentPose, ttlTry } from '@/state/espTtlStore';
+import { useEspNodesStore } from '@/state/espNodesStore';
+import { callAllNodes, estopAllNodes } from '@/features/servo/servoLink';
+import { useEspTtlStore, currentPose, ttlTry, liveBoards, jointKey, splitKey } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
 import { playTimeline, stopPlayback, gotoFrame } from './player';
-import { sendToBoard, startOnBoard, stopOnBoard } from './sender';
 import { planTimeline, peakDegPerS, type FramePlan } from './motion';
 import { recordPose } from './MiniTimeline';
 import TorqueSwitch from './TorqueSwitch';
 import { useSavedStore, type SavedAnimation } from './savedStore';
 
 export default function AnimationTab() {
-  const tel      = useEspTtlStore(s => s.tel);
+  useEspNodesStore(s => s.nodes);   // re-draw when ANY module's telemetry changes, not just the page's board
   const online   = useEspTtlStore(s => s.online);
   const t        = useTimelineStore();
   const [msg, setMsg]   = useState<string>('');
@@ -33,31 +34,31 @@ export default function AnimationTab() {
   const [renameVal, setRenameVal] = useState('');
 
   const say = (m: string) => { setMsg(m); window.setTimeout(() => setMsg(x => (x === m ? '' : x)), 4000); };
-  const call = async (path: string, label: string) => {
-    const r = await ttlTry(path);
-    say(r.ok ? `${label} ok` : `${label} failed: ${r.error}`);
+  /** The same call on every online module (this tab moves all of them). */
+  const callAll = async (path: string, label: string) => {
+    const r = await callAllNodes(path, { onlineOnly: true });
+    say(r.errors.length ? `${label}: ${r.ok} module(s) ok, failed: ${r.errors.join('; ')}` : `${label} ok on ${r.ok} module(s)`);
   };
 
-  const servos = tel?.servos ?? [];
+  // every online module's servos, named "module:servo" like the frame's joints
+  const servos = liveBoards().flatMap(b => (b.tel.servos ?? []).map(sv => ({ ...sv, key: jointKey(b.mod, sv.id), mod: b.mod })));
+  const jointName = (key: string) => {
+    const { mod, id } = splitKey(key), live = servos.find(x => x.key === key);
+    return `M${mod} · ${live?.label || `id ${id}`}`;
+  };
   const sel    = t.frames.find(f => f.id === t.selectedId) || null;
   const selIdx = sel ? t.frames.indexOf(sel) : -1;
   const plans: FramePlan[] = planTimeline(t.frames, t.globalSpeed, t.globalDelayMs, t.sine, currentPose());
 
   const record = () => recordPose(say);
 
-  // ── send the whole sequence to the board ────────────────────────────────────
-  // Upload first, and only start it if the board confirms it received every frame. The
-  // board checks a declared count and checksum, so a truncated upload is refused rather
-  // than played as a half sequence.
-  const send = async () => {
+  // ── play on every module, in step ───────────────────────────────────────────
+  // Upload to all modules (each checks a frame count and checksum, so a truncated upload is refused), then ONE GO over
+  // the radio starts them together and they keep each other in step (player.ts / sender.ts / firmware groupsync.h).
+  const send = async (from = 0) => {
     setSending(true);
-    const up = await sendToBoard();
-    if (!up.ok) { setSending(false); say(`send failed: ${up.error}`); return; }
-    const go = await startOnBoard(0);
+    await playTimeline(from, say);
     setSending(false);
-    say(go.ok
-      ? `sent ${up.frames} frames — the board is running it on its own now`
-      : `uploaded ${up.frames} frames but could not start: ${go.error}`);
   };
 
   // ── import / export ─────────────────────────────────────────────────────────
@@ -117,15 +118,15 @@ export default function AnimationTab() {
       <div className="ettl-card">
         <h4>Global control</h4>
         <div className="ettl-row">
-          <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold" onClick={() => call('/api/command?servo=all&cmd=estop', 'E-STOP')}>
+          <Button size="lg" className="tw:bg-destructive tw:text-white tw:hover:bg-destructive/85 tw:font-bold" onClick={() => { void estopAllNodes(); say('E-STOP sent to every module'); }}>
             E-STOP ALL
           </Button>
-          <TorqueSwitch say={say} />
+          <TorqueSwitch say={say} all />
           <span className="ettl-sep" />
-          <span className="ettl-sep" />
-          <Button variant="outline" size="sm" onClick={() => call('/api/home', 'home 180')}>Home all → 180°</Button>
-          <Button size="sm" onClick={() => call('/api/home/manual', 'manual home')}>Go to manual home</Button>
-          <Button variant="outline" size="sm" onClick={() => { if (confirm('Overwrite the home positions saved on the board with the current pose? The old homes are lost.')) call('/api/home/set', 'set home'); }}>Set current as home</Button>
+          <span className="ettl-dim" title="the animation moves every online module, so these buttons do too">all modules:</span>
+          <Button variant="outline" size="sm" onClick={() => callAll('/api/home', 'home 180')}>Home all → 180°</Button>
+          <Button size="sm" onClick={() => callAll('/api/home/manual', 'manual home')}>Go to manual home</Button>
+          <Button variant="outline" size="sm" onClick={() => { if (confirm('Overwrite the home positions saved on EVERY online module with its current pose? The old homes are lost.')) callAll('/api/home/set', 'set home'); }}>Set current as home</Button>
         </div>
         <div className="ettl-row">
           <label className="ettl-lbl">speed
@@ -157,11 +158,10 @@ export default function AnimationTab() {
           </label>
         </div>
         <p className="ettl-hint">
-          <b>Send to board</b> uploads the whole sequence and hands over timing — once the
-          board has it, a poor Wi-Fi link cannot stutter the motion, because nothing is being
-          streamed. It only runs if every frame arrived intact (checked by count and checksum).
-          <b> Stream from laptop</b> is the old behaviour, useful when you are still tweaking
-          frames and want each edit to take effect immediately.
+          <b>Play</b> uploads the sequence to every module and starts them all at the same instant (one GO over the
+          radio). While moving they keep each other in step: one that gets ahead slows down for the slowest, and no
+          module starts the next frame before all have finished this one. Once started, a poor Wi-Fi link cannot
+          stutter the motion; it only runs if every frame arrived intact (checked by count and checksum).
         </p>
         <p className="ettl-hint">
           <b>Time is the control; speed is only a maximum.</b> Speed is the fastest any joint
@@ -202,7 +202,7 @@ export default function AnimationTab() {
                 <div className="ettl-saved-btns" onClick={e => e.stopPropagation()}>
                   <Button size="xs" onClick={() => loadSaved(s)}>Load</Button>
                   <Button variant="outline" size="xs" disabled={!online || sending}
-                          onClick={() => void sendSaved(s)} title="Load onto the timeline and send to the board">Send</Button>
+                          onClick={() => void sendSaved(s)} title="Load onto the timeline and play it on every module">Play</Button>
                   <Button variant="outline" size="xs" onClick={() => { setRenaming(s.id); setRenameVal(s.name); }}>Rename</Button>
                   <Button variant="destructive" size="xs" onClick={() => {
                     if (confirm(`Delete saved animation “${s.name}”?`)) saved.remove(s.id);
@@ -219,18 +219,11 @@ export default function AnimationTab() {
         <h4>Timeline · {t.frames.length} frame{t.frames.length === 1 ? '' : 's'}</h4>
         <div className="ettl-row">
           <Button variant="destructive" size="sm" onClick={record} disabled={!online}>● Record pose</Button>
-          <Button size="sm" onClick={send}
-                  disabled={!t.frames.length || !online || sending}>
-            {sending ? 'Sending…' : `⇪ Send to board (${t.frames.length})`}
+          <Button size="sm" onClick={() => void send(0)} disabled={!t.frames.length || !online || sending}
+                  title="upload to every module, then start them together">
+            {sending ? 'Sending…' : `▶ Play on all modules (${t.frames.length})`}
           </Button>
-          <Button variant="destructive" size="sm" onClick={() => { void stopOnBoard(); stopPlayback(); }}>■ Stop</Button>
-          {t.playing
-            ? <Button variant="outline" size="sm" onClick={stopPlayback}>stop streaming</Button>
-            : <Button variant="outline" size="sm" onClick={() => playTimeline(0, say)}
-                      disabled={!t.frames.length || !online}
-                      title="Play from the laptop instead — every frame boundary goes over Wi-Fi">
-                ▶ Stream from laptop
-              </Button>}
+          <Button variant="destructive" size="sm" onClick={stopPlayback}>■ Stop</Button>
           <span className="ettl-sep" />
           <Button variant="outline" size="sm" onClick={t.undo} disabled={!t.canUndo()} title="Undo">↶ Undo</Button>
           <Button variant="outline" size="sm" onClick={t.redo} disabled={!t.canRedo()} title="Redo">↷ Redo</Button>
@@ -279,7 +272,7 @@ export default function AnimationTab() {
                 onGo={() => gotoFrame(f, say)}
                 onDup={() => t.duplicate(f.id)}
                 onDel={() => t.deleteFrame(f.id)}
-                onPlayFrom={() => playTimeline(i, say)}
+                onPlayFrom={() => void send(i)}
                 onDragStart={() => setDrag(i)}
                 onDragOver={(e) => { e.preventDefault(); setOver(i); }}
                 onDrop={() => onDrop(i)}
@@ -331,11 +324,11 @@ export default function AnimationTab() {
           <table className="ettl-table">
             <thead><tr><th>servo</th><th>angle in this frame</th><th>live</th><th></th></tr></thead>
             <tbody>
-              {Object.keys(sel.pose).map(Number).sort((a, b) => a - b).map(id => {
-                const live = servos.find(s => s.id === id);
+              {Object.keys(sel.pose).sort((a, b) => { const x = splitKey(a), y = splitKey(b); return x.mod - y.mod || x.id - y.id; }).map(id => {
+                const live = servos.find(s => s.key === id);
                 return (
                   <tr key={id}>
-                    <td className="l">{live?.label || `id ${id}`}</td>
+                    <td className="l">{jointName(id)}</td>
                     <td className="grow">
                       <JointRow
                         min={live?.min ?? 0} max={live?.max ?? 360}
@@ -351,13 +344,13 @@ export default function AnimationTab() {
               })}
             </tbody>
           </table>
-          {servos.some(s => sel.pose[s.id] === undefined) && (
+          {servos.some(s => sel.pose[s.key] === undefined) && (
             <div className="ettl-row">
               <span className="ettl-dim">not in this frame:</span>
-              {servos.filter(s => sel.pose[s.id] === undefined).map(s => (
-                <Button variant="outline" size="xs" key={s.id}
-                        onClick={() => t.setJoint(sel.id, s.id, s.currentAngle ?? 180)}>
-                  + {s.label}
+              {servos.filter(s => sel.pose[s.key] === undefined).map(s => (
+                <Button variant="outline" size="xs" key={s.key}
+                        onClick={() => t.setJoint(sel.id, s.key, s.currentAngle ?? 180)}>
+                  + {jointName(s.key)}
                 </Button>
               ))}
             </div>
@@ -410,6 +403,7 @@ function FrameCard(props: {
 }) {
   const { f, i } = props;
   const n = Object.keys(f.pose).length;
+  const mods = new Set(Object.keys(f.pose).map(k => splitKey(k).mod)).size;
   return (
     <div
       className={`ettl-frame${props.selected ? ' sel' : ''}${props.playing ? ' playing' : ''}${props.dragOver ? ' over' : ''}`}
@@ -426,7 +420,7 @@ function FrameCard(props: {
         <span className="ettl-frame-name">{f.name}</span>
       </div>
       <div className="ettl-frame-meta">
-        <span>{n} joint{n === 1 ? '' : 's'}</span>
+        <span>{n} joint{n === 1 ? '' : 's'}{mods > 1 ? ` · ${mods} modules` : ''}</span>
         <span className={f.speed != null ? 'ov' : ''}>spd {f.speed ?? props.globalSpeed}</span>
         <span className={f.delayMs != null ? 'ov' : ''}
               title={props.plan?.stretched ? `needs at least ${props.plan.minMs} ms at this speed` : undefined}

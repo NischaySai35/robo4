@@ -139,7 +139,7 @@ Decided by Nischay, 31 Oct 2026:
 - P10 builds one plug-in point, so the engine can be swapped without rebuilding the app.
 - A short Newton test on the real module (locks, rings, many robots on the 8 GB card, runs of 2 minutes or less) decides. If Newton handles the locks better, switch.
 - Newton test (31 Oct, `tools/bench/newton_vs_mjw.py`, one module, 30 N pull for 0.5 s, lock closed): MuJoCo CPU 0.54 mm, MuJoCo Warp 0.65 to 0.8 mm, Newton 1.7 with its MuJoCo solver 0.54 mm. An open lock comes out in all three. An earlier 940 mm for Newton was a test mistake: the motor target was left at 0, so the lock opened itself. At 512 copies, half of them flying off with the lock open: MuJoCo Warp 20,400 steps/s and 352 MB, Newton 10,700 steps/s and 1,314 MB; both hold at 0.54 mm. Newton ran with a higher contact limit, so that gap is not final. Not tested yet: its tight-fit contact methods, rings, and whole-robot runs.
-- Newton needs its own environment (it pins MuJoCo 3.15, the project uses 3.17) and four import settings: `docs/design/p10-physics-interface.md`.
+- Newton needs its own environment (it pins MuJoCo 3.15; the project uses 4.0 since 9 Nov, was 3.17) and four import settings: `docs/design/p10-physics-interface.md`.
 - Blender: copy design ideas, not its physics. Movie-quality video later through an export to Blender.
 
 ## 8. Other changes — to be filled in by Nischay

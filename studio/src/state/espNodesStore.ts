@@ -36,6 +36,9 @@ const LS_ESPNOW = 'robo4:espNodes:espnow';   // set once the saved addresses wer
  *  It answers like the board itself (gos/python/gos/espnow.py module_address). Nischay always plugs the dongle in
  *  (6 Nov 2026), so this is the default; the board's Wi-Fi address (http://modN.local) still works when typed in. */
 export const espNowUrl = (n: number) => `http://127.0.4.${n}`;
+/** The ESP-NOW gateway's list (gos/python/gos/espnow.py Gateway.status): the modules it hears over the radio, plus every
+ *  module's remembered Wi-Fi address (it also searches the network for them: gos hardware.find_modules). */
+export const GATEWAY_URL = 'http://127.0.0.1:8790';
 
 // Once: saved http://modN.local -> the bridge address. Only once, so a Wi-Fi address typed in later stays.
 function toEspNow(nodes: EspNode[]): EspNode[] {

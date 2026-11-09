@@ -1,7 +1,7 @@
 /**
  * timelineStore — the pose-sequence timeline for the ESP-TTL Animation tab.
  *
- * A "frame" is one pose: an angle per servo id, plus optional per-frame overrides for
+ * A "frame" is one pose: an angle per joint of EVERY module ("module:servo", e.g. "2:5"), plus optional per-frame overrides for
  * speed and for the dwell before the NEXT frame. Everything lives here on the laptop —
  * the ESP32 never stores a sequence, it only ever receives "go to these angles now".
  *
@@ -14,8 +14,8 @@ import { create } from 'zustand';
 export interface Frame {
   id: string;
   name: string;
-  /** servo id -> angle in degrees */
-  pose: Record<number, number>;
+  /** "module:servo" -> angle in degrees (see jointKey in espTtlStore); old bare ids load as module 1 */
+  pose: Record<string, number>;
   /** 1..10, or null to follow the global speed */
   speed: number | null;
   /** how long the move should take, ms. 0 = AUTO (as fast as the speed cap allows); null = global */
@@ -50,8 +50,8 @@ interface TimelineState {
   /** A copied frame, waiting to be pasted (kept for this session only). */
   clipboard: Frame | null;
 
-  addFrame: (pose: Record<number, number>, name?: string) => void;
-  insertAfter: (id: string, pose: Record<number, number>) => void;
+  addFrame: (pose: Record<string, number>, name?: string) => void;
+  insertAfter: (id: string, pose: Record<string, number>) => void;
   duplicate: (id: string) => void;
   copyFrame: (id: string) => void;
   /** Paste the copied frame after `id` (or at the end when null). */
@@ -59,8 +59,8 @@ interface TimelineState {
   deleteFrame: (id: string) => void;
   moveFrame: (from: number, to: number) => void;
   updateFrame: (id: string, patch: Partial<Omit<Frame, 'id'>>) => void;
-  setJoint: (id: string, servoId: number, angle: number) => void;
-  removeJoint: (id: string, servoId: number) => void;
+  setJoint: (id: string, joint: string, angle: number) => void;
+  removeJoint: (id: string, joint: string) => void;
   select: (id: string | null) => void;
   clearAll: () => void;
 
@@ -82,6 +82,19 @@ interface TimelineState {
 }
 
 const LS_KEY = 'robo4:esptt:timeline';
+
+/** Clean a pose read from storage or a file: keep numbers only, and name old bare servo ids as module 1 ("5" -> "1:5"). */
+export function normalizePose(raw: any): Record<string, number> {
+  const pose: Record<string, number> = {};
+  if (!raw || typeof raw !== 'object') return pose;
+  for (const k of Object.keys(raw)) {
+    const deg = Number(raw[k]);
+    if (!Number.isFinite(deg)) continue;
+    if (/^\d+:\d+$/.test(k)) pose[k] = deg;
+    else if (/^\d+$/.test(k)) pose[`1:${k}`] = deg;
+  }
+  return pose;
+}
 const uid = () => 'f' + Math.random().toString(36).slice(2, 9);
 const MAX_HISTORY = 60;
 
@@ -99,7 +112,7 @@ function load(): Pick<TimelineState, 'frames' | 'globalSpeed' | 'globalDelayMs' 
     const raw = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (raw && Array.isArray(raw.frames)) {
       return {
-        frames: raw.frames,
+        frames: raw.frames.map((f: Frame) => ({ ...f, pose: normalizePose(f.pose) })),
         globalSpeed: raw.globalSpeed ?? 5,
         globalDelayMs: raw.globalDelayMs ?? 0,
         globalHoldMs: raw.globalHoldMs ?? 0,
@@ -201,16 +214,16 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
       commit(get().frames.map(f => (f.id === id ? { ...f, ...patch } : f)));
     },
 
-    setJoint: (id, servoId, angle) => {
+    setJoint: (id, joint, angle) => {
       commit(get().frames.map(f =>
-        f.id === id ? { ...f, pose: { ...f.pose, [servoId]: angle } } : f));
+        f.id === id ? { ...f, pose: { ...f.pose, [joint]: angle } } : f));
     },
 
-    removeJoint: (id, servoId) => {
+    removeJoint: (id, joint) => {
       commit(get().frames.map(f => {
         if (f.id !== id) return f;
         const pose = { ...f.pose };
-        delete pose[servoId];
+        delete pose[joint];
         return { ...f, pose };
       }));
     },
@@ -274,11 +287,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => {
       const frames: Frame[] = [];
       for (const f of arr) {
         if (!f || typeof f !== 'object' || !f.pose || typeof f.pose !== 'object') continue;
-        const pose: Record<number, number> = {};
-        for (const k of Object.keys(f.pose)) {
-          const id = Number(k), deg = Number(f.pose[k]);
-          if (Number.isFinite(id) && Number.isFinite(deg)) pose[id] = deg;
-        }
+        const pose = normalizePose(f.pose);
         frames.push({
           id: uid(),
           name: typeof f.name === 'string' ? f.name : `Frame ${frames.length + 1}`,

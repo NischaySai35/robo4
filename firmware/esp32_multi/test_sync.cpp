@@ -3,11 +3,12 @@
 // REUSE-CHECKED: sync|synchron|progress -> guard.h/test_guard.cpp are the per-joint overload guard (kept as is);
 // nothing in the firmware coordinates joints during a move. This test follows test_guard.cpp's style.
 //
-// The pretend servo: position mode like an ST3215. It goes towards its goal at the asked speed, speeding up and
+// The pretend servo (test_servo.h, shared with test_group.cpp): position mode like an ST3215. It goes towards its goal at the asked speed, speeding up and
 // braking at accRaw so it stops exactly on the goal, but never faster than `cap` (a load makes it slower) and never
 // past `wall` (a hard stop). It counts how often it had to brake to a near stop mid-move (the old squeak).
 #ifndef ARDUINO   // laptop test only: the sketch build compiles every .cpp in this folder
 #include "sync.h"
+#include "test_servo.h"
 #include <cstdio>
 #include <cmath>
 #include <algorithm>
@@ -16,25 +17,6 @@ static const SyncCfg CFG = {0.02f, 0.08f, 0.15f, 0.20f, 5000.0f, 4.0f, 2048.0f, 
 static const float DT = 0.03f;    // FAST_MS
 static int fails = 0;
 #define CHECK(c, ...) do { if (!(c)) { fails++; printf("  FAIL: "); } else printf("  ok:   "); printf(__VA_ARGS__); printf("\n"); } while (0)
-
-struct Servo {
-  double pos, vel = 0, cap = 1e9, wall = 1e9; int wallDir = 0;
-  int stops = 0; bool movedOnce = false;
-  void tick(int goal, double speed, double acc, double dt) {
-    double err = goal - pos, dir = err > 0 ? 1 : -1;
-    double vmax = std::min(speed, cap);
-    double vstop = sqrt(2 * acc * fabs(err));                    // fastest it may go and still stop on the goal
-    double want = std::min(vmax, vstop) * dir;
-    if (fabs(err) < 0.5) want = 0;
-    double dv = want - vel, lim = acc * dt;
-    vel += dv > lim ? lim : (dv < -lim ? -lim : dv);
-    double was = fabs(vel);
-    pos += vel * dt;
-    if (wallDir && (pos - wall) * wallDir > 0) { pos = wall; vel = 0; }
-    if (was > 100) movedOnce = true;
-    if (movedOnce && was < 20 && fabs(err) > 30) stops++;
-  }
-};
 
 struct Run { SyncState end; float t, worstSpread, worstLag; int stops; int8_t laggard; };
 

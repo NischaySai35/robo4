@@ -9,7 +9,7 @@
  * Aggregate figures (any-connected, total current) are mirrored into integrationStore
  * so the app header + Analysis telemetry keep working unchanged.
  */
-import { useEspNodesStore } from '@/state/espNodesStore';
+import { useEspNodesStore, espNowUrl, GATEWAY_URL } from '@/state/espNodesStore';
 import { useIntegrationStore, type BoardStat } from '@/state/integrationStore';
 import { VERIFY_URL } from '@/robotics/msrr2/simScene';
 
@@ -31,10 +31,14 @@ const inFlight = new Set<string>();
 const nextAt = new Map<string, number>();
 let timer: ReturnType<typeof setInterval> | null = null;
 
+// Several pages use this one reader (the 3D view and the ESP-TTL page). Each start hands back its own stop, and the
+// reader only really stops when the last user has stopped, so closing one page never blinds the other.
+let users = 0;
 export function startEspPoll(): () => void {
-  if (timer) return () => stopEspPoll();
-  timer = setInterval(pump, POLL_MS);
-  return () => stopEspPoll();
+  users++;
+  if (!timer) timer = setInterval(pump, POLL_MS);
+  let done = false;
+  return () => { if (done) return; done = true; if (--users <= 0) { users = 0; stopEspPoll(); } };
 }
 
 export function stopEspPoll(): void {
@@ -68,10 +72,41 @@ function fromService(id: string, url: string): boolean {
   return true;
 }
 
+// Finding modules: the radio gateway already knows them (heard over ESP-NOW, or remembered / found on the Wi-Fi), so it is
+// asked, not the network again. A module it names (mod3) that is not in the list yet is added as http://127.0.4.3, which
+// is what mod3.local means on this laptop too (tools/espnow/install.ps1). Boards with other names: typed in by hand.
+// REUSE-CHECKED: discover|find_modules|gateway|8790 -> espnow.Gateway.status + hardware.find_modules (Python) do the
+// finding; nothing in the Studio read them. This only reads that list.
+const GATEWAY_EVERY_MS = 3000;
+let gatewayAt = 0, gatewayBusy = false;
+async function pollGateway() {
+  if (gatewayBusy || Date.now() - gatewayAt < GATEWAY_EVERY_MS) return;
+  gatewayBusy = true; gatewayAt = Date.now();
+  try {
+    const r = await fetch(`${GATEWAY_URL}/`, { cache: 'no-store', signal: AbortSignal.timeout(1000) });
+    const g = await r.json();
+    addModules([...(g?.modules ?? []).map((m: any) => m?.name), ...Object.keys(g?.wifi ?? {})]);
+  } catch { /* no gateway running: boards typed in by hand still work */ }
+  finally { gatewayBusy = false; }
+}
+
+/** Add every modN named here that the list does not have yet. Exported for tests. */
+export function addModules(names: unknown[]) {
+  const st = useEspNodesStore.getState();
+  const have = new Set(st.nodes.map((n, i) => moduleNumber(n.url, n.name, i)));
+  for (const name of names) {
+    const m = /^mod(\d{1,3})$/.exec(String(name ?? ''));
+    if (!m || have.has(Number(m[1]))) continue;
+    have.add(Number(m[1]));
+    st.addNode({ url: espNowUrl(Number(m[1])), name: `Module ${m[1]}` });
+  }
+}
+
 function pump() {
   const now = Date.now();
   const nodes = useEspNodesStore.getState().nodes;
   pollService();
+  pollGateway();
   for (const node of nodes) {
     if (fromService(node.id, node.url)) continue;
     if (inFlight.has(node.id)) continue;
@@ -110,9 +145,9 @@ function missed(id: string) {
   nextAt.set(id, Date.now() + RETRY_MS);
 }
 
-/** The module number from the board's name: http://mod3.local -> 3 (else "Module 3", else its place in the list). */
+/** The module number from the board's name: http://mod3.local or the ESP-NOW bridge http://127.0.4.3 -> 3 (else "Module 3", else its place in the list). */
 export function moduleNumber(url: string, name: string, index: number): number {
-  const m = /mod(\d+)/i.exec(url) ?? /(\d+)\s*$/.exec(name);
+  const m = /mod(\d+)/i.exec(url) ?? /\/\/127\.0\.4\.(\d+)/.exec(url) ?? /(\d+)\s*$/.exec(name);
   return m ? Number(m[1]) : index + 1;
 }
 

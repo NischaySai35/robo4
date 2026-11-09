@@ -3,6 +3,27 @@
 Handoff for the next chat. Read this first, then `docs/ARCHITECTURE.md`.
 Work happens in `D:\robo4-restructure` (folders `sim\`, `data\`, `studio\`, `firmware\`, `gos\`). Nischay's terminal is PowerShell.
 
+> **9 Nov 2026 (evening) — MuJoCo PINNED to 3.12.0, the exact set Isaac Sim 6.2 asks for (Nischay's call).** The same day's 4.0 upgrade
+> broke Newton's MuJoCo solver inside Isaac (Newton 1.6.1 is built for mujoco-warp 3.12; Newton 1.7 wants 3.15, so no Newton fits 4.0).
+> - System Python now: mujoco 3.12.0, mujoco-warp 3.12.0, warp-lang 1.17.0, numpy 2.3.1, newton 1.6.1, newton-usd-schemas 0.5.0;
+>   mujoco-core / mujoco-studio (4.0-only add-ons) removed. Drifted packages also put back on Isaac's pins: usd-exchange 2.3.0,
+>   usd-optimize 1.1.0, fsspec 2026.2.0, packaging 26.0, urllib3 2.7.0. `pip check` leaves only Isaac Lab 3.0 vs Isaac Sim 6.2
+>   (urllib3, usd-exchange: NVIDIA's two packages disagree; nothing here imports isaaclab, Isaac Sim wins).
+> - Checked on 3.12: GOS tests 83 pass, no warnings; 256 walking robots on GPU = 29 robot-s/s (4.0 gave 25); Newton engine runs in the
+>   SYSTEM Python now (`tools/test_newton_engine.py` 0.00 mrad, `tools/bench/newton_module.py` same as 3 Nov) - no separate env needed.
+> - `gos/python/pyproject.toml` pins `mujoco==3.12.0`, so reinstalling GOS cannot bring 4.0 back. Upgrade only together with a new Isaac Sim.
+> - `nconmax` / `njmax` in `mjw.put_data` are per robot (world); `naconmax` is the total for all. `sim/gpu_bench.py` passes totals and runs out of GPU memory; use `gpu_walk_bench.py` instead.
+> - The GPU has no noslip solver: every GPU script sets `noslip_iterations = 0` (as before).
+> - Studio is unaffected (it uses Jolt, not MuJoCo).
+
+> **9 Nov 2026 — ESP-TTL page is Studio's, for ALL modules; boards play in step (group play).** Not yet tried on the real robot or flashed.
+> - Module bar on the page: modules the radio gateway (127.0.0.1:8790) names are added by `espPoll` (`addModules`); "+ Board" = typed IP / modN.local. The page shows the lowest online module unless one is clicked. One shared strip: `studio/src/features/servo/ModuleStrip.tsx` (also the Servos page).
+> - The page no longer asks boards itself: telemetry comes from `espPoll` (one reader per board). Frames store `"module:servo"` keys (`jointKey`); old bare ids load as module 1.
+> - Record / sliders / play / go / stop / torque / home on the Animation tab = every online module. Firmware tab: tick modules, updated one after another. "Stream from laptop" removed.
+> - Group play: `sender.ts` uploads to every module with one `group=` number, asks the LOWEST module to play; it broadcasts GO (r4now type GRP=7) and all start together. Each board broadcasts its place 20/s; one ahead of the slowest slows its Sync clock (`sync.h peerS`), nobody starts the next frame before all finished (`firmware/esp32_multi/groupsync.h`). No deadlock: the slowest never waits, silent peer dropped after 400 ms, frame-end wait max 3 s. `test_group.cpp` (6 cases, fails without the sync) + test_sync/test_now/test_guard pass.
+> - A module that did not hear GO is started over Wi-Fi after 400 ms and the message says so (modules must be on the same radio channel for GO).
+> - The board's own web page (http://mod1.local, `webui.h`) STAYS in full — Nischay needs it (9 Nov). FW_VERSION stays 0.1.0.
+
 ---
 
 ## 1. The big goal
@@ -186,12 +207,23 @@ The plan has 4 steps:
     joint holds, real gravity vector); each servo <= DIK_TORQUE (0.6) x strength. Off for the ideal robot (w.exact).
     Model vs servo torques checked: same sign, similar size.
   - manual.coop_connect: the target's bends free (share 1.0, was a fixed 0.08) - the torque limit decides how far.
-  - dik 'come around' aim fades in over DIK_AROUND_RAMP (20 mm) instead of switching (aim chattered 40 mm at the stand-off).
-  - coop_connect: a twist wound against its stop at a 1.8-s stall -> the module straightens, turns the twist round to the
-    far side of its range, docking steers on (once per joint).
-  Tried and dropped: 'target turns to face the docker' first (M1 folded to its stops, ideal floor/walls broke).
+  - (9 Nov) twists keep only 3 deg from their +-180 stop (DIK_TWIST_MARGIN; bends still 8): facing a receiver that points
+    away needs ~180 and the 8-deg margin parked M2.T1 at its stop in all 8 failed runs of the 9 Nov sweep.
+  Tried and dropped: 'target turns to face the docker' first (M1 folded to its stops, ideal floor/walls broke); the 8 Nov
+  twist 'unwind' (9 Nov: ceiling seed 2 failed with it, locked without); the 2-cm 'come around' ramp (broke ideal chain3).
   Results: ceiling error robot seed 2 LOCKED (first time); seed 1 unwinds M2.T1 (-169 -> 168), straightened cleanly, final
   result needs a run > 120 s (Nischay). Ideal: floor, +-90, 180, chain3 all LOCKED after every change.
+  Sweep 9 Nov (Nischay, before the 9 Nov fixes): 8/16 locked - seed 2: 0, 45, 90, -45, -90; seed 1: 0, 45. After the fixes
+  (runs < 120 s): ceiling seed 2 LOCKED. Seed 1 at 135/-135/180 still NOT: M1 folds into a tight hook to reach M2's low side
+  socket, its bends at +-87, M2 turned to 177, the end stays ~27 mm beside the socket. Next idea: let M2 bend to lift/tilt S1A.
+  9 Nov afternoon: (a) servo load relief - a loaded servo's spare motion now LOWERS its load (TorqueLimit's gravity model,
+  -d/dq of the share over DIK_RELIEF_FROM 0.4; DIK_RELIEF=down = the old 'let the body down', which swung M2's top half out at
+  135 deg). Relieving every servo a little made both modules lie down in a heap on the floor -> only overloaded servos count.
+  (b) closer stand-off: line-up stuck beside the receiver (closer than 40 mm, < 40 mm aside) -> line up at STANDOFF_NEAR 20 mm.
+  Clean sweep (Nischay, before the 0.4 gate): 7/16 - seed 1: 45, 90 (new), -45; seed 2: 45, 90, 135 (new), -45. Floor (both
+  seeds) and -90 seed 2 (rotor jammed at 5 deg) failed; with the gate -90 seed 2 LOCKS (rotor 42). Floor needs > 120 s runs.
+  Watching: tools in the scratchpad (dock1.py EVERY=1.5 pictures + a contact sheet per run) - M2 still swings its top half
+  sideways early (3 s) before settling; ceiling seed 1/2 still ~110-140 mm off (M2 folds into a V and tangles with M1).
   COOP_DEBUG=1 prints servo loads, =3 joint angles + steps; DIK_TQ_DEBUG prints model vs servo torque.
 
 ---
@@ -320,3 +352,44 @@ Fix: ONE asker per board.
   online/offline in both places. No service -> direct as before.
 - ModuleLink re-sends unchanged angles only every RESEND_S (0.5 s). Pretend board test (scratch fake_board.py): holding
   still 8 sends in 4 s (was 65), moving: every change sent.
+
+### 9 Nov evening: sweep 4 (relief gate 0.4) + relief yield
+- sweep 4: 7/16. Seed 2 6/8 (floor, ceiling, -90 now lock; only +-135 fail). Seed 1 1/8 (lost 45, 90, -45 vs sweep 3).
+- My earlier "it locks" tests used dock1.py, which is NOT the sweep setup (keeps floor anchors, 1 s settle, judge on). manual.py's
+  __main__ now takes EVERY=1 SHOTS=dir for pictures during the run: test with manual.py itself. Same seed + surface = same result (deterministic).
+- seed 1 45/90: pictures show M2 folding over (socket down to its feet) while the relief keeps pushing; M1 stalls 9-27 mm aside.
+  RELIEF_FROM 0 locks seed 1 45 and 90, but heaped the floor case; 0.2 / 0.1 flip case by case (fragile knob, not the fix).
+- dik.py: RELIEF_YIELD (default on) - the relief steps aside while the goal is stuck, like VSEPR (vs_yield). seed 1 90 now LOCKS
+  (seated 9.5 s, tidy arch). seed 1 45 still fails: M2 folds over DURING the reach, before any stall.
+- next: the receiver (M2) should not fold its socket away while the docker reaches for it.
+
+### 9 Nov night: 45 deg seed 1 taken apart (visible-window runs, real CAD pictures)
+- sweep 5 (relief yield): 8/16 - best so far. Short command now: `cd sim; py -3.12 sweep.py` (4 at a time).
+- BUG fixed (phys_world.py): VISUAL_MESH=1 ('pictures only') also sized DIK's coarse keep-out boxes from the picture meshes ->
+  different DIK path (ideal 45: 54 mm off vs locked). Boxes now from physics geoms only. Verified: identical with/without.
+- DIK_RX_HOLD (receiver frozen going in) stalled the IDEAL robot 21 mm out -> default off (1).
+- Root cause of the early M2 flail: seed 1 on 45 deg, M2.B1 starts at 100 % (cannot hold the slope); TorqueLimit (60 % cap) then
+  only allows load-lowering moves, and as T1 twists 'lower load' flips side -> M2 swings low, arches, stands up (pictures 2-6 s).
+  DIK_PARTS=1 prints each rule's share per joint: the QP 'reach' part does it (+-34 deg/s), not VSEPR/relief.
+- Ideal plans, real follows: IDEAL=1 + COOP_SAVE_POSE=f.json saves the ideal's lined-up pose; COOP_PLAN=f.json drives the real
+  robot into it first (drive_to), live DIK finishes. 45 seed 1: no flail, SEATS (gap 0.0 mm) - but rotor jams at 4 deg.
+- Rotor jam: LOCK_DEBUG=1 lists rotor contacts: fin 0.16 mm into M2_srx0 pad1 side. RESEAT (back out 2 mm, centre to 0.4 mm) and
+  LOCK_WIGGLE (0.6 deg circle on the 3 end joints) did not move the end (stays 0.73 mm). LOCK_PLAY_DEG=0 -> LOCKED (rotor 43 deg)
+  at side 0.68 mm: the cause is the 2.5 deg PLA lock-area play (end tilted at its play limit), not the side offset.
+- new options in manual.py __main__: EVERY, SHOTS, FOCUS (close-ups), IDEAL. Next: lock with play - square the end before the
+  rotor turns (press/tilt compensation from real_sync's play model), then the ideal-plan approach on all 16.
+
+### 9 Nov late: the lock on the REAL printed shapes - Isaac Sim 6.2 + Newton (sim/isaac_lock_test.py)
+- Why: MuJoCo collides meshes as convex hulls, so connectors were hand-made boxes (fins without chamfers, the side socket a solid
+  disc - the print is an open ring). Newton (inside Isaac Sim, never its own viewer) collides the exact STL through an SDF.
+- Setup: Spine1 (fixed) + End B (slide along its axis) + lock rotor (hinge), each its brain/meshes STL, NewtonSDFCollisionAPI
+  (0.5 mm voxels), start = the ideal MuJoCo seated pose (scratchpad mj_lock_pose.py). Headless; pictures per phase (RTX).
+- Pitfalls found (all in the script's comments): Newton ext not loaded headless (enable it); solver chosen by a scene schema
+  (NewtonXpbdSceneAPI) - Newton 1.6.1's MuJoCo solver needs mujoco-warp 3.12 (the project pins exactly that since 9 Nov evening); contact_margin default 1 cm;
+  physics steps only via SimulationManager.step; Articulation dof readback stays 0 (measure from body poses); XPBD drives act as
+  hard position targets (ignore max force) -> magnet/pull forces + the ST3215 lock servo applied as forces/torques; rotor needs
+  the gearbox inertia (0.012) or the servo loop bangs stop to stop; rotor surface subdivided (0.6 mm) for vertex-vs-SDF contact.
+- RESULT: seats at -0.04 mm (= MuJoCo seat), rotor turns 44.9-45.0 deg, locked 30 N pull HOLDS (0.2-0.9 mm play), open pull comes
+  out - straight AND tilted +-1.25 deg (the PLA play that jammed the box model). Lock holds by fin contact alone.
+- Spine1 STL = 41 closed solids, End B = 6 (touching at edges, so 'not watertight' overall; each solid is closed - fine for SDF).
+- Next: the whole module(s) in Isaac+Newton with exact shapes (servos as torque models), then docking on it.

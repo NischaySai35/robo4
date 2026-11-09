@@ -207,6 +207,10 @@ LOCK_SLACK = (0.1, 0.1)   # mm, deg: a closed lock may sit anywhere in its print
 SETTLE_S = float(os.environ.get('SETTLE_S', '1.0'))   # s of physics run unseen at the start (the drop onto the floor)
 PLAN_RANGE = float(os.environ.get('PLAN_RANGE', '0.9'))   # plans use at most this share of each joint's range
 SERVO_IDEAL_NM = 50 * 0.0980665   # 50 kg.cm: the ideal robot's servos (Nischay 2 Nov)
+LOCK_WIGGLE = float(os.environ.get('LOCK_WIGGLE', '0.6'))   # deg: jiggle the end's 3 joints while a blocked lock rotor turns (0 = off)
+RESEAT_BACK = float(os.environ.get('RESEAT_BACK', '0.002'))   # m: a blocked lock rotor backs the end out this far to re-centre (0 = off)
+RESEAT_SIDE = float(os.environ.get('RESEAT_SIDE', '0.4'))   # mm: centred this well before pressing in again
+STANDOFF_NEAR = float(os.environ.get('STANDOFF_NEAR', '0.02'))   # m: the closer stand-off when the docker cannot reach the normal one (coop_connect)
 STANDOFF_M = 0.04          # = studio/src/robotics/msrr2/approach.ts STANDOFF_M: 40 mm leaves 31 mm of clear air between pad tops
 
 
@@ -647,11 +651,26 @@ class Manual:
         (dm, de), _ = docking_of(L); rx = ref_name(L['a'])
         w.set_locks(self.cur + [L])                                   # the rotor(s) turn (end<->end: both)
         r = None
-        for _ in range(int(settle / 0.06)):
+        # a blocked rotor -> WIGGLE the end (9 Nov, 45 deg seed 1: seated 0.7 mm off centre, the fin caught a pad's side wall; the
+        # servos' backlash + deadband cannot centre finer than ~0.7 mm): the 3 joints next to the end circle +-LOCK_WIGGLE deg, out of
+        # phase, so the end sweeps across the centre and the turning rotor slips in - peg-in-hole 'spiral search', as a hand jiggles a key
+        kw = [w.ids.index(dm) * 9 + k for k in ((4, 5, 6) if de == 'B' else (0, 1, 2))]; t0w = None; base = w.tgt[kw].copy()
+        for i_ in range(int(settle / 0.06)):
             w.run(0.06); r = w.end_vs(dm, de, rx)
             if abs(r['axial_mm']) < 0.8 and r['radial_mm'] < 1.5 and r['lock_deg'] > 40: break
+            if LOCK_WIGGLE > 0 and not self.ideal and i_ >= 6 and r['lock_deg'] < 20:
+                t0w = i_ if t0w is None else t0w; ph = (i_ - t0w) * 0.06 * 2 * math.pi * 1.5
+                w.tgt[kw] = base + math.radians(LOCK_WIGGLE) * np.array([math.sin(ph), math.sin(ph + 2.1), math.sin(ph + 4.2)])
+        if t0w is not None: w.tgt[kw] = base; self.log(f'  wiggled the end for {(i_ - t0w) * 0.06:.1f} s while the rotor turned')
         if r and abs(r['axial_mm']) < 0.8 and r['radial_mm'] < 1.5 and r['lock_deg'] > 40:
             w.engage(L); self.cur.append(L); self.log(f'LOCKED {key} (gap {r["axial_mm"]:.2f} mm, side {r["radial_mm"]:.2f} mm, rotor {r["lock_deg"]:.0f} deg)'); return True
+        if os.environ.get('LOCK_DEBUG'):                               # what holds the rotor back: its contacts right now
+            m_, d_ = w.m, w.d; rb = m_.body(f'{dm}_L{1 if de == "A" else 2}_LockRotor_{de}').id
+            for c in d_.contact[:d_.ncon]:
+                b1, b2 = m_.geom_bodyid[c.geom1], m_.geom_bodyid[c.geom2]
+                if rb in (b1, b2):
+                    o = c.geom2 if b1 == rb else c.geom1
+                    self.log(f'    rotor touches {m_.geom(o).name or o} on {m_.body(m_.geom_bodyid[o]).name}: depth {-c.dist * 1000:.2f} mm')
         w.set_locks(self.cur); self.log(f'NOT locked {key}: not seated (gap {r["axial_mm"]:.1f} mm, side {r["radial_mm"]:.1f} mm, rotor {r["lock_deg"]:.0f} deg) - rotors back'); return False
 
     def unlock(self, a, b):
@@ -748,7 +767,8 @@ class Manual:
         dofs = np.array([dof for mid in mods for dof in w.mod[mid]['dofs']]); tix = np.array([w.ids.index(mid) * 9 + k for mid in mods for k in range(7)])
         qadr = np.array([qa for mid in mods for qa in w.mod[mid]['qa']])
         lo, hi = m.jnt_range[[m.dof_jntid[x] for x in dofs]].T * 0.97
-        bodies = [m.body(f'{mid}_{b}').id for mid in mods for b in VIEW_BODIES if 'Rotor' not in b]
+        tw_ = np.array([k in (0, 3, 6) for mid in mods for k in range(7)]); tp_ = float(os.environ.get('TWIST_PAD', '2')); lo[tw_] -= math.radians(180 * 0.03 - tp_); hi[tw_] += math.radians(180 * 0.03 - tp_)   # twists: TWIST_PAD deg from the half turn (dik.py margin)
+        bodies =[m.body(f'{mid}_{b}').id for mid in mods for b in VIEW_BODIES if 'Rotor' not in b]
         E = w.mod[dm]['end'][de]; nv = m.nv; jp, jr = np.zeros((3, nv)), np.zeros((3, nv))
         def jac(point, body):
             mujoco.mj_jac(m, d, jp, jr, point, body); return jp[:, dofs].copy(), jr[:, dofs].copy()
@@ -802,7 +822,7 @@ class Manual:
         funnel = (0.15, 0.05, 15.0) if self.ideal else (2.0, 0.06, 0.0)
         best_phase = 'line up'
         glide0 = getattr(w, 'glide', False) and os.environ.get('GLIDE_CONNECT', '0') == '1'   # 3 Nov: gliding joints lag DIK's commands, the final line-up crawled (2-ring 30 s vs 12 s); the Studio's playback is smooth on its own now
-        planned = False; end_fix = None; hold = 0; la_done = False; redo = 0; unwound = set()
+        planned = False; end_fix = None; hold = 0; la_done = False; redo = 0
         groups = {}
         for mid in mods:
             if any(mid in g.mods for g in groups.values()): continue
@@ -834,7 +854,10 @@ class Manual:
                 # joints on both sides of it (S1A/S1B on Spine1 between B1 and B2, S2A/S2B on Spine2 between B3 and B4)
                 end_fix = [(dm, de)] + ([(tname.split('.')[0], te_)] if te_ else [(tname.split('.')[0], 'S1' if tname.split('.')[1].startswith('S1') else 'S2')] if not tname.startswith('F:') else [])
                 self.log('  live: DIK + VSEPR steer from here (no planned shape or path)')
-                plan = {}; raise StopIteration
+                # COOP_PLAN=file.json {module: 7 joint angles, rad}: drive into that shape first (e.g. the IDEAL robot's lined-up pose,
+                # saved with COOP_SAVE_POSE), then live DIK finishes - the ideal sim plans, the real robot follows (9 Nov test)
+                plan = {k_: np.asarray(v_, float) for k_, v_ in json.load(open(os.environ['COOP_PLAN'])).items()} if os.environ.get('COOP_PLAN') else {}
+                raise StopIteration
             if anchored(gd):
                 # a standing docker: the brain's own start pose (IK to its stand-off, best of 6 seeds), as walking does
                 from phys_dock import PhysDockEnv
@@ -889,7 +912,7 @@ class Manual:
             cap_ = 0.035 * min(1.0, max(0.25, np.linalg.norm(ep) / 0.03))   # small, calm corrections near the target, no overshoot (2 Nov)
             q = d.qpos[qadr]; mx = np.abs(dq).max(); dq = dq * (cap_ / mx) if mx > cap_ else dq   # scale the whole step (direction kept), like the brain's vclip
             if os.environ.get('COOP_DEBUG') and (os.environ.get('COOP_DEBUG') == '2' or int((float(d.time) - t0) / 0.06) % 10 == 0): print(f'COOP t {float(d.time) - t0:5.1f} {phase} aim {offset * 1000:5.1f} pos {np.linalg.norm(ep) * 1000:6.1f} mm ang {math.degrees(np.linalg.norm(np.cross(nE, -z))):5.1f} slot {math.degrees(sl):5.1f} |dq| {mx:.3f} q-tgt {np.abs(w.tgt[tix] - q).max():.3f} load ' + ' '.join(f'{x:.2f}' for x in np.abs(d.actuator_force[acts]) / np.maximum(np.abs(m.actuator_forcerange[acts, 1]), 1e-6)) + (f' | DIK sees {dik_e:.1f} mm {dik_a:.1f} deg' if dik is not None else '') + (f' WHY {dik.why()}' if dik is not None and dik_e < float(os.environ.get('COOP_WHY_MM', '25')) and os.environ.get('COOP_WHY') else ''), file=sys.stderr, flush=True)
-            if os.environ.get('COOP_DEBUG') == '3' and int((float(d.time) - t0) / 0.06) % 10 == 0: print(f'COOPQ t {float(d.time) - t0:5.1f} q ' + ' '.join(f'{x:5.0f}' for x in np.degrees(q)) + ' | dq ' + ' '.join(f'{x:6.3f}' for x in dq), file=sys.stderr, flush=True)
+            if os.environ.get('COOP_DEBUG') in ('3', '4') and (os.environ.get('COOP_DEBUG') == '4' or int((float(d.time) - t0) / 0.06) % 10 == 0): print(f'COOPQ t {float(d.time) - t0:5.1f} seat ' + ' '.join(f'{x * 1000:6.1f}' for x in R['seat']) + ' tip ' + ' '.join(f'{x * 1000:6.1f}' for x in tip) + ' q ' + ' '.join(f'{x:5.0f}' for x in np.degrees(q)) + ' | dq ' + ' '.join(f'{x:6.3f}' for x in dq), file=sys.stderr, flush=True)
             # the catch-up push: grows while a joint stays short (friction), but now LEAKS (5 %/tick) and is capped at ~2 deg - it used to
             # build up to 7 deg over a long line-up and then slide the end sideways while going in (2 Nov)
             if phase == 'line up': integ = np.clip(integ + 0.15 * dq, -0.12, 0.12)   # line-up: the full push (it moves the end sideways through friction)
@@ -933,6 +956,8 @@ class Manual:
                     la_done = True
                     if self._true_align(dm, de, tname, offset): phase = 'go in'
                 if phase == 'go in': self._wait_real('stand-off', 2.0, 8.0)
+                if phase == 'go in' and os.environ.get('COOP_SAVE_POSE') and not os.path.exists(os.environ['COOP_SAVE_POSE']):   # the lined-up shape, for COOP_PLAN
+                    json.dump({mid: [float(d.qpos[qa]) for qa in w.mod[mid]['qa']] for mid in mods}, open(os.environ['COOP_SAVE_POSE'], 'w'))
             else:
                 r = w.end_vs(dm, de, tname)
                 # peg-in-hole: advance only while centred; drifted sideways (1 Nov: 9.6 mm, the rims landed on each other) -> back
@@ -982,6 +1007,13 @@ class Manual:
                     lock_tries += 1
                     if lock_tries >= 3: return False
                     stall = 0; deep_stall = 0                                  # give the next push its own 0.5 s
+                    if RESEAT_BACK > 0 and r['radial_mm'] > RESEAT_SIDE:
+                        # the rotor's fins caught a pad's side wall (9 Nov, 45 deg seed 1: seated 0.73 mm off centre, fin 0.16 mm into
+                        # M2_srx0 pad1, rotor 4 of 45 deg - pressed in, the end cannot slide sideways): back out RESEAT_BACK, centre
+                        # in free air to RESEAT_SIDE, press in again; 'seated' now also means centred that well
+                        offset = RESEAT_BACK; lead = 0.0; deep_best = 1e9; seat_mm = (seat_mm[0], min(seat_mm[1], RESEAT_SIDE))
+                        funnel = (min(funnel[0], RESEAT_SIDE), funnel[1], funnel[2])
+                        self.log(f'  rotor blocked {r["radial_mm"]:.2f} mm off centre: backing out {RESEAT_BACK * 1000:.0f} mm, centring to {RESEAT_SIDE} mm, in again')
             # progress: lining up = closer to the stand-off; going in = the gap shrinking (2 Nov: measured to the MOVING aim it stayed
             # at 0.5 mm while going in steadily, and the 7-s 'no progress' stop fired 6 mm before the seat)
             if phase == 'line up': prog = perr
@@ -992,18 +1024,13 @@ class Manual:
             # line-up stuck 1.5 s with only the end joints: every joint may help (2 Nov, end-to-side: 14 mm sideways out of the
             # end joints' bend plane, it sat 7 s and gave up)
             if phase == 'line up' and stall == 25 and dik is not None: dik.posture.set_cost(dik.cost0)
-            # a twist wound up against its stop (8 Nov, ceiling: M2.T1 at -169 deg, the receiver had to turn on past -180): no small
-            # step gets out - swing it round to the far side of its range once, as a person unwinds a cable, then steer on
-            if phase == 'line up' and stall == 30 and dik is not None:
-                for c in [c for c in range(len(qadr)) if c % 7 in (0, 3, 6) and c not in unwound]:
-                    jlo, jhi = m.jnt_range[m.dof_jntid[dofs[c]]]; qc = float(d.qpos[qadr[c]]); near = math.radians(15)
-                    if qc - jlo < near or jhi - qc < near:
-                        mid_ = mods[c // 7]; goal_ = d.qpos[np.array(w.mod[mid_]['qa'])].copy()
-                        goal_[c % 7] = float(np.clip(qc + (2 * math.pi if qc < 0 else -2 * math.pi), jlo + math.radians(12), jhi - math.radians(12)))
-                        self.log(f'  {mid_}.{JN[c % 7]} wound up at {math.degrees(qc):.0f} deg (its stop): turning it round to {math.degrees(goal_[c % 7]):.0f} deg')
-                        # straight first, then turn: turning while bent swung M2's bent half round into M1 (8 Nov, twist at 100 %)
-                        straight = d.qpos[np.array(w.mod[mid_]['qa'])].copy(); straight[[1, 2, 4, 5]] = 0.0
-                        unwound.add(c); self.drive_to({mid_: straight}); goal_[[1, 2, 4, 5]] = 0.0; self.drive_to({mid_: goal_}); stall = 0; best = 1e9; break
+            # stuck BESIDE the receiver, closer than the stand-off: the docker cannot reach out in front (9 Nov, 135 deg: M1 folded to its
+            # stops, 28 mm out and 22 mm aside, the 40-mm aim + 'come round' asked for more reach than it has) -> wait closer, at 20 mm
+            # (pads stand ~9 mm: 11 mm of clear air left), once
+            if phase == 'line up' and stall == 25 and offset > STANDOFF_NEAR and 0.0 < ax_ < offset and lat_ < STANDOFF_M:
+                offset = STANDOFF_NEAR; best = 1e9; self.log(f'  cannot reach out to the {STANDOFF_M * 1000:.0f}-mm stand-off ({ax_ * 1000:.0f} mm out, {lat_ * 1000:.0f} mm aside): lining up at {offset * 1000:.0f} mm')
+            # (removed 9 Nov: the 8 Nov 'unwind a twist wound against its stop' - same yaw +-23 deg, but the straighten-and-turn threw
+            # the whole line-up away: ceiling robot 2 locked without it, failed with it. The fix was the twists' own margin, dik.py)
             # VSEPR is a wish, like gravity it gives way to what blocks it (3 Nov: its push held a standing M1 96 mm off M2.S2B; off, it
             # locked in 3.8 s): 1.5 s without progress -> it pauses until the end moves on again
             if dik is not None: dik.vs_yield = stall >= 25
@@ -1279,11 +1306,14 @@ if __name__ == '__main__':
     if os.environ.get('NO_ANCHORS', '1') == '1' and not any('floor' in l['a'] for l in sc['locks']): sc['anchors'] = []
     from snap import Snapper
     # one name per run (8 Nov: three surfaces overwrote each other's pictures) and the log kept in a file next to them
-    tag = f'manual_{sys.argv[2]}_{a}_{b}_surf{int(float(os.environ.get("SURFACE_DEG", 0)))}_seed{os.environ.get("SEED", "1")}'.replace('.', '').replace(':', '')
+    tag = (f'manual_{sys.argv[2]}_{a}_{b}_surf{int(float(os.environ.get("SURFACE_DEG", 0)))}_' + ('ideal' if os.environ.get('IDEAL') == '1' else f'seed{os.environ.get("SEED", "1")}')).replace('.', '').replace(':', '')
     logf = open(tpath(f'logs/{tag}.log'), 'w', encoding='utf-8')
     def say(*x): print(*x, flush=True); print(*x, file=logf, flush=True)
-    t0 = time.time(); S = Manual(sc, seed=int(os.environ.get('SEED', '1')), pace=False, judge=os.environ.get('JUDGE', 'off'), log=say)
-    Sn = Snapper(S.w, tpath('logs/snaps'), tag)
+    t0 = time.time(); ID_ = os.environ.get('IDEAL') == '1'; S = Manual(sc, seed=int(os.environ.get('SEED', '1')), pace=False, judge=os.environ.get('JUDGE', 'off'), log=say, ideal=ID_, randomize=not ID_, disturb=not ID_)   # IDEAL=1: the perfect robot, same setup
+    Sn = Snapper(S.w, os.environ.get('SHOTS', tpath('logs/snaps')), tag, every=float(os.environ.get('EVERY', '10')),
+                 focus=[S.w.m.body(n).id for n in os.environ.get('FOCUS', '').split(',') if n])   # FOCUS=M1_EndB_LockModule,M2_srx0: close-ups of the dock
+    if os.environ.get('EVERY'):                                        # pictures while it works (EVERY=1 -> one per sim second), the last log line as caption
+        _ot = S.w.on_tick; S.w.on_tick = lambda: (_ot() if _ot else None, Sn.tick(str(S.lines[-1])[7:107] if S.lines else ''))
     S.w.run(2.0); print('picture', Sn.shot('start'))
     ok = S.connect(a, b); S.w.run(3.0)
     say('picture', Sn.shot(f'connect {a} + {b}: locks {[lock_key(L) for L in S.cur]}'))

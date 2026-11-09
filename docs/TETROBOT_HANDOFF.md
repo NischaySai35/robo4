@@ -96,6 +96,7 @@ These are your words (25 Oct, 15:24 and 15:35 IST), turned into a numbered list 
 - Side receivers registered from CAD (0.24 mm fit); two-module scene and env (build_multi.py, multi_env.py).
 - **Studio:** replaced the old 6-DOF default module with the real 7-DOF try8 (meshes and spec in D:\robo4\assets\tetrobot-module); tests; VS Code prompt for the MSRR port.
 - mujoco 3.17 / warp 1.18 / mujoco-warp 3.17 upgrade (Windows Smart App Control blocked the new DLLs; you turned it off).
+- 9 Nov 2026: mujoco 3.17 -> 4.0.0 and mujoco-warp 3.17 -> 4.0.0 (warp stays 1.18). Same GPU speed; speculative contacts left OFF (GPU does not support them yet). Details: D:obo4-restructuredocsCURRENT_STATE.md top.
 - Reach sweeps: only 18/144 side receivers reachable on an upright partner; 59/1536 feasible in the bigger sweep. End→side physics docks work on feasible poses.
 - **Bend limits changed to ±90°** (your instruction, 20:55).
 - GPU walking: 93.8% → 97.5% (lock-stall recovery) → 98.4% (rotate swing). Measured and fixed "stands up between connectors".
@@ -164,7 +165,7 @@ All runs stopped, no scheduled tasks remain.
 |---|---|
 | Real physics only | No hard-coded joint couplings; locks hold only by fin contact; magnets as forces. |
 | Fully realistic from the start | Servo speed/accel/torque droop/voltage sag, encoder noise, delay, PLA flex, backlash, pushes, tilt — always on. |
-| Latest software, never downgrade, no venvs, one Python | System Python 3.12 has mujoco 3.17 / warp 1.18 / mujoco-warp 3.17. |
+| Latest software, never downgrade, no venvs, one Python | System Python 3.12 has mujoco 4.0.0 / warp 1.18 / mujoco-warp 4.0.0 (upgraded from 3.17 on 9 Nov 2026). |
 | Visible work | Runs open in titled PowerShell windows on the laptop; logs in C:\TETROBOT\logs. |
 | Every update in plain words | What runs, why, goal, how long, how it works, what next. |
 | GPU only (from 25 Oct 15:35) | Physics at scale on MuJoCo Warp; geometry-only sweeps (IK + collision) stayed on CPU (explained to you). |
@@ -246,9 +247,9 @@ Launch pattern for a visible run: Start-Process powershell -ArgumentList '-NoExi
 |---|---|---|
 | Laptop | HP Omen, Windows 11, Ryzen 7, 24 GB RAM, RTX 5050 Laptop 8 GB (sm_120) | RAM got tight (1.6 GB free) when a 128-robot GPU run and other apps were open — run big jobs one at a time. |
 | Python | 3.12 (system), no venv | The only Python: Isaac Sim requires exactly 3.12. LeRobot runs in D:\lerobot\.venv312. |
-| mujoco | **3.17.0** | Upgraded 25 Oct. Same physics as 3.12 on the smoke test; ~20% faster. |
+| mujoco | **4.0.0** | Upgraded 9 Nov 2026 from 3.17 (3.17 came 25 Oct from 3.12). Same GPU speed as 3.17; speculative contacts OFF (GPU unsupported). |
 | warp-lang | **1.18.0** | CUDA toolkit 13.4 / driver 13.4. |
-| mujoco-warp | **3.17.0** | Kernels cached in AppData\Local\NVIDIA\warp\Cache\1.18.0 (first run compiles ~2 min). |
+| mujoco-warp | **4.0.0** (was 3.17 until 9 Nov 2026) | Kernels cached in AppData\Local\NVIDIA\warp\Cache\1.18.0 (first run compiles ~2 min). |
 | Isaac Lab / Isaac Sim | Lab 3.0.0, Sim 6.2 | They pin mujoco 3.12 / warp 1.17 — pip warns, but import isaaclab still works. If Isaac ever breaks, this is why. |
 | Windows Smart App Control | **Off** (you turned it off) | It blocked freshly installed unsigned DLLs ("Enterprise signing level"). Keep off for dev work. |
 | Node / Studio | Vite + React/TS + Three.js + Rapier | npm run typecheck, npm test (tsx --test). |
@@ -570,7 +571,7 @@ Everything here is simulation. The first real dock (§18) is the most important 
 
 ## Appendix D — what to tell VS Code Claude about the simulation work
 
-    Simulation/brain code lives in C:\TETROBOT (sim\, deploy\, logs\). Python 3.12 system install, mujoco 3.17, warp 1.18, mujoco-warp 3.17, no venv.
+    Simulation/brain code lives in C:\TETROBOT (sim\, deploy\, logs\). Python 3.12 system install, mujoco 4.0.0, warp 1.18, mujoco-warp 4.0.0 (was 3.17 until 9 Nov 2026), no venv.
     Start with the handoff report section 16 (ordered plan). Next three actions:
      1) python gpu_walk.py 128 12 (TAG=walk_judgepace) then python walk_metrics.py on its log: check first-dock time after JUDGE_SETTLE/JUDGE_WAIT change.
      2) End<->end with a stiff target: partner lying, End A up (tasks_lying_up.csv format), add a 5 N push stiffness test, slow compliant go-in

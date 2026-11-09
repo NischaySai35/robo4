@@ -24,7 +24,8 @@
 
 namespace r4now {
 
-enum Type : uint8_t { HB = 1, REQ = 2, RESP = 3, HELLO = 4, HOLD = 5, ESTOP = 6 };
+// GRP: modules of one group talk to each other (broadcast, groupsync.h): GO / where I am / STOP. The master ignores it.
+enum Type : uint8_t { HB = 1, REQ = 2, RESP = 3, HELLO = 4, HOLD = 5, ESTOP = 6, GRP = 7 };
 
 constexpr uint8_t  VERSION     = 1;
 constexpr int      FRAME_MAX   = 250;

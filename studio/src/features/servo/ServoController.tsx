@@ -9,6 +9,7 @@ import { useModelStore } from '@/state/modelStore';
 import { useEspNodesStore } from '@/state/espNodesStore';
 import { servoRouting, sendServoCmd, sendServoBatch, estopAllNodes, callAllNodes } from './servoLink';
 import TorqueSwitch from '@/components/torque/TorqueSwitch';
+import ModuleStrip from './ModuleStrip';
 import './ServoController.css';
 
 // ── Dynamic servo definitions (derived from the simulator's joints) ────────────
@@ -534,33 +535,6 @@ function GroupControl({ defs, servos, online, onEstop, onHome }: any) {
   );
 }
 
-// ── Board pill ────────────────────────────────────────────────────────────────
-/** One module board: click to change its address, × to remove it. Saved, and polled at once (espPoll reads the list every round). */
-function NodePill({ nd, canRemove }: any) {
-  const updateNode = useEspNodesStore(s => s.updateNode);
-  const removeNode = useEspNodesStore(s => s.removeNode);
-  const [edit, setEdit] = useState<string | null>(null);
-  const commit = () => { if (edit != null && edit.trim() && edit.trim() !== nd.url) updateNode(nd.id, { url: edit.trim() }); setEdit(null); };
-  return (
-    <div className="sc-node-pill" title={`${nd.url}${nd.componentId ? '' : ' · not linked to a module yet'} · click to change the address`}>
-      <span className={`sc-dot ${nd.connected ? 'ok' : 'bad'}`} />
-      {edit != null ? (
-        <Input size="xs" className="tw:w-[150px]" autoFocus value={edit} spellCheck={false}
-               onChange={e => setEdit(e.target.value)} onBlur={commit}
-               onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEdit(null); }} />
-      ) : (
-        <button className="sc-node-name" onClick={() => setEdit(nd.url)}>
-          {nd.name}{nd.latencyMs != null ? ` · ${nd.latencyMs}ms` : ''}
-        </button>
-      )}
-      {canRemove && (
-        <button className="sc-node-del" aria-label={`Remove ${nd.name}`} title={`Remove ${nd.name}`}
-                onClick={() => { if (confirm(`Remove ${nd.name} (${nd.url})?`)) removeNode(nd.id); }}>×</button>
-      )}
-    </div>
-  );
-}
-
 // ── Debug Log ─────────────────────────────────────────────────────────────────
 
 const SRC_COLORS = {
@@ -660,7 +634,6 @@ export default function ServoController() {
   // ── Multi-ESP node registry (each module = its own ESP32-C3) ───────────────
   // The espPoll engine keeps EVERY board polled; here we just read the results.
   const nodes = useEspNodesStore(s => s.nodes);
-  const addNode = useEspNodesStore(s => s.addNode);
 
   const [alerts, setAlerts] = useState<any[]>([]);
   const dismissRef = useRef(new Set());
@@ -783,10 +756,7 @@ export default function ServoController() {
           </div>
           <div className="sc-topbar-space" />
           {/* Per-board status — each module's ESP32-C3 is polled continuously. */}
-          <div className="sc-nodes-strip">
-            {nodes.map((nd) => <NodePill key={nd.id} nd={nd} canRemove={nodes.length > 1} />)}
-            <Button variant="outline" size="xs" onClick={() => addNode()} title="Add another module board">+ Board</Button>
-          </div>
+          <ModuleStrip />
           <div className="sc-topbar-sep" />
           <div className="sc-pill">
             <span className={`sc-dot ${connectedNodes === nodes.length && nodes.length > 0 ? 'ok' : connectedNodes > 0 ? 'warn' : 'bad'}`} />

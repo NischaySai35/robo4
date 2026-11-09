@@ -26,16 +26,6 @@ const rf = (sine: boolean) => (sine ? RF_SINE : RF_LINEAR);
 const kv = (sine: boolean) => 1 / (1 - rf(sine));
 const ka = (sine: boolean) => 1 / (rf(sine) * (1 - rf(sine)));
 
-/** Smooth 0..1 -> 0..1 easing (minimum-jerk) used by Stream from laptop. */
-export function profile(u: number, sine: boolean): number {
-  u = Math.min(1, Math.max(0, u));
-  if (sine) return u * u * u * (10 + u * (-15 + 6 * u));
-  const r = RF_LINEAR, vp = 1 / (1 - r);
-  if (u < r) return 0.5 * vp / r * u * u;
-  if (u > 1 - r) { const w = 1 - u; return 1 - 0.5 * vp / r * w * w; }
-  return 0.5 * vp * r + vp * (u - r);
-}
-
 export interface FramePlan {
   /** What the frame will actually take, ms. */
   ms: number;
@@ -43,13 +33,13 @@ export interface FramePlan {
   minMs: number;
   /** True when the requested time was too short and the frame had to stretch. */
   stretched: boolean;
-  /** The joint that sets the minimum (largest need), if any moved. */
-  limitingId: number | null;
+  /** The joint that sets the minimum (largest need), if any moved — "module:servo". */
+  limitingId: string | null;
 }
 
 export function planFrame(
-  from: Record<number, number> | null,
-  to: Record<number, number>,
+  from: Record<string, number> | null,
+  to: Record<string, number>,
   speed: number,
   requestedMs: number,          // 0 = auto
   sine: boolean,
@@ -57,9 +47,8 @@ export function planFrame(
   const vCap = peakDegPerS(speed) * STEPS_PER_DEG;
   const aMax = vCap / RAMP_S;
   let tMin = 0;
-  let limitingId: number | null = null;
-  for (const key of Object.keys(to)) {
-    const id = Number(key);
+  let limitingId: string | null = null;
+  for (const id of Object.keys(to)) {
     const a = from?.[id];
     if (a == null) continue;                              // no known start: assume it is there
     const D = Math.abs(to[id] - a) * STEPS_PER_DEG;
@@ -79,12 +68,12 @@ export function planFrame(
 
 /** Plan every frame in order. `live` is where the arm is now (the first frame's start). */
 export function planTimeline(
-  frames: { pose: Record<number, number>; speed: number | null; delayMs: number | null }[],
+  frames: { pose: Record<string, number>; speed: number | null; delayMs: number | null }[],
   globalSpeed: number, globalDelayMs: number, sine: boolean,
-  live: Record<number, number> | null,
+  live: Record<string, number> | null,
 ): FramePlan[] {
   const out: FramePlan[] = [];
-  let prev: Record<number, number> | null = live && Object.keys(live).length ? { ...live } : null;
+  let prev: Record<string, number> | null = live && Object.keys(live).length ? { ...live } : null;
   for (const f of frames) {
     out.push(planFrame(prev, f.pose, f.speed ?? globalSpeed, f.delayMs ?? globalDelayMs, sine));
     prev = { ...(prev || {}), ...f.pose };

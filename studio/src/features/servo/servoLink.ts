@@ -108,8 +108,8 @@ export async function sendServoBatch(
 }
 
 /** Send one board-wide request (e.g. `/api/home/manual`) to every module board at once. Returns the boards that failed. */
-export async function callAllNodes(path: string): Promise<{ ok: number; errors: string[] }> {
-  const { nodes } = useEspNodesStore.getState();
+export async function callAllNodes(path: string, opts: { onlineOnly?: boolean } = {}): Promise<{ ok: number; errors: string[] }> {
+  const nodes = useEspNodesStore.getState().nodes.filter(n => !opts.onlineOnly || n.connected);
   const errors: string[] = [];
   await Promise.all(nodes.map(async (nd) => {
     try {

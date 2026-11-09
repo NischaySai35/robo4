@@ -11,16 +11,17 @@
 import { useState } from 'react';
 import { Circle, ClipboardPaste, Copy, CopyPlus, Crosshair, Play, Redo2, Square, Trash2, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useEspTtlStore, currentPose } from '@/state/espTtlStore';
+import { useEspTtlStore, currentPose, splitKey } from '@/state/espTtlStore';
 import { useTimelineStore } from './timelineStore';
 import { playTimeline, stopPlayback, gotoFrame } from './player';
 
-/** Add the arm's live pose as a new frame. Shared by the Control and Animation tabs. */
+/** Add the live pose of EVERY online module as a new frame. Shared by the Control and Animation tabs. */
 export function recordPose(say: (m: string) => void) {
   const pose = currentPose();
   if (!Object.keys(pose).length) { say('nothing to record — no servo is reporting an angle'); return; }
   useTimelineStore.getState().addFrame(pose);
-  say(`recorded ${Object.keys(pose).length} joint(s)`);
+  const mods = new Set(Object.keys(pose).map(k => splitKey(k).mod));
+  say(`recorded ${Object.keys(pose).length} joint(s) from ${mods.size} module${mods.size === 1 ? '' : 's'} (M${[...mods].sort((x, y) => x - y).join(', M')})`);
 }
 
 export default function MiniTimeline({ say }: { say: (m: string) => void }) {

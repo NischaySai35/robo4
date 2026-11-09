@@ -96,6 +96,23 @@ LOCK_WELD = os.environ.get('LOCK_WELD', '0') == '1'   # 1 = closed locks as a we
 PAD_CLEAR_DEG = float(os.environ.get('PAD_CLEAR_DEG', '0.5'))
 
 
+FIN_TAPER = [float(x) for x in os.environ.get('FIN_TAPER', '0.5,0.8').split(',')]   # fin end slice, next slice: share of full thickness
+
+
+def _fin_chamfer(spec):
+    """9 Nov, Nischay: the lock rotor fins are CHAMFERED - both ends of every fin taper in thickness (CAD rendered edge-on). The
+    collision fins were flat 2.8 mm slabs to the very end: an end tilted by the 2.5 deg PLA lock play met a pad's side wall
+    square-on and the rotor stopped at 4 deg (45 deg seed 1; LOCK_PLAY_DEG=0 locked). Each fin is 5 slices along its arc
+    (build_v2.sector_boxes): the end slices are thinned about the fin's mid-plane, a stepped wedge like the printed part."""
+    import re
+    if not FIN_TAPER or FIN_TAPER[0] >= 1.0: return
+    for g in spec.geoms:
+        mt = re.search(r'B_arm\d_(\d)_\d$', g.name)
+        if not mt: continue
+        j = int(mt.group(1)); k = min(j, 4 - j)                     # 0 = an end slice, 1 = next to it, 2 = the middle
+        if k < len(FIN_TAPER): g.size = [g.size[0], g.size[1] * FIN_TAPER[k], g.size[2]]
+
+
 def _pad_clearance(spec, deg=None):
     """1 Nov: the CAD pads are 45.1 deg wide and their gaps 44.9 deg (sliced from the STL), so two ends interfere and an
     end in a receiver has ~0.08 mm per side; in the sim end<->end always jammed ~7 mm out. Nischay pushed two real ends
@@ -136,7 +153,7 @@ def load_model(xml):
     (gpu_walk, gpu_multi_dock) use it, so every sim path collides the same way (31 Oct)."""
     spec = mujoco.MjSpec.from_file(xml)
     if CAD_COLLIDE: _add_cad_colliders(spec, None)
-    _end_pockets(spec); _pad_clearance(spec); return spec.compile()
+    _end_pockets(spec); _pad_clearance(spec); _fin_chamfer(spec); return spec.compile()
 
 
 def lock_key(lk):
@@ -231,7 +248,7 @@ class PhysWorld:
                 for typ, nm in ((mujoco.mjtSensor.mjSENS_ACCELEROMETER, 'acc'), (mujoco.mjtSensor.mjSENS_GYRO, 'gyro')):
                     sn = spec.add_sensor(); sn.type = typ; sn.objtype = mujoco.mjtObj.mjOBJ_SITE; sn.objname = st.name; sn.name = f'{mid}_imu_{nm}'
         if CAD_COLLIDE: _add_cad_colliders(spec, self.ids)
-        _end_pockets(spec); _pad_clearance(spec)                                   # end pad pockets as the STL; real printed fit (1 Nov)
+        _end_pockets(spec); _pad_clearance(spec); _fin_chamfer(spec)                                   # end pad pockets as the STL; real printed fit (1 Nov)
         for b in [b for b in spec.bodies if any(k_ in b.name for k_ in COARSE_ADD)]:                    # a coarse box for each spine receiver housing too: DIK's
             g = b.add_geom(); g.name = f'{b.name}_coarse'; g.type = mujoco.mjtGeom.mjGEOM_BOX   # no-collision limit could not see them and steered
             g.size = [0.001] * 3; g.mass = 0; g.contype = 0; g.conaffinity = 0; g.group = 4   # an end into M2's housing (3 Nov); sized after compile
@@ -266,7 +283,9 @@ class PhysWorld:
         spec.memory = int(float(os.environ.get('ARENA_MB', max(64, 48 * len(module_ids)))) * 2 ** 20)
         self.engine = world_engine(spec); self.m, self.d = self.engine.model, self.engine.data; m = self.m
         for g in [g for g in range(m.ngeom) if m.geom(g).name.endswith('_coarse') and any(k_ in m.geom(g).name for k_ in COARSE_ADD)]:
-            o = [h for h in range(m.ngeom) if m.geom_bodyid[h] == m.geom_bodyid[g] and h != g]
+            # the part's PHYSICS shapes only (9 Nov: with VISUAL_MESH=1 the picture meshes, group 2, were measured too - the boxes changed
+            # size and the 'pictures only' switch changed DIK's path: ideal 45 deg ended 54 mm off instead of 1 mm)
+            o = [h for h in range(m.ngeom) if m.geom_bodyid[h] == m.geom_bodyid[g] and h != g and m.geom_group[h] != 2]
             box = []
             for h in o:
                 R = np.zeros(9); mujoco.mju_quat2Mat(R, m.geom_quat[h]); R = R.reshape(3, 3); c = m.geom_pos[h] + R @ m.geom_aabb[h, :3]; e = np.abs(R) @ m.geom_aabb[h, 3:]

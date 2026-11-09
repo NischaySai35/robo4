@@ -1,19 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planFrame, peakDegPerS, profile } from './motion';
+import { planFrame, peakDegPerS } from './motion';
 
 const from = { 1: 180, 2: 180 };
 
 test('speed is the peak joint velocity: 18 deg/s per step, 180 at 10', () => {
   assert.equal(peakDegPerS(4), 72);
   assert.equal(peakDegPerS(10), 180);
-});
-
-test('minimum-jerk path starts and ends at rest and is symmetric', () => {
-  assert.equal(profile(0, true), 0);
-  assert.equal(profile(1, true), 1);
-  assert.ok(Math.abs(profile(0.5, true) - 0.5) < 1e-12);
-  assert.ok(profile(0.01, true) < 0.0001);           // barely moves at the start
 });
 
 test('auto at speed 4 is not a lunge: a 90 deg move takes over 1.5 s', () => {
@@ -33,7 +26,7 @@ test('a move too fast for the cap stretches instead of being clipped', () => {
   assert.equal(p.stretched, true);
   assert.ok(p.ms > 500);
   assert.equal(p.ms, p.minMs);
-  assert.equal(p.limitingId, 1);
+  assert.equal(p.limitingId, '1');
 });
 
 test('auto time (0) takes the shortest feasible time and scales with distance', () => {

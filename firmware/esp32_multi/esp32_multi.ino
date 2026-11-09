@@ -45,6 +45,7 @@
 #include <HTTPUpdate.h>
 #include "guard.h"          // overload guard (layer 1), see the Overload guard section
 #include "sync.h"           // synchronised motion: every joint at the same share of its path (Sync motion)
+#include "groupsync.h"      // several modules play one animation in step (GO / where I am / STOP over ESP-NOW)
 #include <esp_now.h>
 #include "r4now.h"          // ESP-NOW frame format, shared with the USB dongle (firmware/libraries/R4Now)
 #include <Preferences.h>
@@ -724,8 +725,24 @@ bool      animInterrupted = false;   // power was lost while a sequence played (
 uint8_t   animIdx     = 0;
 uint32_t  animT0      = 0;         // when the current frame started
 
+// Group play (groupsync.h, 9 Nov 2026): every module of a group got the same animation (its own joints) with the same
+// group number; GO over the radio starts them together, and each one's place keeps the others in step.
+#define GROUP_PLACE_MS  50        // say where we are this often while playing
+#define GROUP_GO_REPEAT 3         // GO / STOP said this many times, 15 ms apart (one may be lost)
+#define GROUP_ARMED_MS  120000    // after an upload, listen for GO this long (radio kept awake)
+Group    grp;
+uint16_t grpStep = 0;              // which frame of which pass we play: counts up from the GO's frame
+volatile float grpPeerS = 2;       // the slowest other module's clock, for syncTick (guard task); 2 = alone
+uint32_t grpArmedUntil = 0, grpPlaceMs = 0, grpSayMs = 0;
+uint8_t  grpSayLeft = 0, grpSayKind = 0;
+bool     grpQuiet = false;         // animStop() because a peer said STOP: do not say STOP back
+uint8_t myModule() { const char* h = cfg.host; while (*h && (*h < '0' || *h > '9')) h++; return (uint8_t)atoi(h); }   // mod3 -> 3
+bool grpArmed() { return grp.on() && animCount && (int32_t)(grpArmedUntil - millis()) > 0; }
+
+void grpSay(uint8_t kind);
 void animStop() {
   if (animPlaying) lg("anim stopped at frame %u", animIdx + 1);
+  if (animPlaying && grp.on() && !grpQuiet) grpSay(GK_STOP);   // the others stop too
   if (animPlaying) prefs.putUChar("animRun", 0);
   animPlaying = false; animInterrupted = false;
 }
@@ -770,6 +787,8 @@ bool     syncActive = false;
 SyncMove syncMv;
 int      syncSlot[MAX_SERVOS];
 uint32_t syncLastMs = 0;
+
+bool animSyncOn() { return animSync || grp.on(); }   // a group always plays with Sync motion (the shared clock)
 
 uint32_t animPlanMs    = 0;        // planned duration of the current frame
 bool     animStretched = false;    // true when the limits made it longer than requested
@@ -835,7 +854,7 @@ void animSendFrame(uint8_t idx) {
     ids[k] = sv.id; pos[k] = (int16_t)want[k]; spd[k] = v; acc[k] = a;
   }
 
-  if (animSync && n > 0) {             // the guard task steers them from its next read (<= FAST_MS)
+  if (animSyncOn() && n > 0) {         // the guard task steers them from its next read (<= FAST_MS)
     int16_t from[MAX_SERVOS], to[MAX_SERVOS];
     for (uint8_t k = 0; k < n; k++) { syncSlot[k] = slots[k]; from[k] = (int16_t)curRaw[k]; to[k] = (int16_t)want[k]; }
     syncMv.begin(SYNC_CFG, n, from, to, T, animSine);
@@ -858,6 +877,7 @@ void syncTick() {
   if (dt > 0.2f) dt = 0.2f;                       // a late pass must not make the clock jump
   int pos[SYNC_MAX]; SyncOut out[SYNC_MAX];
   for (uint8_t k = 0; k < syncMv.n; k++) pos[k] = servos[syncSlot[k]].rawPos;
+  syncMv.peerS = grp.on() ? grpPeerS : 2;        // ahead of the slowest other module: this clock runs slower
   SyncState r = syncMv.step(SYNC_CFG, dt, pos, out);
   uint8_t ids[MAX_SERVOS]; int16_t gp[MAX_SERVOS]; uint16_t spd[MAX_SERVOS]; uint8_t acc[MAX_SERVOS]; uint8_t m = 0;
   for (uint8_t k = 0; k < syncMv.n; k++) {
@@ -893,7 +913,7 @@ void animTick() {
   if (!animPlaying || animCount == 0) return;
   uint32_t el = millis() - animT0;
 
-  if (!animArrived && animSync) {
+  if (!animArrived && animSyncOn()) {
     if (syncMv.state == SY_RUN) return;
     int8_t w = syncMv.laggard; const char* who = (w >= 0) ? cfg.labels[syncSlot[w]] : "a joint";
     if (syncMv.state == SY_STALLED) {
@@ -913,9 +933,14 @@ void animTick() {
     animArriveT = millis();
   }
   if (millis() - animArriveT < anim[animIdx].holdMs) return;   // the pause between poses
+  if (grp.on()) {                                                // everyone finished this frame? (never waits forever)
+    if (!grp.mayAdvance(millis(), grpStep)) return;
+    if (grp.lastTimedOut) lg("group: went on after %lu ms without a module that had not finished frame %u", grp.lastWaitMs, animIdx + 1);
+    else if (grp.lastWaitMs > 300) lg("group: waited %lu ms for the others at the end of frame %u", grp.lastWaitMs, animIdx + 1);
+  }
 
-  if (animIdx + 1 < animCount) { animBeginFrame(animIdx + 1); return; }
-  if (animLoop)                { animBeginFrame(0); return; }
+  if (animIdx + 1 < animCount) { grpStep++; animBeginFrame(animIdx + 1); return; }
+  if (animLoop)                { grpStep++; animBeginFrame(0); return; }
   animPlaying = false; prefs.putUChar("animRun", 0);
   int a = -1, b = -1;                                   // the two servos that drew the most current
   for (uint8_t i = 0; i < nServos; i++) {
@@ -1461,7 +1486,7 @@ String nowJson();
 bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS || guardBusy(); }
 void radioTick() {
   if (otaBusy) return;                              // OTA owns the radio settings while it runs
-  bool want = moving() || radioHold || nowAwake() || nowPeeking();   // ESP-NOW: awake while commanded (heat), see ESP-NOW link
+  bool want = moving() || radioHold || nowAwake() || nowPeeking() || grpArmed();   // ESP-NOW: awake while commanded (heat), see ESP-NOW link; a group upload waits for GO
   if (want == radioAwake) return;
   radioAwake = want;
   if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
@@ -2192,8 +2217,11 @@ void handleAnimLoad() {
   animSine = !(rq.hasArg("sine") && rq.arg("sine") == "0");
   if (rq.hasArg("sync")) { animSync = rq.arg("sync") == "1"; prefs.putBool("animSync", animSync); }
   animLoop = rq.hasArg("loop") && rq.arg("loop") != "0";
-  lg("anim loaded: %u frames, sine %s, loop %s", animCount,
-     animSine ? "on" : "off", animLoop ? "on" : "off");
+  grp.reset(rq.hasArg("group") ? (uint32_t)strtoul(rq.arg("group").c_str(), nullptr, 10) : 0);
+  grp.me = myModule(); grpPeerS = 2;
+  grpArmedUntil = millis() + GROUP_ARMED_MS;
+  lg("anim loaded: %u frames, sine %s, loop %s%s", animCount,
+     animSine ? "on" : "off", animLoop ? "on" : "off", grp.on() ? ", group play (waits for GO)" : "");
 
   String r = F("{\"ok\":true,\"frames\":"); r += animCount;
   r += F(",\"sine\":"); r += (animSine ? F("true") : F("false"));
@@ -2202,16 +2230,26 @@ void handleAnimLoad() {
   okJson(r);
 }
 
+// Start playing from frame `from` (the laptop's play, or a GO from the module the laptop asked).
+void animStart(uint8_t from) {
+  if (from >= animCount) from = 0;
+  bc("anim play (%u frames%s)", animCount, grp.on() ? ", group" : "");
+  memset(animPeakmA, 0, sizeof animPeakmA); memset(animPeakLoad, 0, sizeof animPeakLoad);
+  animPlaying = true; animInterrupted = false; motionLocked = false;
+  prefs.putUChar("animRun", 1);         // remembered across a power cut, so the next boot can say it was interrupted
+  grpStep = from; grpPeerS = 2; grp.waitT0 = 0; grpPlaceMs = 0;
+  animBeginFrame(from);
+}
+
+void groupTick();
+// GET /api/anim/play?from=0&loop=0. In a group the laptop asks ONE module: it says GO to the others and starts with them.
 void handleAnimPlay() {
   if (animCount == 0) { errJson(409, "no sequence loaded"); return; }
   if (rq.hasArg("loop")) animLoop = rq.arg("loop") != "0";
   uint8_t from = rq.hasArg("from") ? (uint8_t)rq.arg("from").toInt() : 0;
   if (from >= animCount) from = 0;
-  bc("anim play (%u frames)", animCount);
-  memset(animPeakmA, 0, sizeof animPeakmA); memset(animPeakLoad, 0, sizeof animPeakLoad);
-  animPlaying = true; animInterrupted = false; motionLocked = false;
-  prefs.putUChar("animRun", 1);         // remembered across a power cut, so the next boot can say it was interrupted
-  animBeginFrame(from);
+  if (grp.on()) { grpStep = from; grpSay(GK_GO); groupTick(); }   // the first GO goes out now, with our own start
+  animStart(from);
   okTrue();
 }
 
@@ -2237,6 +2275,12 @@ void handleAnimStatus() {
     r += F(",\"waitingOn\":\""); r += syncMv.laggard >= 0 ? cfg.labels[syncSlot[syncMv.laggard]] : ""; r += '"';
   }
   r += F(",\"loop\":");    r += (animLoop ? F("true") : F("false"));
+  if (grp.on()) {
+    r += F(",\"group\":"); r += grp.id;
+    r += F(",\"armed\":"); r += (grpArmed() ? F("true") : F("false"));
+    r += F(",\"peers\":"); r += grp.np;
+    r += F(",\"waitingFor\":"); r += grp.waitingOn;   // module number we wait for at a frame end (0 = nobody)
+  }
   r += '}';
   okJson(r);
 }
@@ -3001,14 +3045,48 @@ void nowStop() {                                     // before the Wi-Fi driver 
   nowUp = false; nowPeerSet = false;
 }
 
-void nowSend(const uint8_t* mac, uint8_t type, uint16_t seq, const String& msg) {
+void nowSendRaw(const uint8_t* mac, uint8_t type, uint16_t seq, const uint8_t* msg, int len) {
   uint8_t f[r4now::FRAME_MAX];
-  const int cnt = r4now::fragsFor(msg.length());
+  const int cnt = r4now::fragsFor(len);
   if (cnt > r4now::FRAG_MAX) return;
   for (int i = 0; i < cnt; i++) {
-    int n = r4now::build(f, type, seq, (const uint8_t*)msg.c_str(), msg.length(), i);
+    int n = r4now::build(f, type, seq, msg, len, i);
     for (int t = 0; esp_now_send(mac, f, n) == ESP_ERR_ESPNOW_NO_MEM && t < 20; t++) delay(1);
   }
+}
+void nowSend(const uint8_t* mac, uint8_t type, uint16_t seq, const String& msg) {
+  nowSendRaw(mac, type, seq, (const uint8_t*)msg.c_str(), msg.length());
+}
+
+// ── Group play over the radio (groupsync.h) ──────────────────────────────────
+// Broadcast to every module on the channel (the broadcast peer is added in nowInit). Runs in loop().
+static const uint8_t NOW_ALL[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+void grpSay(uint8_t kind) { grpSayKind = kind; grpSayLeft = GROUP_GO_REPEAT; grpSayMs = 0; }
+void groupSend(const GroupMsg& m) { static uint16_t seq = 0; if (nowUp) nowSendRaw(NOW_ALL, r4now::GRP, ++seq, (const uint8_t*)&m, sizeof m); }
+void groupTick() {
+  if (!grp.on()) return;
+  const uint32_t now = millis();
+  grpPeerS = grp.peerS(now, grpStep);
+  if (grpSayLeft && (grpSayMs == 0 || now - grpSayMs >= 15)) {   // GO / STOP, a few times (a lost one costs 15 ms)
+    groupSend(Group::msg(grp.id, grpSayKind, grp.me, grpStep)); grpSayMs = now ? now : 1; grpSayLeft--;
+  }
+  if (animPlaying && (grpPlaceMs == 0 || now - grpPlaceMs >= GROUP_PLACE_MS)) {   // where we are: the others keep in step
+    grpPlaceMs = now ? now : 1;
+    const bool done = grp.waiting() || animArrived;
+    groupSend(Group::msg(grp.id, GK_PLACE, grp.me, grpStep, syncMv.s, done, true));
+  }
+}
+void groupHeard(const GroupMsg& m) {
+  if (!grp.on() || m.group != grp.id || m.mod == grp.me) return;
+  if (m.kind == GK_GO) {
+    if (animPlaying || !grpArmed() || otaBusy) return;
+    lg("group: GO from module %u", m.mod);
+    { BusLock L; animStart((uint8_t)(m.step < animCount ? m.step : 0)); }
+  } else if (m.kind == GK_STOP) {
+    if (!animPlaying) return;
+    lg("group: module %u stopped, stopping too", m.mod);
+    grpQuiet = true; animStop(); grpQuiet = false;
+  } else grp.heard(m, millis());
 }
 
 void nowHello(const uint8_t* mac) {
@@ -3112,6 +3190,8 @@ void nowPoll() {
         nowHeld = true; nowHolds++;
         lg("ESP-NOW: HOLD from the dongle - %u joint(s) stopped where they were, holding", held);
       }
+    } else if (h.type == r4now::GRP) {                // another module of a group (broadcast)
+      if (n == (int)sizeof(GroupMsg) && h.cnt == 1) { GroupMsg g; memcpy(&g, p, sizeof g); groupHeard(g); }
     } else if (h.type == r4now::REQ) {
       nowSetPeer(m.mac);
       nowHbMs = millis(); nowHbSeen = true;          // a request is the laptop too
@@ -3343,6 +3423,7 @@ void loop() {
   ArduinoOTA.handle();
   wifiTick();
   nowPoll();                            // ESP-NOW requests run here, between web requests (same handlers)
+  groupTick();                          // group play: GO / where we are / STOP to the other modules
   battTick();                           // 10.2 V: switch off to save the battery (Battery guard)
   { BusLock L; livePoll(); }            // its UDP socket is shared with the guard task's liveSend()
   radioTick();

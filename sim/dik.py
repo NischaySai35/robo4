@@ -18,7 +18,7 @@ Output: joint velocities for every module of the group (rad/s) -> the caller tur
 import math, numpy as np, mujoco, mink
 import vsepr as V
 
-import os
+import os, sys
 BASE_HOLD = os.environ.get('DIK_BASE_HOLD', '1') == '1'   # going in, the bodies are held (BaseHold); 0 = the old free bases
 BASE_HOLD_COST = float(os.environ.get('DIK_BASE_HOLD_COST', '2'))   # 3 Nov, chain3 M3.B -> M1.S1A from 3 nudged starts: 20 held them too stiffly (1/3), 2 -> 3/3, 0.3 -> 2/3
 BASE_COST = float(os.environ.get('DIK_BASE', '20'))   # cost of moving a module's whole body (was 2: planned the chain sliding, real friction made it stick-slip) - NOTE 3 Nov: mink's PostureTask skips free joints, so this never reached the bodies; BaseHold does
@@ -42,7 +42,8 @@ LOCK_COST = float(os.environ.get('DIK_LOCK', '1e4'))   # closed locks: near-hard
 #   moving the end - the real lock does not bend, so the end never moved and it stalled 0.6 mm off)
 AROUND_MAX = float(os.environ.get('DIK_AROUND', '0.25'))   # m: furthest the aim moves out in front while the end comes around
 AROUND_AX = float(os.environ.get('DIK_AROUND_AX', '0.02'))   # m: closer than this in front of the receiver's face counts as beside it
-AROUND_RAMP = float(os.environ.get('DIK_AROUND_RAMP', '0.02'))   # m: the 'come around' push fades in over this depth (a switch made the aim chatter)
+AROUND_RAMP = float(os.environ.get('DIK_AROUND_RAMP', '0'))   # m: the 'come around' push fades in over this depth; 0 = switched (9 Nov: the 2 cm ramp
+#   was for the dropped 'target faces the docker' step and it broke ideal chain3 M3.B -> M1.S1A, 89 mm off)
 CLEAR_R = float(os.environ.get('DIK_CLEAR', '0.14'))   # m: how far off the receiver's axis the tip must be to pass the body behind it
 COLL_MIN = float(os.environ.get('DIK_COLL_MIN', '-0.003'))   # m: closest two modules' coarse boxes may come; negative: each box sticks out 2-4 mm past its part (measured 2 Nov: lying boxes 2-4 mm into the floor), at +2 mm they blocked a clean line-up at M1.S2B
 FLOOR_IN = float(os.environ.get('DIK_FLOOR_IN', '0.006'))   # m: deepest a coarse box may sit in the floor (they overstate the parts)
@@ -60,6 +61,11 @@ def locks_as_now(m, d, eqs):
         mujoco.mju_mat2Quat(q, (R1.T @ d.xmat[b2].reshape(3, 3)).ravel()); m.eq_data[i, 3:6] = R1.T @ (d.xpos[b2] - d.xpos[b1]); m.eq_data[i, 6:10] = q
 
 
+RELIEF_FROM = float(os.environ.get('DIK_RELIEF_FROM', '0.4'))   # servo load share above which the relief works
+RX_HOLD = float(os.environ.get('DIK_RX_HOLD', '1'))   # going in: the receiver's joints cost this many times more (1 = off; 9 Nov: 30 stalled the
+                                                        # IDEAL robot at 45 deg 21 mm out - the receiver's help is needed going in)
+RELIEF_YIELD =os.environ.get('DIK_RELIEF_YIELD', '1') == '1'   # the relief steps aside while the goal is stuck
+RELIEF = os.environ.get('DIK_RELIEF', 'torque')   # loaded servos: 'torque' = move to lower their load, 'down' = let the bodies down (old)
 TORQUE = float(os.environ.get('DIK_TORQUE', '0.6'))   # no move may need more than this share of a servo's real strength (0 = off); the firmware caps at 70 %, the rest is for the motion itself (8 Nov ceiling: 0.8 let M2 tilt until it gave way)
 
 
@@ -103,6 +109,7 @@ class TorqueLimit(mink.Limit):
         f = self.k.w.d.actuator_force[self.k.acts]; cap = TORQUE * self.k.fmax
         if os.environ.get('DIK_TQ_DEBUG') and int(self.k.w.d.time * 10) % 20 == 0:
             print('TQ model ', ' '.join(f'{x:5.2f}' for x in g0), '\nTQ servo ', ' '.join(f'{x:5.2f}' for x in f), flush=True)
+        self.K, self.f = K, f.copy()                                     # kept for the load relief (DIK._vsepr_null)
         return mink.Constraint(G=np.vstack([K, -K]), h=np.r_[np.maximum(cap - f, 0.0), np.maximum(cap + f, 0.0)])
 
 
@@ -229,6 +236,8 @@ class DIK:
             for c, dof in enumerate(dof for mid in self.mods for dof in w.mod[mid]['dofs']): cost[dof] /= max(share[c], 1e-3) ** 2
         for a in roots: cost[a] = BASE_COST                                                   # the group's own pose: most expensive (friction holds a lying module until it slips)
         self.posture = mink.PostureTask(m, cost=cost); self.cost0 = cost.copy()
+        rxm = m.body(self.tbody).name.split('_')[0] if self.tbody is not None else None   # the module holding the target socket
+        self.rx_dofs = list(w.mod[rxm]['dofs']) if rxm in self.mods and rxm != self.dock[0] else []
         self.base_hold = BaseHold(m, roots, BASE_HOLD_COST)                                       # only while going in (step)
         # 'less bent' preferred, gently: spreads a curl over every joint instead of a few at their stops (1 Nov: the 3-ring plan put
         # 4 bends at +-88 deg although each module needs only ~120 deg in all)
@@ -252,7 +261,11 @@ class DIK:
         # an 8-deg margin on the +-3 deg PLA-flex / +-0.2 deg backlash joints made every tick unsolvable (1 Nov), and the no-margin
         # fallback then drove M2.T2 into its 180-deg stop (servo 100 %, the 3-ring stuck 15 mm short)
         self.cl = mink.ConfigurationLimit(m); self.lo0, self.hi0 = self.cl.lower.copy(), self.cl.upper.copy()
-        self.qa_all = np.array([qa for mid in self.mods for qa in w.mod[mid]['qa']]); self.margin = math.radians(float(os.environ.get('DIK_MARGIN', '8')))
+        self.qa_all = np.array([qa for mid in self.mods for qa in w.mod[mid]['qa']])
+        # twists turn a full +-180: their stop IS the half turn. Facing a receiver that points straight away needs ~180, and the
+        # 8-deg margin left every twist 8 deg short (9 Nov sweep: M2.T1 parked at its stop in all 8 failed walls/ceilings) -> 3 deg
+        self.margin = np.array([math.radians(float(os.environ.get('DIK_TWIST_MARGIN', '3')) if k in (0, 3, 6) else float(os.environ.get('DIK_MARGIN', '8')))
+                                for mid in self.mods for k in range(len(w.mod[mid]['qa']))])
         self.limits = [self.cl, vl] + self._collision_limits(m, w, eqs)
         self.acts = np.array([a for mid in self.mods for a in w.mod[mid]['act']]); self.fmax = np.maximum(np.abs(w.m.actuator_forcerange[self.acts, 1]), 1e-6)
         self.F_all = sorted(set(self.act_dofs) | set(self.roots))
@@ -337,7 +350,7 @@ class DIK:
         if self.offset >= 0.03 and ax < self.offset:
             # faded in over AROUND_RAMP, not switched on (8 Nov: with the target turned to face the docker, the tip arrives AT the
             # stand-off depth 40 mm off the axis; the aim jumped 40 mm out and back every few ticks - no progress for 7 s, walls)
-            pd = pd + min(max(0.0, -ax) + lat, AROUND_MAX) * min(1.0, (self.offset - ax) / AROUND_RAMP) * z
+            pd = pd + min(max(0.0, -ax) + lat, AROUND_MAX) * (min(1.0, (self.offset - ax) / AROUND_RAMP) if AROUND_RAMP > 0 else 1.0) * z
             # behind the receiver's face the way forward runs through the module that holds it: first out sideways, past its body, on
             # the side the tip already is (2 Nov, M1.A -> M2.S2B: wedged 13 mm behind it, 73 mm off the axis)
             if ax < AROUND_AX and lat > 1e-6: pd = pd + max(CLEAR_R - lat, 0.0) * (v - ax * z) / lat   # beside it too (3 Nov: 3 mm in front, 80 mm off, against M2's housing)
@@ -374,13 +387,25 @@ class DIK:
         sat = load > STRAIN
         self.cl.upper[ia[sat & (f > 0)]] = np.minimum(self.cl.upper[ia[sat & (f > 0)]], q[sat & (f > 0)])
         self.cl.lower[ia[sat & (f < 0)]] = np.maximum(self.cl.lower[ia[sat & (f < 0)]], q[sat & (f < 0)])
+        c_ = self.posture.cost.copy()
+        if self.inside and RX_HOLD > 1 and self.rx_dofs:             # going in: the docker's joints do the last mm, the receiver mostly holds
+            ch = c_.copy(); ch[self.rx_dofs] *= RX_HOLD; self.posture.set_cost(ch)
         try: v = mink.solve_ik(self.cfg, tasks, dt, solver='daqp', damping=1e-3, limits=self.limits)
         except mink.exceptions.NoSolutionFound:
             # no move satisfies every limit at once (3 Nov, standing chain): drop only the speed limit this tick - never the collision
             # limits (dropping them drove an end into a housing at 81 N) - and if even that fails, stand still this tick
             try: v = mink.solve_ik(self.cfg, tasks, dt, solver='daqp', damping=1e-3, limits=[l_ for l_ in self.limits if not isinstance(l_, mink.VelocityLimit)])
             except mink.exceptions.NoSolutionFound: v = np.zeros(self.m.nv)
-        if self.spread is not None and VMODE == 'null': v = v + self._vsepr_null(q, ia)
+        self.posture.set_cost(c_)
+        if self.spread is not None and VMODE == 'null':
+            vn = self._vsepr_null(q, ia)
+            # the receiver holds still while the plug goes in (9 Nov, 45 deg seed 1: going in, the spread/relief turned M2's T2 from 50
+            # to 122 deg - 'moving together' is exact only for perfect servos; real ones lag, the socket slid 7 mm away)
+            if self.inside and RX_HOLD > 1 and self.rx_dofs: vn[self.rx_dofs] = 0.0
+            v = v + vn
+        if os.environ.get('DIK_PARTS') and int(round(float(d.time) / 0.06)) % 5 == 0:   # which rule moves each joint (deg/s), M1 | M2
+            P = dict(reach=v - vn if self.spread is not None and VMODE == 'null' else v, **getattr(self, 'parts', {}))
+            print(f'PARTS t {float(d.time):5.1f} ' + ' '.join(f'{k_}: ' + ' '.join(f'{math.degrees(x):4.0f}' for x in [P[k_][dof] for mid in self.mods for dof in self.w.mod[mid]["dofs"]]) for k_ in P), file=sys.stderr, flush=True)
         out = {mid: np.array([v[dof] for dof in self.w.mod[mid]['dofs']]) for mid in self.mods}
         e = self.goal.compute_error(self.cfg)
         return out, float(np.linalg.norm(e[:3])) * 1000, math.degrees(float(np.linalg.norm(e[3:])))
@@ -431,11 +456,26 @@ class DIK:
         err = float(np.linalg.norm(self.goal.compute_error(self.cfg)[:3]))
         fade = min(1.0, max(0.0, (err - 0.01) / VFADE_NULL)) if VFADE_NULL > 0 else 1.0
         out = np.zeros(self.m.nv); out[A] = back[:len(A)] * VNULL
+        self.parts = {'reserve': out.copy()}                            # each rule's share, for DIK_PARTS=1 (debug)
+        # yields while the goal is stuck, like VSEPR below (9 Nov, 45/90 deg seed 1: the relief kept folding M2 down while M1 sat
+        # 9-16 mm aside, 'no progress'); the TorqueLimit still guards the servos, the relief is only a preference
+        if RELIEF_YIELD and getattr(self, 'vs_yield', False): heavy = 0.0
         if heavy > 0:                                                   # too heavy to hold up: the spare motion lets the body down, like gravity -
             # gentler for a standing group (DOWN_STAND): full strength held a standing M1 off M2.S2B, none let M1 arch out and stall (3 Nov)
-            down = -np.einsum('k,bkf->f', up(self.m), V.body_jacobians(self.m, cfg.data, self.spread.b, F)); down = (down - np.linalg.pinv(J, rcond=1e-4) @ (J @ down))[:len(A)]
+            tl = next((l_ for l_ in self.limits if isinstance(l_, TorqueLimit) and hasattr(l_, 'K')), None)
+            if tl is not None and RELIEF == 'torque':
+                # the spare motion that LOWERS the servos' load (9 Nov, 135 deg: 'let the body down' swung M2's top half out sideways,
+                # its lowest bend went to 70 % and could not tilt the socket to M1): - d/dq of sum (torque / strength)^2, the
+                # TorqueLimit's own gravity model, so it works the same on floor, wall and ceiling
+                # only the share OVER RELIEF_FROM counts (9 Nov, floor: relieving every servo a little made both modules lie down in a
+                # heap - lying is the least load of all, but docking needs them up)
+                ex = np.sign(tl.f) * np.maximum(np.abs(tl.f) / self.fmax - RELIEF_FROM, 0.0)
+                down = -(tl.K[:, F].T @ (ex / self.fmax))
+            else: down = -np.einsum('k,bkf->f', up(self.m), V.body_jacobians(self.m, cfg.data, self.spread.b, F))
+            down = (down - np.linalg.pinv(J, rcond=1e-4) @ (J @ down))[:len(A)]
             down[(q <= self.cl.lower[ia] + 1e-6) & (down < 0)] = 0; down[(q >= self.cl.upper[ia] - 1e-6) & (down > 0)] = 0
-            if np.abs(down).max() > 1e-9: out[A] += down / np.abs(down).max() * VNULL * heavy * max(0.1, min(1.0, err / 0.10)) * (1.0 if getattr(self, 'lying', True) else DOWN_STAND)
+            if np.abs(down).max() > 1e-9:
+                o0 = out.copy(); out[A] += down / np.abs(down).max() * VNULL * heavy * max(0.1, min(1.0, err / 0.10)) * (1.0 if getattr(self, 'lying', True) else DOWN_STAND); self.parts['relief'] = out - o0
         if vs is not None and not getattr(self, 'vs_yield', False):   # yields while the goal is stuck (coop_connect sets it)
             # like a ball in a bowl: as fast as the push is strong compared with its strongest so far, so it eases into the best shape
             # instead of running at full speed for ever; 10 % near the target (never off): its steps keep the end still only to first
@@ -443,7 +483,7 @@ class DIK:
             n = np.abs(vs).max(); self.vs_peak = max(getattr(self, 'vs_peak', 0.0), n)
             # (3 Nov, Nischay: 'DIK puts the tip, VSEPR arranges everything behind it at the same time'): full strength while lining up,
             # slowed only going straight in
-            out[A] += vs / n * VNULL * fade * min(1.0, 4.0 * n / self.vs_peak) * (max(0.1, min(1.0, err / 0.10)) if getattr(self, 'inside', False) or not VFULL else 1.0)
+            o0 = out.copy(); out[A] += vs / n * VNULL * fade * min(1.0, 4.0 * n / self.vs_peak) * (max(0.1, min(1.0, err / 0.10)) if getattr(self, 'inside', False) or not VFULL else 1.0); self.parts['vsepr'] = out - o0
         return out
 
     def why(self, dt=0.06):

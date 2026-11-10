@@ -327,6 +327,9 @@ function rows(d){
     q('md').textContent=gd?(s.guard.toUpperCase()+' '+((s.torqueLimit|0)/10|0)+'%'):s.mode+(s.torque?'':' /off');
     q('md').style.color=gd?'var(--bad)':'';
     q('md').title=gd?'overload guard: '+(s.guard==='held'?'stopped after a hit, holding gently. Move it the other way or press Clear blocks.':s.guard==='giving'?'giving way slowly under a load it cannot hold':'too hot: holding gently, moves refused'):'';
+    if(!s.connected){['sp','ld','ma','vv','tp'].forEach(c=>q(c).textContent='--');   // last numbers of an unplugged servo are not live
+      q('er').textContent='--';q('md').textContent='no reply';q('md').style.color='var(--bad)';
+      q('md').title='this servo has not answered for over 1 s: unplugged, loose cable or no power';}
     // The angle column is NOMINAL: 180 = straight = this joint's home (its offset is built in). The home
     // button says whether the joint is there, so it never looks like it disagrees with the angle column;
     // the servo's own (mechanical) angle at home is in its hover text. (Showing that mechanical number,

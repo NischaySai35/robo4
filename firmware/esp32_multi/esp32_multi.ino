@@ -526,7 +526,7 @@ void applyServoConfig() {
     s.speedScale = 10; s.speedRaw = speedScaleToRaw(10); s.acc = POS_ACC_DEFAULT;
     s.rawPos = s.rawSpeed = s.rawLoad = s.rawLoadAbs = -1;
     s.rawCurrent = s.rawVoltage = s.rawTemp = -1;
-    s.moving = false; s.lastCommandMs = 0;
+    s.moving = false; s.lastCommandMs = 0; s.seenMs = 0;
   }
 }
 
@@ -1157,6 +1157,10 @@ void guardClear(int id) {   // id < 0: every joint
 }
 
 // ── Telemetry reads ──────────────────────────────────────────────────────────
+// A servo that stopped answering (unplugged, cable cut) keeps its last numbers in RAM; this says whether they are live.
+#define SERVO_GONE_MS 1000
+bool servoSeen(const ServoState& sv) { return sv.rawPos >= 0 && sv.seenMs && millis() - sv.seenMs < SERVO_GONE_MS; }
+
 void refreshAllFastSync() {
   bc("telemetry sync (%u servos)", nServos);
   if (nServos == 0) return;
@@ -1182,7 +1186,7 @@ void refreshAllFastSync() {
     bool got = false;
     if (st.syncReadPacketRx(ids[i], rx) == 15) {
       int pos = rx[0] | (rx[1] << 8);                // position is unsigned 0..4095
-      if (pos >= 0 && pos <= 4095) { servos[i].rawPos = pos; got = true; }
+      if (pos >= 0 && pos <= 4095) { servos[i].rawPos = pos; servos[i].seenMs = millis(); got = true; }
       int ld = (rx[4] | (rx[5] << 8)) & 0x3FF; if (rx[5] & 0x04) ld = -ld;   // load: bit 10 is the sign
       int cu = (rx[13] | (rx[14] << 8)) & 0x7FFF;                           // current, 6.5 mA units
       servos[i].rawLoad = ld; servos[i].rawLoadAbs = abs(ld); servos[i].rawCurrent = cu;
@@ -1220,6 +1224,7 @@ void refreshSlow(ServoState& sv) {
   if (ok < 0) { flushBus(); ok = st.FeedBack(sv.id); }
   st.IOTimeOut = saved;
   if (ok < 0) return;
+  sv.seenMs = millis();
   int spd  = st.ReadSpeed(-1);
   int load = st.ReadLoad(-1);
   int curr = st.ReadCurrent(-1);
@@ -1969,7 +1974,7 @@ String buildJSON() {
     j += F(",\"name\":\"");  j += cfg.labels[i]; j += '"';
     j += F(",\"min\":");     j += cfg.minDeg[i];
     j += F(",\"max\":");     j += cfg.maxDeg[i];
-    j += F(",\"connected\":"); j += (sv.rawPos >= 0 ? F("true") : F("false"));
+    j += F(",\"connected\":"); j += (servoSeen(sv) ? F("true") : F("false"));
     const char* m = sv.mode == 0 ? "Position" : sv.mode == 1 ? "CW" : sv.mode == 2 ? "CCW" : "Wave";
     j += F(",\"mode\":\""); j += m; j += '"';
     j += F(",\"torque\":"); j += (sv.torqueOn ? F("true") : F("false"));
@@ -3373,6 +3378,7 @@ void battTick() {
   if (otaBusy || nServos == 0) { battLowSince = 0; return; }
   int vMax = 0, mA = 0;
   for (uint8_t i = 0; i < nServos; i++) {
+    if (!servoSeen(servos[i])) continue;              // an unplugged servo's last reading is not the battery now
     if (servos[i].rawVoltage > vMax && servos[i].rawVoltage <= 200) vMax = servos[i].rawVoltage;   // > 20 V: also garbage
     if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f);
   }

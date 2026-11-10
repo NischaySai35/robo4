@@ -40,6 +40,7 @@ struct ServoState {
   int      rawPos, rawSpeed, rawLoad, rawLoadAbs, rawCurrent, rawVoltage, rawTemp;
   bool     moving;
   unsigned long lastCommandMs;
+  unsigned long seenMs;     // last time this servo answered a read; silent > SERVO_GONE_MS = shown "no reply"
 };
 
 // One servo found by the async bus scan.

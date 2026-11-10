@@ -1078,10 +1078,11 @@ void homeAll(bool homeManual = false, bool raw180 = false) {
     // Straight is nominal 180 for every joint (the offset turns that into the hand-set home), so
     // "home" and "manual home" are now the same place. `homeManual` is kept so old callers work;
     // raw180 asks for the MECHANICAL 180 instead (horn assembly: seat the horn at the true middle).
-    float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : homeTargetFor(i), lo, hi);
+    // "Home all -> 180" (homeManual false) = EVERY joint at 180, the locks too (LOCK1 180 = locked). "Go to manual
+    // home" = the home pose, locks open (homeTargetFor). Until 11 Nov both opened LOCK1 to 225: the 180 button lied.
+    float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : homeManual ? homeTargetFor(i) : 180.0f, lo, hi);
     if (!guardAllows(i, nomToRaw(servos[i].id, want))) continue;
     servos[i].targetDeg = want;
-    (void)homeManual;
     servos[i].targetRaw = nomToRaw(servos[i].id, servos[i].targetDeg);
     servos[i].speedScale = 10;
     servos[i].speedRaw = speedScaleToRaw(10);

@@ -1054,16 +1054,18 @@ void gotoDeg(uint8_t slot, float deg) {
   cmdPos(servos[slot], deg, 10, POS_ACC_DEFAULT);
 }
 
-// Home for each joint in nominal degrees (180 = the joint's hand-set straight pose). The locks' home is OPEN, not 180:
-// Nischay 5 Nov 2026 (data/real_robot.json lock_home/lock_sign, the same on every module): LOCK1 open 225 / locked 180,
-// LOCK2 open 180 / locked 135. Before 7 Nov "Go to manual home" sent LOCK1 to 180 = locked.
-#define LOCK1_OPEN_NOM 225.0f
-#define LOCK2_OPEN_NOM 180.0f
-float homeTargetFor(uint8_t i) {
-  if (strcmp(cfg.labels[i], "LOCK1") == 0) return LOCK1_OPEN_NOM;
-  if (strcmp(cfg.labels[i], "LOCK2") == 0) return LOCK2_OPEN_NOM;
-  return 180.0f;
-}
+// Home for each joint in nominal degrees: 180 = the joint's MANUAL home (its saved hand-set pose; the offset is built in).
+// Nischay 11 Nov 2026: the manual home is the default for every joint on every module, the locks too.
+// Locks have two states only (Lock section below): UNLOCKED = manual home (180), LOCKED = manual home - 45, moved slowly.
+// (Until 11 Nov LOCK1's home was a fixed 225 = open: mod2's hand-set lock homes are the open position itself.)
+float homeTargetFor(uint8_t) { return 180.0f; }
+
+// ── Locks (Nischay 11 Nov 2026) ─────────────────────────────────────────────────────────────────────────────────────
+// Two states only: unlock = the lock's manual home, lock = manual home - LOCK_TURN_DEG. The same direction on both locks and
+// every module (mod1 tested 5 Nov: both lock towards -45 from open; data/real_robot.json lock_sign/lock_home). Slow.
+#define LOCK_TURN_DEG 45.0f
+#define LOCK_SPEED    3          // speed scale 1..10: slow, the fins must slide into the other module's slots
+float lockTargetFor(bool locked) { return locked ? 180.0f - LOCK_TURN_DEG : 180.0f; }
 
 void homeAll(bool homeManual = false, bool raw180 = false) {
   lastMotionMs = millis();
@@ -1078,9 +1080,9 @@ void homeAll(bool homeManual = false, bool raw180 = false) {
     // Straight is nominal 180 for every joint (the offset turns that into the hand-set home), so
     // "home" and "manual home" are now the same place. `homeManual` is kept so old callers work;
     // raw180 asks for the MECHANICAL 180 instead (horn assembly: seat the horn at the true middle).
-    // "Home all -> 180" (homeManual false) = EVERY joint at 180, the locks too (LOCK1 180 = locked). "Go to manual
-    // home" = the home pose, locks open (homeTargetFor). Until 11 Nov both opened LOCK1 to 225: the 180 button lied.
-    float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : homeManual ? homeTargetFor(i) : 180.0f, lo, hi);
+    // Every joint to its MANUAL home (nominal 180), the locks too (= unlocked). raw180: mechanical 180, for seating horns.
+    float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : homeTargetFor(i), lo, hi);   // homeTargetFor: manual home
+    (void)homeManual;
     if (!guardAllows(i, nomToRaw(servos[i].id, want))) continue;
     servos[i].targetDeg = want;
     servos[i].targetRaw = nomToRaw(servos[i].id, servos[i].targetDeg);
@@ -2406,6 +2408,27 @@ void handleServoHome() {
   okJson(r);
 }
 void handleTune() { bc("tune all"); tuneAllServos(); okTrue(); }
+
+// GET /api/lock?do=lock|unlock[&id=N]   both locks (or just servo N), slowly: unlock = manual home, lock = home - 45
+void handleLock() {
+  const String what = rq.arg("do");
+  if (what != "lock" && what != "unlock") { errJson(400, "need do=lock or do=unlock"); return; }
+  const bool locked = what == "lock";
+  const int only = rq.hasArg("id") ? rq.arg("id").toInt() : -1;
+  String r = F("{\"ok\":true,\"do\":\""); r += what; r += F("\",\"locks\":[");
+  uint8_t n = 0;
+  for (uint8_t i = 0; i < nServos; i++) {
+    if (!isLockSlot(i) || (only >= 0 && servos[i].id != only)) continue;
+    cmdPos(servos[i], lockTargetFor(locked), LOCK_SPEED, POS_ACC_DEFAULT);
+    if (n++) r += ',';
+    r += F("{\"id\":"); r += servos[i].id; r += F(",\"label\":\""); r += cfg.labels[i];
+    r += F("\",\"target\":"); r += String(servos[i].targetDeg, 1); r += '}';
+  }
+  if (!n) { errJson(404, only >= 0 ? "that servo is not a lock" : "no lock servos (labels LOCK1/LOCK2) on this module"); return; }
+  motionLocked = false;
+  lg("%s: %u lock(s) -> %s", locked ? "LOCK" : "UNLOCK", n, locked ? "manual home - 45" : "manual home");
+  r += "]}"; okJson(r);
+}
 // GET /api/guard            settings and every joint's guard state
 // GET /api/guard/clear?id=N  (or id=all) back to normal where it is now
 void handleGuard() {
@@ -3525,6 +3548,7 @@ void setup() {
   route("/api/command",         handleCommand);
   route("/api/batch",           handleBatch);
   route("/api/home",            handleHome);
+  route("/api/lock",            handleLock);
   route("/api/home/manual",     handleHomeManual);
   route("/api/anim/load",       handleAnimLoad);
   route("/api/anim/play",       handleAnimPlay);

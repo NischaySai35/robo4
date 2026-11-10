@@ -192,7 +192,7 @@ static bool isMove(const uint8_t* frame, int len) {
   r4now::Head h; const uint8_t* p; int n;
   if (!r4now::parse(frame, len, h, p, n) || h.type != r4now::REQ || h.idx != 0) return false;
   auto starts = [&](const char* s) { int k = strlen(s); return n >= k && memcmp(p, s, k) == 0; };
-  if (starts("/api/batch") || starts("/api/anim/play") || starts("/api/home")) return true;
+  if (starts("/api/batch") || starts("/api/anim/play") || starts("/api/home") || starts("/api/lock")) return true;
   if (starts("/api/command")) { for (int i = 0; i + 7 <= n; i++) if (memcmp(p + i, "cmd=pos", 7) == 0) return true; }
   return false;
 }

@@ -117,8 +117,10 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <button class="p" onclick="sendAll()">Send all sliders (sync)</button>
       <span class="tsw" id="tsw"><span class="tdot"></span>Torque: <b id="tword">?</b>
         <button id="b-ton" onclick="api('/api/torque?on=1')" title="hold where it is, nothing moves">ON</button><button id="b-toff" onclick="api('/api/torque?on=0')">OFF (limp)</button></span>
-      <button onclick="api('/api/home')">Home all &rarr; 180&deg;</button>
       <button class="p" onclick="api('/api/home/manual')">Go to manual home</button>
+      <button onclick="api('/api/lock?do=lock')" title="both locks turn slowly to manual home - 45">Lock</button>
+      <button onclick="api('/api/lock?do=unlock')" title="both locks turn slowly back to their manual home">Unlock</button>
+      <button onclick="api('/api/home?raw=1')" title="every joint to MECHANICAL 180, ignoring the manual homes - only for seating servo horns">All to mech 180&deg; (assembly)</button>
       <button onclick="setHomeAll()" title="save every joint's current angle as its home">Set current angles as home</button>
       <button onclick="clearHomeAll()" title="forget all saved homes - every joint goes back to the built-in straight pose">Clear homes</button>
       <button onclick="api('/api/servo/tune',1)" title="Re-write deadband / Kp / Kd / Ki / torque limit">Re-tune hold</button>
@@ -300,7 +302,7 @@ function rows(d){
       '<button class="nb" title="+2 deg" onclick="nudge('+s.id+',2)">&#9654;</button> '+
       '<input type="number" class="tv" id="lv'+s.id+'" min="'+s.min+'" max="'+s.max+'" step="0.1" title="type a target angle, Enter to send" '+
       'oninput="slHeld['+s.id+']=Date.now()" onkeydown="if(event.key===\'Enter\')typed('+s.id+')" onchange="typed('+s.id+')"> '+
-      '<button title="send this servo to 180" style="padding:2px 6px" onclick="api(\'/api/servo/home?id='+s.id+'&to180=1\')">180</button> '+
+      '<button title="MECHANICAL 180, ignoring the manual home - only for seating the horn" style="padding:2px 6px" onclick="api(\'/api/servo/home?id='+s.id+'&raw=1\')">m180</button> '+
       '<button class="hb" title="send this servo to its saved home" style="padding:2px 6px" onclick="api(\'/api/servo/home?id='+s.id+'\')">home</button> '+
       '<button title="save this joint\'s CURRENT angle as its home" style="padding:2px 6px" onclick="setHomeOne('+s.id+')">set</button></td>'+
       '<td class="sp">-</td><td class="ld">-</td><td class="ma">-</td><td class="vv">-</td><td class="tp">-</td><td class="md">-</td>'+

@@ -60,7 +60,7 @@ export function RunTab() {
   return (
     <>
       <Section title="Dry run (nothing is sent to the robot)" info={
-        <p className="msrr-note">Each step is compiled to the module ESPs' /api/batch calls with nominal angles (180 = straight; each ESP adds its own manual-home offsets). Lock rotors: {LOCK_OPEN_DEG}° = home (open); locking turns ±{LOCK_TURN_DEG}° (End A one way, End B the other; end↔end: both ends together).</p>
+        <p className="msrr-note">Each step is compiled to the module ESPs' /api/batch calls with nominal angles (180 = straight; each ESP adds its own manual-home offsets). Locks: unlocked = the lock's own manual home ({LOCK_OPEN_DEG}°), locked = manual home − {LOCK_TURN_DEG}°, turned slowly (end↔end: both ends together).</p>
       }>
         <p className="msrr-note dim">Plan: {plan.steps.length} steps to {plan.target.name}, {(plan.totalP * 100).toFixed(1)}% expected.</p>
         <Row label="Fail step(s) #"><Input data-testid="run-induce" value={induce} onChange={(e) => setInduce(e.target.value)} placeholder="e.g. 2, 5" /></Row>

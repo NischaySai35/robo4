@@ -16,11 +16,14 @@ import { checkStatic } from './statics';
 
 /** servo ids on each module's bus: LOCK1, T1, B1, B2, T2, B3, B4, T3, LOCK2 = 1..9 */
 export const SERVO_ID: Record<string, number> = { LOCK_A: 1, T1: 2, B1: 3, B2: 4, T2: 5, B3: 6, B4: 7, T3: 8, LOCK_B: 9 };
-/** lock rotor (nominal deg, 180 = home = open). Locking turns it 45°: End A one way, End B the other
- *  (handoff §4.2: "turns 45° either way"; the sim's lock_sign: A −1, B +1). */
+/** lock rotor, BOARD nominal degrees (180 = the lock's manual home = unlocked). Nischay 11 Nov 2026: a lock has two states,
+ *  unlocked = manual home, locked = manual home - 45, moved slowly; the same on both locks of every module (the firmware's
+ *  /api/lock does exactly this). The sim mirrors End A/B (lock_sign A -1, B +1) but the real L2 servo is mounted the other
+ *  way round (data/real_robot.json lock_sign L2 -1), so on the board BOTH ends lock at 180 - 45. */
 export const LOCK_OPEN_DEG = 180;
 export const LOCK_TURN_DEG = 45;
-export const lockClosedDeg = (port: 'A' | 'B') => LOCK_OPEN_DEG + (port === 'A' ? -LOCK_TURN_DEG : LOCK_TURN_DEG);
+export const LOCK_SPEED = 3;   // slow, as the firmware's lock (speed scale 1..10)
+export const lockClosedDeg = (_port: 'A' | 'B') => LOCK_OPEN_DEG - LOCK_TURN_DEG;
 
 export interface ControllerCall { module: string; url: string; why: string }
 export interface ExecEvent {
@@ -94,7 +97,7 @@ export function compileStep(before: Config, step: PlanStep, urls: Record<string,
     for (const owner of ends) {
       const port = owner.port as 'A' | 'B';
       const id = port === 'A' ? SERVO_ID.LOCK_A : SERVO_ID.LOCK_B;
-      out.push({ module: owner.module, url: batchUrl(url(owner.module), { [id]: close ? lockClosedDeg(port) : LOCK_OPEN_DEG }, speed, acc), why: `${close ? 'close' : 'open'} lock ${owner.module}.${owner.port}` });
+      out.push({ module: owner.module, url: batchUrl(url(owner.module), { [id]: close ? lockClosedDeg(port) : LOCK_OPEN_DEG }, Math.min(speed, LOCK_SPEED), acc), why: `${close ? 'close' : 'open'} lock ${owner.module}.${owner.port}` });
     }
   }
   return out;

@@ -320,6 +320,13 @@ void loop() {
     r4now::Head h; const uint8_t* p; int n;
     if (r4now::parse(a.data, a.len, h, p, n)) {
       if (h.type == r4now::HELLO) remember(a, p, n);
+      // A module's group STOP (groupsync.h GroupMsg: kind at byte 4, GK_STOP = 3) is a broadcast: never acked, said 3
+      // times, so a weak link can lose all three. The master heard it: hand a copy to every other module it knows,
+      // straight to each (acked and retried by the radio). Repeats are harmless: a stopped module ignores STOP.
+      else if (h.type == r4now::GRP && n >= 5 && p[4] == 3) {
+        for (uint8_t i = 0; i < nKnown; i++)
+          if (memcmp(known[i].mac, a.mac, 6) && millis() - known[i].seen < 10000) airSend(known[i].mac, a.data, a.len);
+      }
       else if (h.type == r4now::RESP) { uint32_t d0 = courier->delivered; courier->answer(a.mac, h, millis()); if (courier->delivered != d0) tS2A = millis() - tSentAt; }
     }
     if (laptopHere) {

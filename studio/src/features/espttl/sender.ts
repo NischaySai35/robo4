@@ -77,7 +77,9 @@ export async function sendToBoard(frames: Frame[] = useTimelineStore.getState().
   if (!frames.length) return { ok: false, error: 'timeline is empty' };
   const mods = modulesOf(frames);
   const group = mods.length > 1 ? (Math.floor(Math.random() * 0xfffffffe) + 1) >>> 0 : 0;   // 0 = one module, no group
-  const q = `?sine=${st.sine ? 1 : 0}&loop=${st.loop ? 1 : 0}${group ? `&group=${group}` : ''}`;
+  // mods: who is in the group, so a member that is switched off (never starts) makes the others stop instead of
+  // playing without it (firmware groupsync.h missingNow)
+  const q = `?sine=${st.sine ? 1 : 0}&loop=${st.loop ? 1 : 0}${group ? `&group=${group}&mods=${mods.join('.')}` : ''}`;
   loaded = null;
   const err = await eachModule(mods, async (mod, base) => {
     const { header, payload } = buildPayload(mod, frames);

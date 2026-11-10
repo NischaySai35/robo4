@@ -19,7 +19,13 @@
 //   - Nobody waits on the slowest module, so it always moves; everyone else only waits for it.
 //   - The clock never stops (sync.h minRate > 0); waiting only makes it slower.
 //   - A peer heard nothing from for staleMs, or that is not playing, is not waited for.
-//   - The wait at a frame end is at most barrierMaxMs; then the module goes on and says so.
+//
+// Safety (Nischay, 10 Nov 2026: "what if one module suddenly goes off?"): docked modules must never push on without a
+// partner, so a missing partner STOPS the group (everyone holds where they are) instead of being left behind:
+//   - a partner that was playing and is silent for goneMs (switched off, crashed, its STOP lost) -> missingNow();
+//   - a partner the upload named (expect) that has not started joinMs after our start -> missingNow();
+//   - the wait at a frame end longer than barrierMaxMs -> mayAdvance() says lastTimedOut; the firmware stops then.
+//   A module that finished the whole animation says so (PLACE, playing = 0), so it is not taken for a lost one.
 #pragma once
 #include <stdint.h>
 #include <string.h>
@@ -47,7 +53,13 @@ struct Group {
   uint32_t id = 0;              // group number of the loaded animation (0 = playing alone)
   uint8_t  me = 0;              // this module's number
   uint32_t staleMs = 400;       // a peer silent this long is not waited for
-  uint32_t barrierMaxMs = 3000; // the longest wait at a frame end
+  uint32_t barrierMaxMs = 3000; // the longest wait at a frame end (then the firmware stops the group)
+  uint32_t goneMs = 1000;       // a playing partner silent this long = gone (20 place messages missed)
+  uint32_t joinMs = 2500;       // a named partner not playing this long after our start = never started
+  uint32_t expect = 0;          // bit k = module k is in this group (from the upload; 0 = not told: older laptop code)
+  uint32_t playT0 = 0;          // when we started playing
+  bool     inPlay = false;      // we are playing (startPlay .. stopPlay)
+  uint8_t  lastWaitingOn = 0;   // who the last frame-end wait was for (for the log)
   GroupPeer peer[GROUP_MAX];
   uint8_t  np = 0;
   uint32_t waitT0 = 0;          // when the current frame-end wait began (0 = not waiting)
@@ -55,7 +67,39 @@ struct Group {
   bool     lastTimedOut = false;
   uint8_t  waitingOn = 0;       // module number we wait for now (0 = nobody)
 
-  void reset(uint32_t gid) { id = gid; np = 0; waitT0 = 0; lastWaitMs = 0; lastTimedOut = false; waitingOn = 0; }
+  void reset(uint32_t gid, uint32_t members = 0) { id = gid; expect = members; np = 0; waitT0 = 0; lastWaitMs = 0; lastTimedOut = false; waitingOn = 0; playT0 = 0; inPlay = false; }
+  // We start playing: what the partners said before belongs to an earlier run.
+  void startPlay(uint32_t now) { np = 0; waitT0 = 0; waitingOn = 0; lastTimedOut = false; playT0 = now; inPlay = true; }
+  void stopPlay() { inPlay = false; waitT0 = 0; waitingOn = 0; }
+
+  // A partner that should be playing with us and is not (0 = everyone fine). absent: it never started.
+  uint8_t missingNow(uint32_t now, bool* absent = nullptr) const {
+    if (!id || !inPlay) return 0;
+    for (uint8_t i = 0; i < np; i++)
+      if (peer[i].playing && now - peer[i].seenMs >= goneMs) { if (absent) *absent = false; return peer[i].mod; }
+    if (expect && now - playT0 >= joinMs)
+      for (uint8_t k = 1; k < 32; k++) {
+        if (!(expect >> k & 1) || k == me) continue;
+        bool heardIt = false;
+        for (uint8_t i = 0; i < np; i++) if (peer[i].mod == k) heardIt = true;
+        if (!heardIt) { if (absent) *absent = true; return k; }
+      }
+    return 0;
+  }
+  // A fresh partner already playing (we started late: missed GO). 0 = none.
+  uint8_t aheadOfUs(uint32_t now) const {
+    for (uint8_t i = 0; i < np; i++) if (fresh(peer[i], now)) return peer[i].mod;
+    return 0;
+  }
+  // "1.3" -> bits 1 and 3 (the upload's mods=)
+  static uint32_t members(const char* list) {
+    uint32_t b = 0; int v = 0; bool any = false;
+    for (const char* c = list; ; c++) {
+      if (*c >= '0' && *c <= '9') { v = v * 10 + (*c - '0'); any = true; }
+      else { if (any && v > 0 && v < 32) b |= 1u << v; v = 0; any = false; if (!*c) break; }
+    }
+    return b;
+  }
   bool on() const { return id != 0; }
 
   static GroupMsg msg(uint32_t gid, uint8_t kind, uint8_t mod, uint16_t step, float s = 0, bool done = false, bool playing = false) {
@@ -108,7 +152,7 @@ struct Group {
     waitingOn = notDone(now, step);
     const bool timedOut = now - waitT0 >= barrierMaxMs;
     if (waitingOn && !timedOut) return false;
-    lastWaitMs = now - waitT0; lastTimedOut = waitingOn != 0; waitT0 = 0; waitingOn = 0;
+    lastWaitMs = now - waitT0; lastTimedOut = waitingOn != 0; lastWaitingOn = waitingOn; waitT0 = 0; waitingOn = 0;
     return true;
   }
   bool waiting() const { return waitT0 != 0; }

@@ -144,6 +144,14 @@ Read `docs/ARCHITECTURE.md` before changing anything in the Studio.
 - **Kept in step:** `test_message_types_and_sizes_match_the_firmware` reads `r4now.h`.
 - [ ] Upload the master (COM7, stop the bridge first) and mod1; then try `gos robot stop` while a slow move runs, and check an animation's "highest current" note shows in `gos robot status`.
 
+### Group play safety, status lights, IMU (10 Nov) — built and tested on the laptop, NOT yet on the hardware
+- **A missing partner stops the group** (docked modules must never push on alone): a playing partner silent 1 s (off, out of range, its STOP lost), a partner the upload named (`mods=1.2`, Studio `sender.ts` + `ModuleGroup`) not started 2.5 s after us, or a 3 s wait at a frame end -> `groupHalt()`: note + STOP to the others + every joint holds where it is; red light 10 s. `test_group.cpp` 4, 7-11.
+- E-STOP, HOLD (radio, Wi-Fi `/api/hold`, master silent) and the battery guard **disarm** the group: a later GO from another module no longer starts that module (re-upload needed).
+- The master **repeats a group STOP** straight to every other module (acked), since the broadcast itself is never acked.
+- Notes: another board with the same number ("give every module its own number"); a late start ("missed GO"). The bridge adds events for module gone / back / restarted (hello `up=` went back).
+- **Lights:** red GPIO 6, green GPIO 7 (`ledTask`): power-on both blink 2 s; green steady; green blinks while moving (animation, GO, play, home, joint moves, Sync streaming); red blinks on a warning (guard, battery low, link cut, group stop, stalled); warning while moving = green off; E-STOP = red steady 3 s; firmware update = alternate.
+- **IMU:** I2C SDA 21 / **SCL 20** (Nischay asked 21/22; the C3 has no GPIO 22) — `IMU_SDA_PIN` / `IMU_SCL_PIN`. Boot log + `/api/health` `imu`: "none" or the chip (WHO_AM_I at 0x68/0x69). Detection only.
+
 ---
 
 ## 4. Key files

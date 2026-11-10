@@ -49,6 +49,7 @@
 #include <esp_now.h>
 #include "r4now.h"          // ESP-NOW frame format, shared with the USB dongle (firmware/libraries/R4Now)
 #include <Preferences.h>
+#include <Wire.h>           // the optional IMU (I2C, Status lights + IMU section)
 #include <SCServo.h>
 #include <esp_system.h>
 #include <esp_sleep.h>         // Battery guard: the final sleep
@@ -60,6 +61,8 @@
 #include <stdarg.h>
 #include "types.h"
 #include "webui.h"
+String imuName = "none";    // the IMU found at boot (imuDetect, Status lights + IMU section). Below the includes on
+                            // purpose: Arduino puts its function prototypes before the first line of code.
 
 #ifndef UART_MODE_RS485_HALF_DUPLEX
 #define UART_MODE_RS485_HALF_DUPLEX 4
@@ -587,8 +590,11 @@ void cmdTorqueToggle(ServoState& sv) {
   if (sv.torqueOn) { st.EnableTorque(sv.id, 0); delay(2); sv.torqueOn = false; sv.moving = false; }
   else             { st.EnableTorque(sv.id, 1); delay(2); sv.torqueOn = true; }
 }
+volatile uint32_t ledEstopUntil = 0;   // red light steady until then (Status lights)
+void grpDisarm();
 void estopAll() {
   animStop();                          // an E-STOP that leaves a sequence running is not a stop
+  grpDisarm(); ledEstopUntil = millis() + 3000;
   for (uint8_t i = 0; i < nServos; i++) cmdStop(servos[i]);
 }
 
@@ -749,13 +755,20 @@ uint8_t  grpSayLeft = 0, grpSayKind = 0;
 bool     grpQuiet = false;         // animStop() because a peer said STOP: do not say STOP back
 uint8_t myModule() { const char* h = cfg.host; while (*h && (*h < '0' || *h > '9')) h++; return (uint8_t)atoi(h); }   // mod3 -> 3
 bool grpArmed() { return grp.on() && animCount && (int32_t)(grpArmedUntil - millis()) > 0; }
+// E-STOP, HOLD, battery: this module ignores GO until the animation is uploaded again (Nischay 10 Nov: an E-STOPped
+// module must not start because another module of its group was played)
+void grpDisarm() { grpArmedUntil = 0; }
+uint32_t grpFaultUntil = 0;        // a group stop happened (partner missing / stopped): the red light blinks till then
+bool     grpDupSaid = false;       // "another module has my number" said once
 
 void grpSay(uint8_t kind);
+void groupHalt(const char* fmt, ...);
 void animStop() {
   if (animPlaying) note("anim stopped at frame %u", animIdx + 1);
   if (animPlaying && grp.on() && !grpQuiet) grpSay(GK_STOP);   // the others stop too
   if (animPlaying) prefs.putUChar("animRun", 0);
   animPlaying = false; animInterrupted = false;
+  grp.stopPlay();
 }
 
 /*
@@ -946,13 +959,18 @@ void animTick() {
   if (millis() - animArriveT < anim[animIdx].holdMs) return;   // the pause between poses
   if (grp.on()) {                                                // everyone finished this frame? (never waits forever)
     if (!grp.mayAdvance(millis(), grpStep)) return;
-    if (grp.lastTimedOut) lg("group: went on after %lu ms without a module that had not finished frame %u", grp.lastWaitMs, animIdx + 1);
+    if (grp.lastTimedOut) {
+      groupHalt("group: module %u had not finished frame %u after %lu s - every module stops and holds",
+                grp.lastWaitingOn, animIdx + 1, (unsigned long)(grp.lastWaitMs / 1000));
+      return;
+    }
     else if (grp.lastWaitMs > 300) lg("group: waited %lu ms for the others at the end of frame %u", grp.lastWaitMs, animIdx + 1);
   }
 
   if (animIdx + 1 < animCount) { grpStep++; animBeginFrame(animIdx + 1); return; }
   if (animLoop)                { grpStep++; animBeginFrame(0); return; }
   animPlaying = false; prefs.putUChar("animRun", 0);
+  if (grp.on()) { grp.stopPlay(); grpSay(GK_PLACE); }  // "finished" (playing = 0), 3 times: not a lost module
   int a = -1, b = -1;                                   // the two servos that drew the most current
   for (uint8_t i = 0; i < nServos; i++) {
     if (a < 0 || animPeakmA[i] > animPeakmA[a]) { b = a; a = i; }
@@ -1988,6 +2006,7 @@ void handleHealth() {
   b += F(",\"live\":"); b += LIVE_PORT;      // live mode: GOS asks here for pushed angles
   b += F(",\"liveOn\":"); b += (liveAwake ? F("true") : F("false"));
   b += F(",\"radioAwake\":"); b += (radioAwake ? F("true") : F("false"));
+  b += F(",\"imu\":\""); b += imuName; b += '"';
   b += F(",\"chipC\":"); b += String(temperatureRead(), 1); b += '}';
   okJson(b);
 }
@@ -2228,7 +2247,9 @@ void handleAnimLoad() {
   animSine = !(rq.hasArg("sine") && rq.arg("sine") == "0");
   if (rq.hasArg("sync")) { animSync = rq.arg("sync") == "1"; prefs.putBool("animSync", animSync); }
   animLoop = rq.hasArg("loop") && rq.arg("loop") != "0";
-  grp.reset(rq.hasArg("group") ? (uint32_t)strtoul(rq.arg("group").c_str(), nullptr, 10) : 0);
+  // mods=1.2.3: who is in the group, so a module that never starts is noticed (older laptop code: not given)
+  grp.reset(rq.hasArg("group") ? (uint32_t)strtoul(rq.arg("group").c_str(), nullptr, 10) : 0,
+            rq.hasArg("mods") ? Group::members(rq.arg("mods").c_str()) : 0);
   grp.me = myModule(); grpPeerS = 2;
   grpArmedUntil = millis() + GROUP_ARMED_MS;
   lg("anim loaded: %u frames, sine %s, loop %s%s", animCount,
@@ -2248,7 +2269,8 @@ void animStart(uint8_t from) {
   memset(animPeakmA, 0, sizeof animPeakmA); memset(animPeakLoad, 0, sizeof animPeakLoad);
   animPlaying = true; animInterrupted = false; motionLocked = false;
   prefs.putUChar("animRun", 1);         // remembered across a power cut, so the next boot can say it was interrupted
-  grpStep = from; grpPeerS = 2; grp.waitT0 = 0; grpPlaceMs = 0;
+  grpStep = from; grpPeerS = 2; grpPlaceMs = 0;
+  if (grp.on()) grp.startPlay(millis());   // what partners said before belongs to an earlier run
   animBeginFrame(from);
 }
 
@@ -2259,7 +2281,10 @@ void handleAnimPlay() {
   if (rq.hasArg("loop")) animLoop = rq.arg("loop") != "0";
   uint8_t from = rq.hasArg("from") ? (uint8_t)rq.arg("from").toInt() : 0;
   if (from >= animCount) from = 0;
-  if (grp.on()) { grpStep = from; grpSay(GK_GO); groupTick(); }   // the first GO goes out now, with our own start
+  if (grp.on()) {
+    if (uint8_t w = grp.aheadOfUs(millis())) note("group: started late - module %u was already playing (this one missed GO)", w);
+    grpStep = from; grpSay(GK_GO); groupTick();                    // the first GO goes out now, with our own start
+  }
   animStart(from);
   okTrue();
 }
@@ -2270,7 +2295,7 @@ void handleAnimStop() { animStop(); okTrue(); }
 // HOLD. For the laptop's stop-all when the master is not plugged in (gos robot stop goes over Wi-Fi then).
 uint8_t nowHold();
 void handleHold() {
-  animStop();
+  animStop(); grpDisarm();
   const uint8_t held = nowHold();
   note("HOLD from the laptop (Wi-Fi) - %u joint(s) stopped where they were, holding", held);
   String r = F("{\"ok\":true,\"held\":"); r += held; r += '}';
@@ -3095,6 +3120,14 @@ void groupTick() {
   if (!grp.on()) return;
   const uint32_t now = millis();
   grpPeerS = grp.peerS(now, grpStep);
+  if (animPlaying) {                    // a partner switched off / out of range / never started: stop, never push on alone
+    bool absent = false;
+    if (uint8_t w = grp.missingNow(now, &absent)) {
+      groupHalt(absent ? "group: module %u never started (off, or without this animation) - every module stops and holds"
+                       : "group: module %u went silent while playing (switched off? out of range?) - every module stops and holds", w);
+      return;
+    }
+  }
   if (grpSayLeft && (grpSayMs == 0 || now - grpSayMs >= 15)) {   // GO / STOP, a few times (a lost one costs 15 ms)
     groupSend(Group::msg(grp.id, grpSayKind, grp.me, grpStep)); grpSayMs = now ? now : 1; grpSayLeft--;
   }
@@ -3104,16 +3137,33 @@ void groupTick() {
     groupSend(Group::msg(grp.id, GK_PLACE, grp.me, grpStep, syncMv.s, done, true));
   }
 }
-void groupHeard(const GroupMsg& m) {
-  if (!grp.on() || m.group != grp.id || m.mod == grp.me) return;
+// The group stops: every joint where it is, held (docked modules must not push on without a partner). Says STOP to the
+// others (unless grpQuiet: we are stopping because of their STOP). Red light blinks 10 s.
+void groupHalt(const char* fmt, ...) {
+  char b[180];
+  va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof(b), fmt, ap); va_end(ap);
+  note("%s", b);
+  grpFaultUntil = millis() + 10000;
+  animStop();
+  { BusLock L; nowHold(); }
+}
+void groupHeard(const GroupMsg& m, const uint8_t* mac) {
+  if (m.mod && m.mod == myModule()) {                // another board with our number: group play cannot tell us apart
+    if (!grpDupSaid) {
+      grpDupSaid = true;
+      note("group: another module (%02x:%02x:%02x:%02x:%02x:%02x) is also called %s - give every module its own number",
+           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5], cfg.host);
+    }
+    return;
+  }
+  if (!grp.on() || m.group != grp.id) return;
   if (m.kind == GK_GO) {
     if (animPlaying || !grpArmed() || otaBusy) return;
     lg("group: GO from module %u", m.mod);
     { BusLock L; animStart((uint8_t)(m.step < animCount ? m.step : 0)); }
   } else if (m.kind == GK_STOP) {
     if (!animPlaying) return;
-    lg("group: module %u stopped, stopping too", m.mod);
-    grpQuiet = true; animStop(); grpQuiet = false;
+    grpQuiet = true; groupHalt("group: module %u stopped - stopping too, holding", m.mod); grpQuiet = false;
   } else grp.heard(m, millis());
 }
 
@@ -3219,11 +3269,11 @@ void nowPoll() {
       } else if (!otaBusy) {
         animStop();
         uint8_t held; { BusLock L; held = nowHold(); }
-        nowHeld = true; nowHolds++;
+        nowHeld = true; nowHolds++; grpDisarm();
         note("ESP-NOW: HOLD from the master - %u joint(s) stopped where they were, holding", held);
       }
     } else if (h.type == r4now::GRP) {                // another module of a group (broadcast)
-      if (n == (int)sizeof(GroupMsg) && h.cnt == 1) { GroupMsg g; memcpy(&g, p, sizeof g); groupHeard(g); }
+      if (n == (int)sizeof(GroupMsg) && h.cnt == 1) { GroupMsg g; memcpy(&g, p, sizeof g); groupHeard(g, m.mac); }
     } else if (h.type == r4now::REQ) {
       nowSetPeer(m.mac);
       nowHbMs = millis(); nowHbSeen = true;          // a request is the laptop too
@@ -3246,7 +3296,7 @@ void nowPoll() {
     nowHello(nowLinked() && nowPeerSet ? nowPeer : all);
   }
   if (nowHbSeen && !nowHeld && !otaBusy && now - nowHbMs > NOW_HOLD_MS && nowMoveMs && now - nowMoveMs < NOW_DRIVE_MS + NOW_HOLD_MS) {
-    nowHeld = true; nowHeldSilent = true; nowHolds++;
+    nowHeld = true; nowHeldSilent = true; nowHolds++; grpDisarm();
     uint8_t held; { BusLock L; held = nowHold(); }
     note("ESP-NOW: master silent %lu ms while driving - %u joint(s) stopped where they were, holding", (unsigned long)(now - nowHbMs), held);
   }
@@ -3270,6 +3320,7 @@ void battShutdown(int v10, int mA) {
   lg("BATTERY EMPTY: %d.%d V (%d mA) for %u s - stopping every servo and switching off to save the battery. Charge it, then switch the module off and on.",
      v10 / 10, v10 % 10, mA, (unsigned)(millis() - battLowSince) / 1000);
   prefs.putUShort("battCut", (uint16_t)v10);
+  grpDisarm();
   if (nowUp) {                                       // tell the master (and through it the laptop), a few times
     static const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
     String s = F("name="); s += cfg.host; s += F(" dying=battery v="); s += v10 / 10; s += '.'; s += v10 % 10;
@@ -3319,8 +3370,87 @@ String nowJson() {
   return j;
 }
 
+// ── Status lights + IMU (Nischay, 10 Nov 2026: new board layout) ─────────────────────────────────────────────────────
+// Red LED on GPIO 6, green on GPIO 7 (each pin -> resistor -> LED -> GND). Own small task, so they blink even while
+// setup() or a request is busy.
+//   power-on        both blink 2 s, then green steady
+//   moving          green blinks: an animation, a GO, Play, home, joint moves, the Sync button streaming (until ~2 s
+//                   after the last move command)
+//   warning         red blinks: a joint over load / too hot (overload guard), battery low, link cut (master silent
+//                   while driving, or neither the master nor Wi-Fi for 20 s), a group stop (partner missing / stopped)
+//   warning while moving: green off, red blinks
+//   E-STOP          red steady 3 s, green off
+//   firmware update red and green take turns (do not switch off)
+// REUSE-CHECKED: led|LED|digitalWrite|blink -> no lights existed on the module (the master's LED is its own sketch).
+#define LED_RED_PIN    6
+#define LED_GREEN_PIN  7
+#define LED_ON         HIGH
+#define LED_BLINK_MS   250
+// The optional IMU. Nischay asked for SDA 21 / SCL 22, but the ESP32-C3 has no GPIO 22 (its pins end at 21): SCL is on
+// 20, the free pin next to it (USB serial does not use it). Change these two if the PCB is wired differently.
+#define IMU_SDA_PIN    21
+#define IMU_SCL_PIN    20
+uint32_t ledBootUntil = 0;
+
+bool ledLinkCut() {
+  if (nowHeldSilent) return true;                     // the master went silent while we were driving
+  if (millis() < 20000) return false;                 // starting up: Wi-Fi and the master take a few seconds
+  return !nowLinked() && WiFi.status() != WL_CONNECTED;
+}
+bool ledWarning() {
+  return guardBusy() || battLowSince || ledLinkCut() || (int32_t)(grpFaultUntil - millis()) > 0 ||
+         (animPlaying && syncMv.state == SY_STALLED);
+}
+bool ledMoving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS; }
+
+void ledTask(void*) {
+  for (;;) {
+    const uint32_t now = millis();
+    const bool on = (now / LED_BLINK_MS) & 1;
+    bool r, g;
+    if ((int32_t)(ledBootUntil - now) > 0)          { r = on; g = on; }
+    else if (otaBusy)                                { r = on; g = !on; }
+    else if ((int32_t)(ledEstopUntil - now) > 0)     { r = true; g = false; }
+    else {
+      const bool warn = ledWarning();
+      r = warn && on;
+      g = ledMoving() ? (!warn && on) : true;
+    }
+    digitalWrite(LED_RED_PIN, r ? LED_ON : !LED_ON);
+    digitalWrite(LED_GREEN_PIN, g ? LED_ON : !LED_ON);
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+void ledInit() {
+  pinMode(LED_RED_PIN, OUTPUT); pinMode(LED_GREEN_PIN, OUTPUT);
+  ledBootUntil = millis() + 2000;
+  xTaskCreate(ledTask, "leds", 2048, nullptr, 1, nullptr);
+}
+
+// Which IMU answers on I2C (address 0x68 / 0x69, its WHO_AM_I register): its name, or "none". Detection only for now.
+void imuDetect() {
+  Wire.begin(IMU_SDA_PIN, IMU_SCL_PIN, 400000);
+  Wire.setTimeOut(20);
+  const uint8_t addrs[2] = {0x68, 0x69};
+  for (uint8_t a : addrs) {
+    Wire.beginTransmission(a); Wire.write(0x75);
+    if (Wire.endTransmission(false) != 0) continue;
+    if (Wire.requestFrom(a, (uint8_t)1) != 1) continue;
+    const uint8_t who = Wire.read();
+    const char* n = who == 0x68 ? "MPU-6050" : who == 0x70 ? "MPU-6500" : who == 0x71 ? "MPU-9250" : who == 0x73 ? "MPU-9255"
+                  : who == 0x12 ? "ICM-20602" : who == 0x98 ? "ICM-20689" : who == 0x47 ? "ICM-42688" : "unknown IMU";
+    char b[48]; snprintf(b, sizeof b, "%s (0x%02x, id 0x%02x)", n, a, who);
+    imuName = b;
+    lg("IMU: %s on SDA %d / SCL %d", b, IMU_SDA_PIN, IMU_SCL_PIN);
+    return;
+  }
+  Wire.end();                                          // nothing there: leave the pins alone
+  lg("no IMU (nothing answers on SDA %d / SCL %d)", IMU_SDA_PIN, IMU_SCL_PIN);
+}
+
 void setup() {
   captureLastBoot();          // must be first: nothing may overwrite the breadcrumb
+  ledInit();                  // both lights blink 2 s, then green (Status lights)
   busMx = xSemaphoreCreateRecursiveMutex();
   sketchSizeBoot = ESP.getSketchSize(); otaSpaceBoot = ESP.getFreeSketchSpace();
   lgMx  = xSemaphoreCreateMutex();
@@ -3345,6 +3475,7 @@ void setup() {
   setCpuFrequencyMhz(80);              // heat; bumped to 160 automatically during OTA
 
   busBegin(cfg.baud);
+  imuDetect();                         // "no IMU" or which one (Status lights + IMU)
 
   wifiInit();                          // non-blocking: the server is up in milliseconds
   otaConfig();                         // begin() happens in wifiTick once we have an IP

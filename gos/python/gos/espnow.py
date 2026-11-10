@@ -167,6 +167,7 @@ class Module:
         self.battery = None             # volts (its hello's bat=, the highest servo reading); None = no reading
         self.held = self.playing = False  # holding after a HOLD / playing an animation (hello held= anim=)
         self.note_seq = None            # the last note's number (a repeat is not a new event)
+        self.up = None                  # its clock (ms since power-on, hello up=): going back = it restarted
         self.got = threading.Condition()
         self.pending = {}               # seq -> Assembly; finished answers land in self.done[seq], give-ups in failed_why
         self.done, self.failed_why = {}, {}
@@ -281,6 +282,13 @@ class EspNowLink:
             try: m.battery = float(kv['bat']) if 'bat' in kv else (float(kv['v']) if 'v' in kv else m.battery)
             except ValueError: pass
             m.held, m.playing = kv.get('held') == '1', kv.get('anim') == '1'
+            try: up = int(kv['up']) if 'up' in kv else None
+            except ValueError: up = None
+            if up is not None:
+                if m.up is not None and up + 2000 < m.up:
+                    self._note(m.name or mac.hex(':'), f'restarted (power cut or reset?) after {m.up / 1000:.0f} s on; '
+                               'it starts with every servo limp and has forgotten its animation')
+                m.up = up
             if m.ch: self.channel = m.ch
             if kv.get('dying'):                                  # its battery guard switched it off: gone
                 if m.seen: self._note(m.name or mac.hex(':'), f'switched itself off: battery empty ({kv.get("v", "?")} V)')
@@ -726,8 +734,8 @@ def run_bridge(port=None, http_port=8790, channel=None, parent_pid=0, say=print)
                     if not told: say(f'{e} Trying again every second; Wi-Fi works meanwhile.'); told = True
                     next_try = time.time() + 1
             now = {m.name for m in link.alive()} if link else set()
-            for n in sorted(now - seen): say(f'+ {n} heard over ESP-NOW on channel {link.channel}: {gw.address(n) or "?"} goes over the radio')
-            for n in sorted(seen - now): say(f'- {n} not heard over ESP-NOW for {EspNowLink.STALE:.0f} s: over Wi-Fi meanwhile')
+            for n in sorted(now - seen): gw.log.add(n, f'heard over ESP-NOW on channel {link.channel}: {gw.address(n) or "?"} goes over the radio')
+            for n in sorted(seen - now): gw.log.add(n, f'not heard over ESP-NOW for {EspNowLink.STALE:.0f} s (switched off? out of range?): over Wi-Fi meanwhile')
             seen = now
             for e in gw.log.after(shown):                # the modules' notes, the master's own, the laptop's stops
                 say(f'{time.strftime("%H:%M:%S", time.localtime(e["t"]))} {e["source"]}: {e["text"]}'); shown = e['n']

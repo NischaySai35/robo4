@@ -433,6 +433,7 @@ def test_module_group_loads_each_its_own_joints_and_starts_together():
         assert b2.loaded == '1500 7 0 3:175.0\n0 5 200 3:175.0\n'                          # keeps its last angles
         assert b3.loaded == '1500 7 0 \n0 5 200 \n'
         assert b1.group == b2.group == b3.group and b1.group > 0
+        assert b1.query['mods'] == b2.query['mods'] == '1.2.3'                         # who is in the group
         r = g.play()
         assert r.ok and b1.plays == 1 and b2.plays == 0 and b2.playing                    # 2 heard GO: no second start
         assert r.data['late'] == [3] and b3.plays == 1 and 'did not hear GO' in r.message  # deaf one started directly
@@ -481,3 +482,16 @@ def test_stop_all_without_a_bridge_says_so():
         r = espnow_hw.stop_all(bridge='http://127.0.0.1:9')
         assert r.ok and 'wifi' in r.message and ('GET', '/api/hold') in board.got
     finally: board.srv.shutdown()
+
+
+def test_a_restarted_module_is_said():
+    master = FakeMaster()
+    master.hello_extra = ' up=50000 bat=11.6'
+    link = _link(master)
+    try:
+        time.sleep(0.3)
+        master.hello_extra = ' up=900 bat=11.6'                                     # its clock went back: power cut
+        time.sleep(0.45)
+        said = [e['text'] for e in link.events() if e['source'] == 'mod1']
+        assert len(said) == 1 and said[0].startswith('restarted') and 'limp' in said[0]
+    finally: link.close()

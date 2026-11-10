@@ -357,7 +357,8 @@ class ModuleGroup:
         if not frames: raise GosError('No frames to load.')
         self.group = int.from_bytes(os.urandom(4), 'little') % 0xfffffffe + 1 if len(self.mods) > 1 else 0
         self.loop = loop
-        q = f'?sine={int(sine)}&loop={int(loop)}' + (f'&group={self.group}' if self.group else '')
+        # mods: who is in the group, so a member that never starts makes the others stop (firmware groupsync.h)
+        q = f'?sine={int(sine)}&loop={int(loop)}' + (f'&group={self.group}&mods={".".join(map(str, self.mods))}' if self.group else '')
         def up(m):
             head, body = self.payload(m, frames, **defaults)
             return self._ask(m, '/api/anim/load' + q, head + '\n' + body)

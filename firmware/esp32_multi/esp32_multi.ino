@@ -624,7 +624,10 @@ bool tuneWordIfDiff(uint8_t id, uint8_t addr, uint16_t want, const char* name) {
 
 /* Make a servo hold its position stiffly. Deadband/gains live in EPROM (needs unlock);
    the torque limit is a RAM register and is written every time, since it costs nothing. */
-void tuneServoHolding(ServoState& sv) {
+bool tuneServoHolding(ServoState& sv) {
+  // Not there (unplugged, wrong id, no servos fitted yet): skip it. Without this check each of the ~14 reads below waits
+  // for its timeout, and a board with no servos took ~3.5 min to boot (mod2, 11 Nov 2026).
+  if (st.Ping(sv.id) != sv.id) { delay(5); if (st.Ping(sv.id) != sv.id) { lg("  id%u: no answer - not tuned", sv.id); return false; } }
   st.unLockEprom(sv.id); delay(10);
   bool changed = false;
   changed |= tuneByteIfDiff(sv.id, REG_CW_DEAD,  deadbandUnits, "cw deadband");
@@ -659,13 +662,17 @@ void tuneServoHolding(ServoState& sv) {
   st.writeWord(sv.id, REG_TORQUE_LIMIT, gc.ceiling);   // the strength ceiling, now
   delay(6);
   if (!changed) lg("  id%u already tuned", sv.id);
+  return true;
 }
+
+uint8_t servosAnswering = 0;   // how many servos answered at boot (tuneAllServos)
 
 void tuneAllServos() {
   lg("tuning hold stiffness (deadband %u units = +/-%s deg, Kp %u, Kd %u, Ki %u, torque %u)",
      deadbandUnits, String(deadbandUnits * DEG_PER_UNIT, 2).c_str(),
      TUNE_KP, TUNE_KD, TUNE_KI, TUNE_TORQUE_MAX);
-  for (uint8_t i = 0; i < nServos; i++) { bc("tune id=%u", servos[i].id); tuneServoHolding(servos[i]); yield(); }
+  servosAnswering = 0;
+  for (uint8_t i = 0; i < nServos; i++) { bc("tune id=%u", servos[i].id); if (tuneServoHolding(servos[i])) servosAnswering++; yield(); }
   lg("tuning done");
 }
 
@@ -3571,7 +3578,11 @@ void setup() {
   { uint16_t cut = prefs.getUShort("battCut", 0);
     if (cut) { lg("last shutdown: the battery was empty (%u.%u V) - the module switched itself off", cut / 10, cut % 10); prefs.remove("battCut"); } }
   bootDone = true;
-  lg("boot complete - torque OFF, nothing moved, %u servo(s) read. Waiting for the operator.", nServos);
+  if (servosAnswering == nServos)
+    lg("boot complete - torque OFF, nothing moved, all %u servos answered. Waiting for the operator.", nServos);
+  else
+    lg("boot complete - torque OFF, nothing moved, %u of %u servos answered%s. Waiting for the operator.",
+       servosAnswering, nServos, servosAnswering ? " - check the missing ones" : " (no servos connected?)");
   // priority 2, just above loop() (1). Tried 19 (above the TCP/IP task): web replies then took ~6 s and ping ~1 s
   // (mod1, 5 Nov). The 0.2 s late guard was the flash-size reads holding the lock, not the priority.
   xTaskCreate(guardTask, "guard", 6144, nullptr, 2, nullptr);

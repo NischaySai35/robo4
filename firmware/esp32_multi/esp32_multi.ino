@@ -1061,11 +1061,12 @@ void gotoDeg(uint8_t slot, float deg) {
 float homeTargetFor(uint8_t) { return 180.0f; }
 
 // ── Locks (Nischay 11 Nov 2026) ─────────────────────────────────────────────────────────────────────────────────────
-// Two states only: unlock = the lock's manual home, lock = manual home - LOCK_TURN_DEG. The same direction on both locks and
-// every module (mod1 tested 5 Nov: both lock towards -45 from open; data/real_robot.json lock_sign/lock_home). Slow.
+// Two states only: unlock = the lock's manual home, lock = manual home +/- LOCK_TURN_DEG, slow. The DIRECTION is not fixed
+// (Nischay 11 Nov): it depends on the other module's connector in that dock, so the caller (planner / Studio) sends dir.
+// Without dir: -45 (mod1's tested direction, 5 Nov).
 #define LOCK_TURN_DEG 45.0f
 #define LOCK_SPEED    3          // speed scale 1..10: slow, the fins must slide into the other module's slots
-float lockTargetFor(bool locked) { return locked ? 180.0f - LOCK_TURN_DEG : 180.0f; }
+float lockTargetFor(bool locked, int dir = -1) { return locked ? 180.0f + (dir > 0 ? 1 : -1) * LOCK_TURN_DEG : 180.0f; }
 
 void homeAll(bool homeManual = false, bool raw180 = false) {
   lastMotionMs = millis();
@@ -2409,24 +2410,26 @@ void handleServoHome() {
 }
 void handleTune() { bc("tune all"); tuneAllServos(); okTrue(); }
 
-// GET /api/lock?do=lock|unlock[&id=N]   both locks (or just servo N), slowly: unlock = manual home, lock = home - 45
+// GET /api/lock?do=lock|unlock[&id=N][&dir=1|-1]   both locks (or servo N), slowly: unlock = manual home,
+//                                                  lock = home + dir x 45 (dir from the dock, default -1)
 void handleLock() {
   const String what = rq.arg("do");
   if (what != "lock" && what != "unlock") { errJson(400, "need do=lock or do=unlock"); return; }
   const bool locked = what == "lock";
   const int only = rq.hasArg("id") ? rq.arg("id").toInt() : -1;
+  const int dir = rq.hasArg("dir") && rq.arg("dir").toInt() > 0 ? 1 : -1;
   String r = F("{\"ok\":true,\"do\":\""); r += what; r += F("\",\"locks\":[");
   uint8_t n = 0;
   for (uint8_t i = 0; i < nServos; i++) {
     if (!isLockSlot(i) || (only >= 0 && servos[i].id != only)) continue;
-    cmdPos(servos[i], lockTargetFor(locked), LOCK_SPEED, POS_ACC_DEFAULT);
+    cmdPos(servos[i], lockTargetFor(locked, dir), LOCK_SPEED, POS_ACC_DEFAULT);
     if (n++) r += ',';
     r += F("{\"id\":"); r += servos[i].id; r += F(",\"label\":\""); r += cfg.labels[i];
     r += F("\",\"target\":"); r += String(servos[i].targetDeg, 1); r += '}';
   }
   if (!n) { errJson(404, only >= 0 ? "that servo is not a lock" : "no lock servos (labels LOCK1/LOCK2) on this module"); return; }
   motionLocked = false;
-  lg("%s: %u lock(s) -> %s", locked ? "LOCK" : "UNLOCK", n, locked ? "manual home - 45" : "manual home");
+  lg("%s: %u lock(s) -> %s", locked ? "LOCK" : "UNLOCK", n, !locked ? "manual home" : dir > 0 ? "manual home + 45" : "manual home - 45");
   r += "]}"; okJson(r);
 }
 // GET /api/guard            settings and every joint's guard state

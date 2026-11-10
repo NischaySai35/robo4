@@ -28,6 +28,10 @@ export interface Edge {
   /** which of the four keyed lock orientations (90° apart) */
   slot: 0 | 1 | 2 | 3;
   locked: boolean;
+  /** which way each END's lock rotor turns to lock THIS dock: +1 = manual home + 45, -1 = manual home - 45 (board
+   *  nominal). It is NOT fixed (Nischay 11 Nov): it depends on the other connector, so the planner sets it per dock and
+   *  per side (a/b = the end on that side; end<->end docks have two). Missing = -1. */
+  lockDir?: { a?: 1 | -1; b?: 1 | -1 };
 }
 
 export const JOINTS = ['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3'] as const;

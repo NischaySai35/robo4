@@ -118,7 +118,8 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
       <span class="tsw" id="tsw"><span class="tdot"></span>Torque: <b id="tword">?</b>
         <button id="b-ton" onclick="api('/api/torque?on=1')" title="hold where it is, nothing moves">ON</button><button id="b-toff" onclick="api('/api/torque?on=0')">OFF (limp)</button></span>
       <button class="p" onclick="api('/api/home/manual')">Go to manual home</button>
-      <button onclick="api('/api/lock?do=lock')" title="both locks turn slowly to manual home - 45">Lock</button>
+      <button onclick="api('/api/lock?do=lock&dir=-1')" title="both locks turn slowly to manual home - 45 (the direction depends on the other connector)">Lock &minus;45</button>
+      <button onclick="api('/api/lock?do=lock&dir=1')" title="both locks turn slowly to manual home + 45 (the direction depends on the other connector)">Lock +45</button>
       <button onclick="api('/api/lock?do=unlock')" title="both locks turn slowly back to their manual home">Unlock</button>
       <button onclick="api('/api/home?raw=1')" title="every joint to MECHANICAL 180, ignoring the manual homes - only for seating servo horns">All to mech 180&deg; (assembly)</button>
       <button onclick="setHomeAll()" title="save every joint's current angle as its home">Set current angles as home</button>

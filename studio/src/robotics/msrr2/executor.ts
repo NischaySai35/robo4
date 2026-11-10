@@ -17,13 +17,13 @@ import { checkStatic } from './statics';
 /** servo ids on each module's bus: LOCK1, T1, B1, B2, T2, B3, B4, T3, LOCK2 = 1..9 */
 export const SERVO_ID: Record<string, number> = { LOCK_A: 1, T1: 2, B1: 3, B2: 4, T2: 5, B3: 6, B4: 7, T3: 8, LOCK_B: 9 };
 /** lock rotor, BOARD nominal degrees (180 = the lock's manual home = unlocked). Nischay 11 Nov 2026: a lock has two states,
- *  unlocked = manual home, locked = manual home - 45, moved slowly; the same on both locks of every module (the firmware's
- *  /api/lock does exactly this). The sim mirrors End A/B (lock_sign A -1, B +1) but the real L2 servo is mounted the other
- *  way round (data/real_robot.json lock_sign L2 -1), so on the board BOTH ends lock at 180 - 45. */
+ *  unlocked = manual home, locked = manual home +/- 45, moved slowly. WHICH way (+ or -) is decided per dock, to match the
+ *  other connector (Edge.lockDir, per side); without one both locks turn -45 (mod1's tested direction). The firmware's
+ *  /api/lock?do=lock&dir=+1|-1 does the same. */
 export const LOCK_OPEN_DEG = 180;
 export const LOCK_TURN_DEG = 45;
 export const LOCK_SPEED = 3;   // slow, as the firmware's lock (speed scale 1..10)
-export const lockClosedDeg = (_port: 'A' | 'B') => LOCK_OPEN_DEG - LOCK_TURN_DEG;
+export const lockClosedDeg = (dir: 1 | -1 = -1) => LOCK_OPEN_DEG + dir * LOCK_TURN_DEG;
 
 export interface ControllerCall { module: string; url: string; why: string }
 export interface ExecEvent {
@@ -96,8 +96,9 @@ export function compileStep(before: Config, step: PlanStep, urls: Record<string,
     // every END in the lock turns its rotor (end↔end: both at once, each its own way); spine receivers have no rotor
     for (const owner of ends) {
       const port = owner.port as 'A' | 'B';
+      const dir = (owner === e.b ? e.lockDir?.b : e.lockDir?.a) ?? -1;   // per dock + side: matches the other connector
       const id = port === 'A' ? SERVO_ID.LOCK_A : SERVO_ID.LOCK_B;
-      out.push({ module: owner.module, url: batchUrl(url(owner.module), { [id]: close ? lockClosedDeg(port) : LOCK_OPEN_DEG }, Math.min(speed, LOCK_SPEED), acc), why: `${close ? 'close' : 'open'} lock ${owner.module}.${owner.port}` });
+      out.push({ module: owner.module, url: batchUrl(url(owner.module), { [id]: close ? lockClosedDeg(dir) : LOCK_OPEN_DEG }, Math.min(speed, LOCK_SPEED), acc), why: `${close ? 'close' : 'open'} lock ${owner.module}.${owner.port}` });
     }
   }
   return out;

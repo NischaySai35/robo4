@@ -24,6 +24,12 @@ test('a dock compiles to closing the lock rotor of the END that docks', () => {
   assert.match(calls[0].why, /close lock M1\.A/);
 });
 
+test('the lock turns the way THIS dock needs (lockDir per side), slowly; -45 when the plan does not say', () => {
+  const plus = cloneConfig(bent); plus.edges = [{ ...docked.edges[0], lockDir: { b: 1 } }];
+  assert.match(compileStep(bent, step('walk_step', plus), { M1: 'http://m1' })[0].url, /\?1=225\.0&speed=3&/);
+  assert.match(compileStep(bent, step('walk_step', docked), { M1: 'http://m1' })[0].url, /\?1=135\.0&speed=3&/);
+});
+
 test('a dock that did not latch is retried first (the robot is where the plan expected)', async () => {
   let replans = 0;
   const r = await executeDryRun(lying, plan([step('pose_move', bent), step('walk_step', docked)]), {

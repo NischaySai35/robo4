@@ -1275,7 +1275,8 @@ uint32_t wPrefScanAt  = 0;
 bool     wPrefScanning = false;
 char     apName[24];
 
-// Per slot, RAM only — after a reboot the first join is a normal scan + DHCP.
+// Per slot. Channel + router (BSSID) are also kept in flash (fjLoad/fjStore), so the first join after a power-on goes
+// straight to the right channel (~1-2 s) instead of a full scan (mod2, 11 Nov: 13 s). The DHCP lease stays RAM only.
 struct FastJoin {
   bool ok; uint8_t bssid[6]; int32_t ch;      // where the network was
   bool lease; IPAddress ip, gw, mask, dns;    // the last DHCP lease on it
@@ -1460,6 +1461,7 @@ void wifiInit() {
   WiFi.setSleep(ROBO_WIFI_PS);                   // modem sleep — keeps the C3 cool
   wifiRadioTuning();
   WiFi.onEvent(onWiFiEvent);
+  fjLoad();
   uint8_t s = nextSlot();
   if (s == 255) { lg("No Wi-Fi credentials stored — raising SoftAP"); startAP(); return; }
   wifiConnectSlot(s);
@@ -1554,6 +1556,25 @@ void liveSend() {
   liveSent++;
 }
 
+// Flash copy of a slot's channel + router, tied to the network name: a renamed slot just misses once and scans.
+uint32_t fjNameHash(const char* s) { uint32_t h = 2166136261u; while (*s) { h ^= (uint8_t)*s++; h *= 16777619u; } return h; }
+struct FjFlash { uint32_t name; uint8_t bssid[6]; uint8_t ch; };
+void fjLoad() {
+  for (uint8_t i = 0; i <= WSLOT_DEFAULT && i < 4; i++) {
+    char k[6]; snprintf(k, sizeof k, "fj%u", i);
+    FjFlash f;
+    if (prefs.getBytes(k, &f, sizeof f) != sizeof f || f.name != fjNameHash(ssidFor(i)) || !f.ch || f.ch > 14) continue;
+    memcpy(fj[i].bssid, f.bssid, 6); fj[i].ch = f.ch; fj[i].ok = true;
+  }
+}
+void fjStore(uint8_t i) {
+  char k[6]; snprintf(k, sizeof k, "fj%u", i);
+  FjFlash f = {}, old = {};
+  f.name = fjNameHash(ssidFor(i)); memcpy(f.bssid, fj[i].bssid, 6); f.ch = (uint8_t)fj[i].ch;
+  if (prefs.getBytes(k, &old, sizeof old) == sizeof old && !memcmp(&old, &f, sizeof f)) return;   // unchanged: no flash write
+  prefs.putBytes(k, &f, sizeof f);
+}
+
 void saveFastJoin() {
   wantFastSave = false;
   hbUdp.stop(); hbOpen = false;             // rebind on the fresh interface
@@ -1565,6 +1586,7 @@ void saveFastJoin() {
   memcpy(f.bssid, b, 6);
   f.ch = WiFi.channel();
   f.ok = true;
+  fjStore(wSlot);
   if (!wStatic) {                           // a real DHCP lease — keep it for the next rejoin
     f.ip = WiFi.localIP(); f.gw = WiFi.gatewayIP(); f.mask = WiFi.subnetMask(); f.dns = WiFi.dnsIP();
     f.lease = f.ip != INADDR_NONE;
@@ -1754,7 +1776,10 @@ void adoptScanResults() {
     oldMin[k] = cfg.minDeg[k]; oldMax[k] = cfg.maxDeg[k];
   }
 
-  uint8_t n = 0;
+  // MERGE (11 Nov 2026): every servo already configured stays (name, limits, order), even if this scan missed it -
+  // a loose cable or a servo being renumbered must not wipe the module's list. Only ids not in the list are added.
+  // Removing a servo is an explicit /api/config/set.
+  uint8_t n = oldCount, added = 0;
   for (uint8_t i = 0; i < sc.nHits && n < MAX_SERVOS; i++) {
     if (sc.hits[i].baud != bestBaud) continue;
     bool dup = false;
@@ -1763,15 +1788,11 @@ void adoptScanResults() {
     // Keep any label/limits already configured for this ID; only unknown IDs get defaults.
     int prev = -1;
     for (uint8_t k = 0; k < oldCount; k++) if (oldIds[k] == sc.hits[i].id) prev = k;
+    if (prev >= 0) continue;                              // already in the list, kept as it is
     cfg.ids[n] = sc.hits[i].id;
-    if (prev >= 0) {
-      memcpy(cfg.labels[n], oldLabels[prev], sizeof(cfg.labels[0]));
-      cfg.minDeg[n] = oldMin[prev]; cfg.maxDeg[n] = oldMax[prev];
-    } else {
-      snprintf(cfg.labels[n], sizeof(cfg.labels[0]), "id %u", sc.hits[i].id);
-      cfg.minDeg[n] = 0; cfg.maxDeg[n] = 360;             // unknown joint: no travel limits
-    }
-    n++;
+    snprintf(cfg.labels[n], sizeof(cfg.labels[0]), "id %u", sc.hits[i].id);
+    cfg.minDeg[n] = 0; cfg.maxDeg[n] = 360;               // unknown joint: no travel limits
+    n++; added++;
   }
   for (uint8_t k = n; k < MAX_SERVOS; k++) { cfg.ids[k] = 0; cfg.labels[k][0] = 0; }
   cfg.servoCount = n;
@@ -1794,7 +1815,7 @@ void adoptScanResults() {
       break;
     }
   }
-  lg("adopted %u servo(s) from scan", n);
+  lg("scan: %u servo(s) in the list, %u new added (configured ones are never removed by a scan)", n, added);
 }
 
 void scanFinish() {
@@ -3321,6 +3342,8 @@ void nowPoll() {
 #define BATT_CUT_V10         103     // 10.3 V (Nischay, 7 Nov)
 #define BATT_HOLD_MS        5000
 #define BATT_HOLD_LOADED_MS 20000
+#define BATT_SANE_V10        60      // below 6.0 V is not a 3S battery, it is a bad read (a servo just plugged in, a garbled
+                                     // reply): mod2 read 0.1 V once at boot and started the switch-off countdown (11 Nov)
 uint32_t battLowSince = 0;
 
 void battShutdown(int v10, int mA) {
@@ -3350,10 +3373,10 @@ void battTick() {
   if (otaBusy || nServos == 0) { battLowSince = 0; return; }
   int vMax = 0, mA = 0;
   for (uint8_t i = 0; i < nServos; i++) {
-    if (servos[i].rawVoltage > vMax) vMax = servos[i].rawVoltage;
+    if (servos[i].rawVoltage > vMax && servos[i].rawVoltage <= 200) vMax = servos[i].rawVoltage;   // > 20 V: also garbage
     if (servos[i].rawCurrent > 0) mA += (int)(servos[i].rawCurrent * 6.5f);
   }
-  if (vMax <= 0 || vMax > BATT_CUT_V10) {            // no reading (servo power off) or fine
+  if (vMax < BATT_SANE_V10 || vMax > BATT_CUT_V10) { // no believable reading (servo power off, bad read) or fine
     if (battLowSince) note("battery back above %d.%d V - not switching off", BATT_CUT_V10 / 10, BATT_CUT_V10 % 10);
     battLowSince = 0; return;
   }
@@ -3380,7 +3403,8 @@ String nowJson() {
 // ── Status lights + IMU (Nischay, 10 Nov 2026: new board layout) ─────────────────────────────────────────────────────
 // Red LED on GPIO 6, green on GPIO 7 (each pin -> resistor -> LED -> GND). Own small task, so they blink even while
 // setup() or a request is busy.
-//   power-on        both blink 2 s, then green steady
+//   power-on        both blink 2 s, then green blinks SLOWLY until it can be reached (Wi-Fi up or the master heard),
+//                   then green steady = ready (11 Nov: steady green while Wi-Fi still searched looked "all ok")
 //   moving          green blinks: an animation, a GO, Play, home, joint moves, the Sync button streaming (until ~2 s
 //                   after the last move command)
 //   warning         red blinks: a joint over load / too hot (overload guard), battery low, link cut (master silent
@@ -3408,6 +3432,7 @@ bool ledWarning() {
   return guardBusy() || battLowSince || ledLinkCut() || (int32_t)(grpFaultUntil - millis()) > 0 ||
          (animPlaying && syncMv.state == SY_STALLED);
 }
+bool ledReady() { return bootDone && (WiFi.status() == WL_CONNECTED || nowLinked()); }
 bool ledMoving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS; }
 
 void ledTask(void*) {
@@ -3421,7 +3446,7 @@ void ledTask(void*) {
     else {
       const bool warn = ledWarning();
       r = warn && on;
-      g = ledMoving() ? (!warn && on) : true;
+      g = ledMoving() ? (!warn && on) : ledReady() ? true : ((now / 1000) & 1);   // slow blink: not reachable yet
     }
     digitalWrite(LED_RED_PIN, r ? LED_ON : !LED_ON);
     digitalWrite(LED_GREEN_PIN, g ? LED_ON : !LED_ON);

@@ -28,9 +28,10 @@ export interface Edge {
   /** which of the four keyed lock orientations (90° apart) */
   slot: 0 | 1 | 2 | 3;
   locked: boolean;
-  /** which way each END's lock rotor turns to lock THIS dock: +1 = manual home + 45, -1 = manual home - 45 (board
-   *  nominal). It is NOT fixed (Nischay 11 Nov): it depends on the other connector, so the planner sets it per dock and
-   *  per side (a/b = the end on that side; end<->end docks have two). Missing = -1. */
+  /** which way each END's lock rotor turns to lock THIS dock, in the BOARD frame: +1 = manual home + 45, -1 = manual
+   *  home - 45. NOT fixed (Nischay 11 Nov): it depends on the other connector, so it is set per dock and per side.
+   *  a = the end being docked INTO (end<->end only), b = the docking end. Missing: b -1, a +1 (the sim's default).
+   *  From a sim 'dir' (sim frame): board = lock_sign x sim, lock_sign L1/End A +1, L2/End B -1. */
   lockDir?: { a?: 1 | -1; b?: 1 | -1 };
 }
 

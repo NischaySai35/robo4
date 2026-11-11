@@ -96,7 +96,10 @@ export function compileStep(before: Config, step: PlanStep, urls: Record<string,
     // every END in the lock turns its rotor (end↔end: both at once, each its own way); spine receivers have no rotor
     for (const owner of ends) {
       const port = owner.port as 'A' | 'B';
-      const dir = (owner === e.b ? e.lockDir?.b : e.lockDir?.a) ?? -1;   // per dock + side: matches the other connector
+      // per dock + side, BOARD frame (matches the other connector). Without one: the sim's default (manual.canon, agreed
+      // with the sim session 11 Nov): b = the docking end -1; a = the end being docked into (end<->end only) +1.
+      // A sim 'dir' converts with board = lock_sign x sim (L1/End A +1, L2/End B -1).
+      const dir = (owner === e.b ? e.lockDir?.b ?? -1 : e.lockDir?.a ?? 1);
       const id = port === 'A' ? SERVO_ID.LOCK_A : SERVO_ID.LOCK_B;
       out.push({ module: owner.module, url: batchUrl(url(owner.module), { [id]: close ? lockClosedDeg(dir) : LOCK_OPEN_DEG }, Math.min(speed, LOCK_SPEED), acc), why: `${close ? 'close' : 'open'} lock ${owner.module}.${owner.port}` });
     }

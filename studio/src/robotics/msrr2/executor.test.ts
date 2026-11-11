@@ -30,6 +30,14 @@ test('the lock turns the way THIS dock needs (lockDir per side), slowly; -45 whe
   assert.match(compileStep(bent, step('walk_step', docked), { M1: 'http://m1' })[0].url, /\?1=135\.0&speed=3&/);
 });
 
+test('end<->end without a direction: the docking end (b) turns -45, the end docked into (a) +45', () => {
+  const e2e = cloneConfig(bent);
+  e2e.edges = [{ a: { module: 'M1', port: 'B' }, b: { module: 'M2', port: 'A' }, slot: 0, locked: true }];
+  const urls = compileStep(bent, step('walk_step', e2e), { M1: 'http://m1', M2: 'http://m2' }).map((c) => c.url);
+  assert.ok(urls.some((u) => /^http:\/\/m2\/api\/batch\?1=135\.0&/.test(u)), urls.join(' '));
+  assert.ok(urls.some((u) => /^http:\/\/m1\/api\/batch\?9=225\.0&/.test(u)), urls.join(' '));
+});
+
 test('a dock that did not latch is retried first (the robot is where the plan expected)', async () => {
   let replans = 0;
   const r = await executeDryRun(lying, plan([step('pose_move', bent), step('walk_step', docked)]), {

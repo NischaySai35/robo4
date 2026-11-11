@@ -1,4 +1,4 @@
 {
- "note": "mod1 saved manual homes (mechanical degrees, servo ID -> home), 11 Nov 2026. Same as 4 Nov except LOCK1: 176.8 -> 221.8, its OPEN position (the old lock_home L1 45), because a lock's manual home is now 'unlocked' (lock = home +/- 45, direction per dock). Restore one with /api/home/set?id=N&deg=X (no motor moves).",
- "homes": {"1": 221.8, "2": 181.4, "3": 167.9, "4": 179.9, "5": 185.1, "6": 179.7, "7": 176.9, "8": 179.3, "9": 184.1}
+ "note": "mod1 saved manual homes (mechanical degrees, servo ID -> home), set by Nischay on 11 Nov 2026 (second set, after the real-angle page). LOCK1 home = unlocked. Restore one with /api/home/set?id=N&deg=X (no motor moves).",
+ "homes": {"1": 264.3, "2": 181.0, "3": 167.7, "4": 180.0, "5": 185.1, "6": 179.2, "7": 177.4, "8": 179.3, "9": 184.1}
 }

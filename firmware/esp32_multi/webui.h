@@ -108,7 +108,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
 <section id="s-dash" class="sel">
   <div class="card"><h3>Servos</h3>
     <div class="wrap"><table><thead><tr>
-      <th class="l">#</th><th class="l">ID</th><th class="l">label</th><th>angle</th><th>target</th><th>err&deg;</th><th>set</th>
+      <th class="l">#</th><th class="l">ID</th><th class="l">label</th><th title="from this joint's manual home: 180 = AT its manual home">angle</th><th title="the real servo angle (mechanical); at manual home it equals the saved home">servo&deg;</th><th>target</th><th>err&deg;</th><th>set</th>
       <th>spd</th><th>load</th><th>mA</th><th>V</th><th>degC</th><th>mode</th><th class="l">actions</th>
     </tr></thead><tbody id="tb"></tbody></table></div>
     <div class="row" style="margin-top:10px">
@@ -295,7 +295,7 @@ function rows(d){
   const sig=d.servos.map(s=>s.id+s.label).join(',');
   if(tb.dataset.sig!==sig){tb.dataset.sig=sig;tb.innerHTML='';
     d.servos.forEach((s,i)=>{const tr=document.createElement('tr');tr.id='r'+s.id;
-      tr.innerHTML='<td class="l">'+(i+1)+'</td><td class="l"><b>'+s.id+'</b></td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td><td class="er">-</td>'+
+      tr.innerHTML='<td class="l">'+(i+1)+'</td><td class="l"><b>'+s.id+'</b></td><td class="l">'+s.label+'</td><td class="a">-</td><td class="m" style="color:var(--dim)">-</td><td class="t">-</td><td class="er">-</td>'+
       // Fixed-width parts only, left-aligned: the old trailing value label changed width
       // with its digit count ("80" vs "180") and pushed that row's slider out of line.
       '<td class="l"><button class="nb" title="-2 deg" onclick="nudge('+s.id+',-2)">&#9664;</button>'+
@@ -314,6 +314,7 @@ function rows(d){
   d.servos.forEach(s=>{const r=el('r'+s.id);if(!r)return;const q=c=>r.querySelector('.'+c);
     q('a').textContent=s.currentAngle==null?'--':s.currentAngle.toFixed(1);
     q('a').style.color=s.connected?(s.moving?'var(--acc)':'var(--fg)'):'var(--bad)';
+    q('m').textContent=s.mechAngle==null||!s.connected?'--':s.mechAngle.toFixed(1);
     q('t').textContent=s.targetAngle==null?'--':s.targetAngle.toFixed(1);
     // Holding error against the 0.3 deg goal. Grey while limp (a limp joint is not trying),
     // green within spec, amber drooping, red being pushed off target and not winning.

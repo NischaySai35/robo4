@@ -370,9 +370,10 @@ class ModuleGroup:
         """Start: the first module says GO over the radio and they all start together. A module that did not hear GO
         (another radio channel, or firmware without group play) is started directly a moment later, and the result says so."""
         lead = self.mods[0]
-        self._ask(lead, f'/api/anim/play?from={start}&loop={int(getattr(self, "loop", False))}', timeout=8)
+        r = self._ask(lead, f'/api/anim/play?from={start}&loop={int(getattr(self, "loop", False))}', timeout=8)
         if not self.group: return Result(True, f'Module {lead} plays.')
-        time.sleep(0.4)
+        # the lead counts down (firmware GROUP_GO_LEAD_MS): everyone starts then; check for a module that missed it after
+        time.sleep(max(0.4, (r.get('startsInMs') or 0) / 1000 + 0.25))
         late = []
         def check(m):
             s = self._ask(m, '/api/anim/status', timeout=3)

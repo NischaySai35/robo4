@@ -46,6 +46,11 @@ struct SyncCfg {
 
 enum SyncState : uint8_t { SY_IDLE = 0, SY_RUN, SY_DONE, SY_LATE, SY_STALLED };
 
+// A joint this close behind its place on the path (steps, 6 = ~0.5 deg) is NOT lagging. Without it, at the slow ends of
+// the ease a 1-2 step error reads as a big lag in time (easeInv is steep there) and the clock crawled: a 10 deg, 2 s
+// frame took 3.2 s on mod1/mod2 (11 Nov 2026).
+static constexpr float SYNC_LAG_TOL_RAW = 6.0f;
+
 struct SyncOut { int16_t goal; uint16_t speed; };   // raw steps, steps/s; written to every joint each step
 
 struct SyncMove {
@@ -85,7 +90,9 @@ struct SyncMove {
     for (uint8_t i = 0; i < n; i++) {
       if (pos[i] >= 0 && abs(pos[i] - to[i]) > c.doneTolRaw) allThere = false;
       if (!track[i] || pos[i] < 0) continue;
-      float u = easeInv((float)(pos[i] - from[i]) / (float)(to[i] - from[i]));
+      const float Di = (float)(to[i] - from[i]);
+      const float behindRaw = (from[i] + Di * ease(s) - pos[i]) * (Di > 0 ? 1.0f : -1.0f);
+      float u = behindRaw <= SYNC_LAG_TOL_RAW ? s : easeInv((float)(pos[i] - from[i]) / Di);
       if (u < slow) { slow = u; who = (int8_t)i; }
     }
     if (who < 0) slow = s;                                   // nothing to wait on (all small, or no readings)

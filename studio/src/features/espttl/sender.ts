@@ -104,15 +104,17 @@ export async function startOnBoard(from = 0): Promise<SendResult> {
   const { mods, group } = loaded, loop = useTimelineStore.getState().loop ? 1 : 0;
   const lead = mods[0], base = boardUrl(lead);
   if (!base) return { ok: false, error: `module ${lead} has no board address` };
+  let startsIn = 0;   // a group lead counts down (firmware GROUP_GO_LEAD_MS) and every module starts at that instant
   try {
     const r = await getJson(`${base}/api/anim/play?from=${from}&loop=${loop}`, 8000);
     if (!r.ok) return { ok: false, error: `module ${lead}: ${r.j?.error || `HTTP ${r.status}`}` };
+    startsIn = +r.j?.startsInMs || 0;
   } catch (e: any) { return { ok: false, error: `module ${lead}: ${e?.message || String(e)}` }; }
   speakForPath('/api/anim/play');
   if (!group) return { ok: true, modules: 1 };
 
   // Did everyone hear GO? A module still armed but not playing after a moment is started over Wi-Fi (a bit late).
-  await new Promise(r => setTimeout(r, 400));
+  await new Promise(r => setTimeout(r, Math.max(400, startsIn + 250)));
   const late: number[] = [];
   await eachModule(mods.slice(1), async (mod, b) => {
     const s = await getJson(`${b}/api/anim/status`, 3000);

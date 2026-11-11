@@ -124,12 +124,15 @@ struct Group {
 
   // The slowest fresh peer's clock on OUR step: 2 = nobody to wait for. A peer still on an earlier step counts as 0
   // (it is a whole frame behind); one already past our step does not hold us back.
-  float peerS(uint32_t now, uint16_t step) const {
+  // T (s, the frame's planned time): a peer's clock is moved on by the age of its message (sent every 50 ms), so two
+  // modules in step do not each see the other "behind" and slow each other down (11 Nov 2026: frames 60 % too long).
+  float peerS(uint32_t now, uint16_t step, float T = 0) const {
     float lo = 2;
     for (uint8_t i = 0; i < np; i++) {
       const GroupPeer& p = peer[i];
       if (!fresh(p, now) || p.step > step) continue;
       float v = p.step < step ? 0.0f : (p.done ? 1.0f : p.s);
+      if (T > 0 && p.step == step && !p.done) { v += (float)(now - p.seenMs) / 1000.0f / T; if (v > 1) v = 1; }
       if (v < lo) lo = v;
     }
     return lo;

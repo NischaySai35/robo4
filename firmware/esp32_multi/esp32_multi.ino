@@ -752,7 +752,13 @@ uint32_t  animT0      = 0;         // when the current frame started
 // Group play (groupsync.h, 9 Nov 2026): every module of a group got the same animation (its own joints) with the same
 // group number; GO over the radio starts them together, and each one's place keeps the others in step.
 #define GROUP_PLACE_MS  50        // say where we are this often while playing
-#define GROUP_GO_REPEAT 3         // GO / STOP said this many times, 15 ms apart (one may be lost)
+#define GROUP_GO_REPEAT 3         // STOP said this many times, 15 ms apart (one may be lost)
+// GO is a COUNTDOWN (11 Nov 2026, real test: mod2 missed all 3 GOs and started 0.1-0.6 s late over Wi-Fi). The lead
+// says "start in N ms" every 15 ms for GROUP_GO_LEAD_MS; EVERY module (the lead too) starts at that instant, not when a
+// message lands, so any one of ~13 messages getting through is enough and the starts agree to a few ms.
+#define GROUP_GO_LEAD_MS 200
+volatile uint32_t grpStartAt = 0;   // millis() of the agreed start (0 = none); grpStartTask starts it on time
+uint8_t grpStartStep = 0;
 #define GROUP_ARMED_MS  120000    // after an upload, listen for GO this long (radio kept awake)
 Group    grp;
 uint16_t grpStep = 0;              // which frame of which pass we play: counts up from the GO's frame
@@ -764,13 +770,14 @@ uint8_t myModule() { const char* h = cfg.host; while (*h && (*h < '0' || *h > '9
 bool grpArmed() { return grp.on() && animCount && (int32_t)(grpArmedUntil - millis()) > 0; }
 // E-STOP, HOLD, battery: this module ignores GO until the animation is uploaded again (Nischay 10 Nov: an E-STOPped
 // module must not start because another module of its group was played)
-void grpDisarm() { grpArmedUntil = 0; }
+void grpDisarm() { grpArmedUntil = 0; grpStartAt = 0; }
 uint32_t grpFaultUntil = 0;        // a group stop happened (partner missing / stopped): the red light blinks till then
 bool     grpDupSaid = false;       // "another module has my number" said once
 
 void grpSay(uint8_t kind);
 void groupHalt(const char* fmt, ...);
 void animStop() {
+  grpStartAt = 0;                                    // a countdown waiting to start is cancelled too
   if (animPlaying) note("anim stopped at frame %u", animIdx + 1);
   if (animPlaying && grp.on() && !grpQuiet) grpSay(GK_STOP);   // the others stop too
   if (animPlaying) prefs.putUChar("animRun", 0);
@@ -1194,8 +1201,8 @@ void refreshAllFastSync() {
       int ld = (rx[4] | (rx[5] << 8)) & 0x3FF; if (rx[5] & 0x04) ld = -ld;   // load: bit 10 is the sign
       int cu = (rx[13] | (rx[14] << 8)) & 0x7FFF;                           // current, 6.5 mA units
       servos[i].rawLoad = ld; servos[i].rawLoadAbs = abs(ld); servos[i].rawCurrent = cu;
-      if (animPlaying) {
-        const uint16_t mA = (uint16_t)(cu * 6.5f > 65535 ? 65535 : cu * 6.5f);
+      if (animPlaying && cu * 6.5f < 6000) {       // an ST3215 never draws 6 A: bigger is a garbled read (it said 65535 mA)
+        const uint16_t mA = (uint16_t)(cu * 6.5f);
         if (mA > animPeakmA[i]) animPeakmA[i] = mA;
         if ((uint16_t)abs(ld) > animPeakLoad[i]) animPeakLoad[i] = (uint16_t)abs(ld);
       }
@@ -2320,7 +2327,12 @@ void handleAnimPlay() {
   if (from >= animCount) from = 0;
   if (grp.on()) {
     if (uint8_t w = grp.aheadOfUs(millis())) note("group: started late - module %u was already playing (this one missed GO)", w);
-    grpStep = from; grpSay(GK_GO); groupTick();                    // the first GO goes out now, with our own start
+    // countdown: everyone (this module too) starts at the same instant, GROUP_GO_LEAD_MS from now (grpStartTask)
+    grpStep = from; grpStartStep = from; grpStartAt = millis() + GROUP_GO_LEAD_MS;
+    grpSayKind = GK_GO; grpSayLeft = 255; grpSayMs = 0; groupTick();   // says GO + the time left every 15 ms until then
+    String r = F("{\"ok\":true,\"startsInMs\":"); r += GROUP_GO_LEAD_MS; r += '}';
+    okJson(r);
+    return;
   }
   animStart(from);
   okTrue();
@@ -3179,7 +3191,7 @@ void groupSend(const GroupMsg& m) { static uint16_t seq = 0; if (nowUp) nowSendR
 void groupTick() {
   if (!grp.on()) return;
   const uint32_t now = millis();
-  grpPeerS = grp.peerS(now, grpStep);
+  grpPeerS = grp.peerS(now, grpStep, animPlaying ? syncMv.T : 0);
   if (animPlaying) {                    // a partner switched off / out of range / never started: stop, never push on alone
     bool absent = false;
     if (uint8_t w = grp.missingNow(now, &absent)) {
@@ -3189,7 +3201,11 @@ void groupTick() {
     }
   }
   if (grpSayLeft && (grpSayMs == 0 || now - grpSayMs >= 15)) {   // GO / STOP, a few times (a lost one costs 15 ms)
-    groupSend(Group::msg(grp.id, grpSayKind, grp.me, grpStep)); grpSayMs = now ? now : 1; grpSayLeft--;
+    if (grpSayKind == GK_GO) {                       // GO = countdown: the time left rides in the message, until the start
+      const int32_t left = grpStartAt ? (int32_t)(grpStartAt - now) : 0;
+      if (left <= 0) grpSayLeft = 0;
+      else { GroupMsg m = Group::msg(grp.id, GK_GO, grp.me, grpStep); m.s = (uint16_t)left; groupSend(m); grpSayMs = now ? now : 1; }
+    } else { groupSend(Group::msg(grp.id, grpSayKind, grp.me, grpStep)); grpSayMs = now ? now : 1; grpSayLeft--; }
   }
   if (animPlaying && (grpPlaceMs == 0 || now - grpPlaceMs >= GROUP_PLACE_MS)) {   // where we are: the others keep in step
     grpPlaceMs = now ? now : 1;
@@ -3199,6 +3215,18 @@ void groupTick() {
 }
 // The group stops: every joint where it is, held (docked modules must not push on without a partner). Says STOP to the
 // others (unless grpQuiet: we are stopping because of their STOP). Red light blinks 10 s.
+// Starts a counted-down GO at its instant (1 ms ticks): loop() can be tens of ms late, this task is not.
+void grpStartTask(void*) {
+  for (;;) {
+    const uint32_t at = grpStartAt;
+    if (at && (int32_t)(millis() - at) >= 0) {
+      grpStartAt = 0;
+      if (!animPlaying && !otaBusy && grp.on()) { BusLock L; animStart(grpStartStep); }
+    }
+    vTaskDelay(1);
+  }
+}
+
 void groupHalt(const char* fmt, ...) {
   char b[180];
   va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof(b), fmt, ap); va_end(ap);
@@ -3219,8 +3247,15 @@ void groupHeard(const GroupMsg& m, const uint8_t* mac) {
   if (!grp.on() || m.group != grp.id) return;
   if (m.kind == GK_GO) {
     if (animPlaying || !grpArmed() || otaBusy) return;
-    lg("group: GO from module %u", m.mod);
-    { BusLock L; animStart((uint8_t)(m.step < animCount ? m.step : 0)); }
+    const uint8_t step = (uint8_t)(m.step < animCount ? m.step : 0);
+    if (m.s == 0) {                                  // an older lead (no countdown): start now
+      lg("group: GO from module %u", m.mod);
+      { BusLock L; animStart(step); }
+      return;
+    }
+    const bool first = grpStartAt == 0;
+    grpStartStep = step; grpStartAt = millis() + m.s;   // every repeat refines the instant (the time left, as sent)
+    if (first) lg("group: GO from module %u - starting in %u ms with it", m.mod, m.s);
   } else if (m.kind == GK_STOP) {
     if (!animPlaying) return;
     grpQuiet = true; groupHalt("group: module %u stopped - stopping too, holding", m.mod); grpQuiet = false;
@@ -3645,6 +3680,7 @@ void setup() {
   // priority 2, just above loop() (1). Tried 19 (above the TCP/IP task): web replies then took ~6 s and ping ~1 s
   // (mod1, 5 Nov). The 0.2 s late guard was the flash-size reads holding the lock, not the priority.
   xTaskCreate(guardTask, "guard", 6144, nullptr, 2, nullptr);
+  xTaskCreate(grpStartTask, "grpstart", 3072, nullptr, 3, nullptr);   // group GO countdown: starts on the agreed ms
 }
 
 void loop() {

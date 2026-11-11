@@ -108,7 +108,7 @@ pre{background:#f6f8fa;border:1px solid var(--ln);border-radius:6px;padding:10px
 <section id="s-dash" class="sel">
   <div class="card"><h3>Servos</h3>
     <div class="wrap"><table><thead><tr>
-      <th class="l">#</th><th class="l">ID</th><th class="l">label</th><th title="from this joint's manual home: 180 = AT its manual home">angle</th><th title="the real servo angle (mechanical); at manual home it equals the saved home">servo&deg;</th><th>target</th><th>err&deg;</th><th>set</th>
+      <th class="l">#</th><th class="l">ID</th><th class="l">label</th><th title="the REAL servo angle (mechanical). At manual home it equals the saved home, e.g. 167.9">angle</th><th title="where it is told to be, real servo angle">target</th><th>err&deg;</th><th>set</th>
       <th>spd</th><th>load</th><th>mA</th><th>V</th><th>degC</th><th>mode</th><th class="l">actions</th>
     </tr></thead><tbody id="tb"></tbody></table></div>
     <div class="row" style="margin-top:10px">
@@ -295,7 +295,7 @@ function rows(d){
   const sig=d.servos.map(s=>s.id+s.label).join(',');
   if(tb.dataset.sig!==sig){tb.dataset.sig=sig;tb.innerHTML='';
     d.servos.forEach((s,i)=>{const tr=document.createElement('tr');tr.id='r'+s.id;
-      tr.innerHTML='<td class="l">'+(i+1)+'</td><td class="l"><b>'+s.id+'</b></td><td class="l">'+s.label+'</td><td class="a">-</td><td class="m" style="color:var(--dim)">-</td><td class="t">-</td><td class="er">-</td>'+
+      tr.innerHTML='<td class="l">'+(i+1)+'</td><td class="l"><b>'+s.id+'</b></td><td class="l">'+s.label+'</td><td class="a">-</td><td class="t">-</td><td class="er">-</td>'+
       // Fixed-width parts only, left-aligned: the old trailing value label changed width
       // with its digit count ("80" vs "180") and pushed that row's slider out of line.
       '<td class="l"><button class="nb" title="-2 deg" onclick="nudge('+s.id+',-2)">&#9664;</button>'+
@@ -311,11 +311,13 @@ function rows(d){
       '<button onclick="api(\'/api/command?servo='+s.id+'&cmd=torquetoggle\')">torq</button> '+
       '<button onclick="api(\'/api/identify?id='+s.id+'\')">identify</button></td>';
       tb.appendChild(tr);});}
+  // Nischay 11 Nov: this page shows and takes REAL servo angles (mechanical). The API stays nominal (180 = manual home,
+  // what the Studio/sim send); the page converts with each joint's offset: real = nominal + offset.
+  d.servos.forEach(s=>{OFS[s.id]=+s.offset||0;});
   d.servos.forEach(s=>{const r=el('r'+s.id);if(!r)return;const q=c=>r.querySelector('.'+c);
-    q('a').textContent=s.currentAngle==null?'--':s.currentAngle.toFixed(1);
+    q('a').textContent=s.currentAngle==null?'--':REAL(s.id,s.currentAngle).toFixed(1);
     q('a').style.color=s.connected?(s.moving?'var(--acc)':'var(--fg)'):'var(--bad)';
-    q('m').textContent=s.mechAngle==null||!s.connected?'--':s.mechAngle.toFixed(1);
-    q('t').textContent=s.targetAngle==null?'--':s.targetAngle.toFixed(1);
+    q('t').textContent=s.targetAngle==null?'--':REAL(s.id,s.targetAngle).toFixed(1);
     // Holding error against the 0.3 deg goal. Grey while limp (a limp joint is not trying),
     // green within spec, amber drooping, red being pushed off target and not winning.
     if(s.currentAngle==null||s.targetAngle==null){q('er').textContent='--';}
@@ -334,17 +336,14 @@ function rows(d){
     if(!s.connected){['sp','ld','ma','vv','tp'].forEach(c=>q(c).textContent='--');   // last numbers of an unplugged servo are not live
       q('er').textContent='--';q('md').textContent='no reply';q('md').style.color='var(--bad)';
       q('md').title='this servo has not answered for over 1 s: unplugged, loose cable or no power';}
-    // The angle column is NOMINAL: 180 = straight = this joint's home (its offset is built in). The home
-    // button says whether the joint is there, so it never looks like it disagrees with the angle column;
-    // the servo's own (mechanical) angle at home is in its hover text. (Showing that mechanical number,
-    // e.g. "home 168", next to an angle of 180 made it look like home was wrong when it was not.)
+    // The home button says whether the joint is at its manual home (the saved home is in its hover text).
     const hb=r.querySelector('.hb');
     if(hb&&s.home!=null){
       const at=s.currentAngle!=null&&Math.abs(s.currentAngle-(s.homeAt!=null?s.homeAt:180))<=0.5;   // locks: home = open
       hb.textContent=at?'at home \u2713':'go home';
       hb.style.borderColor=at?'var(--ok)':'';
       hb.style.color=at?'var(--ok)':'';
-      hb.title='home = straight = 180 in the angle column. The servo itself reads '+(+s.home).toFixed(1)+'\u00b0 there ('+
+      hb.title='manual home: the servo reads '+(+s.home).toFixed(1)+'\u00b0 there ('+
         (s.homeSet?'saved home':'built-in straight pose')+'). '+(at?'Already there.':'Click to send this joint home.');
     }
     // The slider always shows where the joint is meant to be: the real angle while limp
@@ -353,7 +352,7 @@ function rows(d){
     // while the operator is actually dragging it. (It used to freeze whenever torque was
     // on, and also whenever it merely had focus, i.e. forever after the first drag.)
     const sl=el('sl'+s.id);
-    const want=s.torque?s.targetAngle:s.currentAngle;
+    const wn=s.torque?s.targetAngle:s.currentAngle, want=wn==null?null:REAL(s.id,wn);
     const tv=el('lv'+s.id);
     if(sl&&want!=null&&!(slHeld[s.id]&&Date.now()-slHeld[s.id]<1500)&&document.activeElement!==tv){
       sl.value=want;tv.value=(+want).toFixed(1);}});
@@ -366,9 +365,11 @@ function rows(d){
     :anyTorque?'':'all limp — sliders follow the arm; press Turn torque ON to hold';
 }
 function homeOne(id){api('/api/command?servo='+id+'&cmd=home');}
+const OFS={};   // id -> offset (saved home - 180): the page shows real angles, the API takes nominal ones
+const REAL=(id,nom)=>nom+(OFS[id]||0), NOM=(id,real)=>(real-(OFS[id]||0)).toFixed(1);
 const slHeld={};   // id -> last time the operator touched that slider
 function mv(id){slHeld[id]=Date.now();el('lv'+id).value=(+v('sl'+id)).toFixed(1);
-  api('/api/command?servo='+id+'&cmd=pos&angle='+v('sl'+id)+'&speed='+v('g-spd')+'&acc='+v('g-acc'));}
+  api('/api/command?servo='+id+'&cmd=pos&angle='+NOM(id,+v('sl'+id))+'&speed='+v('g-spd')+'&acc='+v('g-acc'));}
 // Send one joint to an exact angle, clamped to its slider limits.
 function goTo(id,a){const sl=el('sl'+id);
   a=Math.min(+sl.max,Math.max(+sl.min,a));sl.value=a;mv(id);}
@@ -376,7 +377,7 @@ function goTo(id,a){const sl=el('sl'+id);
 function nudge(id,d){goTo(id,Math.round(+v('sl'+id))+d);}
 function typed(id){const a=parseFloat(v('lv'+id));if(!isNaN(a))goTo(id,a);el('lv'+id).blur();}
 function sendAll(){if(!tel)return;let q='/api/batch?speed='+v('g-spd')+'&acc='+v('g-acc');
-  tel.servos.forEach(s=>{q+='&'+s.id+'='+v('sl'+s.id)});api(q);}
+  tel.servos.forEach(s=>{q+='&'+s.id+'='+NOM(s.id,+v('sl'+s.id))});api(q);}
 
 
 async function poll(){

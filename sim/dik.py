@@ -106,7 +106,7 @@ class TorqueLimit(mink.Limit):
         K = np.zeros((len(self.J), m.nv)); dv = np.zeros(m.nv)
         for j in self.k.F_all:                                          # every joint + free body DIK moves
             dv[:] = 0.0; dv[j] = h_; q1 = q0.copy(); mujoco.mj_integratePos(m, q1, dv, 1.0); K[:, j] = (self._grav(q1) - g0) / h_
-        f = self.k.w.d.actuator_force[self.k.acts]; cap = TORQUE * self.k.fmax
+        f = self.k.w.d.actuator_force[self.k.acts]; cap = self.k.tq_share * self.k.freal
         if os.environ.get('DIK_TQ_DEBUG') and int(self.k.w.d.time * 10) % 20 == 0:
             print('TQ model ', ' '.join(f'{x:5.2f}' for x in g0), '\nTQ servo ', ' '.join(f'{x:5.2f}' for x in f), flush=True)
         self.K, self.f = K, f.copy()                                     # kept for the load relief (DIK._vsepr_null)
@@ -269,7 +269,18 @@ class DIK:
         self.limits = [self.cl, vl] + self._collision_limits(m, w, eqs)
         self.acts = np.array([a for mid in self.mods for a in w.mod[mid]['act']]); self.fmax = np.maximum(np.abs(w.m.actuator_forcerange[self.acts, 1]), 1e-6)
         self.F_all = sorted(set(self.act_dofs) | set(self.roots))
-        if TORQUE > 0 and not getattr(w, 'exact', False): self.limits.append(TorqueLimit(self))   # the ideal robot sets its angles exactly: no strength to run out of
+        # the REAL servo's strength (ST3215 2.7 N.m) bounds every plan - also the ideal brain's (10 Nov, Isaac twin: the ideal brain held
+        # a module out on a 45 deg slope / wall at 2.35-2.46 N.m; the real servos sagged 150 mm and the firmware cuts out at 1.9 N.m)
+        import tetro_env2 as _te
+        self.freal = np.minimum(self.fmax, _te.TAU)
+        # 12 Nov (Isaac twin, wall): the TWIST servos ended up holding a module out sideways at their limit (2.5 N.m) while the plan
+        # said 1.8 - a twist's load grows fast once the module sags. DIK_TORQUE_TWIST = their own (smaller) share; default = TORQUE
+        tw_ = np.array([JN_ for mid in self.mods for JN_ in range(7)]) if False else np.array([k_ % 7 for k_ in range(len(self.acts))])
+        # (12 Nov: 0.2 everywhere broke the flat blind dock (18 mm short) - so only where gravity pulls SIDEWAYS (a wall, > 60 deg))
+        sideways = abs(float(up(w.m) @ np.array([0, 0, 1.0]))) < 0.5
+        tws = float(os.environ.get('DIK_TORQUE_TWIST', '0.2' if sideways else str(TORQUE)))
+        self.tq_share = np.where(np.isin(tw_, (0, 3, 6)), tws, TORQUE)
+        if TORQUE > 0 and (not getattr(w, 'exact', False) or os.environ.get('DIK_TQ_IDEAL', '1') == '1'): self.limits.append(TorqueLimit(self))
         self.k = None; self.relax_on = True; self.funnel = FUNNEL; self.lift = []
 
     def _collision_limits(self, m, w, eqs):

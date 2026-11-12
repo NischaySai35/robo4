@@ -10,12 +10,13 @@
 import { Input, NativeSelect } from '@/components/ui/input';
 import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useContext, useEffect, useRef, useState } from 'react';
 import { speak } from '@/features/voice/speech';
 import {
-  useEspTtlStore, startTtlPoll, stopTtlPoll, ttlTry, ttlGet, ttlUrl,
+  useEspTtlStore, startTtlPoll, stopTtlPoll, ttlTry, ttlUrl, ttlTryAll, ttlTargets, TtlScope, useTtlScope, nodeLabel, nodeModule,
   type TtlTab, type TtlServo,
 } from '@/state/espTtlStore';
+import { GATEWAY_URL } from '@/state/espNodesStore';
 import AnimationTab from './AnimationTab';
 import MiniTimeline from './MiniTimeline';
 import TorqueSwitch from './TorqueSwitch';
@@ -37,7 +38,9 @@ const TABS: { id: TtlTab; label: string }[] = [
 ];
 
 export default function EspTtlPage() {
-  const { nodeId, tab, tel, online, latencyMs, lastError, select, setTab } = useEspTtlStore();
+  const { tab, tel, online, latencyMs, lastError, focus, toggleFocus, setTab } = useEspTtlStore();
+  const nodes = useEspNodesStore(s => s.nodes);
+  const focused = focus ? nodes.find(n => n.id === focus) : null;
 
   // Show the modules while this page is open. The shared reader (espPoll) does the asking and the finding.
   useEffect(() => { const stop = startTtlPoll(); return () => { stop(); stopTtlPoll(); }; }, []);
@@ -46,10 +49,17 @@ export default function EspTtlPage() {
     <div className="ettl" data-ui="a">
       <header className="ettl-head">
         <span className="ettl-title">ESP-TTL</span>
-        <ModuleStrip selectedId={nodeId} onSelect={select} />
+        {/* default = ALL modules; click one = only that one, click it again = all (Nischay 12 Nov) */}
+        <ModuleStrip selectedId={focus} onSelect={toggleFocus} />
+        <span className="ettl-chip" data-testid="ttl-target"
+              title="Click a module to send only to it; click it again to go back to all modules">
+          {focused ? `sending to ${nodeLabel(focused)} only` : `sending to all ${new Set(nodes.map(nodeModule)).size} modules`}
+        </span>
+        {focused && <>
         <span className={`ettl-dot ${online ? 'on' : 'off'}`} />
         <span className="ettl-dim">{online ? 'connected' : (lastError || 'offline')}</span>
-        {tel && <>
+        </>}
+        {focused && tel && <>
           <span className="ettl-chip">fw {tel.fw}</span>
           <span className="ettl-chip">{tel.wifi.hostname}.local · {tel.wifi.ip}</span>
           <span className="ettl-chip">{tel.wifi.rssi} dBm</span>
@@ -71,9 +81,9 @@ export default function EspTtlPage() {
         {tab === 'control'   && <ControlTab />}
         {tab === 'animation' && <AnimationTab />}
         {tab === 'walk'      && <WalkTab />}
-        {tab === 'tools'     && <ToolsTab />}
-        {tab === 'config'    && <ConfigTab />}
-        {tab === 'wifi'      && <WifiTab />}
+        {tab === 'tools'     && <PerModule>{() => <ToolsTab />}</PerModule>}
+        {tab === 'config'    && <PerModule>{() => <ConfigTab />}</PerModule>}
+        {tab === 'wifi'      && <PerModule>{() => <WifiTab />}</PerModule>}
         {tab === 'ota'       && <OtaTab />}
         {tab === 'log'       && <LogTab />}
       </div>
@@ -82,15 +92,36 @@ export default function EspTtlPage() {
 }
 
 /** Shared: run a call and surface the outcome in a small status line. */
+/** Inside a module's own section (PerModule) a button goes to THAT module; elsewhere to every target module (all by default,
+ *  or the one picked at the top), asking first if one of them is offline. */
 function useSay() {
+  const scope = useContext(TtlScope);
   const [msg, setMsg] = useState('');
   const say = (m: string) => { setMsg(m); window.setTimeout(() => setMsg(x => (x === m ? '' : x)), 4000); };
   const call = async (path: string, label: string) => {
-    const r = await ttlTry(path);
+    const r = scope ? await ttlTry(path, 6000, scope.url) : await ttlTryAll(path);
+    if (r.error === 'cancelled') return r;
     say(r.ok ? `${label} ok` : `${label} failed: ${r.error}`);
     return r;
   };
   return { msg, say, call };
+}
+
+/** One section per target module (all modules, or the one picked at the top), each with that module's own data and calls. */
+function PerModule({ children }: { children: () => React.ReactNode }) {
+  useEspTtlStore(s => s.focus);                  // redraw when the selection changes
+  useEspNodesStore(s => s.nodes);                // and when a module comes / goes
+  const ts = ttlTargets();
+  if (!ts.length) return <div className="ettl-card ettl-dim">No module yet - add one with + Board.</div>;
+  return <>{ts.map(n => (
+    <TtlScope.Provider key={n.id} value={n}>
+      <div className="ettl-modhead" data-testid={`ttl-mod-${nodeModule(n)}`}>
+        <span className={`ettl-dot ${n.connected ? 'on' : 'off'}`} /> <b>{nodeLabel(n)}</b>
+        <span className="ettl-dim"> {n.connected ? `online${n.latencyMs != null ? ` · ${n.latencyMs} ms` : ''}` : 'offline'}</span>
+      </div>
+      {children()}
+    </TtlScope.Provider>
+  ))}</>;
 }
 
 function readNum(key: string, dflt: number) {
@@ -99,19 +130,13 @@ function readNum(key: string, dflt: number) {
 
 // ── Control ───────────────────────────────────────────────────────────────────
 function ControlTab() {
-  const tel = useEspTtlStore(s => s.tel);
   const { msg, say, call } = useSay();
   // Remembered: the tab used to forget them on every tab switch and quietly move at 5 / 20 again.
   const [speed, setSpeed] = useState(() => readNum('robo4:esptt:speed', 5));
   const [acc, setAcc]     = useState(() => readNum('robo4:esptt:acc', 20));
   useEffect(() => { try { localStorage.setItem('robo4:esptt:speed', String(speed)); localStorage.setItem('robo4:esptt:acc', String(acc)); } catch { /* private window */ } }, [speed, acc]);
   const [band, setBand] = useState('0.1');
-
-  const servos = tel?.servos ?? [];
-  const deadband = (tel as any)?.deadbandDeg ?? 2.46;
-  const move = (s: TtlServo, deg: number) => {
-    void ttlTry(`/api/command?servo=${s.id}&cmd=pos&angle=${deg}&speed=${speed}&acc=${acc}`);
-  };
+  const deadband = (useEspTtlStore(s => s.tel) as any)?.deadbandDeg ?? 2.46;
 
   return (
     <div>
@@ -123,7 +148,7 @@ function ControlTab() {
           <label className="ettl-lbl">acc<Input size="xs" className="tw:w-auto" type="number" min={1} max={100} value={acc}
                  onChange={e => setAcc(+e.target.value)} style={{ width: 60 }} /></label>
           <span className="ettl-sep" />
-          <TorqueSwitch say={say} />
+          <TorqueSwitch say={say} all />
           <span className="ettl-sep" />
           <Button variant="outline" size="sm" onClick={() => call('/api/home', 'home 180')}>Home → 180°</Button>
           <Button size="sm" onClick={() => call('/api/home/manual', 'manual home')}>Manual home</Button>
@@ -148,6 +173,21 @@ function ControlTab() {
 
       <MiniTimeline say={say} />
 
+      <PerModule>{() => <ServoTable speed={speed} acc={acc} />}</PerModule>
+      {msg && <div className="ettl-toast">{msg}</div>}
+    </div>
+  );
+}
+
+/** One module's servo table (inside PerModule): its own telemetry, its own calls. */
+function ServoTable({ speed, acc }: { speed: number; acc: number }) {
+  const sc = useTtlScope();
+  const { msg, call } = useSay();
+  const servos = sc.tel?.servos ?? [];
+  const deadband = (sc.tel as any)?.deadbandDeg ?? 2.46;
+  const move = (s: TtlServo, deg: number) => { void sc.tryp(`/api/command?servo=${s.id}&cmd=pos&angle=${deg}&speed=${speed}&acc=${acc}`); };
+  return (
+    <>
       <div className="ettl-card">
         <h4>Servos</h4>
         <div className="ettl-wrap">
@@ -197,7 +237,7 @@ function ControlTab() {
         </div>
       </div>
       {msg && <div className="ettl-toast">{msg}</div>}
-    </div>
+    </>
   );
 }
 
@@ -288,6 +328,7 @@ function AngleCell(props: { s: TtlServo; onCommit: (v: number) => void }) {
 // ── Servo tools ───────────────────────────────────────────────────────────────
 function ToolsTab() {
   const { msg, say, call } = useSay();
+  const sc = useTtlScope();
   const [scanning, setScanning] = useState(false);
   const [found, setFound] = useState<any[]>([]);
   const [at, setAt] = useState(0);
@@ -299,11 +340,11 @@ function ToolsTab() {
 
   const detect = async (adopt: boolean) => {
     setScanning(true); setFound([]); setManual(false); setOldId('');
-    const r = await ttlTry(`/api/scan?from=1&to=253&adopt=${adopt ? 1 : 0}`);
+    const r = await sc.tryp(`/api/scan?from=1&to=253&adopt=${adopt ? 1 : 0}`);
     if (!r.ok) { setScanning(false); say('scan refused: ' + r.error); return; }
     const poll = async () => {
       try {
-        const d = await ttlGet('/api/scan/status');
+        const d = await sc.get('/api/scan/status');
         setFound(d.found || []); setAt(d.at || 0);
         if (d.active) { window.setTimeout(poll, 200); return; }
         setScanning(false);
@@ -321,7 +362,7 @@ function ToolsTab() {
     const dup = found.some(f => f.id === to);
     if (dup && !confirm(`ID ${to} is ALREADY on this bus.\n\nGoing ahead leaves two servos sharing it, and no scan can tell them apart.\n\nReally continue?`)) return;
     if (!confirm(`Change servo ${from} to ID ${to}?`)) return;
-    const r = await ttlTry(`/api/servo/setid?from=${from}&to=${to}${dup ? '&force=1' : ''}`);
+    const r = await sc.tryp(`/api/servo/setid?from=${from}&to=${to}${dup ? '&force=1' : ''}`);
     say(r.ok && r.data?.ok ? `wrote ${from} → ${to}` : `failed: ${r.data?.error || r.error}`);
     setFound([]); setOldId(''); setManual(false);   // stale by definition — detect again
   };
@@ -403,7 +444,7 @@ function ToolsTab() {
             </NativeSelect>
           </label>
           <Button variant="outline" size="sm" onClick={async () => {
-            const r = await ttlTry(`/api/servo/read?id=${reg.id}&addr=${reg.addr}&len=${reg.len}`);
+            const r = await sc.tryp(`/api/servo/read?id=${reg.id}&addr=${reg.addr}&len=${reg.len}`);
             setRegOut(JSON.stringify(r.data ?? r.error, null, 1));
           }}>Read</Button>
           <label className="ettl-lbl">value<Input size="xs" className="tw:w-auto" value={reg.val} onChange={e => setReg({ ...reg, val: e.target.value })} style={{ width: 70 }} /></label>
@@ -412,7 +453,7 @@ function ToolsTab() {
             <span />unlock EPROM
           </label>
           <Button variant="destructive" size="sm" onClick={async () => {
-            const r = await ttlTry(`/api/servo/write?id=${reg.id}&addr=${reg.addr}&len=${reg.len}&val=${reg.val}&unlock=${reg.unlock ? 1 : 0}`);
+            const r = await sc.tryp(`/api/servo/write?id=${reg.id}&addr=${reg.addr}&len=${reg.len}&val=${reg.val}&unlock=${reg.unlock ? 1 : 0}`);
             setRegOut(JSON.stringify(r.data ?? r.error, null, 1));
           }}>Write</Button>
         </div>
@@ -431,8 +472,9 @@ function ToolsTab() {
 // ── Config ────────────────────────────────────────────────────────────────────
 function ConfigTab() {
   const { msg, say, call } = useSay();
+  const sc = useTtlScope();
   const [cfg, setCfg] = useState<any>(null);
-  const load = async () => { const r = await ttlTry('/api/config'); if (r.ok) setCfg(r.data); else say(r.error!); };
+  const load = async () => { const r = await sc.tryp('/api/config'); if (r.ok) setCfg(r.data); else say(r.error!); };
   useEffect(() => { void load(); }, []);
 
   if (!cfg) return <div className="ettl-card"><h4>Config</h4><div className="ettl-dim">loading…</div></div>;
@@ -441,7 +483,7 @@ function ConfigTab() {
     const rows = (cfg.servos || []).map((s: any) => `${s.id}:${s.label}:${s.min}:${s.max}`).join('|');
     const q = `/api/config/set?host=${encodeURIComponent(cfg.host)}&baud=${cfg.baud}`
             + `&servos=${encodeURIComponent(rows)}`;
-    const r = await ttlTry(q);
+    const r = await sc.tryp(q);
     say(r.ok ? 'config saved to the board' : 'save failed: ' + r.error);
     void load();
   };
@@ -490,11 +532,12 @@ function ConfigTab() {
 // ── Wi-Fi ─────────────────────────────────────────────────────────────────────
 function WifiTab() {
   const { msg, say, call } = useSay();
+  const sc = useTtlScope();
   const [w, setW] = useState<any>(null);
   const [nets, setNets] = useState<any[] | null>(null);
   const [pw, setPw] = useState<Record<number, string>>({});
   const [ssid, setSsid] = useState<Record<number, string>>({});
-  const load = async () => { const r = await ttlTry('/api/wifi'); if (r.ok) { setW(r.data); setSsid({ ...(r.data.slots || []).reduce((o: any, s: string, i: number) => (o[i] = s, o), {}) }); } };
+  const load = async () => { const r = await sc.tryp('/api/wifi'); if (r.ok) { setW(r.data); setSsid({ ...(r.data.slots || []).reduce((o: any, s: string, i: number) => (o[i] = s, o), {}) }); } };
   useEffect(() => { void load(); }, []);
 
   return (
@@ -525,7 +568,7 @@ function WifiTab() {
         <h4>Nearby networks</h4>
         <div className="ettl-row">
           <Button variant="outline" size="sm" onClick={async () => {
-            setNets(null); const r = await ttlTry('/api/wifi/scan', 15000);
+            setNets(null); const r = await sc.tryp('/api/wifi/scan', 15000);
             if (r.ok) setNets(r.data.nets); else say('scan failed: ' + r.error);
           }}>Scan</Button>
         </div>
@@ -547,8 +590,7 @@ function WifiTab() {
 // ── Firmware ──────────────────────────────────────────────────────────────────
 function OtaTab() {
   const nodes = sortedNodes(useEspNodesStore(s => s.nodes));
-  const shown = useEspTtlStore(s => s.nodeId);
-  const [pick, setPick] = useState<Set<string>>(() => new Set(shown ? [shown] : []));
+  const [pick, setPick] = useState<Set<string>>(() => new Set(ttlTargets().filter(n => n.connected).map(n => n.id)));
   const [rows, setRows] = useState<Record<string, { pct: number; stat: string; err: boolean }>>({});
   const [busy, setBusy] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -626,27 +668,81 @@ function OtaTab() {
 }
 
 // ── Log ───────────────────────────────────────────────────────────────────────
+// Every module's log AND the master's (the radio bridge's events) in one list, kept on this computer (Nischay 12 Nov: "all
+// logs of all things, even previous ones"). A module's own log restarts empty when it restarts; here each new line is appended
+// to that module's history with the time it arrived, and a restart is marked. The top selection filters (default: all).
+// REUSE-CHECKED: log|history|_events -> the old Log tab (one module, replaced each refresh) and the bridge's /_events
+// (in memory, lost on its restart); nothing kept lines. This keeps them.
+type LogLine = { t: number; src: string; text: string };
+const LOG_KEY = 'robo4:esptt:logs', LOG_MAX = 4000;
+const UP = /^\[\s*(\d+)\]/;
+const loadLogs = (): LogLine[] => { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { return []; } };
+const saveLogs = (l: LogLine[]) => { try { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(-LOG_MAX))); } catch { /* full or private */ } };
+const seenUp: Record<string, number> = {};          // per module: the board's uptime (ms) of the newest line already kept
+let masterAfter = 0;
+
+async function collectLogs(): Promise<LogLine[]> {
+  const add: LogLine[] = [], now = Date.now(), keep = loadLogs();
+  if (!Object.keys(seenUp).length) {
+    for (const l of keep) { const m = UP.exec(l.text); if (m && l.src.startsWith('mod')) seenUp[l.src] = Math.max(seenUp[l.src] ?? -1, +m[1]); }
+  }
+  for (const n of ttlTargets().filter(x => x.connected)) {
+    const src = nodeLabel(n);
+    const r = await ttlTry('/api/log', 8000, n.url);
+    if (!r.ok) continue;
+    const lines = String(r.data).split(/\r?\n/).filter(Boolean);
+    const ups = lines.map(l => { const m = UP.exec(l); return m ? +m[1] : -1; });
+    const maxUp = Math.max(-1, ...ups);
+    if (seenUp[src] != null && seenUp[src] >= 0 && maxUp >= 0 && maxUp < seenUp[src]) {   // its uptime went back: it restarted
+      add.push({ t: now, src, text: '──────── module restarted ────────' }); seenUp[src] = -1;
+    }
+    lines.forEach((l, i) => { if (ups[i] > (seenUp[src] ?? -1)) add.push({ t: now, src, text: l }); });
+    if (maxUp >= 0) seenUp[src] = Math.max(seenUp[src] ?? -1, maxUp);
+  }
+  try {
+    const res = await fetch(`${GATEWAY_URL}/_events?after=${masterAfter}`, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
+    const ev = await res.json(), list: any[] = Array.isArray(ev) ? ev : ev?.events ?? [];
+    for (const e of list) {
+      masterAfter = Math.max(masterAfter, Number(e.n ?? e.id ?? masterAfter) || masterAfter);
+      const t = Number(e.t ?? e.time ?? 0);
+      add.push({ t: t ? (t < 1e12 ? t * 1000 : t) : now, src: 'master', text: `${e.source ? e.source + ': ' : ''}${e.text ?? e.msg ?? JSON.stringify(e)}` });
+    }
+  } catch { /* bridge not running */ }
+  if (!add.length) return keep;
+  const all = [...keep, ...add];
+  saveLogs(all);
+  return all.slice(-LOG_MAX);
+}
+
 function LogTab() {
-  const [txt, setTxt] = useState('');
+  const [lines, setLines] = useState<LogLine[]>(loadLogs);
   const [auto, setAuto] = useState(true);
-  const load = async () => {
-    try { setTxt(await ttlGet<string>('/api/log', 8000)); } catch (e: any) { setTxt('could not read log: ' + e.message); }
-  };
+  const [master, setMaster] = useState(true);
+  const focus = useEspTtlStore(s => s.focus);
+  useEspNodesStore(s => s.nodes.length);
+  const load = async () => setLines(await collectLogs());
   useEffect(() => {
     void load();
     if (!auto) return;
-    const t = window.setInterval(load, 2000);
+    const t = window.setInterval(load, 3000);
     return () => window.clearInterval(t);
-  }, [auto]);
-
+  }, [auto, focus]);
+  const want = new Set(ttlTargets().map(nodeLabel));
+  const shown = lines.filter(l => (l.src === 'master' ? master : want.has(l.src)));
+  const pre = useRef<HTMLPreElement>(null);
+  useEffect(() => { const el = pre.current; if (el) el.scrollTop = el.scrollHeight; }, [shown.length]);
   return (
     <div className="ettl-card">
-      <h4>Device log</h4>
+      <h4>Logs · {focus ? [...want].join(', ') : 'all modules'}{master ? ' + master' : ''}</h4>
       <div className="ettl-row">
         <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
         <label className="ettl-toggle"><input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /><span />auto</label>
+        <label className="ettl-toggle"><input type="checkbox" checked={master} onChange={e => setMaster(e.target.checked)} /><span />master (radio)</label>
+        <span className="ettl-dim">{shown.length} lines kept on this computer · pick a module at the top to see only it</span>
+        <span style={{ flex: 1 }} />
+        <Button variant="outline" size="sm" onClick={() => { if (confirm('Delete every kept log line on this computer?')) { saveLogs([]); setLines([]); } }}>Clear kept logs</Button>
       </div>
-      <pre className="ettl-pre tall">{txt || '—'}</pre>
+      <pre ref={pre} className="ettl-pre tall" data-testid="ttl-log">{shown.length ? shown.map(l => `${new Date(l.t).toLocaleTimeString()}  ${l.src.padEnd(6)} ${l.text}`).join('\n') : '—'}</pre>
     </div>
   );
 }

@@ -10,7 +10,7 @@
  * Fallback: a module that did not hear GO (not on the same radio channel) is started over Wi-Fi a moment later, and
  * the message says so.
  */
-import { byModule, boardUrl } from '@/state/espTtlStore';
+import { byModule, boardUrl, ttlTargets, askOffline, nodeModule } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
 import { speakForPath } from '@/features/voice/phrases';
 
@@ -75,7 +75,12 @@ let loaded: { group: number; mods: number[]; frames: number } | null = null;
 export async function sendToBoard(frames: Frame[] = useTimelineStore.getState().frames): Promise<SendResult> {
   const st = useTimelineStore.getState();
   if (!frames.length) return { ok: false, error: 'timeline is empty' };
-  const mods = modulesOf(frames);
+  // only the modules picked at the top of the page (default all); one offline -> asked first (Nischay 12 Nov)
+  const tg = askOffline(ttlTargets());
+  if (!tg) return { ok: false, error: 'cancelled' };
+  const want = new Set(tg.map(nodeModule)), inFrames = modulesOf(frames);
+  const mods = inFrames.filter(m => want.has(m));
+  if (!mods.length) return { ok: false, error: `the timeline has no frames for ${tg.map(n => `mod${nodeModule(n)}`).join(', ')}` };
   const group = mods.length > 1 ? (Math.floor(Math.random() * 0xfffffffe) + 1) >>> 0 : 0;   // 0 = one module, no group
   // mods: who is in the group, so a member that is switched off (never starts) makes the others stop instead of
   // playing without it (firmware groupsync.h missingNow)

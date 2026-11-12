@@ -74,6 +74,10 @@
 .ettl-toggle.on { color: var(--accent); }
 .ettl-toggle.on span { border-color: var(--accent); }
 .ettl-toggle.on span::after { left: 16px; background: var(--accent); }
+/* the checkbox itself drives the look too (12 Nov: Log tab switches were ON but drawn OFF - they never set .on) */
+.ettl-toggle:has(input:checked) { color: var(--accent); }
+.ettl-toggle input:checked + span { border-color: var(--accent); }
+.ettl-toggle input:checked + span::after { left: 16px; background: var(--accent); }
 
 /* ── LED strip ──────────────────────────────────────────────────────────── */
 .ettl-leds { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -226,3 +230,7 @@
 .ettl-servos .c-mode  { width: calc(13ch + 16px); }
 .ettl-servos .c-act   { width: 300px; }
 .ettl-servos td:last-child { overflow: visible; }
+
+/* one section per module (PerModule): its name and state above its own tables */
+.ettl-modhead { display: flex; align-items: center; gap: 6px; margin: 14px 0 6px; padding: 4px 8px;
+  border-left: 3px solid var(--accent); background: var(--muted, transparent); font-size: 13px; }

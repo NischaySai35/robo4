@@ -114,7 +114,7 @@ class NewtonEngine(Engine):
         try:
             import warp, newton, mujoco
         except ImportError as e:
-            raise GosError('This engine needs Newton in its own environment, because it pins its own MuJoCo: py -3.12 -m venv nwt, then nwt\\Scripts\\python -m pip install "newton[sim]" scipy') from e
+            raise GosError('This engine needs Newton: py -3.12 -m pip install "newton[sim]==1.6.1" (the version Isaac Sim 6.2 pins; it needs mujoco 3.12, the project pin)') from e
         self.wp, self.newton, self.mj = warp, newton, mujoco
 
     def open(self, path):

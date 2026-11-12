@@ -601,40 +601,146 @@ class Gateway:
         except GosError: return None
 
     def ask(self, name, path, target, body, method='GET', ctype=None):
-        """(http code, bytes, content type) for one request to module `name`."""
+        """(http code, bytes, content type) for one request to module `name`.
+        THE RADIO (the dongle) IS THE MAIN PATH (Nischay 12 Nov 2026: "why are you going back to the router? what if I go to a new
+        place" - the dongle exists so nothing depends on a router, like a wireless mouse's). Wi-Fi is only the backup, used when a
+        network happens to be there:
+          radio healthy -> radio first, Wi-Fi if that one request fails;
+          a radio request just failed -> Wi-Fi first (no request waits ~4 s on a radio known to be down) while a background
+          probe asks the module over the radio every RADIO_PROBE_S; the first answer makes the radio the main path again."""
         m = self.radio(name) if path not in WIFI_ONLY else None
-        if m and path == '/':
-            try: return 200, self._page(m), 'text/html; charset=utf-8'
-            except GosError: pass                        # Wi-Fi below
-        if m and path == '/api/ota' and method == 'POST':
+        radio_ok = bool(m) and time.time() >= self.__dict__.setdefault('_radio_bad', {}).get(name, 0.0)
+        if m and path == '/api/ota' and method == 'POST' and radio_ok:
             data = _upload_file(body or b'', ctype)
             if not data: return 400, b'no firmware file in the upload', 'text/plain'
             try: done = self._radio_ota(m, data)
             except GosError as e:
                 return 500, f'upload over ESP-NOW failed: {e}. Nothing was activated - just retry.'.encode(), 'text/plain'
             if done: return done
-            m = None                                     # older firmware on the board: this upload goes over Wi-Fi
-        if m:
-            try:
-                code, text = self.link.request(m, target, body if body else None)
-                self.via[name] = 'radio'
-                return code or 502, self._own(name, path, text, m.ip).encode(), None
-            except GosError: pass                        # the radio did not make it: Wi-Fi below
+            m = None; radio_ok = False                   # older firmware on the board: this upload goes over Wi-Fi
         known = self.radio(name)
-        ip = (known.ip if known and known.ip != '-' else None) or self.wifi.get(name)
-        if not ip:
-            self._find()
+        ip = None if os.environ.get('GOS_BRIDGE_WIFI') == '0' else ((known.ip if known and known.ip != '-' else None) or self.wifi.get(name))
+        small = path.startswith('/api/')                      # API replies are tiny; the page (42 KB) can take ~1 s on a busy board
+        why = ''
+        if radio_ok and ip and path != '/' and method == 'GET':
+            # both paths there: ask the radio; no answer within HEDGE_S -> ask Wi-Fi as well and take whichever answers first
+            # (12 Nov: mod1 at -90 dBm at the dongle - waiting out the radio's ~4 s give-up made every 2nd request time out)
+            got = self._hedged(name, m, path, target, body, method, ctype, ip, small)
+            if got: return got
+            radio_ok = False                                  # both failed below; don't ask the radio a second time
+        elif radio_ok:
+            got = self._over_radio(name, m, path, target, body)
+            if got: return got
+        if ip:
+            got = self._over_wifi(name, path, target, body, method, ctype, ip, 1.5 if small else 6.0)
+            if isinstance(got, str): got = self._over_wifi(name, path, target, body, method, ctype, ip, 3.0 if small else 6.0)
+            if not isinstance(got, str): return got
+            why = got
+        if m and not radio_ok:                               # Wi-Fi is not there either: the radio is all there is, try it anyway
+            got = self._over_radio(name, m, path, target, body)
+            if got: return got
+        self._find()
+        if not ip and not m:
             return 504, json.dumps({'ok': False, 'error': f'{name} is not heard over ESP-NOW and its Wi-Fi address is not known yet (looking for it). Is it powered?'}).encode(), None
+        if not ip:
+            return 504, json.dumps({'ok': False, 'error': f'{name} did not answer over ESP-NOW and has no Wi-Fi address to fall back on. Is it powered and in range of the dongle?'}).encode(), None
+        return 504, json.dumps({'ok': False, 'error': f'{name} answers neither over ESP-NOW nor on Wi-Fi at {ip} ({why}).'}).encode(), None
+
+    RADIO_PROBE_S = 2.0
+    HEDGE_S = 0.6
+
+    def _hedged(self, name, m, path, target, body, method, ctype, ip, small):
+        """radio first, Wi-Fi joins after HEDGE_S; the first good answer wins (the slower one is dropped)"""
+        import queue
+        q = queue.Queue()
+        threading.Thread(target=lambda: q.put(('radio', self._over_radio(name, m, path, target, body))), daemon=True).start()
+        def wifi():
+            got = self._over_wifi(name, path, target, body, method, ctype, ip, 1.5 if small else 6.0)
+            q.put(('wifi', None if isinstance(got, str) else got))
+        started_wifi, pending, end = False, 1, time.time() + (8.0 if small else 12.0)
+        while pending and time.time() < end:
+            try: _, got = q.get(timeout=self.HEDGE_S if not started_wifi else max(0.05, end - time.time()))
+            except queue.Empty:
+                if not started_wifi: started_wifi = True; pending += 1; threading.Thread(target=wifi, daemon=True).start()
+                continue
+            pending -= 1
+            if got: return got
+            if not started_wifi: started_wifi = True; pending += 1; threading.Thread(target=wifi, daemon=True).start()
+        return None
+
+    def _over_radio(self, name, m, path, target, body):
+        """the request over the radio: (code, data, type), or None if it did not get through (the radio is then marked down
+        and a background probe watches for it coming back)"""
+        try:
+            if path == '/':
+                out = 200, self._page(m), 'text/html; charset=utf-8'
+            else:
+                code, text = self.link.request(m, target, body if body else None)
+                out = code or 502, self._own(name, path, text, m.ip).encode(), None
+            self.via[name] = 'radio'; self._radio_bad.pop(name, None)
+            self._radio_ok_at = time.time(); self._radio_fails = 0
+            return out
+        except GosError as e:
+            self._dongle_watchdog()
+            if name not in self._radio_bad and self.link: self.link._note(name, f'radio request failed ({str(e)[:80]}): Wi-Fi covers, probing the radio every {self.RADIO_PROBE_S:.0f} s')
+            self._radio_bad[name] = time.time() + 3600        # down until the probe says otherwise
+            self._probe_radio(name)
+            return None
+
+    DONGLE_STUCK_S, DONGLE_RESET_EVERY_S = 10.0, 60.0
+
+    def _dongle_watchdog(self):
+        """12 Nov 2026: the dongle's sending froze (its 'sent' counter stuck at 4234, 'txfail' climbing to 76 000) while it still
+        HEARD every module, and it never recovered by itself - every radio request failed for ~2 h. Modules still heard + no radio
+        answer for DONGLE_STUCK_S = stuck: pulse its reset line (RTS -> EN on the CH340 board), at most every DONGLE_RESET_EVERY_S."""
+        now = time.time()
+        self._radio_fails = self.__dict__.get('_radio_fails', 0) + 1
+        ok_at = self.__dict__.setdefault('_radio_ok_at', now)
+        last = self.__dict__.get('_dongle_reset_at', 0.0)
+        link = self.link
+        if not link or self._radio_fails < 4 or now - ok_at < self.DONGLE_STUCK_S or now - last < self.DONGLE_RESET_EVERY_S: return
+        heard = [m for m in list(getattr(link, 'modules', {}).values()) if now - getattr(m, 'seen', 0) < 3]
+        if not heard: return                                  # nobody heard: modules off / out of range, not a stuck dongle
+        port = getattr(link.dongle, 'port', None)
+        if port is None or not hasattr(port, 'rts'): return
+        self._dongle_reset_at = now
+        try:
+            port.dtr = False; port.rts = True; time.sleep(0.15); port.rts = False
+            link._note('dongle', f'radio stuck {now - ok_at:.0f} s while modules are heard: dongle restarted (reset line)')
+        except Exception as e:
+            link._note('dongle', f'radio stuck, but the dongle reset failed: {e}')
+
+    def _probe_radio(self, name):
+        probing = self.__dict__.setdefault('_radio_probing', set())
+        if name in probing: return
+        probing.add(name)
+        def run():
+            try:
+                while name in self._radio_bad:
+                    time.sleep(self.RADIO_PROBE_S)
+                    m = self.radio(name)
+                    if not m: continue                        # not even heard: keep waiting
+                    try:
+                        code, _ = self.link.request(m, '/api/health')
+                        if code == 200:
+                            self._radio_ok_at = time.time(); self._radio_fails = 0
+                            self._radio_bad.pop(name, None); self.via[name] = 'radio'
+                            if self.link: self.link._note(name, 'radio answers again: back to the radio')
+                    except GosError: self._dongle_watchdog()
+            finally: probing.discard(name)
+        threading.Thread(target=run, daemon=True).start()
+
+    def _over_wifi(self, name, path, target, body, method, ctype, ip, wait=2.5):
+        """the request over Wi-Fi: (code, data, type), or the reason it failed (str)"""
         try:
             req = urllib.request.Request(f'http://{ip}{target}', data=body if method == 'POST' else None, method=method)
             if ctype: req.add_header('Content-Type', ctype)
-            with urllib.request.urlopen(req, timeout=180 if path == '/api/ota' else 4) as r:
+            with urllib.request.urlopen(req, timeout=180 if path == '/api/ota' else wait) as r:
                 code, data, rtype = r.status, r.read(), r.headers.get('Content-Type')
         except urllib.error.HTTPError as e:
             code, data, rtype = e.code, e.read(), e.headers.get('Content-Type')
         except OSError as e:
-            self._find()
-            return 504, json.dumps({'ok': False, 'error': f'{name} answers neither over ESP-NOW nor on Wi-Fi at {ip} ({e}).'}).encode(), None
+            return str(e)
         self.via[name] = 'wifi'
         if rtype and ('json' in rtype or 'text/plain' in rtype):
             data = self._own(name, path, data.decode(errors='replace'), ip).encode()
@@ -699,6 +805,7 @@ class Gateway:
         out = link.status() if link and not link.dongle.dead else {'dongle': 'not plugged in', 'modules': []}
         out['wifi'] = self.wifi
         out['via'] = self.via
+        out['radioDown'] = sorted(self.__dict__.get('_radio_bad', {}))   # modules whose radio path is down right now (Wi-Fi covers)
         out['lastEvent'] = self.log.last
         return out
 

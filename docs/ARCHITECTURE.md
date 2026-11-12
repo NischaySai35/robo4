@@ -24,7 +24,7 @@ src/
     renderers/             # how model entities become meshes
         RobotFK.js  ArmRenderer.js  ArmGeometry.js
   kinematics/              # FK/IK math (generic, no React/Three)
-    kinematics.js  fabrik.js  jacobianIK.js
+    kinematics.js  jacobianIK.js
   shared/                  # cross-cutting helpers
     telemetry.js
   features/                # self-contained UI features (jsx + co-located css)

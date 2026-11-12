@@ -1,6 +1,6 @@
 """P10 check: the same GOS script runs on MuJoCo and on Newton through the plug-in point.
 
-Newton pins its own MuJoCo, so it needs its own environment. usage: PYTHON_WITH_NEWTON\\python.exe tools/test_newton_engine.py
+Runs in the system Python (MuJoCo pinned to 3.12 = Newton 1.6.1's, 9 Nov). usage: py -3.12 tools/test_newton_engine.py
 """
 import os, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

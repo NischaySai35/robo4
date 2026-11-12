@@ -20,8 +20,8 @@ export default function VoiceControl() {
   const status =
     S.model === 'downloading' ? `Downloading voice… ${(S.progress * 100).toFixed(0)}%`
     : S.model === 'ready'     ? 'Ryan (US male) ready — works offline'
-    : S.model === 'error'     ? `Voice download failed — using the system voice${S.error ? ` (${S.error})` : ''}`
-    : S.model === 'missing'   ? 'Ryan voice not downloaded — using the system voice'
+    : S.model === 'error'     ? `Ryan voice download failed — silent until it loads${S.error ? ` (${S.error})` : ''}`
+    : S.model === 'missing'   ? 'Ryan voice not downloaded yet — it downloads on the first announcement'
     : 'Checking voice…';
 
   return (

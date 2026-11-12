@@ -276,7 +276,7 @@ export function bodiesConnected(doc: Document, aId: string, bId: string): boolea
 }
 
 
-export interface MateBend { jointValues: Record<string, number>; standoffValues: Record<string, number>; joint: Joint; residual: number; startGap: number; chainLen: number }
+export interface MateBend { jointValues: Record<string, number>; standoffValues: Record<string, number>; joint: Joint; residual: number; startGap: number; chainLen: number; chainNames: string[] }
 
 /**
  * Mate two connectors that are ALREADY connected through the joint graph, by BENDING
@@ -369,11 +369,30 @@ export function computeMateBend(
   // acceptance makes the residual MONOTONE, so a gap the chain can physically close gets
   // driven to ~0 instead of stalling — and A/B order no longer matters. Then a nullspace
   // spread phase pushes bodies apart (VSEPR) without loosening the mate.
-  const seated = lmSolveGeneric(loopChain, values, (v) => mateError(v, SEAT_INSET), {
-    iterations: 320, tol: 1e-4, maxStep: 0.3, minTravel: true,
-    spread: spreadPotential, spreadGain: 2.0, spreadIters: 140, // stronger, longer spread relaxation
-  });
-  for (const [id, v] of Object.entries(seated)) values[id] = v as number;
+  const seatFrom = (start: Record<string, number>) => {
+    const v = lmSolveGeneric(loopChain, start, (x) => mateError(x, SEAT_INSET), {
+      iterations: 320, tol: 1e-4, maxStep: 0.3, minTravel: true,
+      spread: spreadPotential, spreadGain: 2.0, spreadIters: 140, // stronger, longer spread relaxation
+    }) as Record<string, number>;
+    return { v, res: Math.hypot(...mateError(v, SEAT_INSET).slice(0, 3)) };
+  };
+  let best = seatFrom(values);
+  // A STRAIGHT chain is a dead start (12 Nov, two modules end to end -> ring: "137 cm gap, started 137 cm"): at 0 every
+  // bend's first-order effect on the end-to-end gap is zero, so LM sees no downhill and never moves. Retry from a few
+  // gently bent, deterministic starts (inside the joint limits) and keep the closest seat.
+  let seed = 12345;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  for (let k = 0; k < 6 && best.res > 0.003; k++) {
+    const start: Record<string, number> = {};
+    loopChain.forEach((j: any, i: number) => {
+      const lo = j.limit?.lower ?? -Math.PI, hi = j.limit?.upper ?? Math.PI;
+      const nudge = k === 0 ? 0.35 : k === 1 ? 0.35 * (i % 2 ? -1 : 1) : (rnd() * 2 - 1) * 0.6;   // same way, zig-zag, then random
+      start[j.id] = Math.min(hi, Math.max(lo, (values[j.id] ?? 0) + nudge));
+    });
+    const r = seatFrom(start);
+    if (r.res < best.res) best = r;
+  }
+  for (const [id, v] of Object.entries(best.v)) values[id] = v as number;
   work = withJointValues(doc, values);
   const residual = Math.hypot(...mateError(values, SEAT_INSET).slice(0, 3)); // position gap only
 
@@ -413,7 +432,7 @@ export function computeMateBend(
     componentId: null,
     meta: { generatedFromConnector: true, connectorA: seatRef.connectorId, connectorB: moveRef.connectorId, detachable: true },
   });
-  return { jointValues: values, standoffValues, joint, residual, startGap, chainLen };
+  return { jointValues: values, standoffValues, joint, residual, startGap, chainLen, chainNames: loopChain.map((j: any) => j.name ?? j.id) };
 }
 
 /**

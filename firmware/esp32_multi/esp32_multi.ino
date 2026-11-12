@@ -482,9 +482,22 @@ static inline int slotOf(uint8_t id) {
 }
 static inline ServoState* byId(uint8_t id) { int s = slotOf(id); return s < 0 ? nullptr : &servos[s]; }
 
+/* Travel by joint TYPE, in nominal degrees (180 = this joint's manual home), so the limits move with the home by themselves
+   (Nischay 12 Nov 2026: bends slid 0..360 on the page and nothing - page, board or servo - stopped a bend past 90):
+   bend B1..B4 = home +-90, lock = home +-50 (lock/unlock is +-45), twist = home +-180 (a full turn, no limit). */
+#define BEND_TRAVEL 90.0f
+#define LOCK_TRAVEL 50.0f
+bool isBendSlot(uint8_t i) { return cfg.labels[i][0] == 'B' && cfg.labels[i][1] >= '0' && cfg.labels[i][1] <= '9'; }
+void typeLimits(uint8_t slot, float& lo, float& hi) {
+  float t = isBendSlot(slot) ? BEND_TRAVEL : strncmp(cfg.labels[slot], "LOCK", 4) == 0 ? LOCK_TRAVEL : 180.0f;
+  lo = 180.0f - t; hi = 180.0f + t;
+}
 void limitsFor(uint8_t slot, float& lo, float& hi) {
   lo = cfg.minDeg[slot]; hi = cfg.maxDeg[slot];
   if (hi <= lo) { lo = 0; hi = 360; }
+  float tlo, thi; typeLimits(slot, tlo, thi);        // the Config tab can only narrow a joint further, never widen it
+  if (tlo > lo) lo = tlo;
+  if (thi < hi) hi = thi;
 }
 
 void busBegin(uint32_t baud) {
@@ -622,6 +635,29 @@ bool tuneWordIfDiff(uint8_t id, uint8_t addr, uint16_t want, const char* name) {
   return true;
 }
 
+/* The limits stored INSIDE the servo (raw 0..4095): the joint's travel about its manual home plus SERVO_LIMIT_MARGIN, so the
+   board's own clamp always acts first and the servo only catches what the board gets wrong. A full-turn joint (twist), a
+   joint with no slot, or a range that would cross the 0/4095 seam keeps 0..4095 (single turn, never 0/0 = multi-turn). */
+#define SERVO_LIMIT_MARGIN 5.0f
+void servoAngleLimits(uint8_t id, uint16_t& rlo, uint16_t& rhi) {
+  rlo = 0; rhi = 4095;
+  int slot = slotOf(id); if (slot < 0) return;
+  float lo, hi; typeLimits((uint8_t)slot, lo, hi);
+  if (hi - lo >= 359.0f) return;
+  float a = lo - SERVO_LIMIT_MARGIN + offsetFor(id), b = hi + SERVO_LIMIT_MARGIN + offsetFor(id);   // real servo degrees
+  if (a < 1.0f || b > 359.0f || b <= a) { lg("  id%u: travel %.0f..%.0f crosses the servo's 0/360 seam - servo limits left open", id, a, b); return; }
+  rlo = angleToRaw(a); rhi = angleToRaw(b);
+}
+/* After a new manual home: move the servo's own limits with it (EPROM, written only if different). */
+void tuneAngleLimits(ServoState& sv) {
+  if (st.Ping(sv.id) != sv.id) return;
+  uint16_t rlo, rhi; servoAngleLimits(sv.id, rlo, rhi);
+  st.unLockEprom(sv.id); delay(10);
+  tuneWordIfDiff(sv.id, REG_MIN_ANGLE, rlo, "min angle limit");
+  tuneWordIfDiff(sv.id, REG_MAX_ANGLE, rhi, "max angle limit");
+  st.LockEprom(sv.id); delay(10);
+}
+
 /* Make a servo hold its position stiffly. Deadband/gains live in EPROM (needs unlock);
    the torque limit is a RAM register and is written every time, since it costs nothing. */
 bool tuneServoHolding(ServoState& sv) {
@@ -641,8 +677,9 @@ bool tuneServoHolding(ServoState& sv) {
      goal is taken on an unwrapped scale. Every joint on this module is a single-turn position
      joint (twists +-180 about the 180 home, bends +-95), so pin the range to one turn and the
      servo always takes the direct path. Written only if different, like the rest. */
-  changed |= tuneWordIfDiff(sv.id, REG_MIN_ANGLE, 0,    "min angle limit");
-  changed |= tuneWordIfDiff(sv.id, REG_MAX_ANGLE, 4095, "max angle limit");
+  { uint16_t rlo, rhi; servoAngleLimits(sv.id, rlo, rhi);     // 12 Nov: the joint's own travel + 5 deg, inside the servo too
+    changed |= tuneWordIfDiff(sv.id, REG_MIN_ANGLE, rlo, "min angle limit");
+    changed |= tuneWordIfDiff(sv.id, REG_MAX_ANGLE, rhi, "max angle limit"); }
   // Layer 2, the servo's own protection, a little above the board's guard so the board always acts first; this only
   // catches what the board misses (if it ever stops reacting). Factory: 80 % for 2 s, about 2000 mA for 2 s.
   int slot = slotOf(sv.id);
@@ -1538,11 +1575,25 @@ bool nowPeeking();
 void nowStop();
 String nowJson();
 bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS || guardBusy(); }
+// Laptop in use = awake, full power (12 Nov 2026, Nischay: "I just want uninterrupted comm" - mod1.local / mod2.local and the
+// Studio dropped while the module stood still: a napping radio at 11 dBm missed most frames, -90 dBm at the dongle, a 42 KB
+// page took 4 s). Measured with the radio held awake: page 4 s -> 0.3-1 s, bridge requests 0/7 -> 27/27. The nap and 11 dBm
+// come back only when nobody (web request or ESP-NOW master) has talked to the module for LAPTOP_AWAKE_MS.
+#define LAPTOP_AWAKE_MS 30000
+uint32_t lastHttpMs = 0;                            // set by setCORS(): every web reply goes through it
+extern bool nowHbSeen; extern uint32_t nowHbMs;
+bool laptopActive() {
+  uint32_t now = millis();
+  return (lastHttpMs && now - lastHttpMs < LAPTOP_AWAKE_MS) || (nowHbSeen && now - nowHbMs < LAPTOP_AWAKE_MS);
+}
 void radioTick() {
   if (otaBusy) return;                              // OTA owns the radio settings while it runs
   bool want = moving() || radioHold || nowAwake() || nowPeeking() || grpArmed();   // ESP-NOW: awake while commanded (heat), see ESP-NOW link; a group upload waits for GO
+  // (12 Nov: 'awake while the laptop talks' made the chips hot - Nischay: back to how it was. The drops were the stuck dongle.)
   if (want == radioAwake) return;
   radioAwake = want;
+  // Power stays 11 dBm: at 19.5 dBm mod2's board garbled big frames (12 Nov: its 42 KB page stalled at 38 KB, mod1 fine) -
+  // awake is what fixed the drops, not power.
   if (want) WiFi.setSleep(false); else WiFi.setSleep(ROBO_WIFI_PS);
 }
 
@@ -1610,8 +1661,13 @@ void saveFastJoin() {
 }
 
 // On a fallback slot: every 10 s look (async, SSID-filtered) for a better slot; switch when seen.
+// NOT while the ESP-NOW master is heard (12 Nov 2026): each look hopped the radio off channel and a seen-but-unjoinable
+// preferred network dropped the router too, every 10 s -> both modules flickered offline on the dongle. With the master
+// heard, Wi-Fi is only for uploads, so the current network is good enough (same rule as the heartbeat rejoin below).
+#define PREF_QUIET_MS 30000                 // master heard this recently = stay put (a napping radio can miss a few beats)
 void preferredCheck() {
   if (wSlot > WSLOT_DEFAULT) return;        // a reconnect was just requested; not on a slot
+  if (!wPrefScanning && nowHbSeen && millis() - nowHbMs < PREF_QUIET_MS) return;
   uint8_t p = 255;
   for (uint8_t i = 0; i < wSlot && i <= WSLOT_DEFAULT; i++) if (slotUsable(i)) { p = i; break; }
   if (p == 255 || strcmp(ssidFor(p), ssidFor(wSlot)) == 0) { wPrefScanning = false; return; }
@@ -1914,6 +1970,7 @@ void scanStep() {
 //  JSON / HTTP
 // ─────────────────────────────────────────────────────────────────────────────
 void setCORS() {
+  lastHttpMs = millis();                            // the laptop is talking to us: keep the radio awake (radioTick)
   server.sendHeader("Access-Control-Allow-Origin",  "*");
   server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
@@ -1948,7 +2005,7 @@ void route(const char* path, void (*fn)(), bool bus = true, bool radio = true) {
 }
 
 String buildJSON() {
-  String j; j.reserve(3200);
+  String j; j.reserve(6144);   // 12 Nov: the reply is ~4.6 KB; growing past 3200 piecewise failed on a fragmented heap and cut parts out ("espnow":} = broken JSON, the Studio showed the module offline)
   j += F("{\"ok\":true,\"resetWhy\":\""); j += resetWhy;
   j += F("\",\"lastCrumb\":\""); j += prevCrumb;
   j += F("\",\"lastCrumbMs\":"); j += prevCrumbMs;
@@ -1985,6 +2042,7 @@ String buildJSON() {
     j += F(",\"name\":\"");  j += cfg.labels[i]; j += '"';
     j += F(",\"min\":");     j += cfg.minDeg[i];
     j += F(",\"max\":");     j += cfg.maxDeg[i];
+    { float lo, hi; limitsFor(i, lo, hi); j += F(",\"lo\":"); j += String(lo, 1); j += F(",\"hi\":"); j += String(hi, 1); }   // travel in force (nominal)
     j += F(",\"connected\":"); j += (servoSeen(sv) ? F("true") : F("false"));
     const char* m = sv.mode == 0 ? "Position" : sv.mode == 1 ? "CW" : sv.mode == 2 ? "CCW" : "Wave";
     j += F(",\"mode\":\""); j += m; j += '"';
@@ -2118,6 +2176,10 @@ void handleBatch() {
   int     spd = rq.hasArg("speed") ? constrain(rq.arg("speed").toInt(), 1, 10) : 5;
   uint8_t acc = (uint8_t)(rq.hasArg("acc") ? constrain(rq.arg("acc").toInt(), 1, 100)
                                                : POS_ACC_DEFAULT);
+  // dt=<ms> = a live stream (Sync): steps arrive this far apart. Each joint then gets its OWN speed, sized so it covers the
+  // distance from where it really is in ~1.6 steps: still moving when the next step lands, so no dash-and-stop per step and
+  // all joints arrive together (12 Nov 2026, Nischay: Sync "moves like frames"). Without dt: speed 1..10 as before.
+  int streamMs = rq.hasArg("dt") ? constrain(rq.arg("dt").toInt(), 20, 500) : 0;
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
   uint16_t spds[MAX_SERVOS]; uint8_t accs[MAX_SERVOS];
   uint8_t cnt = 0, refused = 0;
@@ -2136,6 +2198,12 @@ void handleBatch() {
     sv.speedScale    = spd;
     sv.speedRaw      = speedScaleToRaw(spd);
     sv.acc           = acc;
+    if (streamMs) {
+      int32_t cur = sv.rawPos >= 0 ? sv.rawPos : (int32_t)sv.targetRaw;
+      float v = fabsf((float)sv.targetRaw - (float)cur) / (streamMs / 1000.0f * 1.6f);   // encoder units / s
+      sv.speedRaw = (uint16_t)constrain((int)lroundf(v), 40, 3400);
+      sv.acc = 100;                                   // quick speed changes: the stream itself is the smooth path
+    }
     sv.lastCommandMs = millis();
     ids[cnt] = sv.id; pos[cnt] = (int16_t)sv.targetRaw;
     spds[cnt] = sv.speedRaw; accs[cnt] = sv.acc;
@@ -2190,6 +2258,7 @@ void handleHomeSet() {
     }
     // the offset just changed, so the nominal view of where the joint is/was sent has moved
     sv.targetDeg = rawToNom(sv.id, sv.targetRaw);
+    tuneAngleLimits(sv);                              // the servo's own travel limits follow the new home
     if (n++) out += ',';
     out += F("{\"id\":");   out += sv.id;
     out += F(",\"home\":"); out += String(homeFor(sv.id), 1);
@@ -2846,6 +2915,7 @@ uint32_t otaSum     = 2166136261u;  // FNV-1a over the received bytes: proves wh
 // board hot (full CPU, radio sleep off) until someone power-cycles it.
 void otaEnd(bool success) {
   if (success) return;
+  if (Update.isRunning()) Update.abort();   // 12 Nov: a failed/cut upload left Update "running" -> every later begin refused ("No Error") until a reboot
   otaBusy = false;
   prefs.putUChar("otaBoot", 0);
   setCpuFrequencyMhz(80);

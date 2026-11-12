@@ -536,20 +536,34 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
    *  existing joints to close the loop (holding A fixed) instead of rigidly moving a
    *  component — which would tear the connected structure apart. If the joints can't
    *  reach, refuse and leave everything in place. Separate modules use the rigid snap. */
+  // "EndB_LockModule · +X" - the same name the A/B pickers show
+  const plugName = (r: { bodyId: string; connectorId: string }) => {
+    const b = doc.bodies[r.bodyId]; const c = b ? bodyConnectors(b).find((x) => x.id === r.connectorId) : null;
+    return `${b?.name ?? '?'} · ${c ? faceLabel(c.normal) : r.connectorId}`;
+  };
+  // What the last Lock did, kept on screen (12 Nov: the A/B slots empty the moment B is clicked, so the picks vanished).
+  const [mateStatus, setMateStatus] = useState<string | null>(null);
   const doMate = (aRef: { bodyId: string; connectorId: string }, bRef: { bodyId: string; connectorId: string }) => {
+    const pair = `${plugName(aRef)} ↔ ${plugName(bRef)}`;
     if (bodiesConnected(doc, aRef.bodyId, bRef.bodyId)) {
       const bend = computeMateBend(doc, aRef, bRef, rigidMode ? activeBodyId : null);
       if (!bend) {
-        alert('These connectors are already linked through the model, but there\'s no movable joint chain between them to bend. Nothing moved.');
+        setMateStatus(`${pair}: not locked - no movable joint between them.`);
+        alert('These connectors are already linked through the model, but there is no movable joint chain between them to bend. Nothing moved.');
         return;
       }
       if (bend.residual > 0.03) {
+        setMateStatus(`${pair}: not locked - ${(bend.residual * 100).toFixed(1)} cm gap left (only ${bend.chainLen} joint${bend.chainLen === 1 ? '' : 's'} between them).`);
         alert(
           `Can't fully close: nearest the joints can get is a ${(bend.residual * 100).toFixed(1)} cm gap ` +
-          `(started ${(bend.startGap * 100).toFixed(1)} cm, ${bend.chainLen} movable joint${bend.chainLen === 1 ? '' : 's'} between them). ` +
+          `(started ${(bend.startGap * 100).toFixed(1)} cm).\n\n` +
+          `${doc.bodies[aRef.bodyId]?.name ?? '?'} and ${doc.bodies[bRef.bodyId]?.name ?? '?'} are already joined, so only the ` +
+          `${bend.chainLen} joint${bend.chainLen === 1 ? '' : 's'} on the path between them can close the gap: ${bend.chainNames.join(', ')}. ` +
+          `Moving whole modules cannot help (they move together). Pick plugs with more joints between them, or unlock first.\n\n` +
           `The modules stay where they are.`);
         return;
       }
+      setMateStatus(`${pair}: locked (bent ${bend.chainLen} joints to close the loop).`);
       // Approach & align to the standoff pose, then insert & lock — like Auto-Snap.
       animateBend(
         [{ vals: bend.standoffValues, ms: 850 }, { vals: bend.jointValues, ms: 530 }],
@@ -560,6 +574,7 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
     }
     // Separate modules → align rigidly and join (the original behaviour).
     const m = mkMatePatches(aRef, bRef);
+    setMateStatus(m ? `${pair}: locked.` : `${pair}: not locked - plug position unknown.`);
     if (m) playMate(m.patches, m.axisNormal, m.partnerId, () => dispatch(commands.snapAndJoin(m.patches, m.joint)));
   };
 
@@ -567,6 +582,14 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
     if (!mateSlotA || !mateSlotB) return;
     doMate(mateSlotA, mateSlotB);
   };
+  // two plugs clicked in the viewport (animSceneStore.pickConnector): connect at once, the same Lock as the button
+  const mateGo = useAnimSceneStore((s) => s.mateGo);
+  const seenGo = useRef(mateGo);
+  useEffect(() => {
+    if (mateGo === seenGo.current) return; seenGo.current = mateGo;
+    if (mateSlotA && mateSlotB) doMate(mateSlotA, mateSlotB);
+    clearMateSlots();                                   // done or refused (doMate says why): ready for the next pick
+  }, [mateGo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const saveMate = () => {
     if (!mateSlotA || !mateSlotB) return;
@@ -736,6 +759,11 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
       {/* ── Assembly Mates ── */}
       <div className="alp-section">
         {secTitle('mates', 'ASSEMBLY MATES')}
+        <div className="alp-snap-hint" data-testid="mate-hint">
+          {!mateSlotA ? 'Click a plug in the viewport (A), then another (B): the modules bend to meet and lock.'
+            : !mateSlotB ? 'A picked. Now click the plug to join it to (click A again to cancel).' : 'Connecting…'}
+        </div>
+        {mateStatus && <div className="alp-snap-status" data-testid="mate-status">{mateStatus}</div>}
 
         {/* Slot pickers */}
         <div className="alp-mate-slots">

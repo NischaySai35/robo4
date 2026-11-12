@@ -19,6 +19,7 @@ import { usePageStore } from '@/state/pageStore';
 import { useV2Store } from '@/state/msrrV2Store';
 import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { usePoseSync, poseCmd } from './poseSync';
+import { hostLabel } from './syncAssign';
 
 const INTERVAL_MS = 50;
 
@@ -133,7 +134,7 @@ export default function SimTransmitPanel() {
           {Object.entries<any>(sync.modules).map(([mid, m]) => (
             <div key={mid} style={{ display: 'flex', alignItems: 'center', gap: 6 }} data-testid={`sync-status-${mid}`}>
               <span className={`stp-dot ${m.online && !m.held ? 'stp-dot-ok' : 'stp-dot-off'}`} />
-              <span style={{ width: 26 }}>{mid}</span>
+              <span style={{ minWidth: 26, whiteSpace: 'nowrap', fontWeight: 700 }}>{isMsrr ? mid : hostLabel(mid)}</span>
               <Input size="xs" className="tw:flex-1 tw:min-w-0" defaultValue={m.host} readOnly={!isMsrr} aria-label={`${mid} address`}
                 onBlur={(e) => { if (e.target.value !== m.host) cmd('hosts', { hosts: { [mid]: e.target.value } }); }} />
               <span style={{ color: m.held ? '#ef4444' : m.online ? '#22c55e' : '#f97316' }} title={m.error || undefined}>{m.held ? 'HOLD' : m.online ? 'online' : 'offline'}</span>

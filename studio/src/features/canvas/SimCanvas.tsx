@@ -75,9 +75,9 @@ export default function SimCanvas() {
     sceneRef.current = sceneMgr;
     sceneMgr.applyTheme(useThemeStore.getState().theme);
     const unsubTheme = useThemeStore.subscribe((s) => sceneMgr.applyTheme(s.theme));
-    // a real floor on every page that shares this view except the Editor (Nischay 5 Nov); MSRR's own view always has one
-    sceneMgr.setRealFloor(usePageStore.getState().page !== 'editor');
-    const unsubPage = usePageStore.subscribe((s) => sceneMgr.setRealFloor(s.page !== 'editor'));
+    // the real floor on EVERY page that shares this view, the Editor too (12 Nov: one rule, the same look in every tab);
+    // ModelEditor moves it under the robot (setFloorY). MSRR's own view always has one.
+    sceneMgr.setRealFloor(true);
 
     // Model-graph layer (renderers + gizmo + selection + mate + physics).
     const modelEditor = new ModelEditor({
@@ -506,7 +506,7 @@ export default function SimCanvas() {
       clearTimeout(saveTimer);
       clearTimeout(fitTimer);
       stopMemoryMonitor();
-      unsubTheme(); unsubPage();
+      unsubTheme();
       unsubMeasure();
       unsubModelPT();
       unsubModelSave();

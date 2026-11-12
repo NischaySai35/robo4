@@ -12,6 +12,7 @@ itself. Rate limited, clamped to the joints' limits, and it holds (stops sending
 REUSE-CHECKED: board calls = gos.hardware.Esp32Robot; loads = MuJoCo's own cfrc_ext; flex / play values = phys_world.sag_spec (from
 build_mjcf + physics_params.json); no other live real-robot link exists (deploy/laptop_controller.py is the old single-module docker).
 """
+import re
 import json, math, os, socket, sys, threading, time, urllib.parse, numpy as np, mujoco
 from paths import tpath
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'gos', 'python'))
@@ -22,10 +23,11 @@ PHYS = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '
 JN = ['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3']
 SERVO_ID = {'L1': 1, 'T1': 2, 'B1': 3, 'B2': 4, 'T2': 5, 'B3': 6, 'B4': 7, 'T3': 8, 'L2': 9}   # physical order on every module
 PARTS = ('Spine1_B1B2', 'T2_Ring_B3Fork', 'Spine2_B3B4', 'EndB_LockModule', 'EndA_LockModule')   # the links whose pose is matched
-SEND_DT = 0.06                 # s: the board's own read / write cycle
+SEND_DT = 0.05                 # s: one step to the board this often (12 Nov: no longer waits for a status read each step)
+POLL_S = 0.25                  # s: the board's status (angles, load) is read this often while sending; every step when not sending
 ENC_HOLD = 0.3                 # deg: encoder changes smaller than this are flicker (ST3215 reads in 0.09 deg steps), the picture holds
 LAG = float(os.environ.get('SYNC_LAG', '0.12'))   # s: command delay (60-180 ms in the servo model): moving joints are led by this
-FOLLOW_RATE, CATCH_RATE = 60.0, 15.0   # deg/s: following the sim / closing a big gap after Sync
+FOLLOW_RATE, CATCH_RATE = 120.0, 15.0   # deg/s: following the sim / closing a big gap after Sync
 CATCH_GAP = 3.0                # deg: further from the wanted angle than this = still catching up
 BOARD_TIMEOUT = 1.5            # s: one read / write; modem sleep (radio asleep while still) adds a beacon or two
 RESEND_S = 0.5                 # s: unchanged angles are still re-sent this often
@@ -35,7 +37,7 @@ BEHIND_DEG, LOAD_STOP, HOLD_S = 25.0, 900, 0.5   # holds when a servo stays this
 TRIM_MAX, TRIM_RATE, TRIM_DEAD = 3.0, 0.5, 0.1   # deg, deg/s, deg: the slow encoder trim
 SMOOTH_S = 0.3                 # s: the correction is low-passed, contact spikes must not shake the robot
 CORR_MAX = math.radians(8.0)   # no correction beyond this: beyond it the prediction is wrong, not the robot
-DAMP = 1e-5                    # keeps the module solve calm near straight
+DAMP = float(os.environ.get('SYNC_DAMP', '1e-5'))                   # keeps the module solve calm near straight
 CONFIG = 'real_robot.json'     # data/: {"hosts": {"M1": "mod1.local"}, "sign": {"T1": -1, ...}, "lock_sign": {"L1": 1, "L2": 1}, "lock_home": {"L1": 45, "L2": 0}, "signs_checked": true, "locks_checked": false}
 # Joint directions are the SAME on every module, also new ones (Nischay 5 Nov: every module is built the same way).
 
@@ -48,9 +50,18 @@ def config():
     return c
 
 
+def module_key(name):
+    """'mod2', 'mod2.local', '127.0.4.2' (the ESP-NOW bridge) -> 'mod2'; anything else -> None"""
+    m = re.search(r'mod(\d+)', str(name or ''), re.I) or re.search(r'^127\.0\.4\.(\d+)', str(name or ''))
+    return f'mod{int(m.group(1))}' if m else None
+
+
 def board_cfg(cfg, name=None):
-    """the joint directions: one set for every module, whatever its name"""
-    return dict(sign={j: 1 for j in JN} | cfg.get('sign', {}), lock_sign={'L1': 1, 'L2': 1} | cfg.get('lock_sign', {}),
+    """the joint directions: one set for every module, plus that module's own exceptions (data/real_robot.json "module_sign":
+    {"mod2": {"B2": 1}} - Nischay 12 Nov: on mod2 motor 4 (B2) turned the wrong way with the shared set, the rest were right)"""
+    own = cfg.get('module_sign', {}).get(module_key(name) or '', {})
+    return dict(sign={j: 1 for j in JN} | cfg.get('sign', {}) | {j: v for j, v in own.items() if j in JN},
+                lock_sign={'L1': 1, 'L2': 1} | cfg.get('lock_sign', {}) | {j: v for j, v in own.items() if j in ('L1', 'L2')},
                 lock_home={'L1': 0.0, 'L2': 0.0} | cfg.get('lock_home', {}), signs_checked=bool(cfg.get('signs_checked')), locks_checked=bool(cfg.get('locks_checked')), known=True)
 
 
@@ -59,6 +70,32 @@ def lock_board_deg(bc, j, deg):
     Nischay 5 Nov: L1 turned the right way but 0 was not open (fins repeat every 90 deg, so open is 45 off) -> lock_home L1 45;
     L2 opened right but turned the wrong way -> lock_sign L2 -1. One place, both senders (RealSync, PoseSync)."""
     return 180.0 + float(bc['lock_home'][j]) + bc['lock_sign'][j] * float(deg)
+
+
+def sim_deg_from_board(bc, j, a):
+    """the exact reverse of the board angles RealSync sends: board degrees a of servo j (T1..T3, B1..B4, L1, L2) -> sim degrees
+    (signs are +-1). For a board that is not real: isaac_twin.py's virtual boards."""
+    if j in ('L1', 'L2'): return (float(a) - 180.0 - float(bc['lock_home'][j])) * bc['lock_sign'][j]
+    return (float(a) - 180.0) * bc['sign'][j]
+
+
+def mpu_reading(R):
+    """what the MPU-6050 on Spine2 reports for its true orientation R (3x3): R with ~0.3 deg of sensor noise (only the tilt is used).
+    One place: the MuJoCo copy's board (Twin.Board) and isaac_twin.py's virtual boards."""
+    a = np.random.normal(0, math.radians(0.3), 3); K = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
+    return (np.eye(3) + K) @ R
+
+
+def step_sent(sent, read, want, dt):
+    """what a board is told next (board degrees, updated IN PLACE): each servo follows the wanted angle at FOLLOW_RATE, or closes a gap
+    over CATCH_GAP at CATCH_RATE (starting from where it reads). Returns the fastest move (deg/s) for the board's speed setting.
+    One place: ModuleLink (real boards) and isaac_twin.py (virtual boards)."""
+    fastest = 0.0
+    for j, v in want.items():
+        cur = sent.get(j, read.get(j, v))
+        rate = CATCH_RATE if abs(v - cur) > CATCH_GAP else FOLLOW_RATE
+        sent[j] = cur + float(np.clip(v - cur, -rate * dt, rate * dt)); fastest = max(fastest, abs(sent[j] - cur) / max(dt, 0.03))
+    return fastest
 
 
 def boards_now():
@@ -96,7 +133,8 @@ class Correction:
                 J.append(dict(j=j, b=b, sub=sub, flex=[(s['axis'], s['k'], math.radians(s['rng'])) for s in spec if '_flex' in s['name']],
                               bl=next((math.radians(s['rng']) for s in spec if s['name'].endswith('_bl')), 0.0)))
             self.mods[mid] = dict(J=J, pts=np.array([m.body(f'{mid}_{p}').id for p in PARTS]))
-        self.grav = m.opt.gravity.copy(); self.kp = PHYS['kp']
+        self.grav = m.opt.gravity.copy(); self.kp = PHYS['kp']; self.unfelt = []
+        self.body_mod = {x: next((mid for mid in w.ids if m.body(x).name.startswith(f'{mid}_')), None) for x in range(m.nbody)}
         self.lp = {mid: np.zeros(7) for mid in w.ids}; self.droop = {mid: np.zeros(7) for mid in w.ids}; self.t = None; self.smooth_s = SMOOTH_S
 
     @staticmethod
@@ -107,11 +145,39 @@ class Correction:
         return False
 
     def load(self, J):
-        """torque the rest of the world puts on everything past this joint, about its anchor (world axes)"""
+        """torque the rest of the world puts on everything past this joint, about its anchor (world axes) - as the REAL robot feels it:
+        pushes and magnet pulls from ANOTHER module count only once the two are locked together (_unfelt)"""
         m, d = self.w.m, self.w.d; a = d.xanchor[J['j']]; S = J['sub']
         M = np.cross(d.xipos[S] - a, m.body_mass[S, None] * self.grav).sum(0)
         ext = d.cfrc_ext[S]; com = d.subtree_com[m.body_rootid[S]]
-        return M + (ext[:, :3] + np.cross(com - a, ext[:, 3:])).sum(0)
+        M = M + (ext[:, :3] + np.cross(com - a, ext[:, 3:])).sum(0)
+        for b, p, f in self.unfelt:
+            if b in S: M = M - np.cross(p - a, f)
+        return M
+
+    def _unfelt(self):
+        """the ideal world's forces between two modules that are NOT locked together yet: (body, point, force on that body).
+        10 Nov, Isaac twin (isaac_twin.py): the ideal End B touched its socket and was magnet-held, so the predicted flex of the docking
+        module dropped and its compensation with it - while the REAL end was still free, 23 mm short: it sagged, tipped 6.6 deg and hung
+        there. The real robot cannot feel the other module before it touches, and has no sensor that says it does: until the lock is
+        closed, its parts hang free. UNFELT=0 = the old behaviour."""
+        w = self.w; m, d = w.m, w.d; out = []
+        if os.environ.get('UNFELT', '1') != '1': return out
+        joined = set()
+        for k in getattr(w, 'engaged', ()):
+            mods = {x.split('.')[0] for x in k.split('|') if not x.startswith('F:')}
+            if len(mods) == 2: joined.add(frozenset(mods))
+        free = lambda m1, m2: m1 and m2 and m1 != m2 and frozenset((m1, m2)) not in joined
+        f6 = np.zeros(6)
+        for i in range(d.ncon):
+            c = d.contact[i]; b1, b2 = m.geom_bodyid[c.geom1], m.geom_bodyid[c.geom2]
+            if not free(self.body_mod.get(b1), self.body_mod.get(b2)): continue
+            mujoco.mj_contactForce(m, d, i, f6); f = c.frame.reshape(3, 3).T @ f6[:3]       # the push on geom2 (normal: geom1 -> geom2)
+            out += [(b2, c.pos.copy(), f), (b1, c.pos.copy(), -f)]
+        for m1, m2, b, Bm, Fv, rb, Pm in getattr(w, 'xmag', ()):
+            if not free(m1, m2): continue
+            out += [(b, p_, f_) for p_, f_ in zip(Bm, Fv)] + [(rb, p_, -f_) for p_, f_ in zip(Pm, Fv)]
+        return out
 
     def solve(self, mid):
         """(joint correction, servo droop) in rad for one module"""
@@ -128,13 +194,17 @@ class Correction:
                 v = d.xpos[p] - a; A[6 * c:6 * c + 3, i] = np.cross(u, v); A[6 * c + 3:6 * c + 6, i] = u * L
                 r[6 * c:6 * c + 3] += np.cross(rot, v); r[6 * c + 3:6 * c + 6] += rot * L
         self.Ar[mid] = (A, r)                                         # the live feedback reuses both (Feedback.step)
-        dq = -np.linalg.solve(A.T @ A + DAMP * np.eye(7), A.T @ r)
+        # 11 Nov: ROLE weights while docking (RealSync.begin_follow sets self.focus): all parts equal let the target's socket part turn
+        # 12 deg (a T1/T2 counter-twist that suits its other parts); the socket's part (target) / the end (docker) counts ROLE_W x
+        Wv = np.ones(6 * n); fc = getattr(self, 'focus', {}).get(mid)
+        if fc is not None: Wv[6 * fc[0]:6 * fc[0] + 6] = fc[1]
+        dq = -np.linalg.solve(A.T @ (Wv[:, None] * A) + DAMP * np.eye(7), A.T @ (Wv * r))
         return np.clip(dq, -CORR_MAX, CORR_MAX), droop
 
     def tick(self):
         """called from the physics thread (the only one allowed to touch d)"""
         w = self.w; now = float(w.d.time); dt = 0.06 if self.t is None else max(now - self.t, 1e-3); self.t = now
-        mujoco.mj_rnePostConstraint(w.m, w.d)
+        mujoco.mj_rnePostConstraint(w.m, w.d); self.unfelt = self._unfelt()
         k = min(1.0, dt / self.smooth_s)
         for mid in w.ids:
             dq, droop = self.solve(mid)
@@ -191,6 +261,10 @@ class Feedback:
             e[6 * c:6 * c + 3] = Pest[c] - Pid[c]
             e[6 * c + 3:6 * c + 6] = self._rotvec(Rest[c] @ Rid[c].T) * L_ROT
         e = e + flex                                                  # what the encoders cannot see, predicted
+        # 11 Nov: the extra move the sender adds ON PURPOSE (push into the socket, follow the real socket) is not an error: without
+        # this the feedback pulled the end back to the ideal pose within ~0.5 s (every blind push stalled 6-12 mm out)
+        g_ = getattr(self, 'goal', {}).get(mid)
+        if g_ is not None and os.environ.get('FB_GOAL', '0') == '1': e = e - g_   # (opt-in: on, the flat dock broke 11 Nov)
         imu = getattr(src, 'imu', None)
         if not truth and imu is not None:
             Rm = imu(mid)
@@ -199,11 +273,25 @@ class Feedback:
                 tv = self._rotvec(Rm @ Rid[IMU_PART].T); gh = w.m.opt.gravity / np.linalg.norm(w.m.opt.gravity); tv = tv - (tv @ gh) * gh
                 e[6 * IMU_PART + 3:6 * IMU_PART + 6] = tv * L_ROT; used += ' + IMU tilt'
         self.err_mm[mid] = round(float(np.max(np.linalg.norm(e.reshape(n, 6)[:, :3], axis=1))) * 1000, 1); self.used[mid] = used
+        self.__dict__.setdefault('e', {})[mid] = e.copy()                # each part's estimated pose error (RealSync.seat_depth)
         # 5 Nov, real board: under ~0.8 mm the error is the encoder's own 0.09 deg steps - correcting it made the loop hunt
         dead = FB_DEAD_MM if hasattr(src, 'parts') else FB_DEAD_REAL_MM
         if moving > FB_STILL or self.err_mm[mid] < dead: return np.degrees(self.fb[mid])   # hold: lag, or nothing to fix
-        dq = -np.linalg.solve(A.T @ A + DAMP * np.eye(7), A.T @ e)
+        Wv = np.ones(6 * n); fc = getattr(self.cor, 'focus', {}).get(mid)                 # the same ROLE weights as Correction.solve
+        if fc is not None: Wv[6 * fc[0]:6 * fc[0] + 6] = fc[1]
+        dq = -np.linalg.solve(A.T @ (Wv[:, None] * A) + DAMP * np.eye(7), A.T @ (Wv * e))
         self.fb[mid] = np.clip(self.fb[mid] + FB_GAIN * dq, -FB_MAX, FB_MAX)
+        if os.environ.get('FB_DEBUG') and int(w.d.time * 1000) % 1000 < 60:   # ~once a second: error, correction, at the cap?
+            pe = np.linalg.norm(e.reshape(n, 6)[:, :3], axis=1) * 1000; pr = np.degrees(np.linalg.norm(e.reshape(n, 6)[:, 3:], axis=1) / L_ROT)
+            print(f'FB {w.d.time:6.2f} {mid}: err {self.err_mm[mid]:5.1f} mm | per part mm {dict(zip([p.split("_")[0] for p in PARTS], np.round(pe, 1)))} '
+                  f'deg {np.round(pr, 1)} | fb deg {np.round(np.degrees(self.fb[mid]), 1)}', flush=True)
+            if not truth:
+                qi = np.degrees(d.qpos[np.array(w.mod[mid]['qa'])]); qe = np.array([sign[k] * (src.read[j] - 180.0) for k, j in enumerate(JN)])
+                print(f'FB {w.d.time:6.2f} {mid}: joints ideal {np.round(qi, 1)} | encoders {np.round(qe, 1)} | sent {np.round([sign[k] * (getattr(src, "sent", {}).get(j, 180.0) - 180.0) for k, j in enumerate(JN)], 1)}', flush=True)
+            if hasattr(src, 'parts') and not truth:                           # the twin knows the truth: what the estimate SHOULD say
+                Pt, Rt = src.parts(mid)
+                print(f'FB {w.d.time:6.2f} {mid}: TRUE per part mm {np.round(np.linalg.norm(Pt - Pid, axis=1) * 1000, 1)} '
+                      f'deg {np.round([math.degrees(np.linalg.norm(self._rotvec(Rt[c] @ Rid[c].T))) for c in range(n)], 1)}', flush=True)
         return np.degrees(self.fb[mid])
 
 
@@ -271,23 +359,25 @@ class ModuleLink:
         while self.alive:
             t0 = time.time()
             try:
-                self._poll()
+                # 12 Nov (Nischay: Sync 'laggy, moves like frames'): the full status read (9 servos, 60-200 ms) ran before EVERY
+                # step, so steps left ~5/s. Now a read only every POLL_S while sending; the step itself counts as contact.
+                if not (self.sending and not self.held and self.read and t0 - getattr(self, 'poll_at', 0.0) < POLL_S):
+                    self._poll(); self.poll_at = t0
                 want = self.want(self.mid)
                 if self.sending and not self.held:
                     self.held = self._guard(want)
                     if self.held: self.board.stop()
                 if self.sending and not self.held and want:
-                    dt = min(t0 - last, 0.3); fastest = 0.0; before = dict(self.sent)
-                    for j, v in want.items():
-                        cur = self.sent.get(j, self.read.get(j, v))
-                        rate = CATCH_RATE if abs(v - cur) > CATCH_GAP else FOLLOW_RATE
-                        self.sent[j] = cur + float(np.clip(v - cur, -rate * dt, rate * dt)); fastest = max(fastest, abs(self.sent[j] - cur) / max(dt, 0.03))
+                    dt = min(t0 - last, 0.3); before = dict(self.sent)
+                    fastest = step_sent(self.sent, self.read, want, dt)
                     # 5 Nov: the same angles again every 60 ms only kept the small board busy (its replies grew past the timeout and
                     # the Sync box said offline while the top bar said online): resend only what changed, or every RESEND_S
                     same = before.keys() == self.sent.keys() and all(abs(self.sent[j] - before[j]) < 0.05 for j in before)
                     if not same or t0 - getattr(self, 'sent_at', 0.0) > RESEND_S:
-                        q = {'speed': speed_scale(fastest), 'acc': 40}; q.update({str(SERVO_ID[j]): round(v, 2) for j, v in self.sent.items()})
-                        self.board._get('/api/batch?' + urllib.parse.urlencode(q)); self.sent_at = t0
+                        # dt = the step interval: newer firmware gives every joint its own fine speed so it is still moving
+                        # when the next step arrives (no dash-and-stop); older firmware ignores dt and uses speed 1..10
+                        q = {'speed': speed_scale(fastest), 'acc': 40, 'dt': int(SEND_DT * 1000)}; q.update({str(SERVO_ID[j]): round(v, 2) for j, v in self.sent.items()})
+                        self.board._get('/api/batch?' + urllib.parse.urlencode(q)); self.sent_at = t0; self.heard = time.time()
                 last = t0; self.fails = 0
             except GosError as e:
                 if 'refused' in str(e):                                           # it answered: locked after power-on etc. Online, but not moving
@@ -328,16 +418,36 @@ class RealSync:
             sign = np.array([bc['sign'][j] for j in JN], float)
             # live feedback (Feedback): with a source that answers it replaces the slow encoder trim (it sees the same encoders, and more)
             fbon = FB_MODE != 'off' and src is not None and getattr(src, 'online', False)
-            fbd = self.fbk.step(mid, src, sign, float(np.abs(vel).max())) if fbon else np.zeros(7)
+            # 11 Nov (Isaac twin, slope): the brain finished M2's T1 turn to -98 while the servo was still at -68; 'not moving' went by
+            # the BRAIN only, so the feedback took the servo's lag for an error, wound up to its 10 deg cap, and the servo overshot to
+            # -113 (Spine1 14 deg off, the socket with it). Moving = the ideal joints OR the real encoders (deg/s, either one)
+            rd_ = getattr(src, 'read', None) if fbon and os.environ.get('FB_REAL_MOVING', '0') == '1' else None; rv = 0.0   # (opt-in)
+            if rd_ and all(j in rd_ for j in JN):
+                qe_ = np.array([sign[k] * (rd_[j] - 180.0) for k, j in enumerate(JN)]); pe_ = self.__dict__.setdefault('prev_enc', {}).get(mid)
+                if pe_ is not None and dt: rv = float(np.abs(qe_ - pe_).max() / dt)
+                self.prev_enc[mid] = qe_
+            xd = self._push_deg(mid, now) + self._follow_deg(mid) + self._cam_deg(mid, now)   # deg: the extra move on purpose (push, follow, camera)
+            if mid in self.cor.Ar: self.fbk.__dict__.setdefault('goal', {})[mid] = self.cor.Ar[mid][0] @ np.radians(xd)
+            fbd = self.fbk.step(mid, src, sign, max(float(np.abs(vel).max()), rv)) if fbon else np.zeros(7)
+            cs_ = getattr(self, 'cam_state', None)                                    # the camera steers this end: the feedback holds its value
+            if fbon and cs_ and cs_.get('mid') == mid and cs_.get('fresh_t') is not None:
+                fbd = np.degrees(cs_.setdefault('fb0', self.fbk.fb[mid].copy()))
+            # 11 Nov: while this module PUSHES into a socket the feedback (12 %/60 ms back to the ideal pose) undid the push and the
+            # untilt within ~0.5 s - every blind push stalled 6-12 mm out. Pushing: keep the feedback's last correction, frozen
+            pu_ = getattr(self, 'push', None)
+            if fbon and pu_ and pu_['mid'] == mid and os.environ.get('PUSH_FREEZE_FB', '0') == '1':
+                fbd = np.degrees(pu_.setdefault('fb0', self.fbk.fb[mid].copy()))
             trim = np.zeros(7) if fbon else (src.trim if src else np.zeros(7))
             # where the encoder should read = ideal + the module's correction; the servo must be told more: its droop shows on the encoder
-            enc = q + fix; cmd = enc - droop + trim + fbd + vel * LAG
+            enc = q + fix; cmd = enc - droop + trim + fbd + vel * LAG + xd
             cmd = np.array([float(np.clip(c, *self.limits[mid][k])) for k, c in enumerate(cmd)])
             real = {j: 180.0 + sign[k] * c for k, (j, c) in enumerate(zip(JN, cmd))}
             lock = w.tgt[i * 9 + 7:i * 9 + 9]
             real['L1'] = lock_board_deg(bc, 'L1', math.degrees(float(lock[0]))); real['L2'] = lock_board_deg(bc, 'L2', math.degrees(float(lock[1])))
             want[mid] = real
             rows[mid] = dict(ideal=q, fix=fix, droop=droop, cmd=cmd, enc=180.0 + sign * enc)
+            if os.environ.get('FB_DEBUG') and int(now * 1000) % 1000 < 60:
+                print(f'CMD {now:6.2f} {mid}: ideal {np.round(q, 1)} | fix {np.round(fix, 1)} | droop {np.round(droop, 1)} | fb {np.round(fbd, 1)} | lag {np.round(vel * LAG, 1)}', flush=True)
             rd = src.read if src is not None and getattr(src, 'online', False) and not fbon else None
             if rd and np.abs(vel).max() < 2.0:                                   # standing still: the encoder says what the servo really did
                 for k, j in enumerate(JN):
@@ -351,6 +461,187 @@ class RealSync:
         tw = getattr(self, 'twin', None)
         if tw is not None and tw.alive and not self.on:                   # the sim copy runs only while Sync is off
             tw.push(now, {mid: np.radians(r['cmd']) for mid, r in rows.items()}, w.tgt.copy(), set(w.engaged))
+
+    def begin_follow(self, mid, end, rx_name):
+        """11 Nov (Isaac twin, slope 45): the TARGET module's socket part sagged/tilted ~6-12 deg (its base bracket's sideways give,
+        which no joint below it can undo) and the docker aimed at the IDEAL socket - centred by the spiral it still jammed 7 mm out at
+        11 deg. The live feedback's estimate of that socket part was good (11.8 vs 11.4 deg true). So the docking end is shifted and
+        turned by the socket's ESTIMATED error: it docks where the socket really is. FOLLOW=0 = off"""
+        self.follow = dict(mid=mid, end=end, rx=rx_name) if os.environ.get('FOLLOW', '0') == '1' else None
+        self.cam_state = dict(mid=mid, end=end, rx=rx_name, cc=np.zeros(3), cr=np.zeros(3), t=None, fresh_t=None)   # the camera's steering, per dock
+        # ... and the flex compensation's ROLE weights (Correction.solve): the docker's end, the target's socket part
+        w = self.w; R = next((x for x in w.rx if x['name'] == rx_name), None); self.cor.focus = {mid: (PARTS.index(f'End{end}_LockModule'), float(os.environ.get('ROLE_W_DOCK', '1')))}   # the docker's end (11 Nov: x10 broke flat)
+        if R is not None and R.get('mod') and float(os.environ.get('ROLE_W', '1')) != 1.0:
+            pts = list(self.cor.mods[R['mod']]['pts']); b = R['bid']
+            while b and b not in pts: b = w.m.body_parentid[b]
+            if b: self.cor.focus[R['mod']] = (pts.index(b), float(os.environ.get('ROLE_W', '1')))   # the TARGET's socket part
+
+    def end_follow(self):
+        self.follow = None; self.cor.focus = {}; self.cam_state = None
+
+    def _follow_deg(self, mid):
+        F_ = getattr(self, 'follow', None)
+        if not F_ or F_['mid'] != mid or mid not in self.cor.Ar: return np.zeros(7)
+        w, d = self.w, self.w.d; R = next((x for x in w.rx if x['name'] == F_['rx']), None); E = getattr(self.fbk, 'e', {})
+        tm = R.get('mod') if R else None
+        if tm is None or tm not in E: return np.zeros(7)
+        pts = list(self.cor.mods[tm]['pts']); b = R['bid']
+        while b and b not in pts: b = w.m.body_parentid[b]
+        if not b: return np.zeros(7)
+        e = E[tm][6 * pts.index(b):6 * pts.index(b) + 6] + getattr(self.fbk, 'goal', {}).get(tm, np.zeros(6 * len(pts)))[6 * pts.index(b):6 * pts.index(b) + 6]
+        seat, _, _ = w.rx_frame(R, d.xmat[R['bid']].reshape(3, 3), d.xpos[R['bid']]); rot = e[3:] / L_ROT
+        want = np.concatenate([e[:3] + np.cross(rot, seat - d.xpos[b]), rot * L_ROT])        # move the end as the socket really sits
+        A, _ = self.cor.Ar[mid]; c = PARTS.index(f"End{F_['end']}_LockModule"); Ae = A[6 * c:6 * c + 6]
+        dq = np.linalg.solve(Ae.T @ Ae + 1e-4 * np.eye(7), Ae.T @ want)
+        lim = math.radians(float(os.environ.get('FOLLOW_MAX_DEG', '15'))); return np.degrees(np.clip(dq, -lim, lim))
+
+    def _cam_deg(self, mid, now):
+        """the CAMERA (optional add-on, 11 Nov): a fresh hand-held measurement of the docking end against its socket (self.cam, brain
+        frame: rel = tip - seat, rot = the turn that lines it up, z = the socket axis) steers the docking end for the WHOLE approach
+        (wall: the real end hung 70-80 mm aside for 10 s before the push; the camera saw it, 72 vs 71 mm). Each shot is used once:
+        CAM_GAIN of its side offset + tilt is removed, integrated (caps CAM_MAX_MM / 15 deg). Implausible shots (tilt > 25 deg: a
+        single tag's flipped pose) are ignored. No camera / no dock: zeros (nothing changes)"""
+        cs = getattr(self, 'cam_state', None); cm = getattr(self, 'cam', None)
+        if not cs or cs.get('mid') != mid or mid not in self.cor.Ar: return np.zeros(7)
+        lk_ = self.w.tgt[self.w.ids.index(mid) * 9 + (8 if cs['end'] == 'B' else 7)]
+        if abs(float(lk_)) > 0.05: cs['seated'] = True; cs['lock_turning'] = True   # the lock is turning: hold still
+        if not cs.get('lock_turning') and cm is not None and cm['t'] != cs.get('t') and now - cm['t'] < float(os.environ.get('CAM_FRESH_S', '1.5'))                 and np.linalg.norm(cm['rot']) <= math.sin(math.radians(25)):
+            cs['t'] = cm['t']; cs['fresh_t'] = now; gc = float(os.environ.get('CAM_GAIN', '0.4'))
+            side = cm['rel'] - (cm['rel'] @ cm['z']) * cm['z']
+            cs['depth_ok'] = float(np.clip((0.008 - np.linalg.norm(side)) / 0.005, 0.0, 1.0))   # push full depth only under ~3 mm aside
+            # STUCK at the mouth (11 Nov, ceiling: centred but 2-3 deg tilted, 6.5 mm out for 12 s - in contact, friction stopped the
+            # untilt): the camera's depth did not shrink over the last 3 shots while pushing -> back off 5 mm for 1.5 s, the
+            # corrections finish while free, then in again (a hand re-trying a key)
+            ax_ = float(cm['rel'] @ cm['z']); hs = cs.setdefault('axh', []); hs.append(ax_)
+            pu_ = getattr(self, 'push', None); pushing = bool(pu_ and pu_.get('t0') is not None and now - pu_['t0'] > float(os.environ.get('PUSH_RAMP_S', '1.0')) + 1.0 and pu_.get('t_end') is None)
+            if not pushing: cs['axh'] = []                                              # (only WHILE pushing - 11 Nov: it fired at the stand-off, slope regressed)
+            # SEATED -> hands off (11 Nov, slope: in at 19 s, then single-tag readings jittering +-4 mm 'steered' it back out to 12 mm):
+            # a reading within 2 mm of the seat, or the lock rotor turning, freezes the camera's steering where it is
+            # (11 Nov, random robot 4 on the ceiling: ONE reading said 1.4 mm while the truth was 7.8 -> froze 7 mm out. Two readings
+            # in a row under 2.5 mm to hold; three in a row over 4 mm release the hold again - unless the lock is turning)
+            if pushing and len(hs) >= 2 and max(abs(hs[-1]), abs(hs[-2])) < 0.0025: cs['seated'] = True
+            # (11 Nov, random robot 5 on the ceiling: centred, 7 mm out for 14 s, the camera's depth jittering 0..13 mm - 'the last 3 all
+            # > 4 mm' never held. The MEDIAN of the last 4 readings decides: > 4 mm out and not 1 mm better than the 4 before)
+            md = float(np.median(hs[-4:])) if len(hs) >= 4 else 0.0; md0 = float(np.median(hs[-8:-4])) if len(hs) >= 8 else -1e9   # (too few: count as not improving)
+            if cs.get('seated') and not cs.get('lock_turning') and len(hs) >= 4 and md > 0.004: cs['seated'] = False
+            if pushing and len(hs) >= 4 and cs['depth_ok'] > 0.5 and md > 0.004 and md > md0 - 0.001 and now > cs.get('back_until', -1) + 2.0:
+                cs['back_until'] = now + float(os.environ.get('CAM_BACKOFF_S', '1.5')); cs['axh'] = []; cs['stuck'] = cs.get('stuck', 0) + 1
+            if cs.get('seated'): gc = 0.0                                                   # held: readings still counted, no steering
+            cl = float(os.environ.get('CAM_MAX_MM', '50')) / 1000
+            cc = cs['cc'] - gc * side; n_ = np.linalg.norm(cc); cs['cc'] = cc * (cl / n_ if n_ > cl else 1.0)
+            cr = cs['cr'] + gc * cm['rot']; n_ = np.linalg.norm(cr); cap = math.radians(15); cs['cr'] = cr * (cap / n_ if n_ > cap else 1.0)
+        if not np.any(cs['cc']) and not np.any(cs['cr']): return np.zeros(7)
+        A, _ = self.cor.Ar[mid]; c = PARTS.index(f"End{cs['end']}_LockModule"); Ae = A[6 * c:6 * c + 6]
+        want = np.concatenate([cs['cc'], cs['cr'] * L_ROT])
+        # STUCK again after a back-off -> ROCK the tilt (11 Nov, random robot 4 on the ceiling: End B's body on the socket lip 7 mm out,
+        # centred but 3.5 deg tilted while the camera read 1.4-2.7 - one end tag measures tilt worst; a plain retry jammed the same
+        # way). A slow +-CAM_ROCK_DEG circle of the end's tilt: at some phase the unseen tilt cancels and it slips in
+        if cs.get('stuck', 0) >= 1 and not cs.get('seated') and cm is not None and float(os.environ.get('CAM_ROCK_DEG', '0')) > 0:
+            zz = cm['z']; e1 = np.cross(zz, [1.0, 0, 0] if abs(zz[0]) < 0.9 else [0, 1.0, 0]); e1 /= np.linalg.norm(e1); e2 = np.cross(zz, e1)
+            ph = 2 * math.pi * 0.4 * now; amp = math.radians(float(os.environ.get('CAM_ROCK_DEG', '0')))
+            want[3:] += amp * (math.cos(ph) * e1 + math.sin(ph) * e2) * L_ROT
+        return np.degrees(np.linalg.solve(Ae.T @ Ae + 1e-4 * np.eye(7), Ae.T @ want))
+
+    def begin_push(self, mid, end, rx_name):
+        """blind peg-in-hole (10 Nov, Isaac twin): the ideal end is seated, the real one may hang a few mm short or aside - flex and gear
+        play the encoders cannot see (8 mm short, 2 mm aside in the twin, nothing pushing it further). So the REAL end is told to go
+        PUSH_MM further INTO the socket along its axis, ramped over PUSH_RAMP_S: the socket's chamfers and the magnets centre it,
+        contact takes the rest. Bounded: the servos' torque cap and the PLA give limit the force. end_push() ramps it back out."""
+        self.push = dict(mid=mid, end=end, rx=rx_name, t0=None, t_end=None, mm=float(os.environ.get('PUSH_MM', '12')))
+
+    def end_push(self):
+        if getattr(self, 'push', None): self.push['t_end'] = None if self.push.get('t_end') else -1.0   # ramp out from the next tick
+
+    def _push_deg(self, mid, now):
+        P_ = getattr(self, 'push', None)
+        if not P_ or P_['mid'] != mid or mid not in self.cor.Ar: return np.zeros(7)
+        if P_['t0'] is None: P_['t0'] = now
+        if P_.get('t_end') == -1.0: P_['t_end'] = now
+        ramp = float(os.environ.get('PUSH_RAMP_S', '1.0'))
+        k = min(1.0, (now - P_['t0']) / ramp)
+        if P_.get('t_end') is not None:
+            k = k * max(0.0, 1.0 - (now - P_['t_end']) / ramp)
+            if k <= 0.0:
+                if 'fb0' in P_: self.fbk.fb[mid] = P_['fb0'].copy()          # the feedback resumes from where it was frozen
+                self.push = None; return np.zeros(7)
+        w = self.w; R = next(x for x in w.rx if x['name'] == P_['rx'])
+        _, z, Fr = w.rx_frame(R, w.d.xmat[R['bid']].reshape(3, 3), w.d.xpos[R['bid']])  # the socket's outward axis, ideal world
+        A, _ = self.cor.Ar[mid]; c = PARTS.index(f"End{P_['end']}_LockModule"); Ae = A[6 * c:6 * c + 6]
+        want = np.concatenate([-z * P_['mm'] / 1000 * k * P_.get('depth_ok', 1.0), np.zeros(3)])   # straight IN, the end's tilt unchanged
+        # ... and SPIRAL across the socket face while pushing (PUSH_SPIRAL_MM, default 7, 0 = off): 10 Nov, Isaac twin pictures - the blind end
+        # sat on the ring's RIM ~6 mm aside (the feedback cannot see that), pushed 8-10 mm short. The classic blind peg-in-hole
+        # search: a slowly growing circle (0.6 Hz, full size after PUSH_SPIRAL_S) until it lines up and the push + magnets take it in
+        sp = float(os.environ.get('PUSH_SPIRAL_MM', '7')) / 1000
+        cm_ = getattr(self, 'cam', None)
+        if cm_ is not None and now - cm_['t'] < float(os.environ.get('CAM_FRESH_S', '1.5')): sp = 0.0   # the camera centres: no blind search
+        if sp > 0 and k >= 1.0 and P_.get('t_end') is None:
+            ts = now - P_['t0'] - ramp; r_ = sp * min(1.0, ts / float(os.environ.get('PUSH_SPIRAL_S', '5'))); ph = 2 * math.pi * 0.6 * ts
+            want[:3] += r_ * (math.cos(ph) * Fr[:, 0] + math.sin(ph) * Fr[:, 1])
+        # ... and UNTILT (PUSH_TILT_GAIN /s, 0 = off): 11 Nov, slope 45 - centred by the spiral but 8-11 deg tilted (sag), it jammed 6 mm
+        # out. The blind estimate (seat_depth: encoders + IMU + predicted flex) read 10.3 deg vs 8-9 true - so turn the end against its
+        # ESTIMATED tilt, integrated (closed loop on the estimate), capped at 15 deg
+        gt = float(os.environ.get('PUSH_TILT_GAIN', '0'))
+        if gt > 0 and P_.get('t_end') is None:
+            est = self.seat_depth(mid, P_['end'], P_['rx'])
+            if est is not None:
+                rc = P_.get('rc', np.zeros(3)) - gt * est[3] * SEND_DT; n_ = np.linalg.norm(rc); cap = math.radians(15)
+                P_['rc'] = rc * (cap / n_ if n_ > cap else 1.0)
+                # ... and CENTRE on the estimate too (PUSH_SIDE_GAIN /s): untilted, the tip swung 12-23 mm aside (the estimate saw it,
+                # 12.8 vs 12.8 true) - more than the spiral covers. Integrated, capped 20 mm; the spiral then searches what is left
+                gs = float(os.environ.get('PUSH_SIDE_GAIN', '0'))
+                if gs > 0:
+                    pc = P_.get('pc', np.zeros(3)) - gs * est[4] * SEND_DT; n_ = np.linalg.norm(pc)
+                    P_['pc'] = pc * (0.02 / n_ if n_ > 0.02 else 1.0)
+            want[3:] += P_.get('rc', np.zeros(3)) * L_ROT * k
+            want[:3] += P_.get('pc', np.zeros(3)) * k
+        # ... the CAMERA steers the end itself (_cam_deg, the whole approach); here it only GATES the depth: centre first, then in
+        # (11 Nov, S2B: pushed while 7.5 mm aside, the end slid 40 mm along the spine face)
+        cs = getattr(self, 'cam_state', None)
+        if cs and cs.get('mid') == mid and cs.get('fresh_t') is not None and now - cs['fresh_t'] < float(os.environ.get('CAM_FRESH_S', '1.5')):
+            want[:3] = want[:3] * cs.get('depth_ok', 1.0)
+            if now < cs.get('back_until', -1) and not cs.get('seated'): want[:3] = z * float(os.environ.get('CAM_BACKOFF_MM', '5')) / 1000   # backing off (stuck)
+        dq = np.linalg.solve(Ae.T @ Ae + 1e-4 * np.eye(7), Ae.T @ want)                      # (a turned end jams in the socket)
+        # ... and WIGGLE while pushing (PUSH_WIGGLE_DEG, 0 = off): 10 Nov, Isaac twin - pushed straight, the end jammed 8.5 mm short at
+        # 2.3 deg tilt; an earlier success had been helped by accidental shaking. The 3 joints next to the end circle out of phase
+        # (as Manual.lock's LOCK_WIGGLE, 1.5 Hz): the end sweeps round the socket's axis and slips in - a hand jiggling a key
+        wg = math.radians(float(os.environ.get('PUSH_WIGGLE_DEG', '0')))
+        if wg > 0 and k >= 1.0 and P_.get('t_end') is None:
+            ph = (now - P_['t0'] - ramp) * 2 * math.pi * 1.5; ks = (4, 5, 6) if P_['end'] == 'B' else (0, 1, 2)
+            for n_, kk in enumerate(ks): dq[kk] += wg * math.sin(ph + 2.1 * n_)
+        return np.degrees(dq)
+
+    def seat_depth(self, mid, end, rx_name):
+        """BLIND 'am I in?' (10 Nov): where the docking end's tip is in the socket, from the ENCODERS alone - every answering module
+        posed at its read angles in a scratch copy of the ideal world, measured as phys_world measures 'seated' (along the socket
+        axis, + = still out; sideways). Uses the live feedback's own estimate of every part (encoders + IMU tilt + PREDICTED flex,
+        Feedback.step): the ideal tip / seat moved by their part's estimated error (shift + turn about the part). 10 Nov twin: encoders
+        alone said 2.5 mm PAST the seat while the end hung 10.5 mm short on the lip (the servos reach their angles, the PLA bends).
+        None until the feedback has run for both modules."""
+        w, d = self.w, self.w.d; E = getattr(self.fbk, 'e', {})
+        R = next(x for x in w.rx if x['name'] == rx_name); seat, z, _ = w.rx_frame(R, d.xmat[R['bid']].reshape(3, 3), d.xpos[R['bid']])
+        tip = d.site_xpos[w.mod[mid]['end'][end]['tip']].copy()
+
+        def moved(m_, body, p):                                           # p carried by the estimated error of the part holding `body`
+            if m_ not in E: return None
+            pts = list(self.cor.mods[m_]['pts']); b = body
+            while b and b not in pts: b = w.m.body_parentid[b]
+            if not b: return p
+            c = pts.index(b); e = E[m_][6 * c:6 * c + 6]
+            return p + e[:3] + np.cross(e[3:] / L_ROT, p - d.xpos[b])
+        def turn(m_, body):                                               # the estimated turn (rad vector) of the part holding `body`
+            if m_ not in E: return np.zeros(3)
+            pts = list(self.cor.mods[m_]['pts']); b = body
+            while b and b not in pts: b = w.m.body_parentid[b]
+            return E[m_][6 * pts.index(b) + 3:6 * pts.index(b) + 6] / L_ROT if b else np.zeros(3)
+        tb = w.m.site_bodyid[w.mod[mid]['end'][end]['tip']]
+        tip = moved(mid, tb, tip)
+        seat = moved(R['mod'], R['bid'], seat) if R.get('mod') else seat
+        if tip is None or seat is None: return None
+        rel = tip - seat; ax = float(rel @ z)
+        # 11 Nov: + the end's TILT against the socket axis (the slope run jammed 6 mm out at 8-11 deg tilt, centred): the two parts'
+        # estimated turns, minus the part about the socket axis (a spin about it does not tilt), relative to the ideal (seated = 0)
+        dr = turn(mid, tb) - (turn(R['mod'], R['bid']) if R.get('mod') else np.zeros(3)); dr = dr - (dr @ z) * z
+        return ax * 1000, float(np.linalg.norm(rel - ax * z)) * 1000, math.degrees(float(np.linalg.norm(dr))), dr, rel - ax * z
 
     def real_live(self):
         """the real modules that answer while Sync is on: {module: link}"""
@@ -486,9 +777,7 @@ class Twin:
 
         def imu(self, mid):
             """Spine2's real orientation (accelerometer: only its tilt is used), with ~0.3 deg of sensor noise"""
-            w = self.tw.w; R = w.d.xmat[w.m.body(f'{mid}_Spine2_B3B4').id].reshape(3, 3)
-            a = np.random.normal(0, math.radians(0.3), 3); K = np.array([[0, -a[2], a[1]], [a[2], 0, -a[0]], [-a[1], a[0], 0]])
-            return (np.eye(3) + K) @ R
+            w = self.tw.w; return mpu_reading(w.d.xmat[w.m.body(f'{mid}_Spine2_B3B4').id].reshape(3, 3))
 
         @property
         def read(self):
@@ -578,9 +867,9 @@ class PoseSync:
 
     def set_pose(self, boards):
         """boards: {host: {'T1': deg, ..., 'L1': deg}} -> the angles each board should go to"""
-        bc = board_cfg(self.cfg); want = {}
+        want = {}
         for host, js in (boards or {}).items():
-            w = {}
+            bc = board_cfg(self.cfg, host); w = {}
             for j, v in js.items():
                 if j in JN: w[j] = 180.0 + bc['sign'][j] * float(v)
                 elif j in ('L1', 'L2'): w[j] = lock_board_deg(bc, j, v)

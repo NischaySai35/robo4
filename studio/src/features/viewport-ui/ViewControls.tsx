@@ -9,6 +9,11 @@ import { useEditModeStore } from '@/state/editModeStore';
 import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { useHardwareStore } from '@/state/hardwareStore';
 import { useV2Store } from '@/state/msrrV2Store';
+import { useEspNodesStore } from '@/state/espNodesStore';
+import { useSyncAssign, linkReport } from '@/features/connection/syncAssign';
+import './SyncUi.css';
+
+const LINKING_MS = 5000;   // after Sync ON: this long the button says "linking" while boards answer, then "nobody online" if none did
 
 export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onHelpOpen: helpOpen }: any) {
   // A page that passes no handlers (the MSRR canvas) still gets working KEYS and SYNC buttons: the shared commands.
@@ -19,6 +24,21 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
   // turning Sync ON opens the SIM -> ESP window if it is closed; it never closes it (5 Nov: on the MSRR page it could not tell
   // whether the window was open, so every second ON toggled it shut). Turning Sync OFF leaves the window as it is.
   const toggleSync = () => { hardwareBridge.setStreaming(!streaming); if (!streaming) runOperator('ui.connection.open'); };
+  // linked boards online / sim modules (not on MSRR: its own sender shows its own boxes)
+  const onAt = useSyncAssign((s) => s.onAt);
+  const links = useEspNodesStore(() => { const r = linkReport(); return `${r.pairs.filter((p) => p.node?.connected).length}/${r.sims.length}/${r.online.length}`; });
+  const [linkUp, simN, realN] = links.split('/').map(Number);
+  const [, tick] = useState(0);
+  useEffect(() => { if (!onAt) return; const t = setTimeout(() => tick((n) => n + 1), LINKING_MS + 30); return () => clearTimeout(t); }, [onAt]);
+  const syncPhase: 'off' | 'linking' | 'nobody' | 'on' = !streaming ? 'off'
+    : usePageStore.getState().page === 'msrr' ? 'on'
+    : linkUp > 0 ? 'on' : onAt && Date.now() - onAt < LINKING_MS ? 'linking' : 'nobody';
+  const syncTitle = {
+    off: 'Sync OFF: click to drive the real modules from the sim. Sim modules are linked to the online boards in order (M1 → mod1, M2 → mod2).',
+    linking: 'Sync ON: looking for the real modules…',
+    nobody: 'Sync ON, but no real module answers: it shows what it would send. Click to stop.',
+    on: `Sync ON: ${linkUp} of ${simN} sim module${simN === 1 ? '' : 's'} driving a real board (${realN} online). Click to stop.`,
+  }[syncPhase];
   const [wireframe, setWireframe] = useState(false);
   const [connectorsVisible, setConnectorsVisible] = useState(true);
 
@@ -172,7 +192,8 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
       <button
         className={`view-btn view-btn--sync${streaming ? ' view-btn--active' : ''}`}
         onClick={toggleSync}
-        title={streaming ? 'Sync ON: joint values stream to the robot. Click to stop.' : 'Sync OFF: click to stream joint values to the robot (shows what is sent, also offline)'}
+        title={syncTitle}
+        data-testid="sync-toggle" data-phase={syncPhase}
       >
         <span className="view-sync-word">
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -184,7 +205,10 @@ export default function ViewControls({ isConnOpen, onConnToggle: connToggle, onH
           </svg>
           <span className="view-btn-label">SYNC</span>
         </span>
-        <span className={`view-sync-state${streaming ? ' view-sync-state--on' : ''}`}>{streaming ? 'ON' : 'OFF'}</span>
+        <span className={`view-sync-state${syncPhase === 'on' ? ' view-sync-state--on' : ''}${syncPhase === 'linking' ? ' view-sync-state--linking' : ''}${syncPhase === 'nobody' ? ' view-sync-state--nobody' : ''}`}>
+          {syncPhase === 'off' ? 'OFF' : syncPhase === 'linking' ? '···' : 'ON'}
+          {syncPhase === 'on' && page !== 'msrr' && (simN > 1 || realN > 1) && <span className="view-sync-count">{linkUp}/{simN}</span>}
+        </span>
       </button>
     </div>
   );

@@ -20,10 +20,49 @@ RX_GAP, RX_TOP = 0.0063, 0.0153          # receiver gap floor / pad top above it
 ACC_RAD = 40 * 100 * 2 * math.pi / 4096     # firmware POS_ACC_DEFAULT=40 (unit 100 steps/s^2) = 6.14 rad/s^2
 W0_12V = 2 * math.pi * 45 / 60               # ST3215 no-load 0.222 s/60 deg (45 rpm) at 12 V
 KT = 11 * 0.0981                              # 11 kg.cm/A torque constant -> N.m/A; no-load 0.2 A
+
+
+# ---- the ST3215 servo model, ONE copy (10 Nov: phys_world, multi_env and isaac_newton each had / needed it). Arrays are updated in place.
+def st3215_sag(volt, torque_abs_sum):
+    """battery sag per module: 1.8 A idle + |torque| / KT through 0.08 ohm, never below 9 V -> the fraction of speed and torque left"""
+    I = 1.8 + torque_abs_sum / KT
+    return np.maximum(volt - 0.08 * I, 9.0) / volt
+
+
+def st3215_slew(sp, spv, e, w0, amax, dt, vbias=None):
+    """the servo's own setpoint: slews toward the target (e = target - sp) at <= w0 with acceleration <= amax, braking so it lands;
+    vbias = the command's own speed (a gliding command is followed without stopping at each tick). sp, spv updated IN PLACE."""
+    vdes = np.sign(e) * np.minimum(w0, np.sqrt(2 * amax * np.abs(e)))
+    if vbias is not None: vdes = np.clip(vdes + vbias, -w0, w0)
+    spv += np.clip(vdes - spv, -amax * dt, amax * dt); sp += spv * dt
+
+
+def st3215_limit(fr0, tau, w, w0, sag):
+    """torque cap: full when braking, falls with speed when driving (torque-speed line, never below 8 %), times the battery sag"""
+    return sag * np.where(tau * w > 0, fr0 * np.clip(1 - np.abs(w) / w0, 0.08, 1.0), fr0)
 MAG_F0, MAG_D0, MAG_CUT = 4.6, 0.0015, 0.020   # N per magnet pair at contact (0.47 kgf), decay length, cutoff
 # MAG_SCALE: 4.6 N/pair was a catalogue guess, never measured (8 pairs -> 37 N per connector). Nischay, 26 Oct, pulling two real
-# connectors apart by hand: ~700-800 g total (~7.5 N) -> scale 7.5 / 36.8 = 0.204. Default 0.204 since the re-measured runs passed (26 Oct).
-MAG_F0 = MAG_F0 * float(__import__('os').environ.get('MAG_SCALE', '0.204'))   # default = measured (walking 89/89, end->spine 11/11, undock 8/8 with it)
+# connectors apart by hand: ~700-800 g total (~7.5 N) -> scale 7.5 / 36.8 = 0.204 (26 Oct). 10 Nov, Nischay: "just 3.5 N per connector,
+# that's enough, for all things" -> 3.5 / 36.8 = 0.0951 (earlier results - walking, docking sweeps - were at 7.5 N; MAG_SCALE=0.204 = old).
+MAG_PER_CONNECTOR_N = 3.5
+MAG_F0 = MAG_F0 * float(__import__('os').environ.get('MAG_SCALE', str(MAG_PER_CONNECTOR_N / (8 * MAG_F0))))
+MAG_POL = np.where(np.arange(8) % 2 == 0, 1.0, -1.0)   # 8 magnets per connector, N/S alternating
+
+
+def connector_pull(Bm, Pm, z, magk=1.0, gap=0.0, k_end=None, k_rx=None):
+    """the magnet pull between a docking END's 8 magnets (Bm, world, (8,3)) and a connector's 8 (Pm) whose face points along z.
+    Each end magnet pairs with its nearest connector magnet; opposite poles attract, like poles push. magk / gap = per-robot strength
+    and air gap; k_end / k_rx(j) = per-magnet strength (disturb). Returns (Fv (8,3) force ON each end magnet, j = the paired index).
+    ONE copy (10 Nov): phys_world._magnets and isaac_newton use it. Attraction pulls the end INTO the connector (along -z) - the old
+    z*sign(ax) pushed touching ends apart at 160 mm/s once the faces overlapped 0.02 mm."""
+    D = Pm[None, :, :] - Bm[:, None, :]; L = np.linalg.norm(D, axis=2); j = L.argmin(1); v = D[np.arange(8), j]
+    ax = v @ z; lat = v - ax[:, None] * z[None, :]; ln = np.linalg.norm(lat, axis=1); sep = np.maximum(-ax, 0.0) + gap
+    fm = magk * MAG_F0 / (1 + sep / MAG_D0) ** 3 * np.exp(-(ln / 0.006) ** 2)
+    fm = np.where((sep < MAG_CUT) & (ln < 0.012), fm, 0.0) * np.where(MAG_POL * MAG_POL[j] < 0, 1.0, -1.0)
+    if k_end is not None: fm = fm * k_end * k_rx(j)
+    return -z[None, :] * fm[:, None] + lat / 0.004 * 0.5 * fm[:, None], j
+
+
 def quat_from_R(R):
     q = np.zeros(4); mujoco.mju_mat2Quat(q, np.ascontiguousarray(R).reshape(9)); return q
 def rot(axis, ang):

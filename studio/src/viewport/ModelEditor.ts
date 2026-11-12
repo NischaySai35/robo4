@@ -28,6 +28,7 @@ import { useDockStore } from '@/state/dockStore';
 import { usePageStore } from '@/state/pageStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useDragWarningStore } from '@/state/dragWarningStore';
+import { partBoxes, jointedPairs, touching, firstHit } from '@/viewport/dragCollision';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { stopAllSpins, getActiveSpins } from '@/features/motor/spinEngine';
@@ -388,6 +389,7 @@ export class ModelEditor {
     // Mesh Edit Mode (Blender-style) — owns its own gizmo/overlay; this editor
     // steps aside (no body gizmo/picking) whenever it's active.
     this._scene = scene;
+    this._viewport = viewport;   // SceneManager's handle: setFloorY moves the one shared floor
     this.editMode = new EditModeController({
       scene, camera, controls, domElement, bodyRenderer: this.bodyRenderer,
     });
@@ -641,9 +643,19 @@ export class ModelEditor {
       const asset = assetId ? this._doc.assets?.[assetId] : null;
       const obj = asset ? getAssetObject(asset) : null;
       const pts: number[] = [];
+      // In the frame the part is DRAWN in (BodyRenderer._buildVisual): each sub-mesh's own place inside the asset, then the
+      // geometry's scale (0.001 for mm STLs). 12 Nov: raw vertices were mm while bodies are m, so every gravity collider
+      // was 1000x too big, sat deep in the floor and launched the robot ~41 m up on Gravity ON.
+      const gs = g.scale ?? [1, 1, 1];
+      const S = new THREE.Matrix4().makeScale(gs[0], gs[1], gs[2]);
+      obj?.updateMatrixWorld?.(true);
+      const rootInv = obj?.matrixWorld ? new THREE.Matrix4().copy(obj.matrixWorld).invert() : new THREE.Matrix4();
+      const M = new THREE.Matrix4(), v = new THREE.Vector3();
       obj?.traverse?.((o: any) => {
         const p = o.isMesh && o.geometry?.attributes?.position;
-        if (p) for (let i = 0; i < p.count; i++) pts.push(p.getX(i), p.getY(i), p.getZ(i));
+        if (!p) return;
+        M.multiplyMatrices(rootInv, o.matrixWorld).premultiply(S);
+        for (let i = 0; i < p.count; i++) { v.set(p.getX(i), p.getY(i), p.getZ(i)).applyMatrix4(M); pts.push(v.x, v.y, v.z); }
       });
       positions = pts.length ? pts : null;
     }
@@ -1062,35 +1074,19 @@ export class ModelEditor {
     this.bodyRenderer.group.updateMatrixWorld(true);
     const box = new THREE.Box3().setFromObject(this.bodyRenderer.group);
     if (box.isEmpty()) return;
-    const sizeV = new THREE.Vector3(); box.getSize(sizeV);
-    const span = Math.max(sizeV.x, sizeV.z, 0.2) * 8;
     this._floorY = box.min.y - this._gravityY - 0.01;
     // FLAT floor: rigid bodies settle dead-still on a flat surface (a rough one makes them rock
     // forever → the vibration + flickering penetration). Physics uses a flat cuboid (terrainTri
-    // = null); wheels still grip via friction. A subtle grid shows where the ground is.
+    // = null); wheels still grip via friction.
     this._terrainTri = null;
-    // Colours follow the app theme, like SceneManager.applyTheme does for the shared ground + grid.
-    const theme = document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light';
-    const dark = theme === 'dark';
-    const g = new THREE.Group();
-    const plane = new THREE.Mesh(
-      new THREE.PlaneGeometry(span, span),
-      new THREE.MeshStandardMaterial({ color: dark ? 0x262626 : 0xe9e5de, roughness: 1, metalness: 0 }),
-    );
-    plane.rotation.x = -Math.PI / 2;
-    plane.receiveShadow = true;
-    const grid = new THREE.GridHelper(span, 48, dark ? 0x5a5a5a : 0x8499b8, dark ? 0x3a3a3a : 0xbfcbdc);
-    g.add(plane); g.add(grid);
-    g.position.y = this._floorY;
-    g.userData.theme = theme;
-    this._scene.add(g);
-    this._floor = g;
+    // Nothing drawn here (12 Nov: a second plane + grid of our own was the "dual floor"): the ONE shared SceneManager
+    // floor + grid moves to the physics floor height. `_floor` only marks that the floor is in use.
+    this._viewport?.setFloorY?.(this._floorY);
+    this._floor = { visible: true, userData: { theme: document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light' } };
   }
   _hideFloor() {
     if (this._floor) {
-      this._scene.remove(this._floor);
-      // The floor is a group (plane + grid): free each child's GPU memory, not the group's (it has none).
-      this._floor.traverse((o: any) => { o.geometry?.dispose?.(); o.material?.dispose?.(); });
+      this._viewport?.setFloorY?.(null);
       this._floor = null;
     }
     this._terrain = null;
@@ -1169,7 +1165,8 @@ export class ModelEditor {
       // specifically wanted this obvious, not a subtle few millimeters), clamped so a tiny
       // single connector still floats a visible minimum and a huge assembly doesn't fly off
       // absurdly far.
-      this._gravityFloatHeight = Math.min(0.6, Math.max(0.05, span * 0.3));
+      // 12 Nov (Nischay: "too high from the floor"): a small gap that still shows gravity is off, 1.5-5 cm
+      this._gravityFloatHeight = Math.min(0.05, Math.max(0.015, span * 0.04));
     }
     const FLOAT = this._gravityFloatHeight ?? 0.05;
     const target = (gravityOn || pinned) ? 0 : FLOAT;
@@ -1181,15 +1178,13 @@ export class ModelEditor {
     for (const g of [this.bodyRenderer?.group, this.jointRenderer?.group, this.connectorRenderer?.group]) {
       if (g) g.position.y = this._gravityY;
     }
-    // Persistent rough floor: present on the Animation page whether gravity is on or off; removed
-    // on other pages.
-    const onAnim = usePageStore.getState().page === 'animation';
-    if (onAnim) {
-      // Theme switched while on this page: rebuild the floor in the new colours.
-      if (this._floor && this._floor.userData.theme !== (document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light')) this._hideFloor();
-      this._ensureTerrainFloor(); if (this._floor) this._floor.visible = true;
-    }
-    else if (this._floor) this._hideFloor();
+    // ONE floor rule for every tab that shows this view (12 Nov: Editor and Animation looked different): the floor sits
+    // under the robot. While gravity is off it re-seats when bodies are added/removed; with gravity on it stays put
+    // (it is the physics floor).
+    const nBodies = this._doc ? Object.keys(this._doc.bodies).length : 0;
+    if (this._floor && !gravityOn && this._floorBodies !== nBodies) this._hideFloor();
+    this._ensureTerrainFloor();
+    if (this._floor) this._floorBodies = nBodies;
   }
 
   tick() {
@@ -1416,6 +1411,24 @@ export class ModelEditor {
     this.controls.enabled = false;
     this._attachTo(null); // no gizmo while pulling
     this._captureIKStartValues();
+    this._startDragCollision();
+  }
+
+  /** Animation page: what the drag must not run into - the floor and other parts (dragCollision.ts). Contacts that already
+   *  exist when the drag starts are ignored, so only NEW ones stop it. */
+  /** the floor as SEEN, in model space: gravity off draws the robot lifted by _gravityY (the float), so the floor is that much
+   *  further below the model's own coordinates (12 Nov: comparing the bare floor stopped a drag in mid-air) */
+  _dragFloorY(): number | undefined {
+    return this._floorY === undefined ? undefined : this._floorY - (this._gravityY ?? 0);
+  }
+
+  _startDragCollision() {
+    this._dragCol = null;
+    if (usePageStore.getState().page !== 'animation' || !this._doc) return;
+    const doc = this._doc;
+    const boxes = partBoxes(doc, (id: string) => this._meshHullPointsPhysics(id));
+    const joined = jointedPairs(doc);
+    this._dragCol = { boxes, joined, ignore: touching(computeFK(doc) as any, boxes, joined, this._dragFloorY()) };
   }
 
   /** Snapshot every joint's CURRENT value before a drag begins — applyTransient (used for the
@@ -1463,6 +1476,15 @@ export class ModelEditor {
     // symptom. applyTransient is the existing, cheap, no-history live-update path already used
     // for motor spin/physics/animation playback for this same reason — the final pose gets
     // committed as ONE real undoable dispatch at drag-end instead (see _endIK/_lastIKValues).
+    // collision: a step that would put a part into the floor or into another part is refused (the pose stays at the last free one)
+    if (values && this._dragCol) {
+      const hit = firstHit(computeFK(withJointValues(this._doc, values)) as any, this._dragCol.boxes, this._dragCol.joined, this._dragCol.ignore, this._dragFloorY());
+      if (hit) {
+        const nm = (id: string) => (this._doc.bodies as any)[id]?.name ?? id;
+        useDragWarningStore.getState().setMessage(hit.kind === 'floor' ? `Can't go further: ${nm(hit.a)} would go into the floor.` : `Can't go further: ${nm(hit.a)} would hit ${nm(hit.b)}.`);
+        return;
+      }
+    }
     if (values) {
       this._lastIKValues = values;
       useModelStore.getState().applyTransient((d: Document) => {
@@ -1592,6 +1614,13 @@ export class ModelEditor {
     // if a body's raycast also hit here the marker is almost always what the
     // click was aimed at.
     const connectorHit = this.connectorRenderer.pickConnectorAt(ndc, this.camera);
+    if (connectorHit && usePageStore.getState().page === 'animation') {
+      // Animation page: plugs connect, like MSRR - 1st click picks A (highlighted), 2nd picks B and the modules bend to meet
+      useAnimSceneStore.getState().pickConnector({ bodyId: connectorHit.bodyId, connectorId: connectorHit.connectorId });
+      const now = useAnimSceneStore.getState();
+      if (now.mateSlotA && !now.mateSlotB) sel.select(`${now.mateSlotA.bodyId}::${now.mateSlotA.connectorId}`, 'connector'); else sel.clear();
+      return;
+    }
     if (connectorHit) {
       const compositeId = `${connectorHit.bodyId}::${connectorHit.connectorId}`;
       if (sel.kind === 'connector' && sel.selectedId === compositeId) {

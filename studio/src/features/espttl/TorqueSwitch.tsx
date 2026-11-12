@@ -5,9 +5,8 @@
  * REUSE-CHECKED: torque switch -> the look is components/torque/TorqueSwitch; this only wires the ESP-TTL store.
  */
 import TorqueSwitch from '@/components/torque/TorqueSwitch';
-import { useEspTtlStore, ttlTry, liveBoards } from '@/state/espTtlStore';
+import { useEspTtlStore, ttlTry, ttlTryAll, liveBoards } from '@/state/espTtlStore';
 import { useEspNodesStore } from '@/state/espNodesStore';
-import { callAllNodes } from '@/features/servo/servoLink';
 
 export default function EspTorqueSwitch({ say, all = false }: { say: (m: string) => void; all?: boolean }) {
   const tel = useEspTtlStore(s => s.tel);   // select the object itself: a fresh `?? []` each time would redraw forever
@@ -15,9 +14,9 @@ export default function EspTorqueSwitch({ say, all = false }: { say: (m: string)
   useEspNodesStore(s => s.nodes);           // redraw when any module changes (for `all`)
   const set = async (on: boolean) => {
     const what = `torque ${on ? 'on' : 'off'}`, path = `/api/torque?on=${on ? 1 : 0}`;
-    if (all) {
-      const r = await callAllNodes(path, { onlineOnly: true });
-      say(r.errors.length ? `${what}: ${r.ok} module(s) ok, failed: ${r.errors.join('; ')}` : `${what} ok on ${r.ok} module(s)`);
+    if (all) {                               // the modules picked at the top (default all), asked first if one is offline
+      const r = await ttlTryAll(path);
+      if (r.error !== 'cancelled') say(r.ok ? `${what} ok` : `${what}: ${r.error}`);
       return;
     }
     const r = await ttlTry(path);

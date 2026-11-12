@@ -13,7 +13,7 @@ import { useEspNodesStore, espNowUrl, GATEWAY_URL } from '@/state/espNodesStore'
 import { useIntegrationStore, type BoardStat } from '@/state/integrationStore';
 import { VERIFY_URL } from '@/robotics/msrr2/simScene';
 
-const POLL_MS = 120;       // healthy-node cadence
+const POLL_MS = 450;       // healthy-node cadence. 12 Nov: 120 -> 450 - over the radio 8 asks/s per module kept its chip at ~71 C; the top bar needs ~2/s (Sync has its own link)
 const RETRY_MS = 1500;     // offline-node retry cadence (don't hammer)
 const TIMEOUT_MS = 4000;
 // no good reply this long = offline; one missed reply is not (the radio naps while the robot stands still).
@@ -60,15 +60,18 @@ async function pollService() {
   } catch { service = {}; }                                    // no service: every board is asked directly, as before
   finally { serviceBusy = false; }
 }
-const hostOf = (url: string) => { try { return new URL(url).hostname; } catch { return url; } };
+// host WITH its port: the service keys links by what Sync sent (poseSync: URL.host). 12 Nov: matching by bare address mixed
+// two boards on one address (127.0.0.1:18081 / :18082) up; the address fallback is only for port-less (real, port 80) boards.
+const hostOf = (url: string) => { try { return new URL(url).host; } catch { return url; } };
 function fromService(id: string, url: string): boolean {
   const h = hostOf(url), ip = lastIp.get(id);
-  const b = service[h] ?? Object.values(service).find((x) => x.ip && (x.ip === h || x.ip === ip));
+  const b = service[h] ?? (h.includes(':') ? undefined : Object.values(service).find((x) => x.ip && (x.ip === h || x.ip === ip)));
   if (!b) return false;
-  if (b.tel?.ok && b.age_s * 1000 < OFFLINE_AFTER_MS) {
-    if (typeof b.tel?.wifi?.ip === 'string' && b.tel.wifi.ip) lastIp.set(id, b.tel.wifi.ip);
-    useEspNodesStore.getState().setNodeTelemetry(id, b.tel, b.ms); lastOk.set(id, Date.now() - b.age_s * 1000);
-  } else if (Date.now() - (lastOk.get(id) ?? 0) >= OFFLINE_AFTER_MS) useEspNodesStore.getState().setNodeConnected(id, false);
+  // only a FRESH service reading stands in for asking the board; a stale one (12 Nov: an old Sync link, 90 s old, said
+  // offline while the board answered in 25 ms -> the top bar dropped) falls through to asking the board directly
+  if (!(b.tel?.ok && b.age_s * 1000 < OFFLINE_AFTER_MS)) return false;
+  if (typeof b.tel?.wifi?.ip === 'string' && b.tel.wifi.ip) lastIp.set(id, b.tel.wifi.ip);
+  useEspNodesStore.getState().setNodeTelemetry(id, b.tel, b.ms); lastOk.set(id, Date.now() - b.age_s * 1000);
   return true;
 }
 
@@ -122,7 +125,17 @@ async function pollNode(id: string, url: string) {
   try {
     const ip = lastIp.get(id);
     const res = await fetch(`${useIp.has(id) && ip ? viaIp(url, ip) : url}/api/telemetry`, { cache: 'no-store', signal: AbortSignal.timeout(TIMEOUT_MS) });
-    const data = await res.json();
+    const text = await res.text();
+    let data: any;
+    try { data = JSON.parse(text); }
+    catch {
+      // it ANSWERED, the reply was damaged (12 Nov: firmware cut "espnow":} out of a 4.6 KB reply) -> online, keep the last telemetry
+      if (res.ok && text.startsWith('{"ok":true')) {
+        useEspNodesStore.getState().setNodeConnected(id, true, Date.now() - t0); lastOk.set(id, Date.now());
+        nextAt.set(id, Date.now() + POLL_MS); return;
+      }
+      throw new Error('bad reply');
+    }
     if (typeof data?.wifi?.ip === 'string' && data.wifi.ip) lastIp.set(id, data.wifi.ip);
     const lat = Date.now() - t0;
     if (data?.ok) {

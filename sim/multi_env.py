@@ -5,7 +5,7 @@ All holding = contact + magnets (same magnet / polarity model as WalkEnv). Gravi
 from paths import tpath
 import math, os, collections, numpy as np, mujoco
 mujoco.set_mju_user_warning(lambda m: None)
-from tetro_env2 import ACT, ACC_RAD, W0_12V, KT, MAG_F0, MAG_D0, MAG_CUT, RX_GAP, RX_TOP
+from tetro_env2 import ACT, ACC_RAD, W0_12V, KT, MAG_F0, MAG_D0, MAG_CUT, RX_GAP, RX_TOP, st3215_sag, st3215_slew, st3215_limit
 from build_walk import R2q
 MAG_PULL_IN = __import__('os').environ.get('MAG_PULL_IN', '1') == '1'   # magnets always pull the end IN (old sign(ax) flipped when touching faces overlapped: pushed it OUT with full force). GPU A/B 26 Oct, 256 robots: old 81/82 first docks, new 103/103; seated gap 0.11 -> 0.00 mm. MAG_PULL_IN=0 = old behaviour.
 MULTI_XML = tpath('sim/multi_train.xml')
@@ -173,13 +173,12 @@ class MultiEnv:
         self.mag_force = self.mag_force_m[0]
     def _servo(self, dt=0.005):
         M = self.nmod; F = self.d.actuator_force[self.all_act_all].reshape(M, 9)
-        I = 1.8 + np.abs(F).sum(1) / KT; sag = np.maximum(self.volt - 0.08 * I, 9.0) / self.volt; sag9 = np.repeat(sag, 9)
+        sag9 = np.repeat(st3215_sag(self.volt, np.abs(F).sum(1)), 9)              # the ST3215 model: tetro_env2 (one copy)
         w0 = self.w0.ravel() * sag9; amax = self.amax.ravel(); e = self.tgt - self.sp
-        vdes = np.sign(e) * np.minimum(w0, np.sqrt(2 * amax * np.abs(e)))
-        self.spv += np.clip(vdes - self.spv, -amax * dt, amax * dt); self.sp += self.spv * dt
+        st3215_slew(self.sp, self.spv, e, w0, amax, dt)
         self.d.ctrl[self.all_act_all] = self.sp
         w = self.d.qvel[self.all_dof_all]; tau = self.d.actuator_force[self.all_act_all]
-        lim = sag9 * np.where(tau * w > 0, self.fr0 * np.clip(1 - np.abs(w) / w0, 0.08, 1.0), self.fr0)
+        lim = st3215_limit(self.fr0, tau, w, w0, sag9)
         self.m.actuator_forcerange[self.all_act_all, 0] = -lim; self.m.actuator_forcerange[self.all_act_all, 1] = lim
     def step(self, cmd, lockA_deg, lockB_deg, extra_force=None):
         m, d, r = self.m, self.d, self.rng

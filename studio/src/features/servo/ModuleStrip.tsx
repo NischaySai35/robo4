@@ -25,7 +25,7 @@ function NodePill({ nd, canRemove, selected, onSelect }: { nd: EspNode; canRemov
   const commit = () => { if (edit != null && edit.trim() && edit.trim() !== nd.url) updateNode(nd.id, { url: edit.trim() }); setEdit(null); };
   return (
     <div className={`sc-node-pill${selected ? ' sel' : ''}${nd.connected ? '' : ' off'}`}
-         title={`${nd.url} · ${nd.connected ? 'online' : 'offline'} · ${onSelect ? 'click to show it, double-click to change the address' : 'click to change the address'}`}>
+         title={`${nd.url} · ${nd.connected ? 'online' : 'offline'} · ${onSelect ? 'click: send only to this module (click again: all modules) - double-click: change the address' : 'click to change the address'}`}>
       <span className={`sc-dot ${nd.connected ? 'ok' : 'bad'}`} />
       {edit != null ? (
         <Input size="xs" className="tw:w-[150px]" autoFocus value={edit} spellCheck={false}

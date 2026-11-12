@@ -9,6 +9,7 @@
  * and nothing here assumes the board remembers anything between calls.
  */
 import { create } from 'zustand';
+import { createContext, useContext } from 'react';
 import { speakForPath } from '@/features/voice/phrases';
 import { useEspNodesStore, type EspNode } from '@/state/espNodesStore';
 import { startEspPoll, moduleNumber } from '@/features/servo/espPoll';
@@ -68,6 +69,9 @@ interface EspTtlState {
   latencyMs: number | null;
   polling: boolean;
   select: (nodeId: string) => void;
+  /** Nischay 12 Nov: null = ALL modules (default); a module's id = only that one. Clicking the same module again = all. */
+  focus: string | null;
+  toggleFocus: (nodeId: string) => void;
   setTab: (t: TtlTab) => void;
   _apply: (tel: TtlTelemetry | null, latency: number | null, err: string | null) => void;
   setPolling: (on: boolean) => void;
@@ -77,6 +81,8 @@ const lsGet = (k: string) => { try { return localStorage.getItem(k); } catch { r
 const lsSet = (k: string, v: string | null) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch { /* private window */ } };
 
 export const useEspTtlStore = create<EspTtlState>((set) => ({
+  focus: null,
+  toggleFocus: (id) => set((s) => ({ focus: s.focus === id ? null : id })),
   nodeId: lsGet(LS_NODE),
   url: 'http://mod1.local',
   picked: !!lsGet(LS_NODE),
@@ -106,8 +112,8 @@ export const ttlUrl = () => useEspTtlStore.getState().url.replace(/\/+$/, '');
  * carries its own timeout — a board mid-flash or mid-scan simply will not answer, and a
  * hung fetch would wedge the whole page.
  */
-export async function ttlGet<T = any>(path: string, timeoutMs = 6000): Promise<T> {
-  const res = await fetch(`${ttlUrl()}${path}`, {
+export async function ttlGet<T = any>(path: string, timeoutMs = 6000, base?: string): Promise<T> {
+  const res = await fetch(`${(base ?? ttlUrl()).replace(/\/+$/, '')}${path}`, {
     cache: 'no-store',
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -119,8 +125,8 @@ export async function ttlGet<T = any>(path: string, timeoutMs = 6000): Promise<T
 }
 
 /** Same, but never throws — for fire-and-forget buttons that report their own status. */
-export async function ttlTry(path: string, timeoutMs = 6000): Promise<{ ok: boolean; data?: any; error?: string }> {
-  try { const data = await ttlGet(path, timeoutMs); speakForPath(path); return { ok: true, data }; }
+export async function ttlTry(path: string, timeoutMs = 6000, base?: string): Promise<{ ok: boolean; data?: any; error?: string }> {
+  try { const data = await ttlGet(path, timeoutMs, base); speakForPath(path); return { ok: true, data }; }
   catch (e: any) { return { ok: false, error: e?.message || String(e) }; }
 }
 
@@ -154,6 +160,8 @@ function adoptOldUrl() {
 /** Keep the selection valid: the hand-picked module while it exists, else the lowest-numbered online one (else the lowest). */
 function choose(): EspNode | null {
   const st = useEspTtlStore.getState(), nodes = useEspNodesStore.getState().nodes;
+  const f = st.focus ? nodes.find(n => n.id === st.focus) : null;
+  if (f) return f;
   const cur = pageNode();
   if (cur && (st.picked || cur.connected)) return cur;
   const byNum = [...nodes].sort((a, b) => nodeModule(a) - nodeModule(b));
@@ -207,9 +215,11 @@ export interface LiveBoard { mod: number; url: string; tel: TtlTelemetry }
 /** Every module board that is online now, one per module (the page's own board for its module). */
 export function liveBoards(): LiveBoard[] {
   const out = new Map<number, LiveBoard>(), page = pageNode();
+  const want = new Set(ttlTargets().map(nodeModule));           // all modules, or only the one picked at the top
   useEspNodesStore.getState().nodes.forEach((n, i) => {
     if (!n.connected || !n.telemetry) return;
     const mod = moduleNumber(n.url, n.name, i);
+    if (!want.has(mod)) return;
     if (out.has(mod) && n !== page) return;
     out.set(mod, { mod, url: n.url.replace(/\/+$/, ''), tel: n.telemetry as TtlTelemetry });
   });
@@ -245,4 +255,58 @@ export function currentPose(): Record<string, number> {
     }
   }
   return pose;
+}
+
+// ── which modules a button goes to (Nischay 12 Nov 2026) ───────────────────────────────────────────────────────────────
+// Default ALL modules; click one at the top = only that one (click again = all). A shared button (torque, home, play, record)
+// goes to every target; a module-specific part (servo table, config, Wi-Fi, tools) is drawn once per target inside TtlScope.
+
+export const nodeLabel = (n: EspNode) => `mod${nodeModule(n)}`;
+export { nodeModule };
+
+/** the modules buttons go to now: the picked one, else every module (one entry per module number, the online one first) */
+export function ttlTargets(): EspNode[] {
+  const nodes = useEspNodesStore.getState().nodes, f = useEspTtlStore.getState().focus;
+  const picked = f ? nodes.find(n => n.id === f) : null;
+  if (picked) return [picked];
+  const byMod = new Map<number, EspNode>();
+  for (const n of nodes) { const m = nodeModule(n), had = byMod.get(m); if (!had || (!had.connected && n.connected)) byMod.set(m, n); }
+  return [...byMod.entries()].sort((a, b) => a[0] - b[0]).map(e => e[1]);
+}
+
+/** some targets offline: ask first. Returns the modules to send to, or null = cancelled. */
+export function askOffline(ns: EspNode[]): EspNode[] | null {
+  const off = ns.filter(n => !n.connected); if (!off.length) return ns;
+  const on = ns.filter(n => n.connected), offTxt = off.map(nodeLabel).join(', ');
+  if (!on.length) return confirm(`${offTxt} ${off.length > 1 ? 'are' : 'is'} offline. Send anyway?`) ? ns : null;
+  return confirm(`${offTxt} ${off.length > 1 ? 'are' : 'is'} offline.
+Send to ${on.map(nodeLabel).join(', ')} only?`) ? on : null;
+}
+
+/** one call to every target module (asks first if one is offline); ok only when all answered */
+export async function ttlTryAll(path: string, timeoutMs = 6000): Promise<{ ok: boolean; data?: any; error?: string }> {
+  const ns = askOffline(ttlTargets());
+  if (!ns) return { ok: false, error: 'cancelled' };
+  if (!ns.length) return { ok: false, error: 'no module' };
+  const rs = await Promise.all(ns.map(async (n) => ({ n, r: await ttlTry(path, timeoutMs, n.url) })));
+  const bad = rs.filter(x => !x.r.ok);
+  return bad.length ? { ok: false, data: rs.find(x => x.r.ok)?.r.data, error: bad.map(x => `${nodeLabel(x.n)}: ${x.r.error}`).join('; ') }
+                    : { ok: true, data: rs[0].r.data };
+}
+
+/** the module a per-module part is drawn for (null = the page's own board, as before) */
+export const TtlScope = createContext<EspNode | null>(null);
+
+/** inside a per-module part: that module's live telemetry and calls bound to its address */
+export function useTtlScope() {
+  const node = useContext(TtlScope);
+  const storeTel = useEspTtlStore(s => s.tel);
+  const live = useEspNodesStore(s => (node ? s.nodes.find(n => n.id === node.id) ?? null : null));
+  const base = node ? node.url : undefined;
+  const tel: TtlTelemetry | null = node ? (live?.connected ? (live.telemetry as TtlTelemetry) : null) : storeTel;
+  return {
+    node: live ?? node, tel, label: node ? nodeLabel(node) : '',
+    get: <T = any>(p: string, t?: number) => ttlGet<T>(p, t, base),
+    tryp: (p: string, t?: number) => ttlTry(p, t, base),
+  };
 }

@@ -14,7 +14,7 @@ randomized errors do. The only rules are the robot's own mechanics:
 Port conventions (measured, v2_connector_check.py): Studio END port = pad tip, x at a PAD; SPINE port and
 floor anchor = gap floor (seat), x at a GAP. Studio -> MuJoCo frame via v2_calib_fit.json."""
 import os, json, math, numpy as np, mujoco
-from tetro_env2 import ACT, ACC_RAD, W0_12V, KT, MAG_F0, MAG_D0, MAG_CUT, RX_GAP, RX_TOP
+from tetro_env2 import ACT, ACC_RAD, W0_12V, KT, MAG_F0, MAG_D0, MAG_CUT, RX_GAP, RX_TOP, st3215_sag, st3215_slew, st3215_limit, connector_pull
 import disturb as DIST
 from engine import world_engine
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -89,7 +89,38 @@ def _add_cad_colliders(spec, ids):
                 g = body.add_geom(); g.name = f'{mid}_cad_{part}_{k}'; g.type = mujoco.mjtGeom.mjGEOM_BOX
                 g.pos = [cx, cy, cz]; g.size = [hx, hy, hz]; g.mass = 0
                 g.friction = [0.35, 0.005, 0.0001]                                # same PLA as the connector geoms (the default 1.0 gripped the floor 2.5x too hard)
-                g.contype = 1; g.conaffinity = 7; g.group = 3; g.rgba = [0.6, 0.6, 0.6, 0.35]
+                g.contype = 1; g.conaffinity = 5 if FLOOR_HULL else 7; g.group = 3; g.rgba = [0.6, 0.6, 0.6, 0.35]
+            if FLOOR_HULL:
+                # 12 Nov: against a flat floor / slope / wall / ceiling only a part's convex outline matters, so ONE convex hull of the
+                # real STL is exact there. The 4 mm voxel boxes made round housings (r 34-38 mm) lumpy polygons 3-4 mm too fat: the
+                # brain's module 'stepped' (crawled 1.7-5x further than Isaac) and its rolls snapped to quarter turns (Isaac: 97-108 deg).
+                # Boxes keep module-to-module contact (bit 4/1); the floor meets the hulls (bit 16) - PhysWorld sets the floor's bits
+                hulls = _floor_hulls()
+                if part in hulls:
+                    mn = f'floorhull_{part}'
+                    if not any(mm.name == mn for mm in spec.meshes):
+                        me = spec.add_mesh(); me.name = mn; me.uservert = [float(x) for x in np.asarray(hulls[part]).ravel()]
+                    g = body.add_geom(); g.name = f'{mid}_floorhull_{part}'; g.type = mujoco.mjtGeom.mjGEOM_MESH; g.meshname = mn; g.mass = 0
+                    g.friction = [0.35, 0.005, 0.0001]; g.contype = 16; g.conaffinity = 0; g.group = 3; g.rgba = [0.3, 0.8, 0.3, 0.0]
+
+
+FLOOR_HULL = os.environ.get('FLOOR_HULL', '1') == '1'
+
+
+def _floor_hulls():
+    """{part: convex-hull vertices (body frame, m)} of each real part STL (brain/meshes, body vertex = STL*0.001 - offsets),
+    cached in sim/floor_hulls.json"""
+    fn = os.path.join(HERE, 'floor_hulls.json')
+    if not os.path.exists(fn):
+        import trimesh
+        me = os.path.join(HERE, '..', 'brain', 'meshes'); off = json.load(open(os.path.join(me, 'offsets.json'))); out = {}
+        for part in json.load(open(os.path.join(HERE, 'cad_collision.json')))['parts']:
+            f_ = os.path.join(me, part + '.stl')
+            if not os.path.exists(f_) or part not in off: continue
+            v = np.asarray(trimesh.load(f_, force='mesh').vertices) * 0.001 - np.array(off[part])
+            out[part] = np.round(trimesh.convex.convex_hull(v).vertices, 6).tolist()
+        json.dump(out, open(fn, 'w'))
+    return json.load(open(fn))
 
 
 LOCK_WELD = os.environ.get('LOCK_WELD', '0') == '1'   # 1 = closed locks as a weld (old shortcut); 0 = held by the fins' contact
@@ -308,6 +339,17 @@ class PhysWorld:
         for i in range(m.ngeom):
             if m.geom_contype[i] == 1 and m.geom_conaffinity[i] == 2: m.geom_conaffinity[i] = 3
             if m.geom_contype[i] == 4 and m.geom_conaffinity[i] == 2: m.geom_contype[i] = 4; m.geom_conaffinity[i] = 6   # END_END_CONTACT (4/6: ends hit ends + receivers, never module bodies)
+        # 10 Nov: the floor (2/1) and the side receiver rings (2/5) share bit 2, so a lying module's ring sank up to 10 mm into the floor
+        # unseen (Isaac / the real robot rest on that ring). Floor also hits bit 2; floor receivers are welded to the world (never collide)
+        m.geom_conaffinity[m.geom('floor').id] |= 2
+        if FLOOR_HULL and CAD_COLLIDE: fl_ = m.geom('floor').id; m.geom_conaffinity[fl_] = (int(m.geom_conaffinity[fl_]) | 2 | 16) & ~1   # the parts meet the floor by their hulls (_add_cad_colliders)
+        # 12 Nov: the side rings were built from the FLOOR receiver, whose 4 outer lugs reach r 46 mm - the real spine ring is a round
+        # 35 mm disc (Spine1 STL, every angle). A lying module stood on those lugs like 4 feet and 'walked': the brain crawled 5x
+        # further than Isaac (393 vs 73 mm). The lugs still meet docking ends (contype 1/4 parts) but no longer the floor (bit 8)
+        if os.environ.get('SIDE_LUGS_FLOOR', '0') != '1':
+            for i in range(m.ngeom):
+                nm_ = m.geom(i).name
+                if '_srx' in nm_ and 'rx_lug' in nm_ and m.geom_contype[i] == 2: m.geom_contype[i] = 8
         # the broad phase filters on per-BODY bits (OR of its geoms): keep them in step with the geom changes above
         if hasattr(m, 'body_contype'):
             m.body_contype[:] = 0; m.body_conaffinity[:] = 0
@@ -496,19 +538,30 @@ class PhysWorld:
             i = self.ids.index(mod['id'])
             self.tgt[i * 9:i * 9 + 7] = SIGNS * np.array(mod['rad'])
 
+    @staticmethod
+    def lock_dir(lk):
+        """{side ('a'/'b'): +1/-1} - which way each END in this lock turns its rotor (sim angle sign). 11 Nov, Nischay: chosen PER DOCK
+        to match the partner connector, never a constant: lk['dir'] (as the Studio's Edge.lockDir) wins; else the old default -
+        End A -, End B +, and end<->end the receiving end (a) against its usual sign (1 Nov: two facing rotors must turn the same
+        way in the world; seated B<->B opposite signs reach 44.9 deg, the same sign stops at 3 deg)"""
+        out = {}
+        for side in ('a', 'b'):
+            pr = lk[side]
+            if 'module' not in pr or pr['port'] not in ('A', 'B'): continue
+            sg = LOCK_SIGN[pr['port']]
+            if side == 'a' and lk['b'].get('port') in ('A', 'B'): sg = -sg
+            out[side] = float((lk.get('dir') or {}).get(side, sg))
+        return out
+
     def set_locks(self, locks, snap=False):
-        """locked ends turn their rotor 45 deg (A one way, B the other); open ends turn back to 0"""
-        closed = set(); flip = set()
+        """locked ends turn their rotor 45 deg, each the way lock_dir picks for its dock; open ends turn back to 0"""
+        turn = {}
         for lk in locks:
-            # every END in the lock turns its rotor 45 deg (End A one way, End B the other); end<->end: both at once
-            for pr in (lk['a'], lk['b']):
-                if 'module' in pr and pr['port'] in ('A', 'B'): closed.add((pr['module'], pr['port']))
-            # 1 Nov: end<->end, two facing rotors must turn the same way in the world, so the RECEIVING end (a) turns against
-            # its usual sign (seated B<->B: opposite signs reach 44.9 deg, the same sign stops at 3 deg; A<->B the same rule)
-            if 'module' in lk['a'] and lk['a']['port'] in ('A', 'B') and lk['b']['port'] in ('A', 'B'): flip.add((lk['a']['module'], lk['a']['port']))
+            for side, sg in self.lock_dir(lk).items(): turn[(lk[side]['module'], lk[side]['port'])] = sg
+        closed = set(turn)
         for i, mid in enumerate(self.ids):
             for e, off in (('A', 7), ('B', 8)):
-                ang = math.radians(45) * LOCK_SIGN[e] * (-1 if (mid, e) in flip else 1) if (mid, e) in closed else 0.0
+                ang = math.radians(45) * turn[(mid, e)] if (mid, e) in closed else 0.0
                 self.tgt[i * 9 + off] = ang
                 if snap: self.d.qpos[self.mod[mid]['lockq'][e]] = ang
         self.closed = closed
@@ -531,7 +584,7 @@ class PhysWorld:
 
     def _magnets(self):
         """8 magnets per connector, N/S alternating; each end magnet pairs with the nearest receiver magnet (multi_env.py)"""
-        d = self.d; pol = np.where(np.arange(8) % 2 == 0, 1.0, -1.0)
+        d = self.d; self.xmag = []                                                # cross-module pulls, kept apart for real_sync.Correction
         for mid in self.ids:
             for e in 'AB':
                 E = self.mod[mid]['end'][e]; tip = d.site_xpos[E['tip']]
@@ -540,26 +593,21 @@ class PhysWorld:
                     if R['mod'] == mid: continue
                     if R['kind'] == 'end' and self.ids.index(R['mod']) < self.ids.index(mid): continue   # end pair counted once
                     z = R['z']; Bm = d.site_xpos[E['mags']]
-                    D = R['mag_p'][None, :, :] - Bm[:, None, :]; L = np.linalg.norm(D, axis=2); j = L.argmin(1); v = D[np.arange(8), j]
-                    ax = v @ z; lat = v - ax[:, None] * z[None, :]; ln = np.linalg.norm(lat, axis=1); sep = np.maximum(-ax, 0.0) + self.mag_gap
-                    fm = self.magk * MAG_F0 / (1 + sep / MAG_D0) ** 3 * np.exp(-(ln / 0.006) ** 2)
-                    fm = np.where((sep < MAG_CUT) & (ln < 0.012), fm, 0.0) * np.where(pol * pol[j] < 0, 1.0, -1.0)
-                    if self.disturb is not None: fm = fm * self.disturb.site_k[E['mags']] * self.disturb.site_k[np.asarray(R['mags'])[j]]   # every magnet differs
-                    # attraction pulls the docking end INTO the connector (along -z). multi_env.py uses z*sign(ax): when the
-                    # faces touch and the contact solver lets them overlap by ~0.02 mm, ax turns positive and the full pull
-                    # (8 x 4.6 N) pushes the end OUT - measured here: interleaved ends flew apart at 160 mm/s in zero g.
-                    Fv = -z[None, :] * fm[:, None] + lat / 0.004 * 0.5 * fm[:, None]
+                    dk = self.disturb                                                 # every magnet differs (randomized robots)
+                    Fv, j = connector_pull(Bm, R['mag_p'], z, self.magk, self.mag_gap, dk.site_k[E['mags']] if dk is not None else None,
+                                           (lambda jj, R=R, dk=dk: dk.site_k[np.asarray(R['mags'])[jj]]) if dk is not None else None)
                     b = E['body']; c = d.xipos[b]
                     d.xfrc_applied[b, :3] += Fv.sum(0); d.xfrc_applied[b, 3:] += np.cross(Bm - c, Fv).sum(0)
                     if R['kind'] != 'floor':
                         rb = R['bid']; rc = d.xipos[rb]; Pm = R['mag_p'][j]
                         d.xfrc_applied[rb, :3] -= Fv.sum(0); d.xfrc_applied[rb, 3:] -= np.cross(Pm - rc, Fv).sum(0)
+                        self.xmag.append((mid, R['mod'], b, Bm.copy(), Fv.copy(), rb, Pm.copy()))   # (end module, other module, ...)
 
     def _servo(self, dt=0.005):
         """ST3215: setpoint slews at <= speed / accel, torque limit drops with speed and battery sag (multi_env.py)"""
         m, d = self.m, self.d; nM = len(self.ids)
         F = d.actuator_force[self.all_act].reshape(nM, 9)
-        I = 1.8 + np.abs(F).sum(1) / KT; sag = np.maximum(self.volt - 0.08 * I, 9.0) / self.volt; sag9 = np.repeat(sag, 9)
+        sag9 = np.repeat(st3215_sag(self.volt, np.abs(F).sum(1)), 9)
         w0 = self.w0 * sag9; glide = getattr(self, 'tgt_eff', None) is not None
         tg = self.tgt_eff if glide else self.tgt
         if getattr(self, 'comfort', None): tg = self._comfort(tg, dt)
@@ -569,15 +617,13 @@ class PhysWorld:
             # ideal + gliding command: the joint follows the moving command exactly, at most at its top speed
             step = np.clip(e, -w0 * dt, w0 * dt); self.sp += step; self.spv = step / dt
         else:
-            vdes = np.sign(e) * np.minimum(w0, np.sqrt(2 * self.amax * np.abs(e)))
-            if glide: vdes = np.clip(vdes + self.tgt_rate, -w0, w0)                  # + the command's own speed: no stop at each tick
-            self.spv += np.clip(vdes - self.spv, -self.amax * dt, self.amax * dt); self.sp += self.spv * dt
+            st3215_slew(self.sp, self.spv, e, w0, self.amax, dt, self.tgt_rate if glide else None)   # + a gliding command's own speed
             if getattr(self, 'exact', False):                                          # ideal: the last step lands EXACTLY on the command
                 hit = np.abs(self.tgt - self.sp) <= np.maximum(np.abs(self.spv) * dt, 1e-3)
                 self.sp[hit] = self.tgt[hit]; self.spv[hit] = 0.0
         d.ctrl[self.all_act] = self.sp
         w = d.qvel[self.all_dof]; tau = d.actuator_force[self.all_act]
-        lim = sag9 * np.where(tau * w > 0, self.fr0 * np.clip(1 - np.abs(w) / w0, 0.08, 1.0), self.fr0)
+        lim = st3215_limit(self.fr0, tau, w, w0, sag9)
         m.actuator_forcerange[self.all_act, 0] = -lim; m.actuator_forcerange[self.all_act, 1] = lim
 
     def _comfort(self, tg, dt):
@@ -597,6 +643,27 @@ class PhysWorld:
         lock = np.arange(len(tg)) % 9 >= 7; self.cs[lock] = tg[lock]; self.cv[lock] = 0.0   # the lock rotors keep their own timing
         return self.cs
 
+    def _floor_held(self):
+        """indices (in self.ids) of the modules held by a floor lock, directly or through closed module-module locks"""
+        key = frozenset(self.engaged)
+        if getattr(self, '_held_key', None) == key: return self._held
+        mods = lambda k: [t.split('.')[0] for t in k.split('|') if not t.startswith('F:')]
+        g = {mid for k in key if k.startswith('F:') or '|F:' in k for mid in mods(k)}; grew = True
+        while grew:
+            grew = False
+            for k in key:
+                ms = mods(k)
+                if any(x in g for x in ms) and not all(x in g for x in ms): g |= set(ms); grew = True
+        self._held_key, self._held = key, np.array([i for i, mid in enumerate(self.ids) if mid in g], int)
+        ps = getattr(self, '_phys_servo', None)
+        if ps is not None and os.environ.get('EXACT_FREE', '1') != '1':
+            # held: exact (no motor, rigid to the solver); free: the physical ST3215 servo (its own gains, normal rotor inertia)
+            m = self.m; free = ~np.isin(np.arange(len(ps['act'])) // 7, self._held)
+            m.actuator_gainprm[ps['act'], 0] = np.where(free, ps['gain'], 0.0)
+            m.actuator_biasprm[ps['act'], 1:3] = np.where(free[:, None], ps['bias'], 0.0)
+            m.dof_armature[ps['dof']] = np.where(free, ps['arm'], 100.0)
+        return self._held
+
     def _exact(self):
         """IDEAL robot (Nischay 2 Nov: 'just real rotation, math'): after every physics step each arm joint IS its command - set
         exactly, not pulled by a spring (a MuJoCo servo is one: it sagged 0.0x deg under gravity, mm at a ring's tip). The locks
@@ -604,6 +671,11 @@ class PhysWorld:
         module sank 10 mm into the floor, 2 Nov)"""
         m, d = self.m, self.d
         k_ = np.flatnonzero(np.arange(len(self.all_act)) % 9 < 7)                     # arm servos (the lock rotors stay physical)
+        # 12 Nov: only modules held by a FLOOR lock (directly or through closed locks). Joints set exactly on a FREE module skip the
+        # push-back between its halves: a lying module flipped 97 deg in one sideways wave (Isaac 10, physical servos 17) and stepped
+        # along the floor. Free modules keep the physical ST3215 model (EXACT_FREE=1: the old way)
+        if os.environ.get('EXACT_FREE', '1') != '1':
+            held = self._floor_held(); k_ = k_[np.isin(k_ // 9, held)]
         # the torque each servo really carries (gravity, contacts, locks: what holds the joint still), reported as its force - the
         # motor model is off here, so DIK's 'servo at its limit' rule and the load % read this against the ideal 50 kg.cm
         dv = self.all_dof[k_]; qa = m.jnt_qposadr[m.actuator_trnid[self.all_act[k_], 0]]
@@ -618,6 +690,22 @@ class PhysWorld:
         d.qfrc_applied[dv] = np.where(stall, np.clip(tau, -lim, lim), 0.0)
         ok = ~stall; d.qpos[qa[ok]] = self.sp[k_[ok]]; d.qvel[dv[ok]] = self.spv[k_[ok]]
         self.sp[k_[stall]] = d.qpos[qa[stall]]; self.spv[k_[stall]] = 0.0; d.qvel[dv[stall]] = 0.0
+
+    def snapshot(self):
+        """12 Nov: the brain IMAGINES a move (try it in physics, measure, undo) - MuJoCo's full integration state plus this world's servo setpoints, locks and recording, so restore() puts everything back exactly"""
+        # forward first, as restore() does: the parts' positions from the last step's start (read by the magnets) would differ by
+        # ~1e-14 from the recomputed ones, and a rolling module grows that to 1.4 mm in one wave
+        mujoco.mj_forward(self.m, self.d)
+        sz = mujoco.mj_stateSize(self.m, mujoco.mjtState.mjSTATE_INTEGRATION); st = np.empty(sz)
+        mujoco.mj_getState(self.m, self.d, st, mujoco.mjtState.mjSTATE_INTEGRATION)          # qpos qvel act warmstart ctrl applied forces eq_active time
+        return dict(eng=st, sp=self.sp.copy(), spv=self.spv.copy(), tgt=self.tgt.copy(), engaged=set(self.engaged),
+                    lock_t0=dict(self.lock_t0), tau_f=np.copy(getattr(self, 'tau_f', 0.0)), rec=len(self.rec['frames']) if self.rec else None)
+
+    def restore(self, s):
+        mujoco.mj_setState(self.m, self.d, s['eng'], mujoco.mjtState.mjSTATE_INTEGRATION); mujoco.mj_forward(self.m, self.d); self.sp[:] = s['sp']; self.spv[:] = s['spv']; self.tgt[:] = s['tgt']
+        self.engaged = set(s['engaged']); self.lock_t0 = dict(s['lock_t0']); self.tau_f = np.copy(s['tau_f']); self.tgt_eff = None
+        if self.rec and s['rec'] is not None: del self.rec['frames'][s['rec']:]
+        self._refresh_rx()
 
     def run(self, seconds, extra=None):
         """advance with gravity, contacts, magnets and servos; extra = (body, force3) applied meanwhile"""
@@ -639,14 +727,15 @@ class PhysWorld:
                 peak = max(peak, float(np.abs(d.actuator_force[self.all_act]).max() / STALL * 100))
             self.engine.step()
             if getattr(self, 'exact', False): self._exact()
-            if self.rec is not None and d.time - self.rec['last'] >= self.rec['dt'] - 1e-9:
+            if self.rec is not None and not getattr(self, 'imagining', False) and d.time - self.rec['last'] >= self.rec['dt'] - 1e-9:
                 self.rec['last'] = d.time; fr_ = {'t': round(float(d.time), 3), 'p': self.body_poses()}
                 if getattr(self, 'rec_extra', None): fr_['x'] = self.rec_extra()                  # e.g. the connector dots of THIS moment (manual.py)
                 self.rec['frames'].append(fr_)
             if not np.isfinite(d.qpos).all(): self.tgt_eff = None; return peak, False
             if k % 100 == 0:
                 for lk_ in [x for x, t in self.lock_t0.items() if d.time - t >= 0.3]: self._store_lock_pose(lk_); del self.lock_t0[lk_]   # settled in its slack
-            if k % 100 == 0 and getattr(self, 'on_tick', None): self.on_tick()     # e.g. snap.Snapper.tick: pictures during the run
+            # (12 Nov: never while IMAGINING - the sender sent every imagined twist/roll to the Isaac robot, which did them all for real)
+            if k % 100 == 0 and getattr(self, 'on_tick', None) and not getattr(self, 'imagining', False): self.on_tick()     # e.g. snap.Snapper.tick: pictures during the run
         self.tgt_eff = None
         return peak, True
 

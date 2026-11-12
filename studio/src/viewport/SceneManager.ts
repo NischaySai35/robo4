@@ -93,7 +93,8 @@ export class SceneManager {
     this.scene.fog = null;
 
     // ── Camera ─────────────────────────────────────────────────────────────────
-    this.camera = new THREE.PerspectiveCamera(52, w / h, 0.005, 200);
+    // a panel that mounts hidden is 0 px tall: w / 0 = NaN would poison the first Fit (blank viewport, Nischay 12 Nov)
+    this.camera = new THREE.PerspectiveCamera(52, w > 0 && h > 0 ? w / h : 1, 0.005, 200);
     // Arm extends ~0→6 along X; look at its midpoint from a 45° front-elevated angle
     this.camera.position.set(3, 4, 10);
     this.camera.lookAt(3, 0, 0);
@@ -441,12 +442,15 @@ export class SceneManager {
       const offset = this.camera.position.clone().sub(target);
       const sp = new THREE.Spherical().setFromVector3(offset);
       sp.theta -= dx * 0.008;
-      sp.phi = Math.max(0.05, Math.min(Math.PI * 0.47, sp.phi - dy * 0.006));
+      sp.phi = Math.max(0.01, Math.min(Math.PI - 0.01, sp.phi - dy * 0.006)); // full orbit, under the floor too
       offset.setFromSpherical(sp);
       this.camera.position.copy(target).add(offset);
       this.controls.target.copy(target);
       this.controls.update();
     };
+
+    // The one floor's height: ModelEditor's gravity physics moves it to its physics floor (no second floor of its own).
+    this.viewport.setFloorY = (y: number | null) => this.setFloorY(y);
 
     scheduleFrame(() => this._onResize());
   }
@@ -454,17 +458,12 @@ export class SceneManager {
   _buildGround() {
     const GROUND_Y = -3.2;
 
-    // Faint ground plane (shadow receiver). Large + follows the camera so it
-    // never runs out; still 90% transparent so rods dipping below stay visible.
-    const groundGeo = new THREE.PlaneGeometry(1000, 1000);
-    const groundMat = new THREE.MeshStandardMaterial({
-      color: 0xd2ccc2,
-      roughness: 0.95,
-      metalness: 0.0,
-      transparent: true,
-      opacity: 0.13,
-      depthWrite: false,
-    });
+    // Blender-style floor (Nischay 12 Nov: "the Blender kind of smooth floor"): no solid slab, no edge.
+    // The ground is a SHADOW CATCHER only - invisible except where the robot's shadow falls - so it never
+    // shows a horizon band, and the camera can orbit under it and see the robot from below.
+    // Unit plane, scaled to the view in _updateGround.
+    const groundGeo = new THREE.PlaneGeometry(1, 1);
+    const groundMat = new THREE.ShadowMaterial({ transparent: true, opacity: 0.3, depthWrite: false });
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = GROUND_Y;
@@ -473,21 +472,23 @@ export class SceneManager {
     this.scene.add(ground);
     this.ground = ground; this._groundY0 = GROUND_Y;
 
-    // Infinite grid: a large plane that follows the camera, with grid lines
-    // computed in WORLD space (so they stay put while the plane tracks the view)
-    // and a radial distance-fade so there is never a visible edge.
-    const gridGeo = new THREE.PlaneGeometry(4000, 4000);
+    // Infinite grid like Blender's viewport grid: lines in WORLD space on a plane that follows the view,
+    //  - the cell size follows the zoom and the levels CROSS-FADE (small lines fade out, the 10x lines take
+    //    over) instead of popping,
+    //  - lines fade with distance from the camera AND when seen edge-on, so nothing ever "hits the camera"
+    //    or ends in a hard horizon,
+    //  - the X axis (red) and Z axis (blue) run through the origin, like Blender's red/green lines.
+    const gridGeo = new THREE.PlaneGeometry(1, 1);
     const gridMat = new THREE.ShaderMaterial({
       transparent: true,
       depthWrite: false,
       side: THREE.DoubleSide,
       uniforms: {
-        uCell:       { value: 1.0 },                       // minor cell size (world units)
-        uMajor:      { value: 10.0 },                      // major line every N cells
-        uColor:      { value: new THREE.Color(0xa7b9d2) }, // minor line colour (darker)
-        uColorMajor: { value: new THREE.Color(0x8499b8) }, // major line colour (darker)
-        uCenter:     { value: new THREE.Vector3() },       // fade centre (look-at point)
-        uFade:       { value: 60.0 },                      // fade radius (scales with zoom)
+        uLevel: { value: -1.0 },                         // log10 of the smallest visible cell (continuous)
+        uColor: { value: new THREE.Color(0x8a9ab3) },    // grid line colour
+        uAxisX: { value: new THREE.Color(0xd9534f) },    // X axis line
+        uAxisZ: { value: new THREE.Color(0x4a7fd6) },    // Z axis line
+        uFade:  { value: 20.0 },                         // distance (m) where the grid is gone
       },
       vertexShader: /* glsl */`
         varying vec3 vWorld;
@@ -500,33 +501,49 @@ export class SceneManager {
       fragmentShader: /* glsl */`
         precision highp float;
         varying vec3 vWorld;
-        uniform float uCell;
-        uniform float uMajor;
+        uniform float uLevel;
         uniform vec3  uColor;
-        uniform vec3  uColorMajor;
-        uniform vec3  uCenter;
+        uniform vec3  uAxisX;
+        uniform vec3  uAxisZ;
         uniform float uFade;
 
-        // Anti-aliased grid line intensity for a given cell size (uses derivatives).
+        // Anti-aliased 1-pixel grid line intensity for a cell size (screen-space derivatives).
         float lineFactor(vec2 coord, float cell) {
           vec2 c = coord / cell;
-          vec2 d = abs(fract(c - 0.5) - 0.5) / fwidth(c);
+          vec2 d = abs(fract(c - 0.5) - 0.5) / max(fwidth(c), 1e-6);
           return 1.0 - min(min(d.x, d.y), 1.0);
+        }
+        // Weight of the level whose cell is 10^k: fades in once it is big enough on screen, gets bolder as it grows.
+        float levelWeight(float k) {
+          float s = k - uLevel;
+          return smoothstep(-1.0, 0.0, s) * 0.55 + smoothstep(0.0, 1.0, s) * 0.35;
         }
 
         void main() {
           vec2 p = vWorld.xz;
-          float minorL = lineFactor(p, uCell);
-          float majorL = lineFactor(p, uCell * uMajor);
+          float l0 = floor(uLevel);
+          float a = 0.0;
+          for (int i = 0; i < 3; i++) {
+            float k = l0 + float(i);
+            a = max(a, lineFactor(p, pow(10.0, k)) * levelWeight(k));
+          }
+          // axis lines through the origin, ~1.5 px wide
+          vec2 w = max(fwidth(p), vec2(1e-6));
+          float ax = 1.0 - min(abs(p.y) / (w.y * 1.5), 1.0);   // z = 0 -> the X axis
+          float az = 1.0 - min(abs(p.x) / (w.x * 1.5), 1.0);   // x = 0 -> the Z axis
 
-          float dist = length(p - uCenter.xz);
-          float fade = 1.0 - smoothstep(uFade * 0.5, uFade, dist);
+          vec3 toCam = cameraPosition - vWorld;
+          float fade = 1.0 - smoothstep(uFade * 0.25, uFade, length(toCam));
+          float edgeOn = smoothstep(0.0, 0.1, abs(normalize(toCam).y));   // fade out when seen flat-on
+          float vis = fade * edgeOn;
 
-          float a = max(minorL * 0.46, majorL * 0.82) * fade;
-          if (a < 0.002) discard;
-
-          vec3 col = majorL > minorL ? uColorMajor : uColor;
-          gl_FragColor = vec4(col, a);
+          vec3 col = uColor;
+          float alpha = a;
+          if (ax > 0.0) { col = mix(col, uAxisX, ax); alpha = max(alpha, ax * 0.85); }
+          if (az > 0.0) { col = mix(col, uAxisZ, az); alpha = max(alpha, az * 0.85); }
+          alpha *= vis;
+          if (alpha < 0.003) discard;
+          gl_FragColor = vec4(col, alpha);
         }
       `,
     });
@@ -549,50 +566,56 @@ export class SceneManager {
     this.scene.background = new THREE.Color(dark ? 0x2b2b2b : 0xf4f2ee);
     this._paintGround();
     if (this.grid) {
-      this.grid.material.uniforms.uColor.value.set(dark ? 0x404040 : 0xa7b9d2);
-      this.grid.material.uniforms.uColorMajor.value.set(dark ? 0x5a5a5a : 0x8499b8);
+      const u = this.grid.material.uniforms;
+      u.uColor.value.set(dark ? 0x8a8a8a : 0x7f90ab);
+      u.uAxisX.value.set(dark ? 0xc0504d : 0xd9534f);
+      u.uAxisZ.value.set(dark ? 0x4f7fc8 : 0x4a7fd6);
     }
   }
 
-  /** REAL FLOOR (Nischay 5 Nov: every tab and viewport except the Editor): a solid floor at height 0 - where the physics floor
-   *  is and the robots stand - that catches their shadows, the grid lying on it. Off (Editor): the old faint plane below. */
+  /** REAL FLOOR (Nischay 5 Nov: every tab and viewport except the Editor): the floor sits where the physics floor is
+   *  (height 0, or the height ModelEditor's gravity physics reports through setFloorY) and catches the robots' shadows, the
+   *  grid lying on it. Off (Editor): it sits below the model. Either way it is see-through and can be orbited under
+   *  (Blender style, 12 Nov) - ONE floor for every tab, nobody draws a second one. */
   realFloor = false;
+  _floorY: number | null = null;
   setRealFloor(on: boolean) {
     this.realFloor = on;
-    const y = on ? 0 : this._groundY0;
-    if (this.ground) {
-      const gm = this.ground.material;
-      this.ground.position.y = y; gm.transparent = !on; gm.depthWrite = on;
-      // the grid lies ON the floor: push the floor back in depth so the grid always wins (far away the two were one depth and
-      // the solid floor hid the grid in MSRR)
-      gm.polygonOffset = on; gm.polygonOffsetFactor = 4; gm.polygonOffsetUnits = 4; gm.needsUpdate = true;
-      this.ground.renderOrder = on ? -1 : 0;
-    }
-    if (this.grid) this.grid.position.y = y + (on ? 0.0005 : 0.01);
-    // a solid floor cannot be looked through: the camera stays above it (5 Nov: zooming toward the floor went under it - all grey)
-    this.controls.maxPolarAngle = on ? Math.PI / 2 - 0.03 : Math.PI;
+    this._placeFloor();
+  }
+  /** Physics floor height in world metres (ModelEditor's gravity floor); null = height 0. */
+  setFloorY(y: number | null) {
+    this._floorY = y;
+    this._placeFloor();
+  }
+  _placeFloor() {
+    const y = this.realFloor ? (this._floorY ?? 0) : this._groundY0;
+    if (this.ground) this.ground.position.y = y;
+    if (this.grid) this.grid.position.y = y + 0.0005;
     this._paintGround();
-    this.requestRender(3);
+    this.requestRender?.(3);
   }
 
   _paintGround() {
     if (!this.ground) return;
-    const dark = this._theme === 'dark';
-    if (this.realFloor) { this.ground.material.color.set(dark ? 0x323232 : 0xe4dfd6); this.ground.material.opacity = 1; }
-    else { this.ground.material.color.set(dark ? 0x1d1d1d : 0xd2ccc2); this.ground.material.opacity = dark ? 0.18 : 0.13; }
+    this.ground.material.opacity = this._theme === 'dark' ? 0.45 : 0.22;   // shadow darkness
   }
 
   // Keep the infinite ground + grid centred on the view and sized to the zoom.
   _updateGround() {
     const t = this.controls.target;
-    if (this.ground) { this.ground.position.x = t.x; this.ground.position.z = t.z; }
+    const camDist = Math.max(this.camera.position.distanceTo(t), 1e-4);
+    const fadeDist = THREE.MathUtils.clamp(camDist * 8, 2, 4000);
+    const span = fadeDist * 2.5;
+    if (this.ground) { this.ground.position.x = t.x; this.ground.position.z = t.z; this.ground.scale.set(span, span, 1); }
     if (this.grid) {
       this.grid.position.x = t.x;
       this.grid.position.z = t.z;
-      this.grid.material.uniforms.uCenter.value.set(t.x, 0, t.z);
-      const camDist = this.camera.position.distanceTo(t);
-      this.grid.material.uniforms.uFade.value =
-        THREE.MathUtils.clamp(camDist * 2.2, 30, 600);
+      this.grid.scale.set(span, span, 1);
+      const u = this.grid.material.uniforms;
+      u.uFade.value = fadeDist;
+      // smallest cell ~ 1/20 of the view distance: 2 m away -> 10 cm cells cross-fading into 1 m cells
+      u.uLevel.value = Math.log10(camDist) - 1.3;
     }
   }
 
@@ -698,12 +721,40 @@ export class SceneManager {
     const w = canvas.clientWidth;
     const h = canvas.clientHeight;
     if (w === 0 || h === 0) return;
+    const pending = this._fitPending; this._fitPending = false;
     this.camera.aspect = (this.split ? Math.floor(w / 2) : w) / h;   // split view: each half has half the width
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
     this.composer.setSize(w, h);
     this._pathTracer?.setSize(w, h);
+    if (pending) this.fitCamera();                                   // a Fit asked for while the panel had no size
     this.requestRender(3);
+  }
+
+  /** a Fit asked for while the canvas was 0 px (hidden panel): done on the first real resize */
+  _fitPending = false;
+
+  /** every camera number finite? One NaN (0-px panel, 0-ms animation) blanks the view for good: Fit started from it too */
+  _cameraOk(): boolean {
+    const c = this.camera, t = this.controls?.target, ok = (v: THREE.Vector3 | THREE.Quaternion) => [...v.toArray()].every(Number.isFinite);
+    return ok(c.position) && ok(c.quaternion) && (!t || ok(t)) && Number.isFinite(c.aspect) && c.aspect > 0
+      && Number.isFinite(c.near) && Number.isFinite(c.far) && c.far > c.near;
+  }
+
+  /** put a broken camera back to a sane default (then the caller frames the model) */
+  _healCamera() {
+    const c = this.camera, canvas = this.canvas;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    c.aspect = w > 0 && h > 0 ? (this.split ? Math.floor(w / 2) : w) / h : 1;
+    if (!Number.isFinite(c.near) || c.near <= 0) c.near = 0.001;
+    if (!Number.isFinite(c.far) || c.far <= c.near) c.far = 1000;
+    if (!Number.isFinite(c.fov) || c.fov <= 0) c.fov = 52;
+    c.up.set(0, 1, 0);
+    c.position.set(0.35, 0.45, 0.8);
+    this.controls.target.set(0, 0.05, 0);
+    c.lookAt(this.controls.target);
+    c.updateProjectionMatrix();
+    this.controls.update();
   }
 
   /** Enable or disable orbit controls (disabled while dragging). */
@@ -717,10 +768,11 @@ export class SceneManager {
     const startTarget = this.controls.target.clone();
     const endPos = new THREE.Vector3(...(Object.values(targetPos) as number[]));
     const endTarget = new THREE.Vector3(...(Object.values(targetLookAt) as number[]));
+    if (![...endPos.toArray(), ...endTarget.toArray()].every(Number.isFinite)) return;   // never animate into NaN
     const startTime = performance.now();
 
     const tick = () => {
-      const t = Math.min((performance.now() - startTime) / ms, 1);
+      const t = ms > 0 ? Math.min((performance.now() - startTime) / ms, 1) : 1;          // 0 ms: 0/0 would be NaN
       const ease = easeInOut(t);
       this.camera.position.lerpVectors(startPos, endPos, ease);
       this.controls.target.lerpVectors(startTarget, endTarget, ease);
@@ -786,14 +838,17 @@ export class SceneManager {
    * robot's longest floor direction (the side nearer the camera now). Looking down a lying chain's length made it look standing.
    */
   fitCamera(opts?: { fresh?: boolean }) {
-    const pts = this._fitPoints?.() as THREE.Vector3[] | null;
-    if (!pts) return;
+    if (!this.canvas.clientWidth || !this.canvas.clientHeight) { this._fitPending = true; return; }   // hidden: fit once it has a size
+    if (!this._cameraOk()) this._healCamera();
+    const pts = (this._fitPoints?.() as THREE.Vector3[] | null)?.filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z));
+    if (!pts?.length) return;
     const box = new THREE.Box3().setFromPoints(pts);
     const center = box.getCenter(new THREE.Vector3());
     const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 0.05);
 
     // View direction: keep the azimuth (horizontal angle), clamp elevation to 20°–80°.
     const offset = this.camera.position.clone().sub(this.controls.target);
+    if (offset.lengthSq() < 1e-12) offset.set(0.35, 0.4, 0.75);      // camera sitting on its target: any 3/4 view
     const sp = new THREE.Spherical().setFromVector3(offset);
     sp.phi = Math.max(0.35, Math.min(Math.PI * 0.44, sp.phi));
     if (opts?.fresh) {
@@ -886,6 +941,7 @@ export class SceneManager {
   }
 
   render() {
+    if (!this._cameraOk()) { this._healCamera(); this.fitCamera(); }   // self-heal: a NaN camera draws nothing, forever
     this.controls.update();
     if (this.realFloor) {                                 // zoom-to-cursor can still dolly the camera through it: keep it above
       const minY = 0.02;

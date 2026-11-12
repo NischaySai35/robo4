@@ -2,9 +2,9 @@
  * speech — spoken feedback through this computer's speaker.
  *
  * Voice: Piper "en_US-ryan" (a US male neural voice, ~60 MB). It downloads once from
- * HuggingFace into the browser's private storage (OPFS), then works from cache. Until it
- * is ready — or if it can't be loaded (offline first run, blocked CDN) — the operating
- * system's own male English voice speaks instead, so announcements are never silent.
+ * HuggingFace into the browser's private storage (OPFS), then works from cache. Ryan is the
+ * ONLY voice (Nischay 12 Nov 2026): until it is ready a line waits for it, and if it cannot be
+ * loaded (offline first run, blocked CDN) the Studio stays silent - never the Windows voice.
  *
  * Phrases are short and fixed, so each one is synthesised once and replayed from memory.
  */
@@ -50,30 +50,6 @@ export function downloadVoiceModel(): Promise<void> {
     }
   })();
   return downloading;
-}
-
-// ── system (fallback) voice ───────────────────────────────────────────────────
-let sysVoice: SpeechSynthesisVoice | null = null;
-
-function pickSystemVoice(): SpeechSynthesisVoice | null {
-  const all = window.speechSynthesis?.getVoices?.() ?? [];
-  const en = all.filter(v => /^en[-_]/i.test(v.lang));
-  const male = /david|mark|guy|ryan|james|george|daniel|alex|fred|male|christopher|eric|roger|steffan/i;
-  return en.find(v => male.test(v.name)) ?? en[0] ?? all[0] ?? null;
-}
-
-function speakSystem(text: string, volume: number): Promise<void> {
-  return new Promise((resolve) => {
-    const synth = window.speechSynthesis;
-    if (!synth) { resolve(); return; }
-    sysVoice ||= pickSystemVoice();
-    const u = new SpeechSynthesisUtterance(text);
-    if (sysVoice) { u.voice = sysVoice; u.lang = sysVoice.lang; }
-    u.volume = volume; u.rate = 1.0; u.pitch = 0.9;
-    u.onend = () => resolve();
-    u.onerror = () => resolve();
-    synth.speak(u);
-  });
 }
 
 // ── Piper playback ────────────────────────────────────────────────────────────
@@ -127,7 +103,6 @@ export interface SpeakOpts {
 
 export function stopSpeaking() {
   generation++;
-  try { window.speechSynthesis?.cancel(); } catch { /* ignore */ }
   if (current) { current.pause(); current = null; }
 }
 
@@ -154,20 +129,21 @@ export function speak(text: string, opts: SpeakOpts = {}): void {
 
   chain = chain.then(async () => {
     if (gen !== generation) return;            // cancelled while waiting
-    const { volume, model } = useVoiceStore.getState();
-    try {
-      if (model === 'ready') {
-        const url = await render(text);
-        if (gen !== generation) return;
-        useVoiceStore.getState()._status({ engine: 'piper' });
-        await play(url, volume);
-        return;
-      }
-    } catch { /* fall through to the OS voice */
-      useVoiceStore.getState()._status({ engine: 'system' });
+    // RYAN ONLY (Nischay 12 Nov 2026: "I want only Ryan"). No Windows voice, ever: it used to step in while Ryan was still
+    // loading or when a render failed, so the same Studio spoke in two voices. Ryan not on this computer yet -> fetch it
+    // (once) and say this line when it is ready; if it cannot be fetched or rendered, stay silent.
+    if (useVoiceStore.getState().model !== 'ready') {
+      await checkVoiceModel();
+      if (useVoiceStore.getState().model !== 'ready') await downloadVoiceModel();
     }
-    if (gen !== generation) return;
-    await speakSystem(text, volume);
+    const { volume, model } = useVoiceStore.getState();
+    if (model !== 'ready' || gen !== generation) return;
+    try {
+      const url = await render(text);
+      if (gen !== generation) return;
+      useVoiceStore.getState()._status({ engine: 'piper' });
+      await play(url, volume);
+    } catch { /* silent: never another voice */ }
   });
 }
 

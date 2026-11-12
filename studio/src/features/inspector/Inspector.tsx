@@ -29,6 +29,8 @@ import { bridge } from '@/bridge/cameraBridge';
 import SpinControls from '@/features/motor/SpinControls';
 import { stopSpin } from '@/features/motor/spinEngine';
 import { isMotorJoint } from '@/features/motor/endBody';
+import ModuleLinkBadge from '@/features/viewport-ui/ModuleLinkBadge';
+import { moduleOfJoint } from '@/features/servo/servoLink';
 
 const r3 = (v: any) => Math.round((v ?? 0) * 1000) / 1000;
 const clamp01 = (v: any) => Math.max(0, Math.min(1, v));
@@ -287,6 +289,7 @@ function BodyInspector({ body, doc, dispatch, select }: any) {
         <span>Name</span>
         <Input value={body.name} onChange={(e) => up({ name: e.target.value })} />
       </label>
+      <ModuleLinkBadge moduleId={body.componentId ?? null} />
 
       <div className="in-group">TRANSFORM</div>
       <Vec3 label="Position (mm)" value={body.transform.position} onChange={(v: any) => upT({ position: v })} scale={1000} step={1} />
@@ -549,6 +552,7 @@ function JointInspector({ joint, doc, dispatch }: { joint: any; doc: Document; d
         <span>Name</span>
         <Input value={joint.name} onChange={(e) => up({ name: e.target.value })} />
       </label>
+      <ModuleLinkBadge moduleId={moduleOfJoint(doc, joint)} />
       <label className="in-field">
         <span>Type</span>
         <NativeSelect value={joint.type} onChange={(e) => up({ type: e.target.value })}>

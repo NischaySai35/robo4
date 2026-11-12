@@ -24,6 +24,8 @@ export interface CameraBridge {
   animateTo: ((pos: any, lookAt: any, ms?: number) => void) | null;
   fitCamera: (() => void) | null;
   orbitDelta: ((dx: number, dy: number) => void) | null;
+  // Height (world m) of the one shared floor + grid; null = 0. Set by SceneManager, used by ModelEditor's gravity floor.
+  setFloorY?: (y: number | null) => void;
   // Set by SceneManager; read/written by the Camera Settings panel.
   getCameraState?: () => {
     fov: number; focalLength: number; near: number; far: number;

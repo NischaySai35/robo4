@@ -23,7 +23,7 @@ export interface ServoRoute {
 
 /** The module a joint's servo belongs to: the joint's own component, else its
  *  parent body's, else its child body's. */
-function moduleOfJoint(doc: Document, joint: any): string | null {
+export function moduleOfJoint(doc: Document, joint: any): string | null {
   return (
     joint.componentId
     ?? doc.bodies[joint.parentBodyId]?.componentId

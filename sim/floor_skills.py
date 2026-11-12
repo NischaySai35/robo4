@@ -226,7 +226,7 @@ def twohead(B, log=print):
 #   wave +  T2 0   : +236 mm along it (robot with errors +193)     wave -  T2 0  : -225 mm
 #   wave +  T2 +20 : +944 mm sideways (errors +1218)               wave -  T2 +20: -1284 mm sideways (errors -895)
 #   (T2 -20 turned it, but -59 deg in one robot and +42 in another: not used; a 1 s wave hops 20 cm up and drifts)
-WAVE_AMP_DEG, WAVE_PERIOD_S, WAVE_SIDE_DEG = 25.0, 2.0, 20.0
+WAVE_AMP_DEG, WAVE_PERIOD_S, WAVE_SIDE_DEG = 25.0, 4.0, 20.0   # 12 Nov: 4 s (was 2) - on the exact shapes (Isaac) 36-38 mm/wave vs 12
 WAVE_BENDS = (1, 2, 4, 5)                                            # B1 B2 B3 B4
 
 
@@ -236,37 +236,77 @@ def _floor_axes(w, mid):
     ax = (b - a)[:2] / max(np.linalg.norm((b - a)[:2]), 1e-9); return ax, np.array([-ax[1], ax[0]])
 
 
+WAVE_ROLL_PERIOD_S = float(os.environ.get('WAVE_ROLL_PERIOD', '2.0'))   # 12 Nov: sideways waves ROLL the module - at 4 s they no longer did
+
+
 def wave(B, mid, sign, side, base, amp=WAVE_AMP_DEG):
     """one wave period: sign +1 = toward End B (side False) or to its left (side True), -1 the other way"""
     i = B.w.ids.index(mid); B.cmd[mid] = base.copy()
     if side: B.cmd[mid][3] = base[3] + math.radians(WAVE_SIDE_DEG)
-    t = 0.0; A = math.radians(amp)
-    while t < WAVE_PERIOD_S - 1e-9:
-        for k, j in enumerate(WAVE_BENDS): B.cmd[mid][j] = base[j] + A * math.sin(2 * math.pi * t / WAVE_PERIOD_S - sign * k * math.pi / 2)
+    t = 0.0; A = math.radians(amp); per = WAVE_ROLL_PERIOD_S if side else WAVE_PERIOD_S
+    while t < per - 1e-9:
+        for k, j in enumerate(WAVE_BENDS): B.cmd[mid][j] = base[j] + A * math.sin(2 * math.pi * t / per - sign * k * math.pi / 2)
         B.w.tgt[i * 9:i * 9 + 7] = B.cmd[mid]; B.step(1); t += DT
     if side: B.move(mid, {'T2': base[3]}, 0.5)                          # untilt: measuring with T2 still tilted read 'lifting' wrong (8 Nov)
 
 
-def crawl_to(B, mid, here, goal, log=print, near=float(os.environ.get('CRAWL_NEAR', '0.10')), max_s=60.0):
-    """move lying module `mid` until the point here() (on it, world) is within `near` m of goal() on the floor. One wave at a time,
-    re-measured after each: along it or sideways, whichever is further off. here/goal are functions (the target can move too).
-    Positions come from physics truth (the sim); the real robot needs the camera for this. Returns the distance left (m)."""
-    w = B.w; t0 = float(w.d.time); B.align(mid, 'T2', 'horizontal'); base = B.cmd[mid].copy(); n = 0
+def crawl_learn(B, mid, here, goal, log=print, near=0.10, max_s=300.0, stall_waves=6):
+    """12 Nov: on the real-shape floor (phys_world floor hulls; Isaac) a lying module ROLLS onto its side in the first wave and then
+    moves like a snake - the old rules (keep the bends lifting, re-align T2) fought that. Physics decides instead: each wave type
+    (along / sideways x +-) is tried, what it REALLY moved (in the module's own frame: along its axis, to its left) is remembered,
+    and the next wave is the one whose last measured move best closes the gap. Untried types first. Returns the distance left (m)."""
+    w = B.w; t0 = float(w.d.time); base = B.cmd[mid].copy(); n = 0; best, stall = 1e9, 0; eff = {}
+    acts = [(False, 1), (False, -1), (True, 1), (True, -1)]
     while True:
         e = (goal() - here())[:2]; dist = float(np.linalg.norm(e))
+        if dist < best - 0.01: best, stall = dist, 0
+        else: stall += 1
+        if dist < near or stall >= stall_waves or float(w.d.time) - t0 > max_s: break
+        ax, left = _floor_axes(w, mid); el = np.array([e @ ax, e @ left]) / max(dist, 1e-9)
+        untried = [a for a in acts if a not in eff]
+        act = untried[0] if untried else max(acts, key=lambda a: float(eff[a] @ el))
+        if not untried and float(eff[act] @ el) <= 0.002: break                       # nothing moves it toward the goal any more
+        amp = WAVE_AMP_DEG * min(1.0, max(0.4, dist / 0.15)); p0 = here()[:2].copy()
+        wave(B, mid, act[1], act[0], base, amp=amp); n += 1
+        ax2, left2 = _floor_axes(w, mid); dv = here()[:2] - p0; eff[act] = np.array([dv @ (ax + ax2) / 2, dv @ (left + left2) / 2]) / (amp / WAVE_AMP_DEG)
+        if os.environ.get('CRAWL_DEBUG'): log(f'    wave {n}: {"side" if act[0] else "along"} {act[1]:+d} moved {np.linalg.norm(dv) * 1000:.0f} mm -> {float(np.linalg.norm((goal() - here())[:2])) * 1000:.0f} mm left')
+    B.move(mid, {JN[j]: base[j] for j in range(7)}, 1.0)
+    log(f'  crawled {mid} (learned waves): {n} waves, {float(w.d.time) - t0:.0f} s, {dist * 1000:.0f} mm left')
+    return dist
+
+
+def crawl_to(B, mid, here, goal, log=print, near=float(os.environ.get('CRAWL_NEAR', '0.10')), max_s=300.0, stall_waves=6):
+    if os.environ.get('CRAWL_MODE', 'learn') == 'learn': return crawl_learn(B, mid, here, goal, log=log, near=near, max_s=max_s, stall_waves=stall_waves)
+    """move lying module `mid` until the point here() (on it, world) is within `near` m of goal() on the floor. One wave at a time,
+    re-measured after each: along it or sideways, whichever is further off. here/goal are functions (the target can move too).
+    Positions come from physics truth (the sim); the real robot needs the camera for this. Returns the distance left (m).
+    Stops when `stall_waves` waves in a row gained < 1 cm (10 Nov: a fixed 60 s cap left 442 of 827 mm, crawling ~6 mm/s fine)."""
+    w = B.w; t0 = float(w.d.time); B.align(mid, 'T2', 'horizontal'); base = B.cmd[mid].copy(); n = 0; best, stall = 1e9, 0; flip = {False: 1, True: 1}; realign = 0
+    while True:
+        e = (goal() - here())[:2]; dist = float(np.linalg.norm(e))
+        if dist < best - 0.01: best, stall = dist, 0
+        else: stall += 1
         # done when near AND lying right (bends lift): one more roll moves ~18 cm and threw it from 90 to 265 mm (8 Nov); docking's
         # own bending reaches the rest
-        if (dist < near and 1 - B.bend_vertical(mid) >= 0.7) or float(w.d.time) - t0 > max_s: break
+        if (dist < near and 1 - B.bend_vertical(mid) >= 0.7) or stall >= stall_waves or float(w.d.time) - t0 > max_s: break
         ax, left = _floor_axes(w, mid); f, s = float(e @ ax), float(e @ left)
         side = abs(s) > abs(f); comp = abs(s) if side else abs(f)
         # the sideways move ROLLS the module (8 Nov: one wave and its bends swung sideways, 'lifting' 0.97 -> 0.04; every wave along
         # after that pushed it the wrong way). So a roll is finished first: while the bends do not lift, keep rolling toward the goal
         rolled = 1 - B.bend_vertical(mid) < 0.7
+        if rolled and realign < 2:
+            # 10 Nov: resting on its side ring (the brain's floor now touches the rings, as the real robot does) the roll never
+            # 'finishes': sideways waves rocked it back and forth. Turn T2 so the bends lift again, as at the start, then go on
+            B.align(mid, 'T2', 'horizontal'); base = B.cmd[mid].copy(); realign += 1; continue
         if rolled and not side: side = True; comp = abs(s)
         # smaller waves near the goal (a full one goes ~4-25 cm): no overshoot - but a roll that must finish gets a full wave
         amp = WAVE_AMP_DEG if rolled else WAVE_AMP_DEG * min(1.0, max(0.4, comp / (0.15 if side else 0.05)))
-        wave(B, mid, 1 if (s if side else f) >= 0 else -1, side, base, amp=amp)
-        n += 1
+        want = (left if side else ax) * (1 if (s if side else f) >= 0 else -1); p0 = here()[:2].copy()
+        wave(B, mid, int(np.sign(s if side else f) or 1) * flip[side], side, base, amp=amp)
+        # 10 Nov: which way a wave really goes depends on how the module lies (resting on a side ring it rolls like a wheel: every
+        # sideways wave after the first went 55 mm the WRONG way). Measured, not assumed: a wave that went backwards flips that sign
+        if float((here()[:2] - p0) @ want) < -0.005: flip[side] *= -1
+        n += 1; realign = 0 if 1 - B.bend_vertical(mid) >= 0.7 else realign
         if os.environ.get('CRAWL_DEBUG'): log(f'    wave {n}: {"side" if side else "along"} {comp * 1000:.0f} mm off -> {float(np.linalg.norm((goal() - here())[:2])) * 1000:.0f} mm, bends lifting {1 - B.bend_vertical(mid):.2f}')
     B.move(mid, {JN[j]: base[j] for j in range(7)}, 1.0)              # lie straight again, bends as before the crawl
     log(f'  crawled {mid}: {n} waves, {float(w.d.time) - t0:.0f} s, {dist * 1000:.0f} mm left')

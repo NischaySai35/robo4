@@ -139,7 +139,7 @@ Decided by Nischay, 31 Oct 2026:
 - P10 builds one plug-in point, so the engine can be swapped without rebuilding the app.
 - A short Newton test on the real module (locks, rings, many robots on the 8 GB card, runs of 2 minutes or less) decides. If Newton handles the locks better, switch.
 - Newton test (31 Oct, `tools/bench/newton_vs_mjw.py`, one module, 30 N pull for 0.5 s, lock closed): MuJoCo CPU 0.54 mm, MuJoCo Warp 0.65 to 0.8 mm, Newton 1.7 with its MuJoCo solver 0.54 mm. An open lock comes out in all three. An earlier 940 mm for Newton was a test mistake: the motor target was left at 0, so the lock opened itself. At 512 copies, half of them flying off with the lock open: MuJoCo Warp 20,400 steps/s and 352 MB, Newton 10,700 steps/s and 1,314 MB; both hold at 0.54 mm. Newton ran with a higher contact limit, so that gap is not final. Not tested yet: its tight-fit contact methods, rings, and whole-robot runs.
-- Newton needs its own environment (it pins MuJoCo 3.15; the project uses 4.0 since 9 Nov, was 3.17) and four import settings: `docs/design/p10-physics-interface.md`.
+- Newton runs in the system Python since 9 Nov (MuJoCo pinned to 3.12 = Isaac Sim 6.2's Newton 1.6.1) and needs four import settings: `docs/design/p10-physics-interface.md`.
 - Blender: copy design ideas, not its physics. Movie-quality video later through an export to Blender.
 
 ## 8. Other changes — to be filled in by Nischay
@@ -203,7 +203,7 @@ The operating system and driver level still matter in three places:
 |---|---|---|
 | Graph model | `core/model/graph.ts`, loops allowed | Good base. Keep it as the source of truth. |
 | ROS-like runtime | `runtime/`: bus, services, actions, params, TF, clock, recorder (967 lines with tests) | Runs **inside the Studio window**, so nothing outside can reach it. `tf.ts` is a tree. Few features use it. |
-| IK | `modelIK.ts`: damped least squares and Levenberg-Marquardt with a numerical Jacobian, along **one path** between two bodies. Also `fabrik.ts`, `msrr/chainSolve.ts`, and SciPy `least_squares` in `manual.py`. | **No general closed-loop IK.** FK only tolerates loops. `loopClosure.ts` is cited in a comment but isn't in the source or its git history. |
+| IK | `modelIK.ts`: damped least squares and Levenberg-Marquardt with a numerical Jacobian, along **one path** between two bodies. Also `msrr/chainSolve.ts`, and SciPy `least_squares` in `manual.py`. | **No general closed-loop IK.** FK only tolerates loops. `loopClosure.ts` is cited in a comment but isn't in the source or its git history. |
 | Exporters | URDF writes loop joints as comments, with a warning. | **Confirmed 31 Oct: `mjcf.ts` loses loops.** A ring exports an empty world, a diamond loses its closing joint silently, and the default module does not load in MuJoCo (no `<asset>`). See `docs/design/gos-g0-baseline.md`. |
 | External control | None. `main.cjs` reads no script arguments. Dev services run only under `npm run dev`. | Everything in §10.5 is new. |
 | Physics service | `verify_service.py` on `:8771`, from `C:\TETROBOT\sim` | **Not in git and not in the installed app.** Must move into the repo first. |

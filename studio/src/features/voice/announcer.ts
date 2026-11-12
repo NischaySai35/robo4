@@ -30,7 +30,12 @@ function boards(): Board[] {
   }
   const t = useEspTtlStore.getState();
   const k = norm(t.url);
-  if (!out.has(k) || (t.online && !out.get(k)!.online)) {
+  // the ESP-TTL page's board is usually one of the nodes under another address (mod1.local vs 127.0.4.1): same module number
+  // = the same board. 12 Nov: counting it twice announced every connect/disconnect twice, under two names and often two voices.
+  const num = (url: string, name: string) => { const m = /mod(\d+)/i.exec(url) ?? /\/\/127\.0\.4\.(\d+)/.exec(url) ?? /mod(\d+)/i.exec(name) ?? /(\d+)\s*$/.exec(name); return m ? m[1] : null; };
+  const tn = num(t.url, t.tel?.wifi?.hostname ?? '');
+  const known = tn !== null && useEspNodesStore.getState().nodes.some((n) => num(n.url, n.name) === tn);
+  if (!known && (!out.has(k) || (t.online && !out.get(k)!.online))) {
     out.set(k, {
       url: t.url, name: (t.tel?.wifi?.hostname ?? 'module'), online: t.online,
       volts: avgVolts(t.tel?.servos as any[]), servos: (t.tel?.servos as any[]) ?? [],

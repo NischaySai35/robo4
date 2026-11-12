@@ -54,6 +54,8 @@ struct TxDone { uint8_t mac[6]; uint8_t ok; };
 struct Known { uint8_t mac[6]; int8_t rssi; uint8_t ch; bool awake; uint32_t seen; uint8_t len; uint8_t hello[r4now::FRAME_MAX]; };
 static QueueHandle_t airQ, txQ;
 static uint32_t heard = 0, sent = 0, txFail = 0, lost = 0, badUsb = 0, holds = 0, estops = 0;
+static esp_err_t lastErr = ESP_OK;                 // radio self-recovery (radioWatch), shown in the info line
+static uint32_t refusedRun = 0, lastAcceptMs = 0, reinits = 0, lastReinitMs = 0;
 static uint8_t channel = 1;
 static Preferences prefs;                   // "r4master": ch = the channel the modules were last heard on
 static uint32_t ledOffAt = 0;
@@ -110,10 +112,10 @@ static uint8_t aliveCount() {
 
 static void info() {
   char s[300];
-  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 stop=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu cresent=%lu cdeliv=%lu cfail=%lu q2s=%lu air=%lu s2a=%lu",
+  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 stop=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu cresent=%lu cdeliv=%lu cfail=%lu q2s=%lu air=%lu s2a=%lu lasterr=%d reinit=%lu",
            WiFi.macAddress().c_str(), channel, aliveCount(), (unsigned)getCpuFrequencyMhz(), temperatureRead(),
            (unsigned long)heard, (unsigned long)sent, (unsigned long)txFail, (unsigned long)lost, (unsigned long)badUsb,
-           (unsigned long)holds, (unsigned long)estops, (unsigned long)courier->resent, (unsigned long)courier->delivered, (unsigned long)courier->failed, (unsigned long)tQ2S, (unsigned long)tAirUs, (unsigned long)tS2A);
+           (unsigned long)holds, (unsigned long)estops, (unsigned long)courier->resent, (unsigned long)courier->delivered, (unsigned long)courier->failed, (unsigned long)tQ2S, (unsigned long)tAirUs, (unsigned long)tS2A, (int)lastErr, (unsigned long)reinits);
   usbSend('I', (const uint8_t*)s, strlen(s));
 }
 
@@ -127,12 +129,18 @@ static void addPeer(const uint8_t* mac) {
   }
 }
 
+// 12 Nov 2026: the radio refused EVERY send for ~2 h ('sent' frozen at 4234, 'txfail' to 76 000) while it still heard every
+// module; only a restart cured it. Now the dongle notices by itself: sends refused for RADIO_STUCK_MS -> restart ESP-NOW;
+// stuck again within RADIO_REBOOT_MS -> reboot the chip. lastErr / reinit are in the info line.
+#define RADIO_STUCK_MS  3000
+#define RADIO_REBOOT_MS 30000
+
 static void airSend(const uint8_t* mac, const uint8_t* frame, int len) {
   addPeer(mac);
   esp_err_t e;
   for (int tries = 0; (e = esp_now_send(mac, frame, len)) == ESP_ERR_ESPNOW_NO_MEM && tries < 20; tries++) delay(1);
-  if (e == ESP_OK) sent++;
-  else { txFail++; TxDone t; memcpy(t.mac, mac, 6); t.ok = 0; usbSend('T', t.mac, 6, &t.ok, 1); }
+  if (e == ESP_OK) { sent++; refusedRun = 0; lastAcceptMs = millis(); }
+  else { txFail++; lastErr = e; refusedRun++; TxDone t; memcpy(t.mac, mac, 6); t.ok = 0; usbSend('T', t.mac, 6, &t.ok, 1); }
   digitalWrite(LED_PIN, LOW); ledOffAt = millis() + 20;
 }
 
@@ -279,6 +287,23 @@ static void heartbeat() {
   if (++n % 5 == 0) { static const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}; airSend(all, f, len); }
 }
 
+static void onRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len);
+static void onSent(const esp_now_send_info_t* info, esp_now_send_status_t st);
+static void setChannel(uint8_t ch);
+static void radioWatch() {
+  if (refusedRun < 20 || millis() - lastAcceptMs < RADIO_STUCK_MS) return;
+  if (lastReinitMs && millis() - lastReinitMs < RADIO_REBOOT_MS) { delay(50); ESP.restart(); }   // a restart did not cure it
+  lastReinitMs = millis(); reinits++; refusedRun = 0; lastAcceptMs = millis();
+  esp_now_deinit();
+  esp_now_init();
+  esp_now_register_recv_cb(onRecv);
+  esp_now_register_send_cb(onSent);
+  const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+  esp_now_peer_info_t peer = {}; memcpy(peer.peer_addr, all, 6); peer.ifidx = WIFI_IF_STA;
+  esp_now_add_peer(&peer);                                   // module peers come back by themselves (addPeer on each send)
+  setChannel(channel);
+}
+
 static void searchWatch() {
   if (millis() - lastHelloMs < SEARCH_AFTER_MS || millis() - searchStepMs < SEARCH_DWELL_MS) return;
   searchStepMs = millis();
@@ -344,6 +369,7 @@ void loop() {
   laptopWatch();
   buttonWatch();
   searchWatch();
+  radioWatch();
   if (ledOffAt && (int32_t)(millis() - ledOffAt) > 0) { digitalWrite(LED_PIN, HIGH); ledOffAt = 0; }
   delay(1);
 }

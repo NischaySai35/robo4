@@ -354,6 +354,9 @@ function rows(d){
     const sl=el('sl'+s.id);
     const wn=s.torque?s.targetAngle:s.currentAngle, want=wn==null?null:REAL(s.id,wn);
     const tv=el('lv'+s.id);
+    // travel in force (bend = home +-90, lock +-50, twist +-180), as REAL servo angles; follows a new manual home by itself
+    if(sl&&tv){const lo=Math.max(0,REAL(s.id,s.lo!=null?s.lo:s.min)).toFixed(1),hi=Math.min(360,REAL(s.id,s.hi!=null?s.hi:s.max)).toFixed(1);
+      if(sl.min!==lo||sl.max!==hi){sl.min=tv.min=lo;sl.max=tv.max=hi;sl.title=tv.title='travel '+lo+' .. '+hi+' deg (from manual home)';}}
     if(sl&&want!=null&&!(slHeld[s.id]&&Date.now()-slHeld[s.id]<1500)&&document.activeElement!==tv){
       sl.value=want;tv.value=(+want).toFixed(1);}});
   const anyTorque=d.servos.some(s=>s.torque);

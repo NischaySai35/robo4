@@ -18,7 +18,7 @@
 param(
   [string[]]$Hosts   = @('mod1','mod2','mod3','mod4'),
   [string]  $Sketch  = "$PSScriptRoot\..\firmware\esp32_multi",
-  [string]  $Fqbn    = 'esp32:esp32:esp32c3:PartitionScheme=default,CDCOnBoot=cdc',
+  [string]  $Fqbn    = 'esp32:esp32:esp32c3:PartitionScheme=min_spiffs,CDCOnBoot=cdc',
   [string]  $Bin     = '',
   [switch]  $NoBuild,
   [int]     $TimeoutSec = 120
@@ -29,7 +29,7 @@ $Sketch = (Resolve-Path $Sketch).Path
 
 if (-not $NoBuild -and -not $Bin) {
   Write-Host "building $Sketch" -ForegroundColor Cyan
-  arduino-cli compile --fqbn $Fqbn --export-binaries $Sketch
+  arduino-cli compile --fqbn $Fqbn --libraries (Join-Path $PSScriptRoot '..\firmware\libraries') --export-binaries $Sketch
   if ($LASTEXITCODE -ne 0) { throw "arduino-cli compile failed" }
 }
 

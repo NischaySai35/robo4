@@ -21,7 +21,7 @@ These four defaults change the result, and the first test got them wrong:
 - Several contact points per shape pair are off. `enable_multiccd=True` turns them on.
 - Motors read `control.joint_target_q`, which starts at 0, and not only `control.mujoco.ctrl`. Unset, a closed lock opens itself.
 
-Newton pins its own MuJoCo (3.15; the project uses 4.0 since 9 Nov, was 3.17), so it needs its own environment.
+Newton runs in the system Python: the project pins MuJoCo 3.12 (9 Nov), the version Isaac Sim 6.2's Newton 1.6.1 is built for (Newton 1.7 wants 3.15; Isaac pins 1.6.1).
 
 ## Whole-robot test (3 Nov 2026)
 

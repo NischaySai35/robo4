@@ -42,6 +42,10 @@ interface AnimSceneState {
   setMateSlotA: (slot: MateSlot | null) => void;
   setMateSlotB: (slot: MateSlot | null) => void;
   clearMateSlots: () => void;
+  /** a plug clicked in the viewport (Nischay 12 Nov, like MSRR's connect): 1st click = A, 2nd = B and connect (mateGo++),
+   *  clicking A again un-picks it. The panel's Lock does the connect (connectorSnap.computeMateBend: DIK + VSEPR, ideal). */
+  pickConnector: (slot: MateSlot) => void;
+  mateGo: number;
   toggleGravity: () => void;
 }
 
@@ -91,5 +95,12 @@ export const useAnimSceneStore = create<AnimSceneState>((set) => ({
   setMateSlotA: (slot) => set({ mateSlotA: slot }),
   setMateSlotB: (slot) => set({ mateSlotB: slot }),
   clearMateSlots: () => set({ mateSlotA: null, mateSlotB: null }),
+  mateGo: 0,
+  pickConnector: (slot) => set((s) => {
+    const same = (x: MateSlot | null) => !!x && x.bodyId === slot.bodyId && x.connectorId === slot.connectorId;
+    if (same(s.mateSlotA)) return { mateSlotA: null, mateSlotB: null };
+    if (!s.mateSlotA || s.mateSlotB) return { mateSlotA: slot, mateSlotB: null };
+    return { mateSlotB: slot, mateGo: s.mateGo + 1 };
+  }),
   toggleGravity: () => set((s) => ({ gravityOn: !s.gravityOn })),
 }));

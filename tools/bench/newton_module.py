@@ -1,7 +1,7 @@
 """§7 test, whole robot: the real module (its CAD shapes, joints and ST3215 servos) under gravity on MuJoCo and on Newton,
 through the same GOS script. Do the engines agree, and how fast is each?
 
-usage: PYTHON_WITH_NEWTON\\python.exe tools/bench/newton_module.py
+usage: py -3.12 tools/bench/newton_module.py
 """
 # REUSE-CHECKED: newton|engine compare -> newton_ring.py compares a 4-bar test ring, newton_vs_mjw.py the lock test, test_newton_engine.py
 # a 2-link arm; none runs the real module document. Same pattern (gos.App(engine=...), body positions over time).

@@ -6,6 +6,12 @@ firmware/esp32_multi/test_now.cpp (r4now::Courier).
 """
 import json, queue, struct, threading, time, urllib.request
 import pytest
+
+# The shared one-reading-per-module cache (Gateway.READ_TTL) would hand these tests a reply from a second ago; they check the
+# path choice itself, so the cache is off here and tested on its own below (test_reads_are_shared).
+from gos import espnow as _espnow_mod
+_SHARED_TTL = dict(_espnow_mod.Gateway.READ_TTL)
+_espnow_mod.Gateway.READ_TTL = {}
 from gos import espnow
 from gos.app import GosError
 
@@ -495,3 +501,19 @@ def test_a_restarted_module_is_said():
         said = [e['text'] for e in link.events() if e['source'] == 'mod1']
         assert len(said) == 1 and said[0].startswith('restarted') and 'limp' in said[0]
     finally: link.close()
+
+
+def test_reads_are_shared():
+    """one reading per module for every asker: a second ask within the TTL is not sent to the module again"""
+    from gos import espnow as E
+    calls = []
+    class G(E.Gateway):
+        READ_TTL = _SHARED_TTL
+        def __init__(self): pass
+        def _ask(self, name, path, target, body, method='GET', ctype=None):
+            calls.append(path); return 200, b'{"ok":true}', 'application/json'
+    g = G()
+    for _ in range(5): assert g.ask('mod1', '/api/telemetry', '/api/telemetry', None)[0] == 200
+    g.ask('mod1', '/api/command', '/api/command?x=1', None)
+    g.ask('mod1', '/api/command', '/api/command?x=1', None)
+    assert calls == ['/api/telemetry', '/api/command', '/api/command']     # reads shared, commands always sent

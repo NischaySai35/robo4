@@ -56,9 +56,16 @@ let timer: ReturnType<typeof setInterval> | null = null;
 // The name is used only to learn the address (and again after a few misses, in case the address changed).
 async function ask(nd: { url: string }, f: Follow, path: string): Promise<string> {
   const base = nd.url.replace(/\/$/, '');
+  // through the bridge (127.0.4.N) ALWAYS: it shares one reading per module and knows radio + Wi-Fi (12 Nov). The board's own
+  // address is 0.0.0.0 while it runs radio-only (off the router) - asking that failed forever.
+  if (/^https?:\/\/127\.0\.4\.\d+/.test(base)) {
+    const r = await fetch(`${base}${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    f.misses = 0; return r.text();
+  }
   if (!f.ip || f.misses >= 3) {
     const h = await (await fetch(`${base}/api/health`, { signal: AbortSignal.timeout(4000) })).json();
-    if (h?.ip) { f.ip = h.ip; f.misses = 0; }
+    if (h?.ip && h.ip !== '0.0.0.0') { f.ip = h.ip; f.misses = 0; }
   }
   const r = await fetch(`${f.ip ? `http://${f.ip}` : base}${path}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!r.ok) throw new Error(`HTTP ${r.status}`);

@@ -23,6 +23,7 @@ import TorqueSwitch from './TorqueSwitch';
 import WalkTab from './WalkTab';
 import ModuleStrip, { sortedNodes } from '@/features/servo/ModuleStrip';
 import { useEspNodesStore, type EspNode } from '@/state/espNodesStore';
+import SpeedCap from './SpeedCap';
 import { estopAllNodes } from '@/features/servo/servoLink';
 import './EspTtl.css';
 
@@ -55,6 +56,7 @@ export default function EspTtlPage() {
               title="Click a module to send only to it; click it again to go back to all modules">
           {focused ? `sending to ${nodeLabel(focused)} only` : `sending to all ${new Set(nodes.map(nodeModule)).size} modules`}
         </span>
+        <SpeedCap />
         {focused && <>
         <span className={`ettl-dot ${online ? 'on' : 'off'}`} />
         <span className="ettl-dim">{online ? 'connected' : (lastError || 'offline')}</span>
@@ -678,40 +680,30 @@ const LOG_KEY = 'robo4:esptt:logs', LOG_MAX = 4000;
 const UP = /^\[\s*(\d+)\]/;
 const loadLogs = (): LogLine[] => { try { return JSON.parse(localStorage.getItem(LOG_KEY) || '[]'); } catch { return []; } };
 const saveLogs = (l: LogLine[]) => { try { localStorage.setItem(LOG_KEY, JSON.stringify(l.slice(-LOG_MAX))); } catch { /* full or private */ } };
-const seenUp: Record<string, number> = {};          // per module: the board's uptime (ms) of the newest line already kept
-let masterAfter = 0;
 
+// ONE collector (Nischay 12 Nov: "reuse, don't ask the modules again"): the bridge already keeps every module's log, the
+// master's events and the laptop's lines in rotating files (master.local, gos/master_site.py). This tab reads those instead of
+// asking each module for /api/log every 3 s. The Studio's own online/offline lines (espPoll) are merged from this browser.
+const MASTER_SITE = 'http://127.0.5.1';
 async function collectLogs(): Promise<LogLine[]> {
-  const add: LogLine[] = [], now = Date.now(), keep = loadLogs();
-  if (!Object.keys(seenUp).length) {
-    for (const l of keep) { const m = UP.exec(l.text); if (m && l.src.startsWith('mod')) seenUp[l.src] = Math.max(seenUp[l.src] ?? -1, +m[1]); }
-  }
-  for (const n of ttlTargets().filter(x => x.connected)) {
-    const src = nodeLabel(n);
-    const r = await ttlTry('/api/log', 8000, n.url);
-    if (!r.ok) continue;
-    const lines = String(r.data).split(/\r?\n/).filter(Boolean);
-    const ups = lines.map(l => { const m = UP.exec(l); return m ? +m[1] : -1; });
-    const maxUp = Math.max(-1, ...ups);
-    if (seenUp[src] != null && seenUp[src] >= 0 && maxUp >= 0 && maxUp < seenUp[src]) {   // its uptime went back: it restarted
-      add.push({ t: now, src, text: '──────── module restarted ────────' }); seenUp[src] = -1;
-    }
-    lines.forEach((l, i) => { if (ups[i] > (seenUp[src] ?? -1)) add.push({ t: now, src, text: l }); });
-    if (maxUp >= 0) seenUp[src] = Math.max(seenUp[src] ?? -1, maxUp);
-  }
+  const local = loadLogs().filter(l => l.src === 'laptop');
   try {
-    const res = await fetch(`${GATEWAY_URL}/_events?after=${masterAfter}`, { cache: 'no-store', signal: AbortSignal.timeout(3000) });
-    const ev = await res.json(), list: any[] = Array.isArray(ev) ? ev : ev?.events ?? [];
-    for (const e of list) {
-      masterAfter = Math.max(masterAfter, Number(e.n ?? e.id ?? masterAfter) || masterAfter);
-      const t = Number(e.t ?? e.time ?? 0);
-      add.push({ t: t ? (t < 1e12 ? t * 1000 : t) : now, src: 'master', text: `${e.source ? e.source + ': ' : ''}${e.text ?? e.msg ?? JSON.stringify(e)}` });
-    }
-  } catch { /* bridge not running */ }
-  if (!add.length) return keep;
-  const all = [...keep, ...add];
-  saveLogs(all);
-  return all.slice(-LOG_MAX);
+    const r = await fetch(`${MASTER_SITE}/api/logs?src=all&limit=3000`, { cache: 'no-store', signal: AbortSignal.timeout(4000) });
+    const j = await r.json();
+    const kept: LogLine[] = (j.lines ?? []).map((l: any) => ({ t: Date.parse(String(l.t).replace(' ', 'T')) || Date.now(), src: l.src, text: l.text }));
+    return [...kept, ...local].sort((a, b) => a.t - b.t).slice(-LOG_MAX);
+  } catch {
+    return local;                                    // bridge not running: only this computer's own lines
+  }
+}
+
+/** important lines stand out (Nischay 12 Nov): connected / online in bold green, disconnected / offline in bold amber, errors in bold red */
+function logKind(t: string): 'up' | 'down' | 'warn' | '' {
+  const x = t.toLowerCase();
+  if (/red light:|error|failed|e-stop|stuck/.test(x)) return 'warn';
+  if (/offline|not heard|disconnected|lost|link cut|restarted|quiet for|stopped talking|no answer by radio|switched off|no connection/.test(x)) return 'down';
+  if (/online|connected|linked|heard over esp-now|answers again|answers by radio again|talking to me again|talking again|back to the radio/.test(x)) return 'up';
+  return '';
 }
 
 function LogTab() {
@@ -728,7 +720,7 @@ function LogTab() {
     return () => window.clearInterval(t);
   }, [auto, focus]);
   const want = new Set(ttlTargets().map(nodeLabel));
-  const shown = lines.filter(l => (l.src === 'master' ? master : want.has(l.src)));
+  const shown = lines.filter(l => (l.src === 'master' || l.src === 'laptop' ? master : want.has(l.src) || (l.src === 'laptop' && true)));
   const pre = useRef<HTMLPreElement>(null);
   useEffect(() => { const el = pre.current; if (el) el.scrollTop = el.scrollHeight; }, [shown.length]);
   return (
@@ -737,12 +729,15 @@ function LogTab() {
       <div className="ettl-row">
         <Button variant="outline" size="sm" onClick={load}>Refresh</Button>
         <label className="ettl-toggle"><input type="checkbox" checked={auto} onChange={e => setAuto(e.target.checked)} /><span />auto</label>
-        <label className="ettl-toggle"><input type="checkbox" checked={master} onChange={e => setMaster(e.target.checked)} /><span />master (radio)</label>
+        <label className="ettl-toggle"><input type="checkbox" checked={master} onChange={e => setMaster(e.target.checked)} /><span />master + laptop</label>
         <span className="ettl-dim">{shown.length} lines kept on this computer · pick a module at the top to see only it</span>
         <span style={{ flex: 1 }} />
         <Button variant="outline" size="sm" onClick={() => { if (confirm('Delete every kept log line on this computer?')) { saveLogs([]); setLines([]); } }}>Clear kept logs</Button>
       </div>
-      <pre ref={pre} className="ettl-pre tall" data-testid="ttl-log">{shown.length ? shown.map(l => `${new Date(l.t).toLocaleTimeString()}  ${l.src.padEnd(6)} ${l.text}`).join('\n') : '—'}</pre>
+      <pre ref={pre} className="ettl-pre tall" data-testid="ttl-log">{shown.length ? shown.map((l, i) => {
+        const k = logKind(l.text);
+        return <div key={i} className={k ? `ettl-log-${k}` : undefined}>{`${new Date(l.t).toLocaleTimeString()}  ${l.src.padEnd(6)} ${l.text}`}</div>;
+      }) : '—'}</pre>
     </div>
   );
 }

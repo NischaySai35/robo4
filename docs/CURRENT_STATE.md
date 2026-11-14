@@ -716,7 +716,49 @@ Fix: ONE asker per board.
       brain's '1 roll wave turns S1A up' is FALSE for the real robot; stand_lying only docked in Isaac through the camera belief
       updates. NEXT: find which ideal simplification makes the fake roll (flex / play / armature) with the brain alone, or let the
       brain imagine free-module floor moves in a non-ideal copy of itself.
-    - BRAIN COBRA BUG: the chain2 cobra blows up at t 9.47 s (second align of M1.T3: no contacts, M1_root spinning up to 64 rad/s,
+      ANSWER (scratch roll_factor.py, one sideways wave, stand_lying M2): ideal+rigid 96.5 deg, ideal+flex 97.3, non-ideal+rigid
+      91.5 (non-ideal+flex = the earlier 17). BOTH ideal simplifications fake the roll: the flex / gear-play joints AND the exact
+      joints - only the full real model rolls like Isaac (~10). So the brain must imagine free-module floor moves in a NON-ideal,
+      flex-on copy (next step), not just drop one simplification.
+      CORRECTION (same evening): that "non-ideal+flex = 17" was an old (box-floor) number. Re-measured on the hull floor with a
+      0.5 s settle (PRE=0.5 roll_factor.py; the full model needs ~2.2 s wall per sim s, the 2 s settle overran 20 s): FULL model
+      95.7 deg, ideal 96.6, ideal+flex+physical free servos+no glide 86.6. EVERY brain version rolls ~90-97 deg; Isaac ~10.
+      So it is MuJoCo-brain vs Isaac, not the ideal shortcuts. NEXT: in Isaac, log the joints a roll wave really reaches (servo
+      strength / speed under the module's own weight) and the contact points; whichever engine is off gets fixed. Only the real
+      robot can say which is right (handoff step 6: one sideways wave on a lying module, measure the turn).
+      ISAAC CHECK (twin_rollwave.log, status lag_deg = joints sent vs reached): Isaac's servos reach every command within 2-3 deg.
+      Both copies sit still until ~5.4 s, then the BRAIN's M2 tips over in <1 s (43 -> 103 deg) while Isaac's rocks 7-13 deg.
+      Ruled out in the brain: ideal shortcuts, glide, servo type/strength, friction, floor contact shape (hull 96.6 / box 92.5),
+      masses (Isaac reads the same model), multi-contact (already on in MuJoCo 3.12). Two engines disagree at a tipping point:
+      ONLY the real robot decides (lay a module on its side, one sideways wave CRAWL_SIDE=1, does it flip?). Camera re-plan covers
+      both meanwhile.
+    - STUDIO (12 Nov evening, from Nischay's screenshots):
+      - "1 real module found, the sim has none" with modules on screen: a dev-server live patch of modelStore.ts made a second,
+        empty store. modelStore now keeps its one bus on the page in dev (globalThis.__tetrobotModel). Tested: patch -> Sync still 1.
+      - Top bar online / Sync box offline: two deciders. The service's link (real_sync.ModuleLink) is now the ONLY asker:
+        espPoll sends /boards?hosts=..&fast=.. and only reads back (asks boards itself only if the service is down). Sync off the
+        link does health every 1 s + full status every 10 s (1 s on ESP-TTL). MSRR default hosts = 127.0.4.N (same link as Studio).
+        Still separate: boardEvents.ts reads each board's /api/log (through the bridge's shared reads; master_site also keeps logs).
+      - ESP-TTL Record / Play: enabled when ANY target module is online (was: the page's selected board). Play: modules with no
+        frames stay still and are not asked about; an offline module that has frames -> "send to the others only?".
+      - MODULE COLOURS, every tab (viewport/renderers/modulePaint.ts, used by BodyRenderer AND MsrrCanvas/moduleMeshes): End A dark
+        blue, End B orange, side receivers S1A+S2A green, S1B+S2B purple (cut out of the spine mesh by the connectors: <=37 mm from
+        the axis, <=13 mm inside the face). MSRR's own partMats.endA/endB removed. Checked by picture in Animation + MSRR.
+    - BRAIN COBRA BUG - FIXED (12 Nov evening): cause = phys_world._servo, ideal + gliding command: the servo speed jumped 0 -> 4.3
+      rad/s in ONE step (no acceleration limit) on a joint the solver sees as a 100 kg.m2 rotor (ideal armature) -> a hammer blow,
+      at 7.52 s the chain went from 12 to 169 floor contacts (12.5 mm deep, 10.9 kN) and flew 1.2 m up, later NaN. Now the speed
+      changes by <= amax (ACC_RAD 6.1 rad/s2) per step and still lands exactly on the command. Plus a LOUD guard: MuJoCo auto-reset
+      OFF (AUTORESET=1 = old), PhysWorld.blew_up + '!!! PHYSICS BLEW UP', run() refuses a broken world, restore() clears it,
+      Manual.skill/connect report 'PHYSICS BLEW UP ... NOT a result' and return False.
+      Regression after (brain_regress): flat, slope45, flat_S2B, standlying_S1A, ceiling180, sl_S1B LOCKED; chain2 cobra DONE
+      579 mm / 12.2 deg (no fling); wall90, endend, sl_S2A, sl_S2B, sl_M2A, sl_M2B NOT (as before).
+    - FLOOR CRAWL (12 Nov evening): crawl_learn now KEEPS a wave that closed > CRAWL_KEEP_MM (10) and FORGETS the other remembered
+      moves when a wave rolled the module > CRAWL_FORGET_DEG (30) (sl_S2A: 'along' closed... no - it OPENED 250 -> 349 mm; the
+      gait is lopsided: brain crawl_test 3 waves forward 114 mm / backward 48 mm at 25 deg; 35 deg: 302 / 144). WAVE_AMP_DEFAULT=35
+      broke sl_S1B (slid instead of rolling) -> default stays 25. Floor cases still NOT: sl_S2A/S2B/M2A/M2B, endend. Seen: the
+      first wave after a direction change moves ~120 mm, the repeat ~15 mm - a wave's effect depends on how the module lies, so
+      remembered moves mislead. Next idea: before along-waves put the module in the crawl_test lie (T2 horizontal: bends lift).
+    - (old note) BRAIN COBRA BUG: the chain2 cobra blows up at t 9.47 s (second align of M1.T3: no contacts, M1_root spinning up to 64 rad/s,
       then 'Nan/Inf in QACC') and MuJoCo silently RESETS the world (clock back to ~0, all bodies to qpos0) - everything after that
       ('footprint did not form', base tipping) ran on a broken world. Fix that first (find what flings the chain; then guard:
       phys_world.run should stop loudly on a reset, not go on).

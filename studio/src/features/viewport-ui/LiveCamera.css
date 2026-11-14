@@ -1,0 +1,37 @@
+/* LiveCamera: bottom-right of the viewport, theme colour names only (both themes). */
+.live-cam {
+  position: absolute; right: 12px; bottom: 12px; z-index: 6;
+  display: flex; flex-direction: column; align-items: flex-end; gap: 6px;
+  pointer-events: none;
+}
+.live-cam > * { pointer-events: auto; }
+.live-cam-win {
+  position: relative; width: 288px; aspect-ratio: 4 / 3; border-radius: 6px; overflow: hidden;
+  background: #000; border: 1px solid var(--overlay-border, var(--border));
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.3);
+  animation: live-cam-in 200ms cubic-bezier(.2, .8, .2, 1) both;
+}
+.live-cam-img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.live-cam-fps {
+  position: absolute; top: 6px; right: 6px; padding: 1px 6px; border-radius: 4px;
+  background: rgba(0, 0, 0, 0.6); color: #7ee2a8; font: 600 11px var(--font-mono);
+}
+.live-cam-fps--low { color: #ffb454; }
+.live-cam-err {
+  max-width: 288px; padding: 6px 8px; border-radius: 5px; font-size: 11px;
+  background: var(--overlay-bg); color: var(--text); border: 1px solid var(--warn);
+}
+.live-cam-btn {
+  display: inline-flex; align-items: center; gap: 7px; cursor: pointer;
+  padding: 6px 12px; border-radius: 999px; font: 600 11px var(--font-mono); letter-spacing: 0.06em;
+  background: var(--overlay-bg); color: var(--text-dim);
+  border: 1px solid var(--overlay-border, var(--border)); backdrop-filter: blur(8px);
+  transition: color 150ms, border-color 150ms;
+}
+.live-cam-btn:hover { color: var(--text); }
+.live-cam-btn:disabled { opacity: 0.6; cursor: wait; }
+.live-cam-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-dim); }
+.live-cam-btn--on { color: var(--text); border-color: var(--danger, #e5484d); }
+.live-cam-btn--on .live-cam-dot { background: var(--danger, #e5484d); animation: live-cam-pulse 1.2s ease-in-out infinite; }
+@keyframes live-cam-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes live-cam-pulse { 50% { opacity: 0.35; } }

@@ -546,13 +546,21 @@ export default function AnimLeftPanel({ style }: { style?: React.CSSProperties }
   const doMate = (aRef: { bodyId: string; connectorId: string }, bRef: { bodyId: string; connectorId: string }) => {
     const pair = `${plugName(aRef)} ↔ ${plugName(bRef)}`;
     if (bodiesConnected(doc, aRef.bodyId, bRef.bodyId)) {
-      const bend = computeMateBend(doc, aRef, bRef, rigidMode ? activeBodyId : null);
+      // the real part shapes judge every candidate pose and the align -> dock path (12 Nov: an impossible ring was accepted)
+      const pair: [string, string][] = [[aRef.bodyId, bRef.bodyId]];
+      const collides = (vals: Record<string, number>) => !!bridge.poseCollides?.(withJointValues(doc, vals), pair);
+      const bend = computeMateBend(doc, aRef, bRef, rigidMode ? activeBodyId : null, collides);
       if (!bend) {
         setMateStatus(`${pair}: not locked - no movable joint between them.`);
         alert('These connectors are already linked through the model, but there is no movable joint chain between them to bend. Nothing moved.');
         return;
       }
-      if (bend.residual > 0.03) {
+      if (bend.blocked) {
+        const hit = bridge.poseCollides?.(withJointValues(doc, bend.jointValues), pair);
+        alert(`Can't connect these two cleanly: every way the joints can reach it, parts would pass through each other${hit ? ` (${hit[0]} and ${hit[1]})` : ''}. Nothing moved - move the modules closer or try other plugs.`);
+        return;
+      }
+      if (bend.residual > 0.004) {
         setMateStatus(`${pair}: not locked - ${(bend.residual * 100).toFixed(1)} cm gap left (only ${bend.chainLen} joint${bend.chainLen === 1 ? '' : 's'} between them).`);
         alert(
           `Can't fully close: nearest the joints can get is a ${(bend.residual * 100).toFixed(1)} cm gap ` +

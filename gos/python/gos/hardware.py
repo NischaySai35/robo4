@@ -362,6 +362,282 @@ class ModuleGroup:
         def up(m):
             head, body = self.payload(m, frames, **defaults)
             return self._ask(m, '/api/anim/load' + q, head + '\n' + body)
+        got = self._each(self.mods, up)
+        # the timetable (14 Nov 2026): per frame the longest any module needs - every module gets the same one at play
+        self.times = [max(120, int(max((r.get('needMs') or [0] * len(frames))[i] if i < len(r.get('needMs') or []) else 0
+                                       for r in got.values()))) for i in range(len(frames))]
+        return Result(True, f'Loaded {len(frames)} frames on module(s) {", ".join(map(str, self.mods))}' +
+                      (f' as group {self.group}.' if self.group else '.'))
+
+    def _clock(self, m):
+        """(offset, rtt): module ms = laptop ms + offset, from the quickest of 3 reads of /api/clock."""
+        best = None
+        for _ in range(3):
+            t0 = time.perf_counter() * 1000
+            try: r = self._ask(m, '/api/clock', timeout=2.5)
+            except GosError: continue
+            t1 = time.perf_counter() * 1000
+            if isinstance(r.get('ms'), (int, float)) and (best is None or t1 - t0 < best[1]):
+                best = (r['ms'] - (t0 + t1) / 2, t1 - t0)
+        if best is None: raise GosError(f'Module {m} did not answer its clock.')
+        return best
+
+    def play(self, start=0):
+        """Every module starts at ONE instant the laptop picks (13 Nov 2026: no module-to-module radio). Any module not
+        answering or refusing -> nothing starts (all stopped); one not playing just after the instant -> all stopped."""
+        loop = int(getattr(self, 'loop', False))
+        clocks = self._each(self.mods, self._clock)                 # raises if any module is silent: nothing started
+        at = time.perf_counter() * 1000 + min(4000, max(700, 3 * max(c[1] for c in clocks.values()) + 400))
+        try:
+            self._each(self.mods, lambda m: self._ask(
+                m, f'/api/anim/play?from={start}&loop={loop}&at={int(round(at + clocks[m][0])) & 0xffffffff}'
+                   + (f'&times={".".join(map(str, self.times))}' if getattr(self, 'times', None) else ''), timeout=4))
+        except GosError as e:
+            self.stop(); raise GosError(f'{e} Stopped all, nothing moves.') from None
+        time.sleep(max(0.0, (at - time.perf_counter() * 1000) / 1000) + 0.35)
+        def look(m):
+            try: return self._ask(m, '/api/anim/status', timeout=3)
+            except GosError: return {}                      # no answer = the laptop's link, not a stop
+        st = {m: look(m) for m in self.mods}
+        idle = [m for m, s in st.items() if not (s.get('playing') or s.get('ended') == 1)]   # finished early = started
+        if idle:   # only a report (14 Nov: never stop the others; they run their timetable on their own)
+            return Result(True, f'Started; no "playing" answer yet from module(s) {", ".join(map(str, idle))}.', {'unconfirmed': idle})
+        return Result(True, f'Modules {", ".join(map(str, self.mods))} started together.')
+
+    def stop(self):
+        """Emergency stop on every servo. Always allowed, and disarms."""
+        self.armed = False
+        try:
+            self._get('/api/command?servo=all&cmd=estop')
+            return Result(True, 'Emergency stop sent to every servo.')
+        except GosError as e:
+            return Result(False, f'Emergency stop could NOT be sent: {e} Cut the power if the robot is moving.')
+
+    def _clamp(self, j, v):
+        lo, hi = self.limits.get(j, (-math.pi, math.pi))
+        return min(max(v, lo), hi)
+
+    def move(self, values):
+        """Command joint angles (radians, by joint name). Clamped to limits; a large jump goes in steps."""
+        if self.armed and time.time() - self._contact_at > 2.0:
+            self.armed = False
+            self.why_disarmed = f'no reply from the module for {time.time() - self._contact_at:.0f} s (Wi-Fi drop or power cut). When it answers again, check it and arm again.'
+        if not self.armed:
+            return Result(False, f'Not armed: {self.why_disarmed or "call arm() first."} Nothing moved.')
+        unknown = [j for j in values if j not in self.ids]
+        if unknown:
+            return Result(False, f'Unknown joints {", ".join(unknown)}. Joints: {", ".join(self.joints)}.')
+        target = {j: self._clamp(j, v) for j, v in values.items()}
+        clamped = [j for j in values if abs(target[j] - values[j]) > 1e-9]
+        start = {j: self._last.get(j, 0.0) for j in target}
+        biggest = max([abs(math.degrees(target[j] - start[j])) for j in target] + [0])
+        steps = max(1, math.ceil(biggest / self.max_step))
+        for k in range(1, steps + 1):
+            q = {j: start[j] + (target[j] - start[j]) * k / steps for j in target}
+            parts = {'speed': self.speed, 'acc': self.acc}
+            parts.update({str(self.ids[j]): round(self._homes[j] + self.signs[j] * math.degrees(v), 2) for j, v in q.items()})
+            sent = self._get('/api/batch?' + urllib.parse.urlencode(parts))
+            if sent.get('refused'):  # the board's overload guard: a joint hit something, or is too hot
+                return Result(False, f'The module refused {sent["refused"]} joint(s): {sent.get("why") or "overload guard"}. Move it the other way, or clear the block.')
+            if not self.armed: return Result(False, 'Stopped during the move.')
+            if k < steps: time.sleep(0.05)
+        self._last.update(target)
+        msg = f'Moved {len(target)} joints in {steps} step(s).' + (f' Clamped to limits: {", ".join(clamped)}.' if clamped else '')
+        return Result(True, msg, {'steps': steps, 'clamped': clamped})
+
+
+def serve_robot(app, robot, name='mod1', rate=20):
+    """Put one module on the GOS network, like a ROS hardware driver, so any program on any computer can use it:
+    /NAME/joint_states   JointState, rate times a second, read from the servo encoders (radians)
+    /NAME/joint_commands {"name": [...], "position": [...]} in radians; refused until armed, clamped and stepped as move()
+    /NAME/arm, /NAME/disarm, /NAME/stop   services; stop is the emergency stop and always works
+    /NAME/status          {"online", "armed", "error"} whenever it changes
+    The board keeps its own web API; nothing on the module changes. Returns a function that stops serving."""
+    import threading
+    states, status = app.topic(f'/{name}/joint_states', type='JointState'), app.topic(f'/{name}/status')
+    done, last = threading.Event(), {}
+
+    def say(online, error=''):
+        s = {'online': online, 'armed': robot.armed, 'error': error}
+        if s != last: last.clear(); last.update(s); status.publish(s)
+
+    def loop():
+        while not done.is_set():
+            t0 = time.time()
+            try:
+                q = robot.read()
+                states.publish({'header': {'stamp': time.time(), 'frame_id': name}, 'name': list(q), 'position': list(q.values()), 'velocity': [], 'effort': []})
+                say(True)
+            except GosError as e:
+                say(False, str(e))
+            done.wait(max(0.0, 1 / rate - (time.time() - t0)))  # a slow board (0.4 s a reading over Wi-Fi) is not slowed further
+
+    def on_command(m):
+        if len(m.get('name', [])) != len(m.get('position', [])):
+            return say(last.get('online', False), 'A command needs one position per name. Nothing moved.')
+        try: r = robot.move(dict(zip(m['name'], m['position'])))
+        except GosError as e: return say(True, str(e))   # e.g. the board is locked after power-on
+        say(True, '' if r.ok else r.message)
+
+    def result(r):
+        say(last.get('online', False)); return {'ok': r.ok, 'message': r.message}
+
+    app.topic(f'/{name}/joint_commands').subscribe(on_command)
+    app.services.advertise(f'/{name}/arm', lambda _: result(robot.arm()))
+    app.services.advertise(f'/{name}/disarm', lambda _: result(robot.disarm()))
+    app.services.advertise(f'/{name}/stop', lambda _: result(robot.stop()))
+    try: on = robot.live()
+    except GosError: on = False
+    status.publish({'online': True, 'armed': robot.armed, 'error': '', 'live': on})
+    threading.Thread(target=loop, daemon=True).start()
+
+    def stop():
+        done.set(); robot.close()
+    return stop
+
+
+# ── all the modules at once, through the ESP-NOW bridge (gos robot bridge, gos/espnow.py) ─────────────────────────────
+# The bridge owns the master on USB, so programs ask it (http://127.0.0.1:8790) rather than opening the port themselves.
+BRIDGE = 'http://127.0.0.1:8790'
+
+
+def _bridge(path, bridge=BRIDGE, timeout=3.0):
+    try:
+        with urllib.request.urlopen(bridge.rstrip('/') + path, timeout=timeout) as r: return json.loads(r.read() or b'{}')
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as e:
+        raise GosError(f'The ESP-NOW bridge at {bridge} does not answer ({e}). Start it with: gos robot bridge') from None
+
+
+def stop_all(limp=False, bridge=BRIDGE):
+    """Every module stops where it is and holds; limp=True: E-STOP, every servo limp (it may drop!). Like the master's
+    button. Through the bridge and the master when they run; otherwise over Wi-Fi to every module address remembered."""
+    what = 'E-STOP (limp)' if limp else 'Stop and hold'
+    try: r = _bridge('/_stop' + ('?limp=1' if limp else ''), bridge)
+    except GosError:
+        from .espnow import Gateway, stop_over_wifi
+        try: known = dict(json.loads(Gateway.REMEMBER.read_text()))
+        except (OSError, ValueError): known = {}
+        if not known: return Result(False, f'{what} could NOT be sent: no bridge running and no module address known. Cut the power if a robot is moving.')
+        r = stop_over_wifi(known, limp)
+    mods = ', '.join(r.get('modules') or []) or 'no module heard'
+    if r.get('failed'): return Result(False, f'{what} over {r["via"]} reached {mods}; FAILED for {"; ".join(r["failed"])}. Cut the power if a robot is moving.', r)
+    return Result(True, f'{what} sent over {r["via"]} to every module ({mods}).', r)
+
+
+def modules(bridge=BRIDGE):
+    """The modules the bridge hears: [{"name", "battery" (V), "held", "playing", "rssi", "seenAgoS", ...}]."""
+    return _bridge('/', bridge).get('modules', [])
+
+
+def events(after=0, bridge=BRIDGE):
+    """What happened (module notes: animation finished + its top currents, hold, E-STOP, battery; master notes; stops):
+    (last number, [{"n", "t", "source", "text"}]). Pass the last number back to get only newer ones."""
+    r = _bridge(f'/_events?after={int(after)}', bridge)
+    return r.get('last', 0), r.get('events', [])
+
+
+def serve_modules(app, bridge=BRIDGE, rate=2.0):
+    """Put the whole fleet on the GOS network, like a ROS diagnostics + safety node:
+    /modules          [{"name", "battery", "held", "playing", ...}] whenever it changes (and every 5 s)
+    /modules/events   {"n", "t", "source", "text"} for each thing that happened
+    /modules/stop     service {"limp": false}: every module stops and holds (limp: E-STOP); always allowed
+    Returns a function that stops serving."""
+    import threading
+    fleet, happened = app.topic('/modules'), app.topic('/modules/events')
+    done = threading.Event()
+
+    def loop():
+        last, said_at, seen = None, 0.0, None     # seen: the last event number handed out (None: not asked yet)
+        while not done.is_set():
+            try:
+                now = [{k: m.get(k) for k in ('name', 'battery', 'held', 'playing', 'rssi', 'awake', 'channel')} for m in modules(bridge)]
+                n, new = events(seen or 0, bridge)
+                if seen is not None and n >= seen:      # the first round: what happened before is history, not news
+                    for e in new: happened.publish(e)
+                seen = n                                # (n < seen: the bridge restarted and counts from 0 again)
+            except GosError as e:
+                now = [{'error': str(e)}]
+            if now != last or time.time() - said_at > 5:
+                fleet.publish(now); last, said_at = now, time.time()
+            done.wait(1 / rate)
+
+    def on_stop(req):
+        r = stop_all(bool((req or {}).get('limp')), bridge)
+        return {'ok': r.ok, 'message': r.message}
+
+    app.services.advertise('/modules/stop', on_stop)
+    threading.Thread(target=loop, name='gos-modules', daemon=True).start()
+    return done.set
+
+
+class ModuleGroup:
+    """Several modules play one animation together, like the Studio's timeline does (studio/src/features/espttl/sender.ts:
+    the same wire format and steps, here for Python programs; firmware groupsync.h keeps them in step).
+
+        g = ModuleGroup([1, 2])
+        g.load([{'pose': {1: {3: 170, 4: 190}, 2: {3: 175}}, 'time_ms': 1500}, {'pose': {1: {3: 180}, 2: {3: 180}}}])
+        g.play()                         # module 1 says GO over the radio: both start at the same instant
+        g.stop()
+
+    A frame: {"pose": {module: {servo_id: degrees}}, "time_ms" (0 = auto), "speed" 1-10, "hold_ms"}. A module missing
+    from a frame keeps its last angles, so every board has every frame and they stay in step. Moves motors: play()
+    only after a person checked the robot is free to move."""
+    def __init__(self, mods, address=lambda n: f'http://mod{n}.local', timeout=20.0):
+        self.mods, self.address, self.timeout = sorted(int(m) for m in mods), address, timeout
+        self.group = 0
+
+    @staticmethod
+    def checksum(text):
+        h = 0
+        for ch in text.encode(): h = (h * 31 + ch) & 0xffffffff   # the firmware's handleAnimLoad sum
+        return h
+
+    @classmethod
+    def payload(cls, mod, frames, speed=5, time_ms=0, hold_ms=0):
+        """(header line, frame lines) for one module (the firmware's V2 format)."""
+        per = [{int(k): float(v) for k, v in (f.get('pose', {}).get(mod) or f.get('pose', {}).get(str(mod)) or {}).items()} for f in frames]
+        carry = dict(next((p for p in per if p), {}))
+        lines = []
+        for f, p in zip(frames, per):
+            carry.update(p)
+            joints = ' '.join(f'{i}:{d:.1f}' for i, d in carry.items())
+            lines.append(f'{round(f.get("time_ms", time_ms))} {round(f.get("speed", speed))} {round(f.get("hold_ms", hold_ms))} {joints}')
+        body = '\n'.join(lines) + '\n'
+        return f'V2 {len(frames)} {cls.checksum(body)}', body
+
+    def _ask(self, mod, path, body=None, timeout=None):
+        url = self.address(mod).rstrip('/') + path
+        req = urllib.request.Request(url, data=body.encode() if body is not None else None, method='POST' if body is not None else 'GET')
+        if body is not None: req.add_header('Content-Type', 'text/plain')
+        try:
+            with urllib.request.urlopen(req, timeout=timeout or self.timeout) as r: return json.loads(r.read() or b'{}')
+        except urllib.error.HTTPError as e:
+            try: why = json.loads(e.read() or b'{}').get('error')
+            except ValueError: why = None
+            raise GosError(f'Module {mod} refused {path.split("?")[0]}: {why or e.reason}.') from None
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            raise GosError(f'Module {mod} does not answer at {url} ({e}).') from None
+
+    def _each(self, mods, fn):
+        from concurrent.futures import ThreadPoolExecutor
+        def one(m):
+            try: return fn(m)
+            except GosError as e: return e
+        with ThreadPoolExecutor(max(1, len(mods))) as pool: out = dict(zip(mods, pool.map(one, mods)))
+        bad = [str(e) for e in out.values() if isinstance(e, GosError)]
+        if bad: raise GosError(' '.join(bad))
+        return out
+
+    def load(self, frames, sine=True, loop=False, **defaults):
+        """Upload to every module, with one fresh group number. Nothing moves yet."""
+        if not frames: raise GosError('No frames to load.')
+        self.group = int.from_bytes(os.urandom(4), 'little') % 0xfffffffe + 1 if len(self.mods) > 1 else 0
+        self.loop = loop
+        # mods: who is in the group, so a member that never starts makes the others stop (firmware groupsync.h)
+        q = f'?sine={int(sine)}&loop={int(loop)}' + (f'&group={self.group}&mods={".".join(map(str, self.mods))}' if self.group else '')
+        def up(m):
+            head, body = self.payload(m, frames, **defaults)
+            return self._ask(m, '/api/anim/load' + q, head + '\n' + body)
         self._each(self.mods, up)
         return Result(True, f'Loaded {len(frames)} frames on module(s) {", ".join(map(str, self.mods))}' +
                       (f' as group {self.group}.' if self.group else '.'))
@@ -385,7 +661,7 @@ class ModuleGroup:
                       {'late': sorted(late)})
 
     def stop(self):
-        """Stop the animation on every module (each stops; the group's STOP also reaches the others over the radio)."""
+        """Stop the animation on every module."""
         self._each(self.mods, lambda m: self._ask(m, '/api/anim/stop', timeout=6))
         return Result(True, f'Stopped on module(s) {", ".join(map(str, self.mods))}.')
 

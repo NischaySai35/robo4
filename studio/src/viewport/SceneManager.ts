@@ -943,11 +943,7 @@ export class SceneManager {
   render() {
     if (!this._cameraOk()) { this._healCamera(); this.fitCamera(); }   // self-heal: a NaN camera draws nothing, forever
     this.controls.update();
-    if (this.realFloor) {                                 // zoom-to-cursor can still dolly the camera through it: keep it above
-      const minY = 0.02;
-      if (this.camera.position.y < minY) this.camera.position.y = minY;
-      if (this.controls.target.y < 0) this.controls.target.y = 0;
-    }
+    // (12 Nov, Nischay: "the camera is virtual - why does it collide with the floor?") no floor clamp: the camera goes anywhere
     this._updateGround();
 
     if (ENGINES[this._engineMode]?.tracer && this._pathTracer) {

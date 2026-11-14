@@ -12,6 +12,8 @@ import * as THREE from 'three';
 import { GeometryType, bodyConnectors } from '@/core/model/index';
 import type { Document } from '@/core/model/index';
 import { getAssetObject } from '@/viewport/renderers/AssetCache';
+import { PAINT, endPaint, receiverLabels, splitByLabels, RECEIVER_PAINT } from '@/viewport/renderers/modulePaint';
+import { base64ToBytes } from '@/core/serialization/binary';
 import { stressColor } from '@/kinematics/analysis';
 
 const _picker = new THREE.Raycaster();
@@ -143,6 +145,19 @@ export class BodyRenderer {
       const asset = assetId ? doc.assets[assetId] : null;
       child = asset ? getAssetObject(asset) : null;
       if (g.scale) child?.scale.set(g.scale[0], g.scale[1], g.scale[2]);
+      // the side receivers in their side's colour (modulePaint: the same rule as MSRR)
+      if (child?.isMesh && asset && String(asset.format).toLowerCase() === 'stl') {
+        const labels = receiverLabels(asset.id, () => base64ToBytes(asset.data), g.scale?.[0] ?? 1, bodyConnectors(body));
+        if (labels) {
+          const parts = splitByLabels(child.geometry, labels);
+          child.geometry = parts[0];
+          parts.forEach((pg, i) => {
+            if (!i || !pg.index?.count) return;
+            const rm = new THREE.Mesh(pg, new THREE.MeshStandardMaterial()); rm.userData.paint = RECEIVER_PAINT[i];
+            child.add(rm);
+          });
+        }
+      }
     }
     if (!child) child = new THREE.Mesh(primitiveGeometry(g), new THREE.MeshStandardMaterial());
 
@@ -175,7 +190,8 @@ export class BodyRenderer {
         if (!mesh.material || Array.isArray(mesh.material)) return;
         const m = body.visual?.materialId ? doc.materials[body.visual.materialId] : null;
         const [r, gg, b] = m?.color ?? DEFAULT_COLOR;
-        mesh.material.color.setRGB(r, gg, b);
+        const paint = mesh.userData.paint ?? endPaint(body.name);
+        if (paint) mesh.material.color.setHex(PAINT[paint as keyof typeof PAINT]); else mesh.material.color.setRGB(r, gg, b);
         mesh.material.metalness = 0; mesh.material.roughness = 1;
         mesh.material.opacity = 1; mesh.material.transparent = false;
         mesh.material.wireframe = true;
@@ -187,7 +203,8 @@ export class BodyRenderer {
     const [r, gg, b, a] = m?.color ?? DEFAULT_COLOR;
     this._forEachMesh(container, (mesh: any) => {
       if (!mesh.material || Array.isArray(mesh.material)) return;
-      mesh.material.color.setRGB(r, gg, b);
+      const paint = mesh.userData.paint ?? endPaint(body.name);   // module ends / side receivers: one colour everywhere (modulePaint)
+      if (paint) mesh.material.color.setHex(PAINT[paint as keyof typeof PAINT]); else mesh.material.color.setRGB(r, gg, b);
       mesh.material.metalness = m?.metalness ?? 0.45;
       mesh.material.roughness = m?.roughness ?? 0.45;
       mesh.material.opacity = a ?? 1;

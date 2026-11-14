@@ -23,11 +23,15 @@
 //                      'S' mac[6] + air frame      send once as it is (FF:FF:FF:FF:FF:FF = everyone)
 //                      'C' channel[1]              use this Wi-Fi channel (1-13); it still follows the modules after
 //                      'I'                         ask for the info line
+//                      'W' rate[1]                 ESP-NOW speed: 0 normal 1 Mbps, 1 Long Range 500 kbps, 2 Long Range 250 kbps
+//                      'X' mode[1] bright[1]       flash LED: mode 0 off, 1 on, 2 blink; bright 0-100 % (default off)
+//                      'V' on[1]                   camera on (1) / off (0) - default off (heat); off = camera chip powered down
 //   dongle -> laptop   'R' mac[6] rssi[1] + frame  heard over the air (only frames that parse as ours)
 //                      'T' mac[6] ok[1]            the radio's own delivery report for an 'S' (unicast: acked or not)
 //                      'I' text                    "mac=.. ch=.. auto=1 modules=N mhz=.. chipC=.. heard=.. sent=.. ..."
 //                      'F' mac[6] seq[2] text      a request it gave up on, and why
 //                      'L' text                    something it did by itself (hold, E-STOP, channel change)
+//                      'J' id[1] part[1] last[1] + jpeg bytes (<= 1024)   a camera picture, in pieces (camera on only)
 // Anything else the board prints at boot (ROM text) is skipped by the laptop because it is not framed.
 
 #include <WiFi.h>
@@ -35,6 +39,8 @@
 #include <esp_now.h>
 #include "r4now.h"
 #include <Preferences.h>
+#include "esp_camera.h"
+
 
 #define USB_BAUD 921600
 #define LED_PIN  33              // AI-Thinker red LED, on when LOW
@@ -57,6 +63,9 @@ static uint32_t heard = 0, sent = 0, txFail = 0, lost = 0, badUsb = 0, holds = 0
 static esp_err_t lastErr = ESP_OK;                 // radio self-recovery (radioWatch), shown in the info line
 static uint32_t refusedRun = 0, lastAcceptMs = 0, reinits = 0, lastReinitMs = 0;
 static uint8_t channel = 1;
+static uint8_t nowRate = 1;   // 12 Nov (Nischay): Long Range 500 kbps by default, like the modules                // ESP-NOW speed, see applyRate
+static uint8_t flashMode = 0;               // flash LED: 0 off, 1 on, 2 blink (see flashSet)
+static bool camOn = false;                 // the camera runs (default off: heat) - see camStart
 static Preferences prefs;                   // "r4master": ch = the channel the modules were last heard on
 static uint32_t ledOffAt = 0;
 static Known known[MAX_MODULES];
@@ -111,14 +120,26 @@ static uint8_t aliveCount() {
 }
 
 static void info() {
-  char s[300];
-  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 stop=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu cresent=%lu cdeliv=%lu cfail=%lu q2s=%lu air=%lu s2a=%lu lasterr=%d reinit=%lu",
+  char s[400];   // 12 Nov: + up (s) and heap for master.local
+  snprintf(s, sizeof s, "mac=%s ch=%u auto=1 courier=1 stop=1 modules=%u mhz=%u chipC=%.0f heard=%lu sent=%lu txfail=%lu lost=%lu badusb=%lu holds=%lu estops=%lu cresent=%lu cdeliv=%lu cfail=%lu q2s=%lu air=%lu s2a=%lu lasterr=%d reinit=%lu up=%lu heap=%u cam=%d lr=%u flash=%u",
            WiFi.macAddress().c_str(), channel, aliveCount(), (unsigned)getCpuFrequencyMhz(), temperatureRead(),
            (unsigned long)heard, (unsigned long)sent, (unsigned long)txFail, (unsigned long)lost, (unsigned long)badUsb,
-           (unsigned long)holds, (unsigned long)estops, (unsigned long)courier->resent, (unsigned long)courier->delivered, (unsigned long)courier->failed, (unsigned long)tQ2S, (unsigned long)tAirUs, (unsigned long)tS2A, (int)lastErr, (unsigned long)reinits);
+           (unsigned long)holds, (unsigned long)estops, (unsigned long)courier->resent, (unsigned long)courier->delivered, (unsigned long)courier->failed, (unsigned long)tQ2S, (unsigned long)tAirUs, (unsigned long)tS2A, (int)lastErr, (unsigned long)reinits, (unsigned long)(millis() / 1000), (unsigned)ESP.getFreeHeap(), (int)camOn, (unsigned)nowRate, (unsigned)flashMode);
   usbSend('I', (const uint8_t*)s, strlen(s));
 }
 
+// ESP-NOW speed (12 Nov 2026, Gemini's Long Range tip): 0 normal 1 Mbps, 1 LR 500 kbps, 2 LR 250 kbps. USB 'W' rate[1] sets it
+// live (not saved). The radio accepts all of them always (LR in the protocol list), so the modules can switch one by one.
+static void applyRate(const uint8_t* mac) {
+  esp_now_rate_config_t c = {};
+  c.phymode = nowRate ? WIFI_PHY_MODE_LR : WIFI_PHY_MODE_11B;
+  c.rate = nowRate == 2 ? WIFI_PHY_RATE_LORA_250K : nowRate == 1 ? WIFI_PHY_RATE_LORA_500K : WIFI_PHY_RATE_1M_L;
+  esp_now_set_peer_rate_config(mac, &c);
+}
+static void applyRateAll() {
+  esp_now_peer_info_t pi; bool first = true;
+  while (esp_now_fetch_peer(first, &pi) == ESP_OK) { first = false; applyRate(pi.peer_addr); }
+}
 static void addPeer(const uint8_t* mac) {
   if (esp_now_is_peer_exist(mac)) return;
   esp_now_peer_info_t peer = {};
@@ -127,6 +148,7 @@ static void addPeer(const uint8_t* mac) {
     esp_now_peer_info_t old; if (esp_now_fetch_peer(true, &old) == ESP_OK) esp_now_del_peer(old.peer_addr);
     esp_now_add_peer(&peer);
   }
+  applyRate(mac);
 }
 
 // 12 Nov 2026: the radio refused EVERY send for ~2 h ('sent' frozen at 4234, 'txfail' to 76 000) while it still heard every
@@ -208,6 +230,66 @@ static bool isMove(const uint8_t* frame, int len) {
 // USB reader: a small state machine so a cut or garbled frame only costs that frame.
 static uint8_t rx[5 + 6 + r4now::FRAME_MAX + 1];
 static int rxN = 0, rxWant = 0;
+// ── camera (12 Nov 2026, Nischay: "a small live camera window, on/off, default off - it must not stress the board") ──
+// Off: the camera chip is powered down (CAM_PWDN HIGH) and nothing runs. On: 320x240 JPEG, at most CAM_FPS pictures a
+// second, sent to the laptop in 1 KB pieces between the radio work (one piece per loop turn), so the modules' traffic
+// never waits behind a whole picture. GPIO0 is the camera clock while it is on: the button is not read then.
+#define CAM_FPS 8
+static camera_fb_t* camFb = nullptr;
+static uint32_t camSentAt = 0, camOff = 0, camFrames = 0;
+static uint8_t camId = 0;
+// ── flash LED (12 Nov 2026, Nischay: off / on / blink on master.local, default off) ── PWM on LEDC channel 4 (timer 2): the
+// camera keeps channel 0 / timer 0. It is a very bright, hot LED: off when the laptop program goes away, like the camera.
+static uint8_t flashBright = 30;
+static bool flashPwm = false, flashLit = false;
+static uint32_t flashFlipAt = 0;
+static void flashWrite(bool lit) {
+  if (!flashPwm) { flashPwm = ledcAttachChannel(FLASH_PIN, 5000, 8, 4); }
+  flashLit = lit;
+  if (flashPwm) ledcWrite(FLASH_PIN, lit ? (uint32_t)flashBright * 255 / 100 : 0); else digitalWrite(FLASH_PIN, lit ? HIGH : LOW);
+}
+static void flashSet(uint8_t mode, uint8_t bright) {
+  flashMode = mode > 2 ? 0 : mode; flashBright = bright > 100 ? 100 : bright;
+  flashWrite(flashMode != 0); flashFlipAt = millis();
+}
+static void flashTick() {
+  if (flashMode != 2 || millis() - flashFlipAt < 500) return;
+  flashFlipAt = millis(); flashWrite(!flashLit);
+}
+static void camStop() {
+  if (camFb) { esp_camera_fb_return(camFb); camFb = nullptr; }
+  if (camOn) esp_camera_deinit();
+  camOn = false;
+  pinMode(CAM_PWDN_PIN, OUTPUT); digitalWrite(CAM_PWDN_PIN, HIGH);
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+}
+static void camStart() {
+  if (camOn) return;
+  camera_config_t c = {};
+  c.pin_pwdn = CAM_PWDN_PIN; c.pin_reset = -1; c.pin_xclk = 0; c.pin_sccb_sda = 26; c.pin_sccb_scl = 27;
+  c.pin_d7 = 35; c.pin_d6 = 34; c.pin_d5 = 39; c.pin_d4 = 36; c.pin_d3 = 21; c.pin_d2 = 19; c.pin_d1 = 18; c.pin_d0 = 5;
+  c.pin_vsync = 25; c.pin_href = 23; c.pin_pclk = 22;
+  c.xclk_freq_hz = 10000000; c.ledc_timer = LEDC_TIMER_0; c.ledc_channel = LEDC_CHANNEL_0;
+  c.pixel_format = PIXFORMAT_JPEG; c.frame_size = FRAMESIZE_QVGA; c.jpeg_quality = 14; c.fb_count = 1;
+  c.fb_location = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM; c.grab_mode = CAMERA_GRAB_LATEST;
+  esp_err_t e = esp_camera_init(&c);
+  if (e != ESP_OK) { say("camera did not start (error 0x%x)", (unsigned)e); camStop(); return; }
+  camOn = true; camFrames = 0; say("camera ON");
+}
+static void camTick() {
+  if (!camOn || !laptopHere) return;
+  if (!camFb) {
+    if (millis() - camSentAt < 1000 / CAM_FPS) return;
+    camFb = esp_camera_fb_get(); if (!camFb) return;
+    camSentAt = millis(); camOff = 0; camId++;
+  }
+  const uint32_t n = camFb->len - camOff < 1024 ? camFb->len - camOff : 1024;
+  const uint8_t head[3] = {camId, (uint8_t)(camOff / 1024), (uint8_t)(camOff + n >= camFb->len)};
+  usbSend('J', head, 3, camFb->buf + camOff, n);
+  camOff += n;
+  if (camOff >= camFb->len) { esp_camera_fb_return(camFb); camFb = nullptr; camFrames++; }
+}
+
 static void usbPoll() {
   // Read what has arrived in one go: Serial.read() one byte at a time cost ~50 us each at 80 MHz, so a 3.2 KB firmware
   // piece took 184 ms to come in (measured 7 Nov, the laptop sent it in 38 ms) and updates crawled at ~7 KB/s.
@@ -235,6 +317,9 @@ static void usbPoll() {
     if (type == 'Q' && n > 6 && p[6 + 6] == 0) tQfirst = millis();             // fragment 0 of a request
     if (type == 'Q' && n > 6) { if (isMove(p + 6, n - 6)) laptopMoveMs = millis(); courier->request(p, p + 6, n - 6, millis()); }
     else if (type == 'P') { /* presence only */ }
+    else if (type == 'W' && n >= 1) { nowRate = p[0] > 2 ? 2 : p[0]; applyRateAll(); say("radio speed: %s", nowRate == 2 ? "Long Range 250 kbps" : nowRate == 1 ? "Long Range 500 kbps" : "normal 1 Mbps"); }
+    else if (type == 'X' && n >= 2) { flashSet(p[0], p[1]); say("flash %s (%u %%)", flashMode == 2 ? "BLINK" : flashMode ? "ON" : "OFF", flashBright); }
+    else if (type == 'V' && n >= 1) { if (p[0]) camStart(); else if (camOn) { camStop(); say("camera OFF"); } }
     else if (type == 'S' && n > 6) { if (isMove(p + 6, n - 6)) laptopMoveMs = millis(); airSend(p, p + 6, n - 6); }
     else if (type == 'C' && n == 1) { setChannel(p[0]); searchStepMs = millis(); info(); }
     else if (type == 'I') info();
@@ -245,9 +330,12 @@ static void usbPoll() {
   }
 }
 
+static void camStop();
 static void laptopWatch() {
   if (!laptopHere || millis() - lastUsbMs < LAPTOP_GONE_MS) return;
   laptopHere = false;                                    // its heartbeat alone comes every 100 ms
+  if (camOn) { camStop(); say("camera OFF (laptop program gone)"); }   // nobody watching: never left running
+  if (flashMode) { flashSet(0, flashBright); say("flash OFF (laptop program gone)"); }
   if (laptopMoveMs && millis() - laptopMoveMs < DRIVE_MS + LAPTOP_GONE_MS && !heldForLaptop) {
     heldForLaptop = true; holds++;
     toAll(r4now::HOLD);                                  // faster than each module's own 0.8 s wait
@@ -300,7 +388,7 @@ static void radioWatch() {
   esp_now_register_send_cb(onSent);
   const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   esp_now_peer_info_t peer = {}; memcpy(peer.peer_addr, all, 6); peer.ifidx = WIFI_IF_STA;
-  esp_now_add_peer(&peer);                                   // module peers come back by themselves (addPeer on each send)
+  esp_now_add_peer(&peer); applyRate(all);                                   // module peers come back by themselves (addPeer on each send)
   setChannel(channel);
 }
 
@@ -325,6 +413,8 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();                       // never joins a network: free to sit on the modules' channel
   esp_wifi_set_ps(WIFI_PS_NONE);           // always listening
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);   // hear LR too
+  WiFi.setTxPower(WIFI_POWER_15dBm);       // 12 Nov (Nischay): 15 dBm on the master and every module
   esp_now_init();
   esp_now_register_recv_cb(onRecv);
   esp_now_register_send_cb(onSent);
@@ -333,7 +423,7 @@ void setup() {
   setChannel(channel);
   const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
   esp_now_peer_info_t peer = {}; memcpy(peer.peer_addr, all, 6); peer.ifidx = WIFI_IF_STA;
-  esp_now_add_peer(&peer);
+  esp_now_add_peer(&peer); applyRate(all);
   info();
 }
 
@@ -348,7 +438,10 @@ void loop() {
       // A module's group STOP (groupsync.h GroupMsg: kind at byte 4, GK_STOP = 3) is a broadcast: never acked, said 3
       // times, so a weak link can lose all three. The master heard it: hand a copy to every other module it knows,
       // straight to each (acked and retried by the radio). Repeats are harmless: a stopped module ignores STOP.
-      else if (h.type == r4now::GRP && n >= 5 && p[4] == 3) {
+      // 12 Nov (Nischay): module<->module is too weak (-91..-94 dBm, mod2 missed all 13 GO repeats) while both hear the
+      // master (~-80): the master now passes on EVERY group message - GO (1), PLACE (2) and STOP (3) - the same way.
+      // A repeat is harmless: GO only refines the start instant, PLACE is the latest place, STOP stops once.
+      else if (h.type == r4now::GRP && n >= 5 && p[4] >= 1 && p[4] <= 3) {
         for (uint8_t i = 0; i < nKnown; i++)
           if (memcmp(known[i].mac, a.mac, 6) && millis() - known[i].seen < 10000) airSend(known[i].mac, a.data, a.len);
       }
@@ -367,7 +460,9 @@ void loop() {
   courier->tick(millis());
   heartbeat();
   laptopWatch();
-  buttonWatch();
+  if (!camOn) buttonWatch();                 // GPIO0 is the camera clock while the camera is on
+  camTick();
+  flashTick();
   searchWatch();
   radioWatch();
   if (ledOffAt && (int32_t)(millis() - ledOffAt) > 0) { digitalWrite(LED_PIN, HIGH); ledOffAt = 0; }

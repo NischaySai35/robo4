@@ -313,6 +313,10 @@ class PhysWorld:
         # grows with the robot (7 Nov: 3 modules curling into Two heads made ~900 contacts and overflowed 64 MB - a crash, not a result)
         spec.memory = int(float(os.environ.get('ARENA_MB', max(64, 48 * len(module_ids)))) * 2 ** 20)
         self.engine = world_engine(spec); self.m, self.d = self.engine.model, self.engine.data; m = self.m
+        # 12 Nov (cobra): on a NaN MuJoCo silently RESET the world to its start pose and the run went on as if nothing happened.
+        # Auto-reset off: a blow-up stays a blow-up, run() stops loudly (self.blew_up = the time) and the jobs report it.
+        if os.environ.get('AUTORESET', '0') != '1': m.opt.disableflags |= int(mujoco.mjtDisableBit.mjDSBL_AUTORESET)
+        self.blew_up = None
         for g in [g for g in range(m.ngeom) if m.geom(g).name.endswith('_coarse') and any(k_ in m.geom(g).name for k_ in COARSE_ADD)]:
             # the part's PHYSICS shapes only (9 Nov: with VISUAL_MESH=1 the picture meshes, group 2, were measured too - the boxes changed
             # size and the 'pictures only' switch changed DIK's path: ideal 45 deg ended 54 mm off instead of 1 mm)
@@ -615,7 +619,13 @@ class PhysWorld:
         if self.disturb is not None: e = np.where(np.abs(e) < DIST.DEADBAND, 0.0, e)     # servo deadband
         if glide and getattr(self, 'exact', False):
             # ideal + gliding command: the joint follows the moving command exactly, at most at its top speed
-            step = np.clip(e, -w0 * dt, w0 * dt); self.sp += step; self.spv = step / dt
+            # 12 Nov (cobra flung 1.2 m up, then NaN): the speed jumped 0 -> 4.3 rad/s in ONE step on a joint the solver sees as a
+            # 100 kg.m2 rotor (ideal armature) - a hammer blow that threw the chain. The speed now changes at most by the servo's
+            # acceleration (amax) per step; it still lands exactly on the command (never past it)
+            vdes = np.clip(e / dt, -w0, w0)
+            v_ = self.spv + np.clip(vdes - self.spv, -self.amax * dt, self.amax * dt)
+            step = v_ * dt; step = np.where(np.abs(step) > np.abs(e), e, step)
+            self.sp += step; self.spv = step / dt
         else:
             st3215_slew(self.sp, self.spv, e, w0, self.amax, dt, self.tgt_rate if glide else None)   # + a gliding command's own speed
             if getattr(self, 'exact', False):                                          # ideal: the last step lands EXACTLY on the command
@@ -704,12 +714,14 @@ class PhysWorld:
     def restore(self, s):
         mujoco.mj_setState(self.m, self.d, s['eng'], mujoco.mjtState.mjSTATE_INTEGRATION); mujoco.mj_forward(self.m, self.d); self.sp[:] = s['sp']; self.spv[:] = s['spv']; self.tgt[:] = s['tgt']
         self.engaged = set(s['engaged']); self.lock_t0 = dict(s['lock_t0']); self.tau_f = np.copy(s['tau_f']); self.tgt_eff = None
+        self.blew_up = None                                              # back to a valid moment (an imagined move may have blown up)
         if self.rec and s['rec'] is not None: del self.rec['frames'][s['rec']:]
         self._refresh_rx()
 
     def run(self, seconds, extra=None):
         """advance with gravity, contacts, magnets and servos; extra = (body, force3) applied meanwhile"""
         m, d = self.m, self.d
+        if getattr(self, 'blew_up', None) is not None: return 0.0, False     # never step a broken world (restore() a snapshot first)
         n = max(1, int(round(seconds / m.opt.timestep)))
         peak = 0.0
         # glide (Nischay 2 Nov: 'stepwise, I want it smooth like a robot arm'): a new command is not jumped to and stopped at - it
@@ -731,7 +743,13 @@ class PhysWorld:
                 self.rec['last'] = d.time; fr_ = {'t': round(float(d.time), 3), 'p': self.body_poses()}
                 if getattr(self, 'rec_extra', None): fr_['x'] = self.rec_extra()                  # e.g. the connector dots of THIS moment (manual.py)
                 self.rec['frames'].append(fr_)
-            if not np.isfinite(d.qpos).all(): self.tgt_eff = None; return peak, False
+            if not (np.isfinite(d.qpos).all() and np.isfinite(d.qvel).all()):
+                self.tgt_eff = None
+                if self.blew_up is None:
+                    self.blew_up = float(d.time); import sys as _s
+                    print(f'!!! PHYSICS BLEW UP at t {d.time:.3f} s (NaN){" while imagining" if getattr(self, "imagining", False) else ""}: '
+                          f'this world is no longer valid', file=_s.stderr, flush=True)
+                return peak, False
             if k % 100 == 0:
                 for lk_ in [x for x, t in self.lock_t0.items() if d.time - t >= 0.3]: self._store_lock_pose(lk_); del self.lock_t0[lk_]   # settled in its slack
             # (12 Nov: never while IMAGINING - the sender sent every imagined twist/roll to the Isaac robot, which did them all for real)

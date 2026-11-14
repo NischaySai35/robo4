@@ -21,7 +21,7 @@ param(
   [string]  $Fqbn    = 'esp32:esp32:esp32c3:PartitionScheme=min_spiffs,CDCOnBoot=cdc',
   [string]  $Bin     = '',
   [switch]  $NoBuild,
-  [int]     $TimeoutSec = 120
+  [int]     $TimeoutSec = 300
 )
 
 $ErrorActionPreference = 'Stop'
@@ -46,6 +46,8 @@ $kb = [int]((Get-Item $Bin).Length / 1KB)
 Write-Host "firmware: $Bin ($kb kB)" -ForegroundColor Cyan
 
 $ok = @(); $bad = @()
+# 12 Nov: the radio runs Long Range (slow) by default - flash at the normal speed, then back (master.local, live, not saved)
+try { Invoke-RestMethod -Method Post -Uri 'http://127.0.5.1/api/radio/lr?rate=0' -TimeoutSec 3 | Out-Null } catch { }
 foreach ($h in $Hosts) {
   $url = "http://$h.local/api/ota"
   Write-Host "`n--> $h" -ForegroundColor Yellow
@@ -71,6 +73,7 @@ foreach ($h in $Hosts) {
   }
 }
 
+try { Invoke-RestMethod -Method Post -Uri 'http://127.0.5.1/api/radio/lr?rate=1' -TimeoutSec 3 | Out-Null } catch { }
 Write-Host "`n=== flashed: $($ok -join ', ') ===" -ForegroundColor Green
 if ($bad.Count) { Write-Host "=== failed/skipped: $($bad -join ', ') ===" -ForegroundColor Red }
 

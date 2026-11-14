@@ -6,6 +6,7 @@
  *   Build   set up a robot by hand: modules, locks, joint angles, and the static Check
  *   Goal    one flow of steps: 1 say it (words -> tags, LLM) · 2 pick a shape (library) · 3 plan to it · 4 dry run
  */
+import PhysicsSetup from './PhysicsSetup';
 import { NativeSelect, Input } from '@/components/ui/input';
 import { TabBar } from '@/components/ui/tab-bar';
 import { Button } from '@/components/ui/button';
@@ -48,6 +49,7 @@ export default function V2Panel() {
   return (
     <>
       <TabBar size="sm" value={tab} onChange={setTab} tabs={TABS.map((t) => ({ id: t.id, label: t.label }))} />
+      <PhysicsSetup />
       <GravityBar />
       <div className="msrr-body">
         {tab === 'live' && <ManualTab />}

@@ -226,7 +226,7 @@ def twohead(B, log=print):
 #   wave +  T2 0   : +236 mm along it (robot with errors +193)     wave -  T2 0  : -225 mm
 #   wave +  T2 +20 : +944 mm sideways (errors +1218)               wave -  T2 +20: -1284 mm sideways (errors -895)
 #   (T2 -20 turned it, but -59 deg in one robot and +42 in another: not used; a 1 s wave hops 20 cm up and drifts)
-WAVE_AMP_DEG, WAVE_PERIOD_S, WAVE_SIDE_DEG = 25.0, 4.0, 20.0   # 12 Nov: 4 s (was 2) - on the exact shapes (Isaac) 36-38 mm/wave vs 12
+WAVE_AMP_DEG, WAVE_PERIOD_S, WAVE_SIDE_DEG = float(os.environ.get("WAVE_AMP_DEFAULT", "25")), 4.0, 20.0   # 12 Nov eve: 25 (WAVE_AMP_DEFAULT=35 tried: a straight crawl test went 2.5-3x further, but sl_S1B then slid instead of rolling and failed; a wave's effect depends on how the module lies). 12 Nov: 4 s (was 2) - on the exact shapes (Isaac) 36-38 mm/wave vs 12
 WAVE_BENDS = (1, 2, 4, 5)                                            # B1 B2 B3 B4
 
 
@@ -234,6 +234,15 @@ def _floor_axes(w, mid):
     """the module's long axis on the floor (End A -> End B) and its left (90 deg turned), both unit, horizontal"""
     a = w.d.xpos[w.m.body(f'{mid}_EndA_LockModule').id]; b = w.d.xpos[w.m.body(f'{mid}_EndB_LockModule').id]
     ax = (b - a)[:2] / max(np.linalg.norm((b - a)[:2]), 1e-9); return ax, np.array([-ax[1], ax[0]])
+
+
+CRAWL_KEEP_M = float(os.environ.get('CRAWL_KEEP_MM', '10')) / 1000     # a wave that closed more than this is repeated
+CRAWL_FORGET_DEG = float(os.environ.get('CRAWL_FORGET_DEG', '30'))      # a wave that rolled the module more than this: forget the rest
+
+
+def _side_axis(w, mid):
+    """the module's side axis (Spine1's y: the side receivers' axis), world unit - how it lies (rolled or not)"""
+    return w.d.xmat[w.m.body(f'{mid}_Spine1_B1B2').id].reshape(3, 3)[:, 1].copy()
 
 
 WAVE_ROLL_PERIOD_S = float(os.environ.get('WAVE_ROLL_PERIOD', '2.0'))   # 12 Nov: sideways waves ROLL the module - at 4 s they no longer did
@@ -255,7 +264,7 @@ def crawl_learn(B, mid, here, goal, log=print, near=0.10, max_s=300.0, stall_wav
     moves like a snake - the old rules (keep the bends lifting, re-align T2) fought that. Physics decides instead: each wave type
     (along / sideways x +-) is tried, what it REALLY moved (in the module's own frame: along its axis, to its left) is remembered,
     and the next wave is the one whose last measured move best closes the gap. Untried types first. Returns the distance left (m)."""
-    w = B.w; t0 = float(w.d.time); base = B.cmd[mid].copy(); n = 0; best, stall = 1e9, 0; eff = {}
+    w = B.w; t0 = float(w.d.time); base = B.cmd[mid].copy(); n = 0; best, stall = 1e9, 0; eff = {}; last, gain = None, 0.0
     acts = [(False, 1), (False, -1), (True, 1), (True, -1)]
     while True:
         e = (goal() - here())[:2]; dist = float(np.linalg.norm(e))
@@ -263,13 +272,20 @@ def crawl_learn(B, mid, here, goal, log=print, near=0.10, max_s=300.0, stall_wav
         else: stall += 1
         if dist < near or stall >= stall_waves or float(w.d.time) - t0 > max_s: break
         ax, left = _floor_axes(w, mid); el = np.array([e @ ax, e @ left]) / max(dist, 1e-9)
+        # 12 Nov (sl_S2A: 'along' closed 131 mm, then trying the 3 others rolled it 108 mm back and it gave up): KEEP what works -
+        # the last wave closed > KEEP_MM -> the same again; only a stall makes it try (or pick) another
         untried = [a for a in acts if a not in eff]
-        act = untried[0] if untried else max(acts, key=lambda a: float(eff[a] @ el))
-        if not untried and float(eff[act] @ el) <= 0.002: break                       # nothing moves it toward the goal any more
-        amp = WAVE_AMP_DEG * min(1.0, max(0.4, dist / 0.15)); p0 = here()[:2].copy()
+        if last is not None and gain > CRAWL_KEEP_M: act = last
+        else:
+            act = untried[0] if untried else max(acts, key=lambda a: float(eff[a] @ el))
+            if not untried and float(eff[act] @ el) <= 0.002: break                   # nothing moves it toward the goal any more
+        amp = WAVE_AMP_DEG * min(1.0, max(0.4, dist / 0.15)); p0 = here()[:2].copy(); y0 = _side_axis(w, mid)
         wave(B, mid, act[1], act[0], base, amp=amp); n += 1
-        ax2, left2 = _floor_axes(w, mid); dv = here()[:2] - p0; eff[act] = np.array([dv @ (ax + ax2) / 2, dv @ (left + left2) / 2]) / (amp / WAVE_AMP_DEG)
-        if os.environ.get('CRAWL_DEBUG'): log(f'    wave {n}: {"side" if act[0] else "along"} {act[1]:+d} moved {np.linalg.norm(dv) * 1000:.0f} mm -> {float(np.linalg.norm((goal() - here())[:2])) * 1000:.0f} mm left')
+        ax2, left2 = _floor_axes(w, mid); dv = here()[:2] - p0; meas = np.array([dv @ (ax + ax2) / 2, dv @ (left + left2) / 2]) / (amp / WAVE_AMP_DEG)
+        # a wave that ROLLED the module makes every other remembered move out of date (they were felt lying another way)
+        if math.degrees(math.acos(float(np.clip(y0 @ _side_axis(w, mid), -1, 1)))) > CRAWL_FORGET_DEG: eff.clear()
+        eff[act] = meas; last = act; gain = dist - float(np.linalg.norm((goal() - here())[:2]))
+        if os.environ.get('CRAWL_DEBUG'): log(f'    wave {n}: {"side" if act[0] else "along"} {act[1]:+d} moved {np.linalg.norm(dv) * 1000:.0f} mm, gap {dist * 1000:.0f} -> {float(np.linalg.norm((goal() - here())[:2])) * 1000:.0f} mm left')
     B.move(mid, {JN[j]: base[j] for j in range(7)}, 1.0)
     log(f'  crawled {mid} (learned waves): {n} waves, {float(w.d.time) - t0:.0f} s, {dist * 1000:.0f} mm left')
     return dist

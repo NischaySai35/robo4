@@ -24,7 +24,9 @@ JN = ['T1', 'B1', 'B2', 'T2', 'B3', 'B4', 'T3']
 SERVO_ID = {'L1': 1, 'T1': 2, 'B1': 3, 'B2': 4, 'T2': 5, 'B3': 6, 'B4': 7, 'T3': 8, 'L2': 9}   # physical order on every module
 PARTS = ('Spine1_B1B2', 'T2_Ring_B3Fork', 'Spine2_B3B4', 'EndB_LockModule', 'EndA_LockModule')   # the links whose pose is matched
 SEND_DT = 0.05                 # s: one step to the board this often (12 Nov: no longer waits for a status read each step)
-POLL_S = 0.25                  # s: the board's status (angles, load) is read this often while sending; every step when not sending
+POLL_S = 0.25                  # s: the board's status (angles, load) is read this often while sending
+POLL_IDLE_S = 1.0              # s: ... and this often while Sync is off (12 Nov: every 50 ms heated the module to 73 C; 1 s < OFFLINE_AFTER_S)
+FULL_IDLE_S = 10.0             # s: Sync off, the full status (~4.6 KB: battery, current, temperature for the top bar) this often; ESP-TTL page: POLL_IDLE_S
 ENC_HOLD = 0.3                 # deg: encoder changes smaller than this are flicker (ST3215 reads in 0.09 deg steps), the picture holds
 LAG = float(os.environ.get('SYNC_LAG', '0.12'))   # s: command delay (60-180 ms in the servo model): moving joints are led by this
 FOLLOW_RATE, CATCH_RATE = 120.0, 15.0   # deg/s: following the sim / closing a big gap after Sync
@@ -86,6 +88,34 @@ def mpu_reading(R):
     return (np.eye(3) + K) @ R
 
 
+FOLLOW_VMAX = 200.0            # deg/s: top joint speed while following the sim (12 Nov: smooth + live, Nischay)
+FOLLOW_AMAX = 900.0            # deg/s^2: how fast a joint may speed up / slow down - the part that stops the jerks
+
+
+def step_smooth(sent, read, want, dt, vel, catching):
+    """smooth live follow (12 Nov 2026, Nischay: 'fully in sync with my drag, but no jerks'): per joint a velocity that speeds up
+    at most FOLLOW_AMAX, never over FOLLOW_VMAX, and brakes early enough to stop ON the target (no overshoot):
+    v_wanted = min(vmax, sqrt(2 a |error|)) toward the target. A slow drag gives a slow joint, a sudden new angle gives a smooth
+    ramp, not a jump. Joints in `catching` (just after Sync went on) crawl at CATCH_RATE from where the robot really is, until
+    within CATCH_GAP - only then; a fast drag no longer drops a joint into the slow catch-up (it made Sync lag).
+    sent / vel / catching are updated IN PLACE. Returns the fastest joint speed (deg/s)."""
+    fastest = 0.0
+    for j, target in want.items():
+        cur = sent.get(j, read.get(j, target)); e = target - cur
+        if j in catching and abs(e) < CATCH_GAP: catching.discard(j)
+        vmax = CATCH_RATE if j in catching else FOLLOW_VMAX
+        v = vel.get(j, 0.0)
+        # braking distance counted from where this step ENDS (discrete steps), and never more than the gap in one step
+        room = max(0.0, abs(e) - 0.5 * abs(v) * dt)
+        v_goal = math.copysign(min(vmax, math.sqrt(2 * FOLLOW_AMAX * room), abs(e) / dt), e) if abs(e) > 0.02 else 0.0
+        v += float(np.clip(v_goal - v, -FOLLOW_AMAX * dt, FOLLOW_AMAX * dt))
+        step = v * dt
+        if abs(e) <= 0.05 and abs(v) <= FOLLOW_AMAX * dt: step, v = e, 0.0   # settled: land exactly
+        elif abs(step) > abs(e): step = e                                        # never past the target
+        sent[j] = cur + step; vel[j] = v; fastest = max(fastest, abs(v))
+    return fastest
+
+
 def step_sent(sent, read, want, dt):
     """what a board is told next (board degrees, updated IN PLACE): each servo follows the wanted angle at FOLLOW_RATE, or closes a gap
     over CATCH_GAP at CATCH_RATE (starting from where it reads). Returns the fastest move (deg/s) for the board's speed setting.
@@ -98,13 +128,21 @@ def step_sent(sent, read, want, dt):
     return fastest
 
 
-def boards_now():
-    """every board the service talks to: its latest telemetry, untouched, and how old it is. The Studio's top bar reads this
-    instead of asking the board itself (5 Nov: two askers overloaded the ESP and each saw it drop at different moments)"""
+def boards_now(hosts=None, fast=()):
+    """every board: its latest telemetry, untouched, and how old it is. The Studio's top bar and ESP-TTL page read ONLY this
+    (12 Nov, Nischay: "only 1 code to communicate"): hosts = the Studio's board list, each gets its link here if it has none
+    (Sync uses the same one); fast = boards whose full status is wanted every POLL_IDLE_S (the ESP-TTL page's live tables).
+    age_s = since the board last answered anything; tel_age_s = since the last full status."""
+    now = time.time()
+    for h in hosts or ():
+        L = get_link(h, h, lambda _m: {}, None)
+        L.full_every = POLL_IDLE_S if h in fast else FULL_IDLE_S
     out = {}
     for host, L in list(LINKS.items()):
-        if not L.alive or getattr(L, 'tel_raw', None) is None: continue
-        out[host] = dict(online=L.online, age_s=round(time.time() - L.tel_at, 2), ms=L.tel_ms, ip=getattr(L, 'good_ip', None), tel=L.tel_raw)
+        if not L.alive: continue
+        tel = getattr(L, 'tel_raw', None)
+        out[host] = dict(online=L.online, age_s=round(now - L.heard, 2) if L.heard else None, tel_age_s=round(now - L.tel_at, 2) if tel is not None else None,
+                         ms=getattr(L, 'tel_ms', None), ip=getattr(L, 'good_ip', None), error=L.error, tel=tel)
     return out
 
 
@@ -348,11 +386,11 @@ class ModuleLink:
     def _guard(self, want):
         """overloaded, or stuck far behind: stop pushing"""
         over = [j for j, v in self.load.items() if v > LOAD_STOP]
-        behind = [j for j in want if j in self.read and j in self.sent and abs(self.read[j] - self.sent[j]) > BEHIND_DEG]
-        if not over and not behind: self.far_t = None; return ''
+        # 12 Nov (Nischay): the "servo stuck behind" hold is gone - it stopped Sync during normal fast drags. Overload still holds.
+        if not over: self.far_t = None; return ''
         self.far_t = self.far_t or time.time()
         if time.time() - self.far_t < HOLD_S: return ''
-        return f"servo overloaded: {', '.join(over)}" if over else f"servo stuck behind: {', '.join(behind)}"
+        return f"servo overloaded: {', '.join(over)}"
 
     def _run(self):
         last = time.time()
@@ -361,15 +399,26 @@ class ModuleLink:
             try:
                 # 12 Nov (Nischay: Sync 'laggy, moves like frames'): the full status read (9 servos, 60-200 ms) ran before EVERY
                 # step, so steps left ~5/s. Now a read only every POLL_S while sending; the step itself counts as contact.
-                if not (self.sending and not self.held and self.read and t0 - getattr(self, 'poll_at', 0.0) < POLL_S):
-                    self._poll(); self.poll_at = t0
+                # 12 Nov (heat): Sync OFF it still read the full status (~4.6 KB, ~20 radio packets) every 50 ms - mod1 at 73 C and a
+                # crowded radio. Idle: one read every POLL_IDLE_S (enough for the online/offline box); sending: every POLL_S.
+                live = self.sending and not self.held
+                due = POLL_S if live else POLL_IDLE_S
+                if not self.read or t0 - getattr(self, 'poll_at', 0.0) >= due:
+                    if live or not self.read or t0 - getattr(self, 'tel_at', 0.0) >= getattr(self, 'full_every', FULL_IDLE_S): self._poll()   # angles / load: while Sync drives it, else every full_every (top bar)
+                    else:                                         # Sync off: only "is it there?" - the ~200 B health, not ~4.6 KB
+                        self.board._get('/api/health'); self.heard = time.time(); self.error = ''
+                    self.poll_at = t0
+                    if live and not getattr(self, 'was_live', False): self._poll()   # Sync just went on: start from a FRESH pose
+                self.was_live = live
                 want = self.want(self.mid)
                 if self.sending and not self.held:
                     self.held = self._guard(want)
                     if self.held: self.board.stop()
                 if self.sending and not self.held and want:
                     dt = min(t0 - last, 0.3); before = dict(self.sent)
-                    fastest = step_sent(self.sent, self.read, want, dt)
+                    if not self.sent:                                 # Sync just (re)started: every joint creeps in from the real pose
+                        self.vel, self.catching = {}, set(want)
+                    fastest = step_smooth(self.sent, self.read, want, dt, self.__dict__.setdefault('vel', {}), self.__dict__.setdefault('catching', set()))
                     # 5 Nov: the same angles again every 60 ms only kept the small board busy (its replies grew past the timeout and
                     # the Sync box said offline while the top bar said online): resend only what changed, or every RESEND_S
                     same = before.keys() == self.sent.keys() and all(abs(self.sent[j] - before[j]) < 0.05 for j in before)
@@ -396,7 +445,7 @@ class RealSync:
     def __init__(self, w):
         self.w = w; self.cor = Correction(w); self.fbk = Feedback(w, self.cor); self.cfg = config(); self.links = {}; self.on = False; self.want_deg = {}
         self.rows = {}; self.prev = {}; self.prev_t = None; self.lock = threading.Lock(); self.stamp = -1.0
-        for i, mid in enumerate(w.ids): self.cfg['hosts'].setdefault(mid, f'mod{i + 1}.local')
+        for i, mid in enumerate(w.ids): self.cfg['hosts'].setdefault(mid, f'127.0.4.{i + 1}')   # 12 Nov: the Studio's name for the same board (espNowUrl): one link, not two
         self.limits = {mid: [tuple(math.degrees(v) for v in w.m.jnt_range[w.m.actuator_trnid[a, 0]]) for a in w.mod[mid]['act']] for mid in w.ids}
 
     def tick(self):

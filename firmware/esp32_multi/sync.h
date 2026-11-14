@@ -31,7 +31,7 @@
 struct SyncCfg {
   float    lagOk;        // progress (0..1): the slowest may lag this much and the clock still runs at full speed
   float    lagMax;       // at this lag the clock runs at minRate
-  float    minRate;      // the slowest the clock ever runs (share of full speed). Never 0: nothing waits forever
+  float    minRate;      // the slowest the clock ever runs (share of full speed). 0 = waits; stallS ends a wait that never moves
   float    leadS;        // the goal is this far ahead along the path (seconds at the path's speed)
   float    accRaw;       // the servo's acceleration (steps/s^2) for the braking distance; the firmware sends it too
   float    catchGain;    // extra speed per step a joint is behind where it belongs (1/s)
@@ -83,7 +83,10 @@ struct SyncMove {
   // One step: pos = every joint's fresh reading (raw, < 0 = no reading this time), dt in seconds.
   // Fills out[] for every joint; returns the state.
   SyncState step(const SyncCfg& c, float dt, const int* pos, SyncOut* out) {
-    if (state != SY_RUN) { for (uint8_t i = 0; i < n; i++) { out[i].goal = to[i]; out[i].speed = (uint16_t)c.vMinRaw; } return state; }
+    if (state != SY_RUN) {                      // finished / stopped: a stalled pose holds where it is, never runs on
+      for (uint8_t i = 0; i < n; i++) { out[i].goal = (state == SY_STALLED && pos[i] >= 0) ? (int16_t)pos[i] : to[i]; out[i].speed = (uint16_t)c.vMinRaw; }
+      return state;
+    }
     elapsed += dt;
     // where is everyone, as progress on the shared clock
     float slow = 2; int8_t who = -1; bool allThere = true;
@@ -110,7 +113,14 @@ struct SyncMove {
 
     // stalled: the module waits on a joint that gains nothing
     if (slow > best + c.stallStep) { best = slow; stallT = 0; }
-    else if (laggard >= 0) { stallT += dt; if (stallT >= c.stallS) { state = SY_STALLED; return state; } }
+    else if (laggard >= 0) {
+      stallT += dt;
+      if (stallT >= c.stallS) {                 // every joint holds where it IS (13 Nov 2026: out[] was left unfilled here
+        state = SY_STALLED;                     // and the firmware sent leftover memory to every joint - the "weird crash")
+        for (uint8_t i = 0; i < n; i++) { out[i].goal = pos[i] >= 0 ? (int16_t)pos[i] : from[i]; out[i].speed = (uint16_t)c.vMinRaw; }
+        return state;
+      }
+    }
     else stallT = 0;
 
     if (s >= 1) {
@@ -137,6 +147,12 @@ struct SyncMove {
       float ahead = vPath * c.leadS; if (ahead < 1.5f * brake) ahead = 1.5f * brake; if (ahead < 2) ahead = 2;
       float g = place + dir * ahead;
       if ((g - to[i]) * dir > 0 || s >= 1) g = to[i];          // never past the target
+      // never far ahead of where the joint REALLY is (13 Nov 2026: B1 stuck under load, its goal ran 80 deg ahead; when
+      // the load let go it sprinted there and crashed). Enough lead to brake from its speed, no more.
+      if (pos[i] >= 0) {
+        float maxLead = 1.5f * brake + 24; if (maxLead < 60) maxLead = 60;
+        if ((g - pos[i]) * dir > maxLead) g = pos[i] + dir * maxLead;
+      }
       out[i].goal = (int16_t)lroundf(g); out[i].speed = (uint16_t)lroundf(v);
     }
     return state;

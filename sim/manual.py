@@ -429,6 +429,16 @@ class Manual:
         self.log(f'state restored (t {w.d.time:.1f} s, locks {[lock_key(L) for L in self.cur]})')
 
     def skill(self, name):
+        """a skill; a physics blow-up during it is reported, never a result (12 Nov: MuJoCo silently reset the cobra's world)"""
+        r = self._skill(name)
+        return r if self._blown(f'skill {name}') is None else False
+
+    def _blown(self, what):
+        t = getattr(self.w, 'blew_up', None)
+        if t is not None: self.log(f'PHYSICS BLEW UP at t {t:.2f} s during {what}: NOT a result (the world is invalid)')
+        return t
+
+    def _skill(self, name):
         """become a shape with the robot's OWN skills, live in real physics (floor_skills.py: the blind brain - encoders + IMU)"""
         import floor_skills as FS
         w = self.w; n = len(w.ids)
@@ -1283,7 +1293,9 @@ class Manual:
         self._belief_n = 0
         try:
             while True:
-                try: return (os.environ.get('RETWIST', '0') == '1' and self._retwist_retry(a, b, first=True)) or self._connect(a, b)
+                try:
+                    r = (os.environ.get('RETWIST', '0') == '1' and self._retwist_retry(a, b, first=True)) or self._connect(a, b)
+                    return r if self._blown(f'connect {a} {b}') is None else False
                 except Manual.Replan: continue                              # the camera moved a free module's copy (_cam_belief)
         finally:
             self.w.comfort = comfort; self.w.cs = None                     # the smooth path starts again from where the servos are

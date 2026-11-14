@@ -1,0 +1,287 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ROBO4 Master</title>
+<!-- master.local: served by the bridge (gos/python/gos/master_site.py). Plain HTML + JS, no build step, works offline. -->
+<style>
+:root {
+  --bg: #101317; --card: #171b21; --line: #262c35; --text: #e6e9ee; --dim: #8b95a3; --accent: #5aa2ff;
+  --ok: #3ecf7a; --warn: #f0b13a; --bad: #ff5c5c; --off: #4a525e; --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); background: #0d1014; position: sticky; top: 0; z-index: 5; }
+h1 { font-size: 15px; letter-spacing: 2px; margin: 0 8px 0 0; font-weight: 800; }
+h1 b { color: var(--accent); }
+h2 { font-size: 11px; letter-spacing: 1.5px; color: var(--dim); margin: 0 0 10px; font-weight: 700; text-transform: uppercase; }
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border: 1px solid var(--line); border-radius: 99px; font-family: var(--mono); font-size: 12px; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--off); display: inline-block; }
+.dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.grow { flex: 1; }
+button { background: #222831; color: var(--text); border: 1px solid #364050; border-radius: 6px; padding: 5px 11px; cursor: pointer; font: inherit; }
+button:hover { border-color: var(--accent); } button.red { background: #b4232c; border-color: #d33; font-weight: 700; }
+button.on { border-color: var(--accent); color: var(--accent); }
+main { padding: 14px 16px 40px; display: grid; gap: 14px; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+.full { grid-column: 1 / -1; }
+#map { width: 100%; height: auto; display: block; }
+#tip { position: fixed; pointer-events: none; background: #0b0e12ee; border: 1px solid #39424f; border-radius: 8px; padding: 8px 10px; font-family: var(--mono); font-size: 12px; display: none; z-index: 10; white-space: pre; }
+.card.col { display: flex; flex-direction: column; }
+.events { flex: 1 1 0; min-height: 200px; overflow: auto; font-family: var(--mono); font-size: 12px; }   /* fills its card, as tall as the map */
+.ev { padding: 3px 0; border-bottom: 1px dashed #222832; display: grid; grid-template-columns: 64px 56px 1fr; gap: 6px; }
+.lvl-error { color: var(--bad); } .lvl-warn { color: var(--warn); } .lvl-info { color: var(--dim); }
+.mods { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(290px, 1fr)); }
+.mod { border: 1px solid var(--line); border-radius: 10px; padding: 12px; background: #13171c; }
+.mod.off { opacity: .55; }
+.mod h3 { margin: 0 0 8px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-family: var(--mono); font-size: 12px; }
+.kv span:nth-child(odd) { color: var(--dim); }
+.bars { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; vertical-align: -1px; }
+.bars i { width: 3px; background: #39414c; border-radius: 1px; } .bars i.on { background: currentColor; }
+.logbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+select, input[type=search] { background: #0e1115; color: var(--text); border: 1px solid #364050; border-radius: 6px; padding: 5px 8px; font: inherit; }
+pre#log { margin: 0; background: #0b0e12; border: 1px solid var(--line); border-radius: 8px; padding: 10px; height: 420px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; word-break: break-word; }
+.muted { color: var(--dim); }
+.camrow { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.camwin { position: relative; width: 320px; max-width: 100%; aspect-ratio: 4 / 3; background: #000; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.camwin img { width: 100%; height: 100%; object-fit: cover; }
+.camwin .fps { position: absolute; top: 6px; right: 6px; background: #000a; color: var(--ok); font: 600 11px var(--mono); padding: 1px 6px; border-radius: 4px; }
+.camctl { display: flex; flex-direction: column; gap: 12px; min-width: 220px; }
+.camctl input[type=range] { width: 180px; vertical-align: middle; }
+@media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>ROBO4 <b>MASTER</b></h1>
+  <span class="chip" id="mPlug"><span class="dot"></span>master</span>
+  <span class="chip" id="mCh">ch -</span>
+  <span class="chip" id="mUp">up -</span>
+  <span class="chip" id="mTemp">chip - °C</span>
+  <span class="chip" id="mTx">sent - / failed -</span>
+  <span class="chip" id="mHeard">heard -</span>
+  <span class="chip" id="mFix">radio restarts -</span>
+  <span class="chip" id="lap">laptop bridge -</span>
+  <span class="grow"></span>
+  <button onclick="stopAll(false)" title="every module stops where it is and holds">STOP all</button>
+  <button class="red" onclick="stopAll(true)" title="every module goes limp at once">E-STOP all</button>
+</header>
+<main>
+  <section class="card">
+    <h2>Connection map · laptop · master · modules · router (mesh) — hover for values</h2>
+    <svg id="map" viewBox="0 0 760 420" role="img" aria-label="connection map"></svg>
+    <div class="muted" style="display:flex;gap:16px;flex-wrap:wrap;font-size:12px;margin-top:6px">
+      <span><b style="color:var(--ok)">━━</b> strong (−65 dBm or better)</span><span><b style="color:var(--warn)">━━</b> fair (−65…−80)</span>
+      <span><b style="color:var(--bad)">──</b> weak (below −80: drops likely)</span><span>thicker = stronger · dashed = backup path / not heard now</span>
+      <span>solid = master radio (ESP-NOW, main path) · dashed to router = Wi-Fi backup</span></div>
+  </section>
+  <section class="card col">
+    <h2>Warnings &amp; events <span class="muted" id="evCount"></span></h2>
+    <div class="events" id="events"></div>
+  </section>
+  <section class="card full">
+    <h2>Master camera &amp; flash · default off (heat) · turns itself off when nobody watches for 15 s</h2>
+    <div class="camrow">
+      <div class="camwin" id="camWin"><span class="muted" id="camMsg">camera off</span><img id="camImg" alt="master camera, live" hidden><span class="fps" id="camFps" hidden></span></div>
+      <div class="camctl">
+        <div><b>Camera</b><br><button id="camBtn" onclick="camToggle()">Camera OFF - turn on</button></div>
+        <div><b>Flash light</b><br>
+          <button id="fl0" onclick="flash(0)">Off</button> <button id="fl1" onclick="flash(1)">On</button> <button id="fl2" onclick="flash(2)">Blink</button></div>
+        <label class="muted">Brightness <b id="flBv">30</b> % <input id="flB" type="range" min="5" max="100" value="30" oninput="$('flBv').textContent=this.value" onchange="flashMode && flash(flashMode)"></label>
+        <div class="muted" style="font-size:12px">The flash is very bright and gets hot: keep it low and short.</div>
+      </div>
+    </div>
+  </section>
+  <section class="card full">
+    <h2>Modules</h2>
+    <div class="mods" id="mods"></div>
+  </section>
+  <section class="card full">
+    <h2>Logs · kept on this laptop, rotating files (bulk-safe) <span class="muted" id="logDir"></span></h2>
+    <div class="logbar">
+      <select id="lsrc"><option value="all">all sources</option></select>
+      <select id="llvl"><option value="">all levels</option><option value="error">errors</option><option value="warn">warnings</option><option value="info">info</option></select>
+      <input type="search" id="lq" placeholder="search…">
+      <button id="lauto" class="on" onclick="toggleAuto()">auto ✓</button>
+      <button onclick="page(1)">◀ older</button><button onclick="page(-1)">newer ▶</button><button onclick="page(0)">newest</button>
+      <span class="muted" id="linfo"></span>
+      <span class="grow"></span>
+      <button onclick="download()">download</button>
+      <button onclick="clearLogs()">clear</button>
+    </div>
+    <pre id="log">—</pre>
+  </section>
+</main>
+<div id="tip"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+const fmtUp = (ms) => { if (ms == null) return '-'; let s = Math.floor(ms / 1000); const d = Math.floor(s / 86400); s %= 86400; const h = Math.floor(s / 3600); s %= 3600; const m = Math.floor(s / 60); return (d ? d + 'd ' : '') + (h ? h + 'h ' : '') + m + 'm ' + (s % 60) + 's'; };
+// signal: -45 strong .. -95 none
+const q = (rssi) => rssi == null ? 0 : rssi >= -60 ? 4 : rssi >= -70 ? 3 : rssi >= -80 ? 2 : rssi >= -88 ? 1 : 0;
+const col = (rssi) => rssi == null ? 'var(--off)' : rssi >= -65 ? 'var(--ok)' : rssi >= -80 ? 'var(--warn)' : 'var(--bad)';
+const bars = (rssi) => `<span class="bars" style="color:${col(rssi)}">${[3, 6, 9, 12].map((h, i) => `<i class="${i < q(rssi) ? 'on' : ''}" style="height:${h}px"></i>`).join('')}</span>`;
+const tempCol = (c) => c == null ? '' : c >= 70 ? 'color:var(--bad)' : c >= 62 ? 'color:var(--warn)' : '';
+let S = null;
+
+async function load() {
+  try { S = await (await fetch('/api/status', { cache: 'no-store' })).json(); } catch { $('mPlug').innerHTML = '<span class="dot bad"></span>bridge not answering'; return; }
+  const m = S.master, i = m.info || {};
+  $('mPlug').innerHTML = `<span class="dot ${m.plugged ? 'ok' : 'bad'}"></span>master ${m.plugged ? 'plugged in' : 'NOT plugged in'}${i.mac ? ' · ' + i.mac : ''}`;
+  $('mCh').textContent = 'ch ' + (m.channel ?? i.ch ?? '-');
+  $('mUp').textContent = 'up ' + (i.up ? fmtUp(+i.up * 1000) : '-');
+  $('mTemp').innerHTML = `<span style="${tempCol(+i.chipC)}">chip ${i.chipC ?? '-'} °C</span>`;
+  $('mTx').innerHTML = `sent ${i.sent ?? '-'} / <span style="${+i.txfail > 0 ? 'color:var(--warn)' : ''}">failed ${i.txfail ?? '-'}</span>`;
+  $('mHeard').textContent = `heard ${i.heard ?? '-'}${i.heap ? ' · heap ' + Math.round(+i.heap / 1024) + 'k' : ''}`;
+  $('mFix').innerHTML = `<span style="${+i.reinit > 0 ? 'color:var(--warn)' : ''}">radio restarts ${i.reinit ?? '-'}${i.lasterr && i.lasterr !== '0' ? ' · last err ' + i.lasterr : ''}</span>`;
+  $('lap').textContent = `laptop bridge up ${fmtUp(S.laptop.bridgeUpS * 1000)}`;
+  $('logDir').textContent = '· ' + S.laptop.logDir;
+  const sel = $('lsrc'), have = new Set([...sel.options].map((o) => o.value));
+  for (const s of S.laptop.logSources) if (!have.has(s)) sel.add(new Option(s, s));
+  drawEvents(); drawMods(); drawMap();
+}
+
+function drawEvents() {
+  const ev = [...S.events].reverse();
+  $('evCount').textContent = `(${ev.filter((e) => e.level !== 'info').length} warnings/errors in the last ${ev.length})`;
+  const impE = (t) => /connected|disconnected|online|offline|linked|lost|not heard|heard over esp-now|answers again|restarted|red light|e-stop|failed|no answer by radio|answers by radio|switched off|stopped talking/i.test(t);
+  $('events').innerHTML = ev.map((e) => `<div class="ev lvl-${e.level}"${impE(e.text) ? ' style="font-weight:700"' : ''}><span>${new Date(e.t * 1000).toLocaleTimeString()}</span><span>${esc(e.source)}</span><span>${esc(e.text)}</span></div>`).join('') || '<span class="muted">nothing yet</span>';
+}
+
+function drawMods() {
+  $('mods').innerHTML = S.modules.map((d) => {
+    const st = d.online ? (d.radioDown ? 'warn' : 'ok') : 'bad';
+    return `<div class="mod ${d.online ? '' : 'off'}">
+      <h3><span class="dot ${st}"></span>${esc(d.name)} <span class="muted" style="font-size:12px">${d.online ? (d.radioDown ? 'online · radio weak (Wi-Fi covering)' : 'online') : 'offline'}${d.via ? ' · last answer via ' + d.via : ''}</span></h3>
+      <div class="kv">
+        <span>radio (master)</span><span>${bars(d.radioRssi)} ${d.radioRssi ?? '-'} dBm · ${d.radioFailed}/${d.radioReq} lost${d.radioMs != null ? ' · ' + d.radioMs + ' ms' : ''}</span>
+        <span>Wi-Fi</span><span>${bars(d.wifiRssi)} ${d.wifiRssi ?? '-'} dBm ${d.wifiSsid ? '· ' + esc(d.wifiSsid) : ''} ${d.ip ? '· ' + esc(d.ip) : ''}</span>
+        <span>battery</span><span>${d.volts != null ? (+d.volts).toFixed(1) + ' V' : '-'} · ${d.mA != null ? d.mA + ' mA' : '- mA'}</span>
+        <span>temperatures</span><span><span style="${tempCol(d.chipC)}">chip ${d.chipC ?? '-'} °C</span> · servos max ${d.servoTempMax ?? '-'} °C</span>
+        <span>servos</span><span>${d.servosOn}/${d.servos} answering${d.held ? ' · HOLD' : ''}${d.playing ? ' · playing' : ''}</span>
+        <span>connects / drops</span><span>${d.connects} / <span style="${d.drops ? 'color:var(--warn)' : ''}">${d.drops}</span> · restarts ${d.restarts} · radio errors ${d.radioErrors}</span>
+        <span>last change</span><span class="muted">${d.lastAt ? new Date(d.lastAt * 1000).toLocaleTimeString() + ' · ' : ''}${esc(d.last || '-')}</span>
+        <span>firmware</span><span>${esc(d.fw ?? '-')} · heap ${d.heap ? Math.round(d.heap / 1024) + 'k' : '-'} · up ${fmtUp(d.upMs)}</span>
+        <span>last reset</span><span class="muted">${esc(d.resetWhy ?? '-')}</span>
+        <span>hears modules</span><span>${d.peers.length ? d.peers.map((p) => `${esc(p.name)} ${bars(p.rssi)} ${p.rssi}`).join(' · ') : '<span class="muted">none yet</span>'}</span>
+      </div></div>`;
+  }).join('') || '<span class="muted">no module known yet</span>';
+}
+
+function drawMap() {
+  const W = 760, H = 420, svg = $('map');
+  const L = { x: 60, y: H / 2 }, M = { x: 170, y: H / 2 }, R = { x: W - 60, y: H / 2 };
+  const mods = S.modules, n = mods.length;
+  // distance = signal: stronger = shorter line, on BOTH lines (master radio and router Wi-Fi). Each module sits where a circle
+  // round the master (its radio value) meets a circle round the router (its Wi-Fi value); modules alternate above / below.
+  const dist = (rssi) => 120 + Math.min(1, Math.max(0, (-(rssi ?? -95) - 45) / 50)) * 300;
+  const pos = {};
+  const anyWifiPos = mods.some((d) => d.wifiOn && d.wifiRssi != null);
+  mods.forEach((d, k) => {
+    const rM = d.online && d.radioRssi != null ? dist(d.radioRssi) : 420;
+    if (anyWifiPos && d.wifiOn && d.wifiRssi != null) {
+      const rR = dist(d.wifiRssi), dx = R.x - M.x, dy = R.y - M.y, D = Math.hypot(dx, dy);
+      let a = (rM * rM - rR * rR + D * D) / (2 * D);                 // along M->R
+      let h2 = rM * rM - a * a;
+      if (h2 < 0) { a = D * rM / (rM + rR); h2 = 0; }               // circles miss: split the M-R line by the two distances
+      const h = Math.sqrt(h2) * (k % 2 ? 1 : -1);                    // alternate sides so modules don't overlap
+      const px = M.x + a * dx / D - h * dy / D, py = M.y + a * dy / D + h * dx / D;
+      pos[d.name] = { x: Math.max(60, Math.min(W - 60, px)), y: Math.max(36, Math.min(H - 66, py)) };
+    } else {
+      const ang = (n === 1 ? 0 : -60 + 120 * k / (n - 1)) * Math.PI / 180;
+      pos[d.name] = { x: Math.max(60, Math.min(W - 60, M.x + rM * Math.cos(ang))), y: Math.max(36, Math.min(H - 66, M.y + rM * Math.sin(ang))) };
+    }
+  });
+  const line = (a, b, rssi, dash, tip, label) => `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${col(rssi)}" stroke-width="${1 + q(rssi) * 1.3}" ${dash ? 'stroke-dasharray="6 5"' : ''} stroke-linecap="round" data-tip="${esc(tip)}"/>` +
+    `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="transparent" stroke-width="14" data-tip="${esc(tip)}"/>` +
+    (label ? `<g data-tip="${esc(tip)}"><rect x="${(a.x + b.x) / 2 - 34}" y="${(a.y + b.y) / 2 - 10}" width="68" height="18" rx="9" fill="#0d1014" stroke="${col(rssi)}"/>` +
+             `<text x="${(a.x + b.x) / 2}" y="${(a.y + b.y) / 2 + 3}" text-anchor="middle" fill="${col(rssi)}" font-size="11" font-weight="700">${esc(label)}</text></g>` : '');
+  const node = (p, label, sub, color, icon, tip) => `<g data-tip="${esc(tip)}"><circle cx="${p.x}" cy="${p.y}" r="22" fill="#1b2027" stroke="${color}" stroke-width="2"/>
+    <text x="${p.x}" y="${p.y + 5}" text-anchor="middle" font-size="15">${icon}</text>
+    <text x="${p.x}" y="${p.y + 38}" text-anchor="middle" fill="#e6e9ee" font-size="12" font-weight="700">${esc(label)}</text>
+    <text x="${p.x}" y="${p.y + 52}" text-anchor="middle" fill="#8b95a3" font-size="11">${esc(sub)}</text></g>`;
+  let g = '';
+  const anyWifi = mods.some((d) => d.wifiOn);
+  g += line(L, M, S.master.plugged ? -40 : null, !S.master.plugged, `laptop ⇄ master: USB ${S.master.plugged ? 'connected' : 'NOT connected'}${S.master.usbErrors ? '\nUSB errors ' + S.master.usbErrors : ''}`);
+  for (const d of mods) {
+    const p = pos[d.name];
+    g += line(M, p, d.online ? d.radioRssi : null, !d.heard, `master ⇄ ${d.name} (radio)\nsignal ${d.radioRssi ?? '-'} dBm\nlost ${d.radioFailed} of ${d.radioReq}${d.radioMs != null ? '\nlast reply ' + d.radioMs + ' ms' : ''}${d.radioDown ? '\nradio weak now: Wi-Fi covering' : ''}`, d.radioRssi != null ? `radio ${d.radioRssi}` : 'radio -');
+    if (d.wifiOn) g += line(p, R, d.wifiRssi, true, `${d.name} ⇄ router (Wi-Fi, backup)\nsignal ${d.wifiRssi ?? '-'} dBm\n${d.wifiSsid || ''}`, d.wifiRssi != null ? `wifi ${d.wifiRssi}` : '');
+  }
+  const seen = new Set();
+  for (const d of mods) for (const pr of d.peers || []) {
+    const k = [d.name, pr.name].sort().join('|'); if (seen.has(k) || !pos[pr.name]) continue; seen.add(k);
+    const back = (mods.find((x) => x.name === pr.name)?.peers || []).find((x) => x.name === d.name);
+    g += line(pos[d.name], pos[pr.name], pr.rssi, false, `${d.name} ⇄ ${pr.name} (module to module)\n${d.name} hears ${pr.name}: ${pr.rssi} dBm${back ? '\n' + pr.name + ' hears ' + d.name + ': ' + back.rssi + ' dBm' : ''}`, `mesh ${pr.rssi}`);
+  }
+  g += node(L, 'laptop', 'bridge', 'var(--accent)', '💻', `laptop\nbridge up ${fmtUp(S.laptop.bridgeUpS * 1000)}`);
+  const i = S.master.info || {};
+  g += node(M, 'master', `ch ${S.master.channel ?? i.ch ?? '-'}`, S.master.plugged ? 'var(--ok)' : 'var(--bad)', '📡', `master (ESP-NOW dongle)\n${S.master.raw || 'not plugged in'}`.replace(/ (?=\w+=)/g, '\n'));
+  if (anyWifi) g += node(R, 'router', 'Wi-Fi backup', '#6f7a88', '🛜', 'home router (backup path only)');
+  for (const d of mods) {
+    const p = pos[d.name];
+    g += node(p, d.name, d.online ? `${d.volts != null ? (+d.volts).toFixed(1) + ' V · ' : ''}${d.chipC ?? '-'} °C` : 'offline', d.online ? (d.radioDown ? 'var(--warn)' : 'var(--ok)') : 'var(--off)', '🤖',
+      `${d.name} — ${d.online ? 'online' : 'offline'}\nradio ${d.radioRssi ?? '-'} dBm · Wi-Fi ${d.wifiRssi ?? '-'} dBm\nbattery ${d.volts ?? '-'} V · ${d.mA ?? '-'} mA\nchip ${d.chipC ?? '-'} °C · servos max ${d.servoTempMax ?? '-'} °C\nconnects ${d.connects} · drops ${d.drops} · restarts ${d.restarts}`);
+  }
+  svg.innerHTML = g;
+}
+
+// hover values
+document.addEventListener('mousemove', (e) => {
+  const t = e.target.closest && e.target.closest('[data-tip]'), tip = $('tip');
+  if (!t) { tip.style.display = 'none'; return; }
+  tip.textContent = t.getAttribute('data-tip'); tip.style.display = 'block';
+  tip.style.left = Math.min(innerWidth - tip.offsetWidth - 10, e.clientX + 14) + 'px'; tip.style.top = (e.clientY + 14) + 'px';
+});
+
+// logs (server keeps them in rotating files; the page only ever holds one page of lines)
+let skip = 0, auto = true; const PAGE = 400;
+async function loadLogs() {
+  const p = new URLSearchParams({ src: $('lsrc').value, level: $('llvl').value, q: $('lq').value, limit: PAGE, skip });
+  try {
+    const r = await (await fetch('/api/logs?' + p, { cache: 'no-store' })).json(), el = $('log'), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+    const imp = (t) => /connected|disconnected|online|offline|linked|lost|not heard|heard over esp-now|answers again|restarted|red light|e-stop|failed|no answer by radio|answers by radio|switched off|stopped talking/i.test(t);
+    el.innerHTML = r.lines.map((l) => `<span class="lvl-${l.level}"${imp(l.text) ? ' style="font-weight:700"' : ''}>${esc(l.t.slice(11))}  ${esc(l.src.padEnd(7))} ${esc(l.text)}</span>`).join('\n') || '<span class="muted">no lines</span>';
+    $('linfo').textContent = `${r.total} lines match · showing ${Math.max(0, r.total - skip - r.lines.length) + 1}–${r.total - skip}`;
+    if (skip === 0 && atEnd) el.scrollTop = el.scrollHeight;
+  } catch { $('linfo').textContent = 'logs not answering'; }
+}
+function page(d) { skip = d === 0 ? 0 : Math.max(0, skip + d * PAGE); if (d) { auto = false; $('lauto').classList.remove('on'); $('lauto').textContent = 'auto'; } loadLogs(); }
+function toggleAuto() { auto = !auto; $('lauto').classList.toggle('on', auto); $('lauto').textContent = auto ? 'auto ✓' : 'auto'; if (auto) { skip = 0; loadLogs(); } }
+function download() { location.href = '/api/logs/download?src=' + encodeURIComponent($('lsrc').value); }
+async function clearLogs() { const s = $('lsrc').value; if (!confirm(`Delete the kept logs of ${s === 'all' ? 'EVERY source' : s}?`)) return; await fetch('/api/logs/clear?src=' + encodeURIComponent(s), { method: 'POST' }); skip = 0; loadLogs(); }
+async function stopAll(limp) { if (limp && !confirm('E-STOP: every module goes limp at once. Sure?')) return; const r = await (await fetch('/api/stop?limp=' + (limp ? 1 : 0), { method: 'POST' })).json(); alert((limp ? 'E-STOP' : 'STOP') + ' sent via ' + r.via + ': ' + (r.modules || []).join(', ') + (r.failed?.length ? '\nfailed: ' + r.failed.join('; ') : '')); }
+['lsrc', 'llvl'].forEach((id) => $(id).addEventListener('change', () => { skip = 0; loadLogs(); }));
+$('lq').addEventListener('input', () => { skip = 0; clearTimeout(window._lq); window._lq = setTimeout(loadLogs, 300); });
+
+load(); loadLogs();
+let camOn = false, flashMode = 0, camTimer = 0;
+function camShow() {
+  $('camBtn').textContent = camOn ? 'Camera ON - turn off' : 'Camera OFF - turn on'; $('camBtn').className = camOn ? 'on' : '';
+  $('camImg').hidden = !camOn; $('camFps').hidden = !camOn; $('camMsg').hidden = camOn;
+  for (const m of [0, 1, 2]) $('fl' + m).className = flashMode === m ? 'on' : '';
+}
+async function camToggle() {
+  const want = !camOn, r = await (await fetch('/api/cam?on=' + (want ? 1 : 0), { method: 'POST' })).json().catch(() => ({}));
+  if (!r.ok) { $('camMsg').textContent = 'camera: ' + (r.error || 'no answer'); return; }
+  camOn = want; if (camOn) $('camImg').src = '/api/cam/stream?n=' + Date.now(); else { $('camImg').removeAttribute('src'); $('camMsg').textContent = 'camera off'; }
+  clearInterval(camTimer); if (camOn) camTimer = setInterval(camPoll, 500); camShow();
+}
+async function camPoll() {
+  const s = await (await fetch('/api/cam/status', { cache: 'no-store' })).json().catch(() => null); if (!s) return;
+  $('camFps').textContent = (s.fps || 0).toFixed(1) + ' fps';
+  if (camOn && !s.on && s.ageS > 4) { camOn = false; clearInterval(camTimer); $('camImg').removeAttribute('src'); $('camMsg').textContent = 'camera went off'; camShow(); }
+}
+async function flash(m) {
+  const r = await (await fetch(`/api/flash?mode=${m}&bright=${$('flB').value}`, { method: 'POST' })).json().catch(() => ({}));
+  if (r.ok) { flashMode = r.mode; camShow(); }
+}
+window.addEventListener('pagehide', () => { if (camOn) navigator.sendBeacon('/api/cam?on=0'); if (flashMode) navigator.sendBeacon('/api/flash?mode=0'); });
+fetch('/api/cam/status').then((r) => r.json()).then((s) => { flashMode = s.flash?.mode || 0; if (s.flash) { $('flB').value = s.flash.bright; $('flBv').textContent = s.flash.bright; } camShow(); }).catch(() => camShow());
+setInterval(load, 2000);
+setInterval(() => { if (auto) loadLogs(); }, 3000);
+</script>
+</body>
+</html>

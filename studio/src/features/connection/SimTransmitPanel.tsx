@@ -19,7 +19,7 @@ import { usePageStore } from '@/state/pageStore';
 import { useV2Store } from '@/state/msrrV2Store';
 import { hardwareBridge } from '@/features/hardware/HardwareBridge';
 import { usePoseSync, poseCmd } from './poseSync';
-import { hostLabel } from './syncAssign';
+import { hostLabel, setBoardAddress } from './syncAssign';
 
 const INTERVAL_MS = 50;
 
@@ -135,8 +135,17 @@ export default function SimTransmitPanel() {
             <div key={mid} style={{ display: 'flex', alignItems: 'center', gap: 6 }} data-testid={`sync-status-${mid}`}>
               <span className={`stp-dot ${m.online && !m.held ? 'stp-dot-ok' : 'stp-dot-off'}`} />
               <span style={{ minWidth: 26, whiteSpace: 'nowrap', fontWeight: 700 }}>{isMsrr ? mid : hostLabel(mid)}</span>
-              <Input size="xs" className="tw:flex-1 tw:min-w-0" defaultValue={m.host} readOnly={!isMsrr} aria-label={`${mid} address`}
-                onBlur={(e) => { if (e.target.value !== m.host) cmd('hosts', { hosts: { [mid]: e.target.value } }); }} />
+              {/* editable on every page (12 Nov: read-only outside MSRR, Nischay could not type): Enter or leaving the box applies it.
+                  MSRR: the session's board address; other pages: the address of the module board Sync drives (the module list). */}
+              <Input size="xs" className="tw:flex-1 tw:min-w-0" key={m.host} defaultValue={m.host} aria-label={`${mid} address`}
+                title="type the board's address (e.g. 127.0.4.2 or mod2.local) and press Enter"
+                onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); if (e.key === 'Escape') { (e.target as HTMLInputElement).value = m.host; (e.target as HTMLInputElement).blur(); } }}
+                onBlur={(e) => {
+                  const v = e.target.value.trim().replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+                  if (!v || v === m.host) return;
+                  if (isMsrr) { cmd('hosts', { hosts: { [mid]: v } }); return; }
+                  setBoardAddress(m.host, v);
+                }} />
               <span style={{ color: m.held ? '#ef4444' : m.online ? '#22c55e' : '#f97316' }} title={m.error || undefined}>{m.held ? 'HOLD' : m.online ? 'online' : 'offline'}</span>
               {m.board && !m.signs_known && <span style={{ color: '#ef4444' }} title="this board's joint directions are not in data/real_robot.json yet: do the one-joint direction test">{m.board}: untested</span>}
             </div>

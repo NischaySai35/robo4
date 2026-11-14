@@ -36,7 +36,8 @@ import { type Cell, key, cellsOf, add } from '@/robotics/msrr/lattice';
 import { poseAt, cellPose, orientationAfter, IDENTITY_QUAT } from '@/robotics/msrr/executor';
 import { structureAfter } from '@/robotics/msrr/transform';
 import { buildGeometry, moduleGeometry, moduleBodies, tweenGeometry } from './moduleGeometry';
-import { moduleMeshGeometries, disposeModuleMeshes } from './moduleMeshes';
+import { moduleMeshParts, disposeModuleMeshes } from './moduleMeshes';
+import { PAINT, type Paint } from '@/viewport/renderers/modulePaint';
 import { manualToFitted } from '@/robotics/msrr/manualBuild';
 import { useV2Store, type ManualState } from '@/state/msrrV2Store';
 import { bridge } from '@/bridge/cameraBridge';
@@ -202,8 +203,8 @@ export default function MsrrCanvas() {
       // the real try8 parts, coloured like the Editor shows them
       pla: new THREE.MeshStandardMaterial({ color: 0xf1f1ee, roughness: 0.55, metalness: 0.05 }),
       spine: new THREE.MeshStandardMaterial({ color: 0x8a909c, roughness: 0.5, metalness: 0.25 }),
-      endA: new THREE.MeshStandardMaterial({ color: 0x1f3fbf, roughness: 0.5, metalness: 0.1 }),   // End A = dark blue (same as the sim pictures)
-      endB: new THREE.MeshStandardMaterial({ color: 0xff8c0d, roughness: 0.5, metalness: 0.1 }),   // End B = orange
+      // the ends + side receivers: the shared colours of every tab (viewport/renderers/modulePaint.ts)
+      paint: Object.fromEntries(Object.entries(PAINT).map(([k, c]) => [k, new THREE.MeshStandardMaterial({ color: c, roughness: 0.5, metalness: 0.1 })])) as Record<Paint, THREE.MeshStandardMaterial>,
       rod: new THREE.MeshStandardMaterial({ color: 0x9aa3b2, roughness: 0.5, metalness: 0.35 }),
       bigRod: new THREE.MeshStandardMaterial({ color: 0x7f8899, roughness: 0.45, metalness: 0.4 }),
       twist: new THREE.MeshStandardMaterial({ color: 0x3b82f6, roughness: 0.4, metalness: 0.3 }),
@@ -254,7 +255,7 @@ export default function MsrrCanvas() {
         disposeModuleMeshes();
         ground.geometry.dispose(); (ground.material as THREE.Material).dispose();
         for (const m of builtMats) m.dispose();
-        for (const m of Object.values(partMats)) m.dispose();
+        for (const m of Object.values(partMats)) (m instanceof THREE.Material ? [m] : Object.values(m)).forEach((x) => x.dispose());
         for (const m of Object.values(mats)) (m as any).dispose?.();
         unsubTheme(); sm.dispose();
       },
@@ -576,11 +577,10 @@ export default function MsrrCanvas() {
 
 /** which material a module part gets: the two OUTER end connectors in their own colours (the module is symmetric: which end is
  *  on the floor?), rotors in the module's colour. Shared by the ideal robot and the split view's real copy. */
-function partMat(st: any, body: { kind: string; name: string }, tint: THREE.Material): THREE.Material {
+function partMat(st: any, body: { kind: string; name: string }, tint: THREE.Material, paint: Paint | null = null): THREE.Material {
   return body.kind === 'rotor' ? tint
-    : body.name === 'EndA_LockModule' ? st.partMats.endA
-      : body.name === 'EndB_LockModule' ? st.partMats.endB
-        : body.kind === 'spine' ? st.partMats.spine : st.partMats.pla;
+    : paint ? st.partMats.paint[paint]                    // ends / side receivers: modulePaint, the same colours in every tab
+      : body.kind === 'spine' ? st.partMats.spine : st.partMats.pla;
 }
 
 /** Split on/off (SceneManager draws the scene twice) and the real copy's parts. True = something changed. */
@@ -600,14 +600,13 @@ function syncSplit(st: any): boolean {
   }
   if (!on || v2.view2.sig === st.realSig) return changed;
   st.realSig = v2.view2.sig;
-  const meshGeos = moduleMeshGeometries(); let n = 0;
+  const meshParts = moduleMeshParts(); let n = 0;
   v2.view2.modules.forEach((m, i) => {
     const tint = st.builtMats[i % st.builtMats.length];
-    for (const body of moduleBodies(m)) {
-      const geo = meshGeos.get(body.name); if (!geo) continue;
+    for (const body of moduleBodies(m)) for (const { geo, paint } of meshParts.get(body.name) ?? []) {
       if (n >= st.realPool.length) { const mm = new THREE.Mesh(geo); st.realGroup.add(mm); st.realPool.push(mm); }
       const mesh: THREE.Mesh = st.realPool[n++];
-      mesh.geometry = geo; mesh.material = partMat(st, body, tint); mesh.visible = true;
+      mesh.geometry = geo; mesh.material = partMat(st, body, tint, paint); mesh.visible = true;
       mesh.position.set(body.position[0], body.position[1], body.position[2]);
       mesh.quaternion.set(body.quaternion[0], body.quaternion[1], body.quaternion[2], body.quaternion[3]);
     }
@@ -843,7 +842,7 @@ function syncScene(st: any) {
       return mesh;
     };
 
-    const meshGeos = moduleMeshGeometries();
+    const meshParts = moduleMeshParts();
     parts.forEach((g, i) => {
       const highlight = g.moduleId === justMoved || g.moduleId === inFlight?.moduleId;
       const tint = st.builtMats[i % st.builtMats.length];
@@ -857,13 +856,12 @@ function syncScene(st: any) {
       if (g.moduleId !== inFlight?.moduleId) {
         for (const body of moduleBodies(shownModules[i])) {
           addCentre(body.position);
-          const geo = meshGeos.get(body.name);
-          if (!geo) continue;
-          const mat = highlight ? st.mats.moving : partMat(st, body, tint);
-          const mesh = nextMesh(geo, mat);
-          mesh.position.set(body.position[0], body.position[1], body.position[2]);
-          mesh.quaternion.set(body.quaternion[0], body.quaternion[1], body.quaternion[2], body.quaternion[3]);
-          mesh.scale.setScalar(1);
+          for (const { geo, paint } of meshParts.get(body.name) ?? []) {
+            const mesh = nextMesh(geo, highlight ? st.mats.moving : partMat(st, body, tint, paint));
+            mesh.position.set(body.position[0], body.position[1], body.position[2]);
+            mesh.quaternion.set(body.quaternion[0], body.quaternion[1], body.quaternion[2], body.quaternion[3]);
+            mesh.scale.setScalar(1);
+          }
         }
         // (no connector domes: Nischay 5 Nov 'remove all these hemispheres' - the plugs, drawn from the module document, show them)
         return;

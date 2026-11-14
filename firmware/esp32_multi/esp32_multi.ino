@@ -156,8 +156,10 @@ void cfgApplyLayout() {
   }
 }
 
+extern uint8_t speedCapPct;
 void cfgLoad() {
   prefs.begin("robo4", false);
+  speedCapPct = constrain((int)prefs.getUChar("spdCap", 30), 5, 100);
   size_t n = prefs.getBytesLength("cfg");
   if (n == sizeof(Cfg)) {
     prefs.getBytes("cfg", &cfg, sizeof(Cfg));
@@ -572,7 +574,23 @@ void updateMotionFlag(ServoState& sv) {
                                   : (millis() - sv.lastCommandMs < 2000);
 }
 
+// ── Speed cap (13 Nov 2026, Nischay: "no servo, whatever it is, may go above 30 % speed - default, I change it in the Studio's
+// ESP-TTL top line") ── EVERY position command of this board goes through posEx / syncPosEx below, so sliders, animations,
+// the laptop's Sync stream, home, locks and the guard's retreat are all capped. 100 % = 3400 steps/s (~300 deg/s). Speed 0
+// means "as fast as it can" to the servo, so 0 is capped too. Saved on the board (prefs "spdCap"); /api/speedcap?pct=.
+uint8_t speedCapPct = 30;
+void lockSettleCancel(int slot);
+static inline uint16_t capRaw() { return (uint16_t)max(60, 3400 * (int)speedCapPct / 100); }
+static inline uint16_t capSpd(uint16_t v) { const uint16_t c = capRaw(); return (v == 0 || v > c) ? c : v; }
+int posEx(uint8_t id, int pos, uint16_t spd, uint8_t acc) { return st.WritePosEx(id, (s16)pos, capSpd(spd), acc); }
+int syncPosEx(uint8_t* ids, uint8_t n, int16_t* pos, uint16_t* spd, uint8_t* acc) {
+  uint16_t c[MAX_SERVOS];
+  for (uint8_t i = 0; i < n && i < MAX_SERVOS; i++) c[i] = capSpd(spd[i]);
+  st.SyncWritePosEx(ids, n, pos, c, acc); return 1;
+}
+
 void cmdPos(ServoState& sv, float deg, int speedScale, uint8_t acc) {
+  lockSettleCancel(slotOf(sv.id));   // a new command for a lock replaces its overshoot-and-return
   lastMotionMs = millis();
   int slot = slotOf(sv.id); if (slot < 0) return;
   float lo, hi; limitsFor((uint8_t)slot, lo, hi);
@@ -586,7 +604,7 @@ void cmdPos(ServoState& sv, float deg, int speedScale, uint8_t acc) {
   sv.speedRaw   = speedScaleToRaw(sv.speedScale);
   sv.acc        = (uint8_t)constrain((int)acc, 1, 100);
   sv.lastCommandMs = millis();
-  st.WritePosEx(sv.id, sv.targetRaw, sv.speedRaw, sv.acc);
+  posEx(sv.id, sv.targetRaw, sv.speedRaw, sv.acc);
   delay(3);
 }
 /* Continuous-rotation (CW/CCW/wave) was removed: this module's joints are position-only, so
@@ -731,7 +749,7 @@ void torqueOnHold(ServoState& sv) {
     sv.rawPos     = pos;
     sv.targetRaw  = (uint16_t)pos;
     sv.targetDeg  = rawToNom(sv.id, (uint16_t)pos);
-    st.WritePosEx(sv.id, (int16_t)pos, speedScaleToRaw(10), POS_ACC_DEFAULT);
+    posEx(sv.id, (int16_t)pos, speedScaleToRaw(10), POS_ACC_DEFAULT);
     delay(3);
   }
   sv.mode = POS_MODE;
@@ -779,6 +797,13 @@ void seedTargetsFromHardware() {
 // cosine instead of leaving the servo's own profile to do it.
 AnimFrame anim[MAX_FRAMES];
 uint8_t   animCount   = 0;
+// TIMETABLE play (14 Nov 2026, Nischay: "send it the time frames, once both received them both start, no communication,
+// keeps running even when the laptop disconnects; behind or not, it must not stop"). The laptop sends every frame's time
+// (the longest any module needs, so all modules get the SAME table) with play?at=&times=. Then frame k starts at exactly
+// start + sum(time + pause) of the frames before it, whatever the joints did: no waiting, no "behind" stops, no radio.
+bool      animFixed = false;
+uint16_t  animFixMs[MAX_FRAMES];
+uint32_t  animFrameAt = 0;         // when the current frame started on the timetable
 bool      animSine    = true;
 bool      animLoop    = false;
 bool      animPlaying = false;
@@ -808,16 +833,21 @@ bool grpArmed() { return grp.on() && animCount && (int32_t)(grpArmedUntil - mill
 // E-STOP, HOLD, battery: this module ignores GO until the animation is uploaded again (Nischay 10 Nov: an E-STOPped
 // module must not start because another module of its group was played)
 void grpDisarm() { grpArmedUntil = 0; grpStartAt = 0; }
+uint8_t  animEnd = 0;              // how the last play ended: 0 still / not yet, 1 finished, 2 stopped (laptop reads it)
 uint32_t grpFaultUntil = 0;        // a group stop happened (partner missing / stopped): the red light blinks till then
 bool     grpDupSaid = false;       // "another module has my number" said once
 
 void grpSay(uint8_t kind);
 void groupHalt(const char* fmt, ...);
+uint8_t nowHold();
+extern bool syncActive;
 void animStop() {
   grpStartAt = 0;                                    // a countdown waiting to start is cancelled too
-  if (animPlaying) note("anim stopped at frame %u", animIdx + 1);
-  if (animPlaying && grp.on() && !grpQuiet) grpSay(GK_STOP);   // the others stop too
-  if (animPlaying) prefs.putUChar("animRun", 0);
+  if (animPlaying) note("anim stopped at frame %u - every joint holds where it is", animIdx + 1);
+  // 13 Nov 2026: after a stop the joints kept going to their last goals (a stuck joint's goal far ahead) and crashed.
+  // Now every joint freezes where it is (a joint the guard is handling keeps the guard's own target).
+  if (animPlaying) { BusLock L; syncActive = false; nowHold(); }
+  if (animPlaying) { prefs.putUChar("animRun", 0); animEnd = 2; }   // stopped (the laptop stops the others)
   animPlaying = false; animInterrupted = false;
   grp.stopPlay();
 }
@@ -855,7 +885,14 @@ constexpr uint32_t ANIM_ARRIVE_WAIT = 600;       // ms to wait past the plan bef
 // one shared progress clock each FAST_MS, so all joints start, move and finish together; the slowest (a loaded joint)
 // slows everyone down. Off = the one-goal-per-frame player below. Remembered across reboots (/api/anim/sync?on=1).
 //                            lagOk lagMax minRate leadS accRaw catchGain vMaxRaw vMinRaw stallS stallStep endWaitS tol minMove
-const SyncCfg SYNC_CFG = {0.02f, 0.08f, 0.15f, 0.20f, 5000.0f, 4.0f, 2048.0f, 40.0f, 1.5f, 0.004f, 0.8f, 12, 23};
+// 13 Nov 2026 (Nischay: "if a joint is just slower, let it take more time - do not stop"): minRate 0 = the clock WAITS
+// for a joint that is behind (the others hold at their place); stallS 6 s = stop only when it has not moved at all for 6 s.
+const SyncCfg SYNC_CFG = {0.02f, 0.08f, 0.0f, 0.20f, 5000.0f, 4.0f, 2048.0f, 40.0f, 6.0f, 0.004f, 0.8f, 12, 23};
+// The laptop pauses this module while ANOTHER module is behind (/api/anim/wait?on=1, re-sent every ~0.3 s; lapses by
+// itself after 1.5 s so a lost laptop never leaves it paused).
+uint32_t animWaitUntil = 0;
+bool animWaitHeld() { return animWaitUntil && (int32_t)(animWaitUntil - millis()) > 0; }
+SyncCfg syncCfgNow() { SyncCfg c = SYNC_CFG; if (c.vMaxRaw > capRaw()) c.vMaxRaw = capRaw(); return c; }   // + speed cap
 const uint8_t SYNC_ACC = 50;       // servo ACC units (100 steps/s^2): = SYNC_CFG.accRaw
 bool     animSync   = false;
 bool     syncActive = false;
@@ -863,7 +900,7 @@ SyncMove syncMv;
 int      syncSlot[MAX_SERVOS];
 uint32_t syncLastMs = 0;
 
-bool animSyncOn() { return animSync || grp.on(); }   // a group always plays with Sync motion (the shared clock)
+bool animSyncOn() { return !animFixed && (animSync || grp.on()); }   // timetable play: one command per frame, no shared clock   // a group always plays with Sync motion (the shared clock)
 
 uint32_t animPlanMs    = 0;        // planned duration of the current frame
 bool     animStretched = false;    // true when the limits made it longer than requested
@@ -873,7 +910,7 @@ uint32_t animArriveT   = 0;
 void animSendFrame(uint8_t idx) {
   const AnimFrame& f = anim[idx];
   const float rf   = animSine ? ANIM_RF_SINE : ANIM_RF_LINEAR;
-  const float vCap = max(1, (int)f.speed) / 10.0f * ANIM_VMAX;
+  const float vCap = min(max(1, (int)f.speed) / 10.0f * ANIM_VMAX, (float)capRaw());   // never above the speed cap
   const float aMax = vCap / ANIM_RAMP_S;
 
   int      slots[MAX_SERVOS];
@@ -906,6 +943,7 @@ void animSendFrame(uint8_t idx) {
   float Treq = f.timeMs / 1000.0f;                // 0 = auto
   float T = max(max(Treq, Tmin), 0.12f);
   animStretched = f.timeMs > 0 && Tmin > Treq + 0.02f;
+  if (animFixed) { T = max(animFixMs[idx] / 1000.0f, 0.12f); animStretched = false; }   // the timetable decides
   animPlanMs = (uint32_t)lroundf(T * 1000.0f);
 
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
@@ -932,13 +970,13 @@ void animSendFrame(uint8_t idx) {
   if (animSyncOn() && n > 0) {         // the guard task steers them from its next read (<= FAST_MS)
     int16_t from[MAX_SERVOS], to[MAX_SERVOS];
     for (uint8_t k = 0; k < n; k++) { syncSlot[k] = slots[k]; from[k] = (int16_t)curRaw[k]; to[k] = (int16_t)want[k]; }
-    syncMv.begin(SYNC_CFG, n, from, to, T, animSine);
+    syncMv.begin(syncCfgNow(), n, from, to, T, animSine);
     syncLastMs = millis(); syncActive = true;
     return;
   }
   syncActive = false;
-  if (n == 1)     { st.WritePosEx(ids[0], pos[0], spd[0], acc[0]); delay(2); }
-  else if (n > 1) { st.SyncWritePosEx(ids, n, pos, spd, acc);      delay(2); }
+  if (n == 1)     { posEx(ids[0], pos[0], spd[0], acc[0]); delay(2); }
+  else if (n > 1) { syncPosEx(ids, n, pos, spd, acc);      delay(2); }
 }
 
 // One Sync motion step, in the guard task right after it read every joint (bus held). A joint the guard is holding
@@ -952,15 +990,20 @@ void syncTick() {
   if (dt > 0.2f) dt = 0.2f;                       // a late pass must not make the clock jump
   int pos[SYNC_MAX]; SyncOut out[SYNC_MAX];
   for (uint8_t k = 0; k < syncMv.n; k++) pos[k] = servos[syncSlot[k]].rawPos;
-  syncMv.peerS = grp.on() ? grpPeerS : 2;        // ahead of the slowest other module: this clock runs slower
-  SyncState r = syncMv.step(SYNC_CFG, dt, pos, out);
+  syncMv.peerS = animWaitHeld() ? -1.0f : 2.0f;   // the laptop says another module is behind: this clock waits
+  SyncState r = syncMv.step(syncCfgNow(), dt, pos, out);
   uint8_t ids[MAX_SERVOS]; int16_t gp[MAX_SERVOS]; uint16_t spd[MAX_SERVOS]; uint8_t acc[MAX_SERVOS]; uint8_t m = 0;
   for (uint8_t k = 0; k < syncMv.n; k++) {
     if (guards[syncSlot[k]].state != G_OK) continue;
     ids[m] = servos[syncSlot[k]].id; gp[m] = out[k].goal; spd[m] = out[k].speed ? out[k].speed : 1; acc[m] = SYNC_ACC; m++;
   }
-  if (m == 1) st.WritePosEx(ids[0], gp[0], spd[0], acc[0]);
-  else if (m > 1) st.SyncWritePosEx(ids, m, gp, spd, acc);
+  if (m == 1) posEx(ids[0], gp[0], spd[0], acc[0]);
+  else if (m > 1) syncPosEx(ids, m, gp, spd, acc);
+  { static uint32_t waitT0 = 0; static bool said = false;
+    if (r == SY_RUN && syncMv.laggard >= 0 && syncMv.lag >= SYNC_CFG.lagMax) {
+      if (!waitT0) waitT0 = now ? now : 1;
+      if (!said && now - waitT0 > 1000) { said = true; lg("anim: %s is slower - waiting for it (not an error)", cfg.labels[syncSlot[syncMv.laggard]]); }
+    } else { waitT0 = 0; said = false; } }
   if (r != SY_RUN) syncActive = false;            // animTick() reads the result and moves on (or stops)
 }
 
@@ -987,12 +1030,19 @@ bool animAllArrived(uint8_t idx) {
 void animTick() {
   if (!animPlaying || animCount == 0) return;
   uint32_t el = millis() - animT0;
+  if (animFixed) {                                  // timetable: the next frame starts on time, whatever the joints did
+    const uint32_t end = animFrameAt + animFixMs[animIdx] + anim[animIdx].holdMs;
+    if ((int32_t)(millis() - end) < 0) return;
+    if (!animAllArrived(animIdx)) lg("anim frame %u: a joint was not quite there - next frame starts on time anyway", animIdx + 1);
+    animFrameAt = end;
+    goto nextFrame;
+  }
 
   if (!animArrived && animSyncOn()) {
     if (syncMv.state == SY_RUN) return;
     int8_t w = syncMv.laggard; const char* who = (w >= 0) ? cfg.labels[syncSlot[w]] : "a joint";
     if (syncMv.state == SY_STALLED) {
-      lg("anim: %s could not keep up (stuck at %.1f deg, %.0f%% behind) - stopping", who,
+      lg("anim: %s did not move at all for 6 s (stuck at %.1f deg, %.0f%% behind) - stopping", who,
          w >= 0 ? rawToNom(servos[syncSlot[w]].id, (uint16_t)max(0, (int)servos[syncSlot[w]].rawPos)) : 0.0f, syncMv.lag * 100);
       animStop(); return;
     }
@@ -1008,7 +1058,7 @@ void animTick() {
     animArriveT = millis();
   }
   if (millis() - animArriveT < anim[animIdx].holdMs) return;   // the pause between poses
-  if (grp.on()) {                                                // everyone finished this frame? (never waits forever)
+  if (false && grp.on()) {                                       // 13 Nov: no waiting for other modules (laptop-timed)
     if (!grp.mayAdvance(millis(), grpStep)) return;
     if (grp.lastTimedOut) {
       groupHalt("group: module %u had not finished frame %u after %lu s - every module stops and holds",
@@ -1018,10 +1068,13 @@ void animTick() {
     else if (grp.lastWaitMs > 300) lg("group: waited %lu ms for the others at the end of frame %u", grp.lastWaitMs, animIdx + 1);
   }
 
+  if (animWaitHeld()) return;                                   // another module is behind: do not start the next frame yet
+nextFrame:
   if (animIdx + 1 < animCount) { grpStep++; animBeginFrame(animIdx + 1); return; }
   if (animLoop)                { grpStep++; animBeginFrame(0); return; }
   animPlaying = false; prefs.putUChar("animRun", 0);
-  if (grp.on()) { grp.stopPlay(); grpSay(GK_PLACE); }  // "finished" (playing = 0), 3 times: not a lost module
+  if (grp.on()) grp.stopPlay();
+  animEnd = 1;                                          // finished on its own (not stopped)
   int a = -1, b = -1;                                   // the two servos that drew the most current
   for (uint8_t i = 0; i < nServos; i++) {
     if (a < 0 || animPeakmA[i] > animPeakmA[a]) { b = a; a = i; }
@@ -1112,6 +1165,39 @@ float homeTargetFor(uint8_t) { return 180.0f; }
 #define LOCK_SPEED    3          // speed scale 1..10: slow, the fins must slide into the other module's slots
 float lockTargetFor(bool locked, int dir = -1) { return locked ? 180.0f + (dir > 0 ? 1 : -1) * LOCK_TURN_DEG : 180.0f; }
 
+// Overshoot and return (13 Nov 2026, Nischay: "the lock was getting stuck - whatever way it turns, turn 3 deg more the same
+// way, then come back 3 deg"): every lock / unlock / home of a lock first goes LOCK_OVER_DEG past its target, then, once
+// there (or after LOCK_OVER_MS if something blocks it), back to the target slowly. The kick frees a fin that catches.
+#define LOCK_OVER_DEG 3.0f
+#define LOCK_OVER_MS  4000
+struct LockSettle { bool on; float finalDeg; float overDeg; uint32_t t0; };
+LockSettle lockSettle[MAX_SERVOS] = {};
+void lockSettleCancel(int slot) { if (slot >= 0 && slot < MAX_SERVOS) lockSettle[slot].on = false; }
+bool isLockSlot(uint8_t i);
+// where to send the lock FIRST (target + 3 deg in the direction of travel); call lockSettleStart after the command
+float lockOverTarget(uint8_t i, float finalDeg) {
+  const ServoState& sv = servos[i];
+  float cur = sv.rawPos >= 0 ? rawToNom(sv.id, (uint16_t)sv.rawPos) : sv.targetDeg;
+  float d = finalDeg - cur;
+  if (fabsf(d) < 1.0f) return finalDeg;            // already there: no kick
+  return finalDeg + (d > 0 ? LOCK_OVER_DEG : -LOCK_OVER_DEG);
+}
+void lockSettleStart(uint8_t i, float finalDeg, float overDeg) {
+  if (fabsf(overDeg - finalDeg) < 0.5f) return;
+  lockSettle[i] = {true, finalDeg, overDeg, millis()};
+}
+void lockSettleTick() {
+  for (uint8_t i = 0; i < nServos; i++) {
+    LockSettle& L = lockSettle[i];
+    if (!L.on) continue;
+    const ServoState& sv = servos[i];
+    bool there = sv.rawPos >= 0 && fabsf(rawToNom(sv.id, (uint16_t)sv.rawPos) - L.overDeg) < 1.5f;
+    if (!there && millis() - L.t0 < LOCK_OVER_MS) continue;
+    const float fin = L.finalDeg; L.on = false;
+    cmdPos(servos[i], fin, LOCK_SPEED, POS_ACC_DEFAULT);   // back 3 deg to the real target
+  }
+}
+
 void homeAll(bool homeManual = false, bool raw180 = false) {
   lastMotionMs = millis();
   uint8_t  ids[MAX_SERVOS]; int16_t pos[MAX_SERVOS];
@@ -1128,6 +1214,7 @@ void homeAll(bool homeManual = false, bool raw180 = false) {
     // Every joint to its MANUAL home (nominal 180), the locks too (= unlocked). raw180: mechanical 180, for seating horns.
     float want = clampF(raw180 ? 180.0f - offsetFor(servos[i].id) : homeTargetFor(i), lo, hi);   // homeTargetFor: manual home
     (void)homeManual;
+    if (isLockSlot(i) && !raw180) { const float over = lockOverTarget(i, want); lockSettleCancel(i); lockSettleStart(i, want, over); want = over; }
     if (!guardAllows(i, nomToRaw(servos[i].id, want))) continue;
     servos[i].targetDeg = want;
     servos[i].targetRaw = nomToRaw(servos[i].id, servos[i].targetDeg);
@@ -1138,8 +1225,8 @@ void homeAll(bool homeManual = false, bool raw180 = false) {
     ids[n] = servos[i].id; pos[n] = (int16_t)servos[i].targetRaw;
     spd[n] = servos[i].speedRaw; acc[n] = servos[i].acc; n++;
   }
-  if (n == 1)      { st.WritePosEx(ids[0], pos[0], spd[0], acc[0]); delay(3); }
-  else if (n > 1)  { st.SyncWritePosEx(ids, n, pos, spd, acc); delay(3); }
+  if (n == 1)      { posEx(ids[0], pos[0], spd[0], acc[0]); delay(3); }
+  else if (n > 1)  { syncPosEx(ids, n, pos, spd, acc); delay(3); }
 }
 
 // ── Overload guard: apply what it decides ───────────────────────────────────
@@ -1155,7 +1242,7 @@ void guardApply(uint8_t i, const GuardAction& a) {
   if (a.setTarget) {
     uint16_t t = (uint16_t)constrain((int)a.target, 0, 4095);
     sv.targetRaw = t; sv.targetDeg = rawToNom(sv.id, t);
-    st.WritePosEx(sv.id, t, speedScaleToRaw(3), 20); delay(2);     // gently: this is a retreat, not a move
+    posEx(sv.id, t, speedScaleToRaw(3), 20); delay(2);     // gently: this is a retreat, not a move
   }
   if (!a.event) return;
   const Guard& g = guards[i];
@@ -1311,6 +1398,7 @@ bool     wHbRejoin    = false;   // this rejoin came from a heartbeat gap on a g
 uint32_t loopMaxMs = 0, loopMaxPrev = 0, loopWinAt = 0;   // slowest loop() pass, this and the last 5 s window
 uint32_t wBackoff     = 800;
 uint32_t wNextTry     = 0;
+extern bool wifiParked;          // master-first: off the router while the master is heard (wifiParkTick, below)
 uint32_t wAttemptAt   = 0;
 uint32_t wDrops       = 0;
 uint32_t wConnectedAt = 0;
@@ -1449,6 +1537,7 @@ void onWiFiEvent(WiFiEvent_t ev, WiFiEventInfo_t info) {
       break;
     case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
       wAssoc = false;
+      if (wifiParked) { wUp = false; mdnsOk = false; break; }   // we left on purpose (master heard): no retry
       if (wUp) { wUp = false; if (!wLostAt) wLostAt = millis(); }
       if (mdnsOk) { wDrops++; lg("WiFi lost (reason %d) — retrying", info.wifi_sta_disconnected.reason); }
       mdnsOk = false;
@@ -1464,6 +1553,36 @@ void onWiFiEvent(WiFiEvent_t ev, WiFiEventInfo_t info) {
 
 // First two tries on a slot: remembered channel/BSSID (+ lease on a heartbeat network).
 // Third: full scan + DHCP.
+// MASTER FIRST (Nischay 12 Nov 2026: "why are they using my home router? they should work purely through the master"):
+// the master (ESP-NOW dongle) heard steadily for WIFI_PARK_AFTER_MS -> leave the router and stay on its channel, radio only
+// (also cooler: no router beacons / TCP waking the radio). The master silent for WIFI_UNPARK_AFTER_MS -> join Wi-Fi again, so
+// a module without a master (or a master unplugged) is never unreachable. Uploads and the web page go over the radio too.
+#define WIFI_PARK_AFTER_MS   30000      // master heard steadily this long -> off the router
+#define WIFI_UNPARK_AFTER_MS  5000      // master silent this long -> back on Wi-Fi as the backup
+bool wifiParked = false;
+uint32_t masterSteadySince = 0;
+extern bool nowHbSeen; extern uint32_t nowHbMs;
+bool nowLinked();
+bool wifiParkTick() {                                 // true = parked: wifiTick has nothing to do
+  const uint32_t now = millis();
+  if (otaBusy) return wifiParked;
+  if (nowLinked()) { if (!masterSteadySince) masterSteadySince = now; } else masterSteadySince = 0;
+  if (!wifiParked && masterSteadySince && now - masterSteadySince > WIFI_PARK_AFTER_MS && WiFi.status() == WL_CONNECTED) {
+    uint8_t ch = 0; wifi_second_chan_t sc; esp_wifi_get_channel(&ch, &sc);
+    wifiParked = true;
+    lg("master is steady: left Wi-Fi '%s', now radio only (channel %u)", WiFi.SSID().c_str(), ch);
+    WiFi.disconnect(false, false);                    // keep STA mode on: ESP-NOW lives on it
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);  // and stay on the master's channel
+    return true;
+  }
+  if (wifiParked && (!nowHbSeen || now - nowHbMs > WIFI_UNPARK_AFTER_MS)) {
+    wifiParked = false;
+    lg("master gone %u s: joining Wi-Fi again as backup", WIFI_UNPARK_AFTER_MS / 1000);
+    wNextTry = now;
+  }
+  return wifiParked;
+}
+
 void wifiConnectSlot(uint8_t i) {
   if (i > WSLOT_DEFAULT) return;
   // The radio refuses to connect while a scan runs; drop any background scan first.
@@ -1500,9 +1619,12 @@ void wifiConnectSlot(uint8_t i) {
   wNextTry = millis() + (wHinted ? 2000 : 4000) + (wFails > 12 ? 2000 : 0);
 }
 
+// radio send power in quarter-dBm (60 = 15 dBm). 12 Nov (Nischay: test 8.5 .. 19.5 dBm on every module): /api/radio?tx=8.5
+// changes it LIVE, not saved - a restart goes back to 11.
+uint8_t txQ4 = 44;   // 12 Nov (Nischay, after the 8.5..19.5 test: power barely mattered): 11 dBm, coolest
 void wifiRadioTuning() {
   WiFi.setHostname(cfg.host);
-  WiFi.setTxPower(WIFI_POWER_11dBm);
+  WiFi.setTxPower((wifi_power_t)txQ4);   // 12 Nov: default 15 dBm (Nischay); /api/radio?tx= changes it live
   esp_wifi_set_inactive_time(WIFI_IF_STA, 3);   // beacon-loss timeout: 6 s default, 3 s minimum
 }
 
@@ -1581,6 +1703,7 @@ bool moving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE
 // come back only when nobody (web request or ESP-NOW master) has talked to the module for LAPTOP_AWAKE_MS.
 #define LAPTOP_AWAKE_MS 30000
 uint32_t lastHttpMs = 0;                            // set by setCORS(): every web reply goes through it
+uint32_t nowAnyReqMs = 0;                           // any ESP-NOW request, read or command (eventWatch: laptop activity)
 extern bool nowHbSeen; extern uint32_t nowHbMs;
 bool laptopActive() {
   uint32_t now = millis();
@@ -1600,10 +1723,24 @@ void radioTick() {
 void okJson(const String& body);
 // GET /api/radio            -> {"hold":false,"awake":false}
 // GET /api/radio?awake=1|0  -> hold the radio awake (1) or back to normal sleep when still (0). Moves nothing.
+extern uint8_t nowRate; void nowApplyRate(const uint8_t* mac); extern bool nowUp, nowPeerSet; extern uint8_t nowPeer[6];
 void handleRadio() {
   if (rq.hasArg("awake")) { radioHold = rq.arg("awake") == "1"; radioTick(); }
+  if (rq.hasArg("lr") && nowUp) {   // 0 normal, 1 LR 500k, 2 LR 250k (see nowApplyRate)
+    nowRate = (uint8_t)constrain(rq.arg("lr").toInt(), 0, 2);
+    const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff}; nowApplyRate(all); if (nowPeerSet) nowApplyRate(nowPeer);
+    lg("radio speed set to %s (test, until restart)", nowRate == 2 ? "Long Range 250 kbps" : nowRate == 1 ? "Long Range 500 kbps" : "normal 1 Mbps");
+  }
+  if (rq.hasArg("tx")) {   // dBm, 2 .. 21 (the chip rounds to its own steps)
+    float d = rq.arg("tx").toFloat(); if (d < 2) d = 2; if (d > 21) d = 21;
+    txQ4 = (uint8_t)(d * 4 + 0.5f); WiFi.setTxPower((wifi_power_t)txQ4);
+    lg("radio power set to %.1f dBm (test, until restart)", txQ4 / 4.0f);
+  }
   String b = F("{\"ok\":true,\"hold\":"); b += radioHold ? "true" : "false";
-  b += F(",\"awake\":"); b += radioAwake ? "true" : "false"; b += '}';
+  b += F(",\"awake\":"); b += radioAwake ? "true" : "false";
+  { int8_t q = 0; esp_wifi_get_max_tx_power(&q); b += F(",\"txDbm\":"); b += String(q / 4.0f, 2); }
+  b += F(",\"lr\":"); b += nowRate;
+  b += '}';
   okJson(b);
 }
 
@@ -1695,6 +1832,7 @@ void preferredCheck() {
 
 // Called every loop iteration. Never blocks, never returns without a plan.
 void wifiTick() {
+  if (wifiParkTick()) return;
   if (wUp && wAssoc) {
     if (wantFastSave) saveFastJoin();
     hbPoll();
@@ -2089,6 +2227,7 @@ String buildJSON() {
   j += F(",\"lastGapMs\":"); j += wLastGapMs;
   j += F(",\"maxGapMs\":");  j += wMaxGapMs;
   j += F("},\"espnow\":"); j += nowJson();
+  j += F(",\"peers\":"); j += peersJson();
   j += '}';
   return j;
 }
@@ -2155,6 +2294,7 @@ void handleCommand() {
   // Mirrored to USB serial by lg(): if the board stops answering, the monitor's last line
   // names the exact request it was in, which beats guessing from the browser side.
   bc("cmd id=%u %s", sv->id, cmd.c_str());
+  if (cmd != "pos") lg("%s: %s (from the laptop)", cfg.labels[slotOf(sv->id)], cmd.c_str());   // slider moves: too many to log
 
   float   angle = rq.hasArg("angle") ? rq.arg("angle").toFloat() : sv->targetDeg;
   int     speed = rq.hasArg("speed") ? rq.arg("speed").toInt()   : 10;
@@ -2172,7 +2312,7 @@ void handleCommand() {
 void handleBatch() {
   if (!motionLocked) lastMotionMs = millis();
   if (motionLocked) { errJson(423, "locked after power-on: nothing moves until you press Turn torque ON, Go to manual home or a servo's own button"); return; }
-  bc("batch move");
+  bc("batch move"); lg("move: several joints at once (from the laptop)");
   int     spd = rq.hasArg("speed") ? constrain(rq.arg("speed").toInt(), 1, 10) : 5;
   uint8_t acc = (uint8_t)(rq.hasArg("acc") ? constrain(rq.arg("acc").toInt(), 1, 100)
                                                : POS_ACC_DEFAULT);
@@ -2209,8 +2349,8 @@ void handleBatch() {
     spds[cnt] = sv.speedRaw; accs[cnt] = sv.acc;
     cnt++;
   }
-  if (cnt == 1)     { st.WritePosEx(ids[0], pos[0], spds[0], accs[0]); delay(3); }
-  else if (cnt > 1) { st.SyncWritePosEx(ids, cnt, pos, spds, accs);    delay(3); }
+  if (cnt == 1)     { posEx(ids[0], pos[0], spds[0], accs[0]); delay(3); }
+  else if (cnt > 1) { syncPosEx(ids, cnt, pos, spds, accs);    delay(3); }
   String b = F("{\"ok\":true,\"sent\":"); b += cnt;
   if (refused) { b += F(",\"refused\":"); b += refused; b += F(",\"why\":\""); b += guardMsg; b += '"'; }
   b += '}';
@@ -2226,13 +2366,14 @@ void handleHome() {
   bool manual = rq.hasArg("manual") && rq.arg("manual") != "0";
   bool raw = rq.hasArg("raw") && rq.arg("raw") != "0";
   bc(raw ? "home all -> mechanical 180" : "home all -> straight (nominal 180)");
+  lg(raw ? "home: every joint to mechanical 180" : "home: every joint to its manual home");
   homeAll(manual, raw);
   motionLocked = false;
   okTrue();
 }
 
 // GET /api/home/manual                 same as /api/home?manual=1
-void handleHomeManual() { bc("home all -> straight (nominal 180)"); homeAll(true); motionLocked = false; okTrue(); }
+void handleHomeManual() { bc("home all -> straight (nominal 180)"); lg("home: every joint to its manual home"); homeAll(true); motionLocked = false; okTrue(); }
 
 // GET /api/home/set                    capture EVERY servo's current angle as its home
 // GET /api/home/set?id=N               just this one
@@ -2265,7 +2406,7 @@ void handleHomeSet() {
     out += '}';
   }
   homesSave();
-  bc(clear ? "home positions cleared" : "home positions saved");
+  bc(clear ? "home positions cleared" : "home positions saved"); lg(clear ? "home positions cleared" : "home positions saved (current pose = manual home)");
   out += F("],\"count\":"); out += n; out += '}';
   okJson(out);
 }
@@ -2366,13 +2507,38 @@ void handleAnimLoad() {
   grp.me = myModule(); grpPeerS = 2;
   grpArmedUntil = millis() + GROUP_ARMED_MS;
   lg("anim loaded: %u frames, sine %s, loop %s%s", animCount,
-     animSine ? "on" : "off", animLoop ? "on" : "off", grp.on() ? ", group play (waits for GO)" : "");
+     animSine ? "on" : "off", animLoop ? "on" : "off", grp.on() ? ", group play (laptop starts all at one instant)" : "");
 
+  animFixed = false;
   String r = F("{\"ok\":true,\"frames\":"); r += animCount;
   r += F(",\"sine\":"); r += (animSine ? F("true") : F("false"));
   r += F(",\"loop\":"); r += (animLoop ? F("true") : F("false"));
+  r += F(",\"needMs\":["); animNeeds(r); r += ']';
   r += '}';
   okJson(r);
+}
+
+// Every frame's time on THIS module (the same rule as animSendFrame), each from the pose before it (frame 1 from where the
+// joints are now). The laptop takes the longest per frame over all modules -> one timetable (play?times=).
+void animNeeds(String& r) {
+  const float rf = animSine ? ANIM_RF_SINE : ANIM_RF_LINEAR;
+  int32_t at[MAX_SERVOS];
+  for (uint8_t i = 0; i < nServos; i++) at[i] = servos[i].rawPos >= 0 ? servos[i].rawPos : (int32_t)servos[i].targetRaw;
+  for (uint8_t k = 0; k < animCount; k++) {
+    const AnimFrame& f = anim[k];
+    const float vCap = min(max(1, (int)f.speed) / 10.0f * ANIM_VMAX, (float)capRaw()), aMax = vCap / ANIM_RAMP_S;
+    float Tmin = 0;
+    for (uint8_t i = 0; i < f.n; i++) {
+      int slot = slotOf(f.ids[i]); if (slot < 0) continue;
+      float lo, hi; limitsFor((uint8_t)slot, lo, hi);
+      int32_t want = nomToRaw(servos[slot].id, clampF(f.deg10[i] / 10.0f, lo, hi));
+      float D = (float)labs(want - at[slot]); at[slot] = want;
+      if (D >= 4.0f) Tmin = max(Tmin, max(D / (vCap * (1.0f - rf)), sqrtf(D / (rf * (1.0f - rf) * aMax))));
+    }
+    float T = max(max(f.timeMs / 1000.0f, Tmin), 0.12f);
+    if (k) r += ',';
+    r += (uint32_t)lroundf(T * 1000.0f);
+  }
 }
 
 // Start playing from frame `from` (the laptop's play, or a GO from the module the laptop asked).
@@ -2380,7 +2546,7 @@ void animStart(uint8_t from) {
   if (from >= animCount) from = 0;
   bc("anim play (%u frames%s)", animCount, grp.on() ? ", group" : "");
   memset(animPeakmA, 0, sizeof animPeakmA); memset(animPeakLoad, 0, sizeof animPeakLoad);
-  animPlaying = true; animInterrupted = false; motionLocked = false;
+  animPlaying = true; animInterrupted = false; motionLocked = false; animEnd = 0; animFrameAt = millis();
   prefs.putUChar("animRun", 1);         // remembered across a power cut, so the next boot can say it was interrupted
   grpStep = from; grpPeerS = 2; grpPlaceMs = 0;
   if (grp.on()) grp.startPlay(millis());   // what partners said before belongs to an earlier run
@@ -2394,12 +2560,24 @@ void handleAnimPlay() {
   if (rq.hasArg("loop")) animLoop = rq.arg("loop") != "0";
   uint8_t from = rq.hasArg("from") ? (uint8_t)rq.arg("from").toInt() : 0;
   if (from >= animCount) from = 0;
-  if (grp.on()) {
-    if (uint8_t w = grp.aheadOfUs(millis())) note("group: started late - module %u was already playing (this one missed GO)", w);
-    // countdown: everyone (this module too) starts at the same instant, GROUP_GO_LEAD_MS from now (grpStartTask)
-    grpStep = from; grpStartStep = from; grpStartAt = millis() + GROUP_GO_LEAD_MS;
-    grpSayKind = GK_GO; grpSayLeft = 255; grpSayMs = 0; groupTick();   // says GO + the time left every 15 ms until then
-    String r = F("{\"ok\":true,\"startsInMs\":"); r += GROUP_GO_LEAD_MS; r += '}';
+  animFixed = false;
+  if (rq.hasArg("times")) {             // the timetable: one time (ms) per frame, the same for every module
+    String t = rq.arg("times"); uint8_t k = 0; int i = 0;
+    while (i < (int)t.length() && k < MAX_FRAMES) {
+      int j = t.indexOf('.', i); if (j < 0) j = t.length();
+      animFixMs[k++] = (uint16_t)constrain(t.substring(i, j).toInt(), 120, 60000); i = j + 1;
+    }
+    if (k != animCount) { errJson(409, "timetable does not match the uploaded frames - upload again"); return; }
+    animFixed = true;
+  }
+  if (rq.hasArg("at")) {                // timed start: `at` = the instant in THIS module's millis() (from /api/clock)
+    const uint32_t at = (uint32_t)strtoul(rq.arg("at").c_str(), nullptr, 10);
+    const int32_t in = (int32_t)(at - millis());
+    if (in < 20 || in > 10000) { errJson(409, in < 20 ? "start time already passed - nothing started" : "start time too far"); return; }
+    if (animPlaying) animStop();
+    grpStep = from; grpStartStep = from; grpStartAt = at; animEnd = 0;
+    lg("anim: starting in %ld ms (same instant as the other modules, set by the laptop)%s", (long)in, animFixed ? " - fixed timetable, runs on its own" : "");
+    String r = F("{\"ok\":true,\"startsInMs\":"); r += in; r += '}';
     okJson(r);
     return;
   }
@@ -2407,7 +2585,20 @@ void handleAnimPlay() {
   okTrue();
 }
 
-void handleAnimStop() { animStop(); okTrue(); }
+// GET /api/anim/stop[?why=text]: the laptop says why (13 Nov: "the log did not say why it stopped")
+void handleAnimStop() {
+  if (animPlaying || grpStartAt) note("anim stopped by the laptop: %s", rq.hasArg("why") ? rq.arg("why").c_str() : "Stop pressed");
+  animStop(); okTrue();
+}
+// GET /api/anim/wait?on=1|0: pause / go on (another module is behind). on=1 lasts 1.5 s; the laptop repeats it.
+void handleAnimWait() {
+  const bool on = rq.hasArg("on") && rq.arg("on") != "0";
+  if (on && !animWaitHeld() && animPlaying) lg("anim: waiting - another module is behind");
+  animWaitUntil = on ? millis() + 1500 : 0;
+  okTrue();
+}
+// GET /api/clock -> {"ok":true,"ms":<millis()>}: the laptop reads every module's clock to give them one start instant
+void handleClock() { String r = F("{\"ok\":true,\"ms\":"); r += (uint32_t)millis(); r += '}'; okJson(r); }
 
 // GET /api/hold -> {"ok":true,"held":N}: stop every joint where it is and hold (torque stays on), like the master's
 // HOLD. For the laptop's stop-all when the master is not plugged in (gos robot stop goes over Wi-Fi then).
@@ -2434,12 +2625,17 @@ void handleAnimStatus() {
   r += F(",\"idx\":");     r += (animPlaying ? animIdx : 0);
   r += F(",\"sine\":");    r += (animSine ? F("true") : F("false"));
   r += F(",\"sync\":");    r += (animSync ? F("true") : F("false"));
-  if (animSync && animPlaying) {
+  if (animSyncOn() && animPlaying) {
+    // behind: one of OUR joints is behind and this module waits for it -> the laptop pauses the other modules
+    r += F(",\"behind\":"); r += (syncMv.laggard >= 0 && syncMv.lag >= SYNC_CFG.lagMax) ? F("true") : F("false");
+    r += F(",\"held\":");   r += animWaitHeld() ? F("true") : F("false");
     r += F(",\"progress\":"); r += String(syncMv.s, 3);
     r += F(",\"gap\":");      r += String(syncMv.lag, 3);
     r += F(",\"waitingOn\":\""); r += syncMv.laggard >= 0 ? cfg.labels[syncSlot[syncMv.laggard]] : ""; r += '"';
   }
   r += F(",\"loop\":");    r += (animLoop ? F("true") : F("false"));
+  r += F(",\"ended\":");   r += animEnd;                          // 1 finished, 2 stopped
+  r += F(",\"startAt\":"); r += (uint32_t)grpStartAt;            // a timed start still waiting (0 = none)
   if (grp.on()) {
     r += F(",\"group\":"); r += grp.id;
     r += F(",\"armed\":"); r += (grpArmed() ? F("true") : F("false"));
@@ -2489,10 +2685,21 @@ void handleServoHome() {
   r += F(",\"target\":"); r += String(target, 1); r += '}';
   okJson(r);
 }
-void handleTune() { bc("tune all"); tuneAllServos(); okTrue(); }
+void handleTune() { bc("tune all"); lg("servos re-tuned"); tuneAllServos(); okTrue(); }
 
 // GET /api/lock?do=lock|unlock[&id=N][&dir=1|-1]   both locks (or servo N), slowly: unlock = manual home,
 //                                                  lock = home + dir x 45 (dir from the dock, default -1)
+// GET /api/speedcap            -> {"ok":true,"pct":30}
+// GET /api/speedcap?pct=N      -> every servo of this board at most N % speed from now on (5..100, saved)
+void handleSpeedCap() {
+  if (rq.hasArg("pct")) {
+    speedCapPct = (uint8_t)constrain(rq.arg("pct").toInt(), 5, 100);
+    prefs.putUChar("spdCap", speedCapPct);
+    lg("speed limit set to %u %% for every servo", speedCapPct);
+  }
+  String r = F("{\"ok\":true,\"pct\":"); r += speedCapPct; r += '}'; okJson(r);
+}
+
 void handleLock() {
   const String what = rq.arg("do");
   if (what != "lock" && what != "unlock") { errJson(400, "need do=lock or do=unlock"); return; }
@@ -2503,7 +2710,8 @@ void handleLock() {
   uint8_t n = 0;
   for (uint8_t i = 0; i < nServos; i++) {
     if (!isLockSlot(i) || (only >= 0 && servos[i].id != only)) continue;
-    cmdPos(servos[i], lockTargetFor(locked, dir), LOCK_SPEED, POS_ACC_DEFAULT);
+    { const float fin = lockTargetFor(locked, dir), over = lockOverTarget(i, fin);
+      cmdPos(servos[i], over, LOCK_SPEED, POS_ACC_DEFAULT); lockSettleStart(i, fin, over); }
     if (n++) r += ',';
     r += F("{\"id\":"); r += servos[i].id; r += F(",\"label\":\""); r += cfg.labels[i];
     r += F("\",\"target\":"); r += String(servos[i].targetDeg, 1); r += '}';
@@ -2541,7 +2749,7 @@ void handleGuardClear() {
 
 void handleTorqueAll() {
   bool on = !rq.hasArg("on") || rq.arg("on") != "0";
-  bc("torque all %s (%u servos)", on ? "ON" : "OFF", nServos);
+  bc("torque all %s (%u servos)", on ? "ON" : "OFF", nServos); lg("torque %s on all %u servos", on ? "ON (holding)" : "OFF (limp)", nServos);
   if (on) { torqueOnAll(); motionLocked = false; } else torqueOffAll();
   okJson(on ? F("{\"ok\":true,\"torque\":\"on\"}") : F("{\"ok\":true,\"torque\":\"off\"}"));
 }
@@ -2560,10 +2768,10 @@ void handleIdentify() {
   st.EnableTorque(id, 1); delay(2);
   const int d = 90;                            // ~8° in raw counts
   for (uint8_t k = 0; k < 3; k++) {
-    st.WritePosEx(id, constrain(base + d, 0, 4095), 2000, 60); delay(160);
-    st.WritePosEx(id, constrain(base - d, 0, 4095), 2000, 60); delay(160);
+    posEx(id, constrain(base + d, 0, 4095), 2000, 60); delay(160);
+    posEx(id, constrain(base - d, 0, 4095), 2000, 60); delay(160);
   }
-  st.WritePosEx(id, base, 1500, 40); delay(120);
+  posEx(id, base, 1500, 40); delay(120);
   ServoState* sv = byId(id);
   if (sv) { sv->hwMode = POS_MODE; sv->torqueOn = true; sv->lastCommandMs = millis(); }
   String b = F("{\"ok\":true,\"id\":"); b += id; b += F(",\"pos\":"); b += base; b += '}';
@@ -2893,8 +3101,10 @@ void handleWifiScan() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Make the machine safe before we stop servicing it: torque off,
 // radio at full power, CPU at full speed so the flash write is fast and reliable.
+extern uint32_t otaRadioMs;
 void prepareForOta(const char* how) {
   otaBusy = true;
+  otaRadioMs = millis();             // 12 Nov: the stall watch (otaRadioTick) covers EVERY update, from its very start
   prefs.putUChar("otaBoot", 1);      // the boot after an update stays limp (setup): an update never moves a motor
   lg("OTA (%s) starting — de-torquing servos", how);
   { BusLock L; for (uint8_t i = 0; i < nServos; i++) { st.EnableTorque(servos[i].id, 0); delay(2); servos[i].torqueOn = false; } }
@@ -2920,7 +3130,7 @@ void otaEnd(bool success) {
   prefs.putUChar("otaBoot", 0);
   setCpuFrequencyMhz(80);
   WiFi.setSleep(ROBO_WIFI_PS);
-  WiFi.setTxPower(WIFI_POWER_11dBm);
+  WiFi.setTxPower((wifi_power_t)txQ4);   // 12 Nov: default 15 dBm (Nischay); /api/radio?tx= changes it live
 }
 
 void handleOtaUpload() {
@@ -2940,6 +3150,7 @@ void handleOtaUpload() {
     else
       lg("OTA receiving %u bytes", (unsigned)otaExpected);
   } else if (up.status == UPLOAD_FILE_WRITE) {
+    otaRadioMs = millis();
     if (!otaAccepting) return;                       // drain the body silently
     if (Update.write(up.buf, up.currentSize) != up.currentSize) {
       lg("Update.write failed: %s — aborting", Update.errorString());
@@ -3100,9 +3311,11 @@ void handleOtaFinish() {
 
 void otaRadioTick() {
   if (otaRestartAt && (int32_t)(millis() - otaRestartAt) > 0) ESP.restart();
-  if (otaBusy && otaAccepting && otaRadioMs && millis() - otaRadioMs > RADIO_OTA_STALL_MS) {
-    lg("OTA over ESP-NOW stalled at %u of %u bytes - dropped, old firmware stays", (unsigned)otaGot, (unsigned)otaExpected);
-    Update.abort(); otaAccepting = false; otaRadioMs = 0; otaEnd(false);
+  // 12 Nov: an update that stops getting pieces (radio OR web; the laptop gave up, the link broke) is dropped after 20 s.
+  // Before, a web upload cut off at the start left the module answering "updating firmware" until a power cycle.
+  if (otaBusy && !otaRestartAt && otaRadioMs && millis() - otaRadioMs > RADIO_OTA_STALL_MS) {
+    lg("update stopped arriving (%u of %u bytes) - dropped, old firmware stays", (unsigned)otaGot, (unsigned)otaExpected);
+    otaAccepting = false; otaRadioMs = 0; otaEnd(false);   // otaEnd aborts Update if it is running
   }
 }
 
@@ -3185,7 +3398,36 @@ void guardTask(void*) {
 #define NOW_HOLD_MS   800    // silent this long while driving -> hold (heartbeat is acked + retried by the radio)
 #define NOW_DRIVE_MS 3000    // a laptop move this recent = the laptop is driving
 
-struct NowIn { uint8_t mac[6]; uint8_t len; uint8_t data[r4now::FRAME_MAX]; };
+struct NowIn { uint8_t mac[6]; int8_t rssi; uint8_t len; uint8_t data[r4now::FRAME_MAX]; };
+// Other modules this one hears (their broadcast hellos), for master.local's mesh map (12 Nov 2026)
+struct Peer { uint8_t mac[6]; char name[16]; int8_t rssi; uint32_t at; };
+Peer peers[8];
+void peerHeard(const uint8_t* mac, int8_t rssi, const uint8_t* p, int n) {
+  char name[16] = "";
+  for (int i = 0; i + 5 < n; i++) if (memcmp(p + i, "name=", 5) == 0) {          // "name=mod2 ip=..."
+    int k = 0; for (int j = i + 5; j < n && p[j] != ' ' && k < 15; j++) name[k++] = (char)p[j]; name[k] = 0; break;
+  }
+  if (!name[0]) return;
+  int slot = -1, oldest = 0;
+  for (int i = 0; i < 8; i++) {
+    if (memcmp(peers[i].mac, mac, 6) == 0) { slot = i; break; }
+    if (peers[i].at < peers[oldest].at) oldest = i;
+  }
+  if (slot < 0) slot = oldest;
+  Peer& q = peers[slot]; memcpy(q.mac, mac, 6); strncpy(q.name, name, 15); q.name[15] = 0;
+  q.rssi = q.at && millis() - q.at < 10000 ? (int8_t)((q.rssi * 3 + rssi) / 4) : rssi;   // smoothed
+  q.at = millis();
+}
+String peersJson() {
+  String j = "["; bool first = true;
+  for (int i = 0; i < 8; i++) {
+    if (!peers[i].at || millis() - peers[i].at > 15000) continue;
+    if (!first) j += ','; first = false;
+    j += F("{\"name\":\""); j += peers[i].name; j += F("\",\"rssi\":"); j += peers[i].rssi;
+    j += F(",\"ageMs\":"); j += millis() - peers[i].at; j += '}';
+  }
+  return j + "]";
+}
 QueueHandle_t    nowQ = nullptr;
 r4now::Assembly* nowAsm = nullptr;      // 7.7 KB, made once
 bool     nowUp = false, nowPeerSet = false, nowHbSeen = false, nowHeld = false, nowHeldSilent = false;
@@ -3209,22 +3451,35 @@ int  nowFind(uint16_t seq) { for (uint8_t i = 0; i < NOW_CACHE; i++) if (nowDone
 // Reads do not keep the radio awake (the Studio polls all the time); everything else is a command.
 bool nowIsRead(const String& p) {
   return p == "/api/telemetry" || p == "/api/health" || p == "/api/log" || p == "/api/anim/status" || p == "/api/guard" ||
-         p == "/api/config" || p == "/api/wifi" || p == "/api/scan/status" || p == "/api/servo/read" || p == "/api/radio";
+         p == "/api/config" || p == "/api/wifi" || p == "/api/scan/status" || p == "/api/servo/read" || p == "/api/radio" || p == "/api/speedcap" || p == "/api/clock";
 }
 
 void nowOnRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {   // Wi-Fi task: just queue it
   if (!nowQ || len <= 0 || len > r4now::FRAME_MAX) return;
-  NowIn m; memcpy(m.mac, info->src_addr, 6); m.len = (uint8_t)len; memcpy(m.data, data, len);
+  NowIn m; memcpy(m.mac, info->src_addr, 6); m.rssi = info->rx_ctrl ? (int8_t)info->rx_ctrl->rssi : 0; m.len = (uint8_t)len; memcpy(m.data, data, len);
   if (xQueueSend(nowQ, &m, 0) != pdTRUE) nowDrops++;
 }
 
+// Radio speed for ESP-NOW (12 Nov 2026, Nischay via Gemini: Espressif "Long Range" mode). 0 = normal 1 Mbps, 1 = LR 500 kbps,
+// 2 = LR 250 kbps: slower, but heard at a weaker signal (about 5-8 dB more reach). Every board ACCEPTS all three at all
+// times (LR is switched on in the radio's protocol list), so switching one sender never cuts a link. Live, not saved:
+// /api/radio?lr=0|1|2 - a restart goes back to the default (1).
+uint8_t nowRate = 1;   // 12 Nov (Nischay): Long Range 500 kbps by default - more reach on the weak links
+void nowApplyRate(const uint8_t* mac) {
+  esp_now_rate_config_t c = {};
+  c.phymode = nowRate ? WIFI_PHY_MODE_LR : WIFI_PHY_MODE_11B;
+  c.rate = nowRate == 2 ? WIFI_PHY_RATE_LORA_250K : nowRate == 1 ? WIFI_PHY_RATE_LORA_500K : WIFI_PHY_RATE_1M_L;
+  esp_now_set_peer_rate_config(mac, &c);
+}
 void nowInit() {
   if (!nowQ) nowQ = xQueueCreate(40, sizeof(NowIn));
   if (!nowAsm) nowAsm = new r4now::Assembly();
   if (esp_now_init() != ESP_OK) return;              // Wi-Fi not started yet: nowPoll() tries again
   esp_now_register_recv_cb(nowOnRecv);
+  esp_wifi_set_protocol(WIFI_IF_STA, WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N | WIFI_PROTOCOL_LR);   // hear LR too
   esp_now_peer_info_t p = {}; memset(p.peer_addr, 0xff, 6); p.ifidx = WIFI_IF_STA;
   esp_now_add_peer(&p);
+  nowApplyRate(p.peer_addr);
   nowPeerSet = false;
   nowUp = true;
 }
@@ -3257,8 +3512,16 @@ void nowNote(const char* text) {                     // see note(): to the maste
 // Broadcast to every module on the channel (the broadcast peer is added in nowInit). Runs in loop().
 static const uint8_t NOW_ALL[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
 void grpSay(uint8_t kind) { grpSayKind = kind; grpSayLeft = GROUP_GO_REPEAT; grpSayMs = 0; }
-void groupSend(const GroupMsg& m) { static uint16_t seq = 0; if (nowUp) nowSendRaw(NOW_ALL, r4now::GRP, ++seq, (const uint8_t*)&m, sizeof m); }
+// 13 Nov 2026 (Nischay: "no module-to-module comm - it is the weakest link; both talk only via the master"): group messages go
+// to the MASTER only (acked + retried by the radio), and the master hands a copy to every other module. No master = no group
+// radio; the laptop then starts / stops each module itself.
+// 13 Nov 2026 (Nischay: "just start both at the same time - the laptop takes care of it, no module-to-module, not even via
+// the master or router"): group play sends and hears NOTHING on the radio. The laptop gives every module the same start
+// instant in its own clock (/api/clock + /api/anim/play?at=), each then plays alone; the laptop stops all if one stops.
+void groupSend(const GroupMsg&) {}
 void groupTick() {
+  grpPeerS = 2;                         // nobody to slow down for
+  return;
   if (!grp.on()) return;
   const uint32_t now = millis();
   grpPeerS = grp.peerS(now, grpStep, animPlaying ? syncMv.T : 0);
@@ -3291,7 +3554,7 @@ void grpStartTask(void*) {
     const uint32_t at = grpStartAt;
     if (at && (int32_t)(millis() - at) >= 0) {
       grpStartAt = 0;
-      if (!animPlaying && !otaBusy && grp.on()) { BusLock L; animStart(grpStartStep); }
+      if (!animPlaying && !otaBusy && animCount) { BusLock L; animStart(grpStartStep); }
     }
     vTaskDelay(1);
   }
@@ -3306,6 +3569,7 @@ void groupHalt(const char* fmt, ...) {
   { BusLock L; nowHold(); }
 }
 void groupHeard(const GroupMsg& m, const uint8_t* mac) {
+  return;                               // 13 Nov: no group radio (laptop-timed start only)
   if (m.mod && m.mod == myModule()) {                // another board with our number: group play cannot tell us apart
     if (!grpDupSaid) {
       grpDupSaid = true;
@@ -3332,7 +3596,7 @@ void groupHeard(const GroupMsg& m, const uint8_t* mac) {
   } else grp.heard(m, millis());
 }
 
-void nowHello(const uint8_t* mac) {
+void nowHello(const uint8_t* mac, bool peek = true) {
   uint8_t ch = 0; wifi_second_chan_t sc; esp_wifi_get_channel(&ch, &sc);
   String s; s.reserve(96);
   s += F("name="); s += cfg.host;
@@ -3346,7 +3610,7 @@ void nowHello(const uint8_t* mac) {
   if (v10 > 0) { s += F(" bat="); s += v10 / 10; s += '.'; s += v10 % 10; }     // volts, the highest servo reading
   s += F(" held="); s += nowHeld ? '1' : '0';
   s += F(" anim="); s += animPlaying ? '1' : '0';
-  if (!awake) { nowPeekUntil = millis() + NOW_PEEK_MS; radioTick(); }   // napping: listen a moment for what waits
+  if (!awake && peek) { nowPeekUntil = millis() + NOW_PEEK_MS; radioTick(); }   // napping: listen a moment for what waits
   nowSend(mac, r4now::HELLO, 0, s);
   nowHelloMs = millis();
 }
@@ -3358,6 +3622,7 @@ void nowSetPeer(const uint8_t* mac) {
   esp_now_peer_info_t p = {}; memcpy(p.peer_addr, mac, 6); p.ifidx = WIFI_IF_STA; p.channel = 0;
   esp_err_t e = esp_now_add_peer(&p);
   nowPeerSet = e == ESP_OK || e == ESP_ERR_ESPNOW_EXIST;
+  if (nowPeerSet) nowApplyRate(mac);
 }
 
 void nowRun(uint16_t seq, const uint8_t* msg, int len) {
@@ -3369,7 +3634,7 @@ void nowRun(uint16_t seq, const uint8_t* msg, int len) {
   const String path = q < 0 ? target : target.substring(0, q);
   const Route* r = nullptr;
   for (uint8_t i = 0; i < nRoutes; i++) if (path == routes[i].path) { r = &routes[i]; break; }
-  nowReqs++;
+  nowReqs++; nowAnyReqMs = millis();                 // any request = the laptop program is there (reads too)
   if (!nowIsRead(path)) nowActiveMs = millis();
   String ans;
   if (!bootDone) ans = F("503\n{\"ok\":false,\"error\":\"starting: servos not read yet, ask again in a moment\"}");
@@ -3405,7 +3670,7 @@ uint8_t nowHold() {
     if (coast > abs(left)) coast = abs(left);
     uint16_t stop = (uint16_t)(sv.rawPos + (left > 0 ? coast : -coast));
     sv.targetRaw = stop; sv.targetDeg = rawToNom(sv.id, stop); sv.lastCommandMs = millis();
-    st.WritePosEx(sv.id, (int16_t)stop, sv.speedRaw ? sv.speedRaw : speedScaleToRaw(10), POS_ACC_DEFAULT);
+    posEx(sv.id, (int16_t)stop, sv.speedRaw ? sv.speedRaw : speedScaleToRaw(10), POS_ACC_DEFAULT);
     delay(2);
     held++;
   }
@@ -3438,7 +3703,10 @@ void nowPoll() {
         note("ESP-NOW: HOLD from the master - %u joint(s) stopped where they were, holding", held);
       }
     } else if (h.type == r4now::GRP) {                // another module of a group (broadcast)
-      if (n == (int)sizeof(GroupMsg) && h.cnt == 1) { GroupMsg g; memcpy(&g, p, sizeof g); groupHeard(g, m.mac); }
+      // only what the MASTER passes on: a module heard directly is ignored (13 Nov: master-only, no doubled, late copies)
+      if (n == (int)sizeof(GroupMsg) && h.cnt == 1 && nowPeerSet && memcmp(m.mac, nowPeer, 6) == 0) { GroupMsg g; memcpy(&g, p, sizeof g); groupHeard(g, m.mac); }
+    } else if (h.type == r4now::HELLO) {             // another module's broadcast hello: who we hear, how strongly
+      if (!nowPeerSet || memcmp(m.mac, nowPeer, 6) != 0) peerHeard(m.mac, m.rssi, p, n);
     } else if (h.type == r4now::REQ) {
       nowSetPeer(m.mac);
       nowHbMs = millis(); nowHbSeen = true;          // a request is the laptop too
@@ -3459,6 +3727,11 @@ void nowPoll() {
   if (now - nowHelloMs > NOW_HELLO_MS) {             // not linked: say it to everyone, so a searching laptop finds us
     static const uint8_t all[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
     nowHello(nowLinked() && nowPeerSet ? nowPeer : all);
+  }
+  static uint32_t meshAt = 0;                         // + a broadcast hello every 3 s: the other modules learn they hear us
+  if (nowLinked() && now - meshAt > 3000) {           // (one small frame, no listening window: no extra heat)
+    meshAt = now; static const uint8_t all2[6] = {0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+    nowHello(all2, false);
   }
   if (nowHbSeen && !nowHeld && !otaBusy && now - nowHbMs > NOW_HOLD_MS && nowMoveMs && now - nowMoveMs < NOW_DRIVE_MS + NOW_HOLD_MS) {
     nowHeld = true; nowHeldSilent = true; nowHolds++; grpDisarm();
@@ -3573,6 +3846,37 @@ bool ledWarning() {
 bool ledReady() { return bootDone && (WiFi.status() == WL_CONNECTED || nowLinked()); }
 bool ledMoving() { return animPlaying || millis() - lastMotionMs < AWAKE_AFTER_MOVE_MS; }
 
+// Every change that matters goes to the log, with its reason (Nischay 12 Nov 2026: "important things must be in the logs -
+// master / laptop detected, disconnected, why the red light is on"). Called from loop() every 250 ms; logs CHANGES only.
+void eventWatch() {
+  static uint32_t at = 0; const uint32_t now = millis();
+  if (now - at < 250 || !bootDone) return; at = now;
+  static int8_t master = -1, laptop = -1, warnGuard = -1, warnBatt = -1, warnCut = -1, warnGrp = -1, warnSync = -1;
+  static uint32_t masterLostAt = 0, laptopQuietAt = 0;
+  const bool m = nowLinked();
+  if (m != master) {
+    if (m && master == 0) lg("CONNECTED to the master again (was gone %lu s)", (unsigned long)((now - masterLostAt) / 1000));
+    else if (m) lg("CONNECTED to the master (radio)");
+    else if (master == 1) { masterLostAt = now; lg("LOST the master (%s)", WiFi.status() == WL_CONNECTED ? "Wi-Fi still works" : "no Wi-Fi either"); }
+    master = m;
+  }
+  const uint32_t last = max(lastHttpMs, nowHbSeen ? nowHbMs : 0u);
+  const bool l = (lastHttpMs || nowAnyReqMs) && now - max(lastHttpMs, nowAnyReqMs) < 15000;   // the laptop program asked anything (radio or Wi-Fi) in the last 15 s
+  if (l != laptop) {
+    if (l && laptop == 0) lg("laptop is talking to me again");
+    else if (l) lg("laptop CONNECTED");
+    else if (laptop == 1) { laptopQuietAt = now; lg("laptop stopped talking to me (15 s)"); }
+    laptop = l;
+  }
+  (void)last;
+  auto edge = [](int8_t& was, bool on, const char* what) { if (was != -1 && on != (bool)was) lg(on ? "RED LIGHT ON: %s" : "red light off: %s is fine again", what); was = on; };
+  edge(warnGuard, guardBusy(), "a joint is overloaded or too hot");
+  edge(warnBatt, battLowSince != 0, "battery low");
+  edge(warnCut, ledLinkCut(), "no connection (no master and no Wi-Fi)");
+  edge(warnGrp, (int32_t)(grpFaultUntil - now) > 0, "group stopped (another module is missing)");
+  edge(warnSync, animPlaying && syncMv.state == SY_STALLED, "move is stuck");
+}
+
 void ledTask(void*) {
   for (;;) {
     const uint32_t now = millis();
@@ -3657,10 +3961,13 @@ void setup() {
   route("/api/batch",           handleBatch);
   route("/api/home",            handleHome);
   route("/api/lock",            handleLock);
+  route("/api/speedcap",        handleSpeedCap);   // every servo's top speed, % (default 30)
   route("/api/home/manual",     handleHomeManual);
   route("/api/anim/load",       handleAnimLoad);
   route("/api/anim/play",       handleAnimPlay);
   route("/api/anim/stop",       handleAnimStop);
+  route("/api/clock",           handleClock);
+  route("/api/anim/wait",       handleAnimWait);
   route("/api/hold",            handleHold);
   route("/api/anim/status",     handleAnimStatus);
   route("/api/anim/sync",       handleAnimSync);
@@ -3762,6 +4069,7 @@ void loop() {
   server.handleClient();
   ArduinoOTA.handle();
   wifiTick();
+  eventWatch();
   nowPoll();                            // ESP-NOW requests run here, between web requests (same handlers)
   groupTick();                          // group play: GO / where we are / STOP to the other modules
   battTick();                           // 10.2 V: switch off to save the battery (Battery guard)
@@ -3773,7 +4081,7 @@ void loop() {
   otaRadioTick();                       // ESP-NOW update: restart after it, or drop a stalled one
   if (otaBusy) return;                 // never touch the servo bus mid-flash
 
-  { BusLock L; animTick(); }           // the board owns sequence timing, not the browser
+  { BusLock L; animTick(); lockSettleTick(); }           // the board owns sequence timing, not the browser
 
   if (sc.active) { BusLock L; scanStep(); return; }   // scan owns the bus until it finishes
 

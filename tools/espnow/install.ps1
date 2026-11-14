@@ -24,7 +24,8 @@ if ($HostsOnly) {
   $pattern = "(?s)\r?\n?" + [regex]::Escape($begin) + ".*?" + [regex]::Escape($end) + "\r?\n?"
   $text = [regex]::Replace($text, $pattern, "`r`n")
   if (-not $Remove) {
-    $lines = @($begin) + (1..9 | ForEach-Object { "127.0.4.$_`tmod$_.local" }) + @($end)
+    # + master.local: the bridge's page for the master, the laptop side and every module (12 Nov 2026)
+    $lines = @($begin) + (1..9 | ForEach-Object { "127.0.4.$_`tmod$_.local" }) + @("127.0.5.1`tmaster.local") + @($end)
     $text = $text.TrimEnd() + "`r`n`r`n" + ($lines -join "`r`n") + "`r`n"
   }
   [IO.File]::WriteAllText($hosts, $text)

@@ -110,3 +110,10 @@ export function firstHit(fk: FK, boxes: Map<string, PartBox>, joined: Set<string
   }
   return null;
 }
+
+/** how far the lowest part is below the floor (m, 0 = none) - the drag LIFTS the robot by this instead of refusing (12 Nov) */
+export function floorGap(fk: FK, boxes: Map<string, PartBox>, floorY: number): number {
+  let lo = Infinity;
+  for (const [id, b] of boxes) { const f = fk.get(id); if (f) lo = Math.min(lo, lowestY(b, f)); }
+  return lo === Infinity ? 0 : lo - floorY;                 // < 0: into the floor by that much; > 0: that high above it
+}

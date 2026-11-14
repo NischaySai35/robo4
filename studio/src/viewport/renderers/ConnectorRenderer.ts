@@ -241,7 +241,7 @@ export function orientConnectorMarker(node: any, world: ConnectorPose) {
       const end = world.roll.clone().multiplyScalar(child.userData.armLen);
       pos.setXYZ(1, end.x, end.y, end.z);
       pos.needsUpdate = true;
-    } else if (child.isArrowHelper) {
+    } else if ((child.type === 'ArrowHelper' || child instanceof THREE.ArrowHelper)) {
       child.setDirection(world.normal);
     }
   }

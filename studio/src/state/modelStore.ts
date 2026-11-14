@@ -16,7 +16,13 @@ import { stabilizeLoops } from '@/assembly/connectorSnap';
 import { setModelPort } from '@/core/model/modelPort';
 
 // cap 0: the one undo history is core/commands/undoStack.ts, see docs/design/p5-one-undo.md.
-const bus = new CommandBus(makeDocument({ name: 'Untitled' }), { cap: 0 });
+// 12 Nov: a dev-server live patch of this file used to make a SECOND, empty store while the viewport kept the old one (Sync then
+// said "the sim has none" with modules on screen). Dev only: the bus - the one document - is kept on the page, so every copy of this
+// file shares it (Vite's dispose hook does not run for a file it re-imports in passing, so it could not hand the bus over).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const hot: any = import.meta.hot ? ((globalThis as any).__tetrobotModel ??= {}) : null;
+const bus: CommandBus = hot?.bus ?? new CommandBus(makeDocument({ name: 'Untitled' }), { cap: 0 });
+if (hot) hot.bus = bus;
 // Closed lock loops are a first-class invariant: after ANY mutation (drag, gizmo, sliders,
 // animation), the bus re-projects the config so every lock stays shut. Graph FK is a spanning
 // tree that drops loop-closing edges, so without this any edit could silently open a loop.
@@ -43,6 +49,10 @@ interface ModelState {
   applyTransient: (fn: (doc: Document) => Document) => void;
 }
 
+/** the document as it was when the project was opened / loaded: the Reset button (HomeButton) puts it back (Nischay 12 Nov) */
+let openedDoc: Document | null = hot?.openedDoc ?? null;
+export const openedDocument = () => (hot ? hot.openedDoc ?? null : openedDoc);
+
 export const useModelStore = create<ModelState>((set) => {
   const sync = () => set({
     doc: bus.doc,
@@ -59,7 +69,7 @@ export const useModelStore = create<ModelState>((set) => {
     /** Apply a command (from @/core/commands). */
     dispatch: (command) => { bus.dispatch(command); },
     /** Replace the document (file open / new project) and clear history. */
-    loadDocument: (doc) => { bus.reset(doc); sync(); },
+    loadDocument: (doc) => { openedDoc = doc; if (hot) hot.openedDoc = doc; bus.reset(doc); sync(); },
     /** High-frequency update that bypasses undo history (action playback). */
     applyTransient: (fn) => { bus.applyTransient(fn); },
   };

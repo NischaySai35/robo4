@@ -104,6 +104,13 @@ export function hostLabel(host: string): string {
   return n ? boardName(n) : host;
 }
 
+/** the Sync box's address field (pages other than MSRR): move the board at `host` to a new address in the module list */
+export function setBoardAddress(host: string, next: string) {
+  const hostOf = (u: string) => { try { return new URL(u).host; } catch { return u; } };
+  const st = useEspNodesStore.getState(), n = st.nodes.find((x) => hostOf(x.url) === host);
+  if (n) st.updateNode(n.id, { url: `http://${next}` });
+}
+
 function makeNotice(): SyncNotice | null {
   const r = linkReport();
   const link = r.pairs.filter((p) => p.node?.connected).map((p) => `M${p.sim.index} → ${boardName(p.node)}`);

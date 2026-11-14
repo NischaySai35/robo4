@@ -10,9 +10,9 @@
  */
 import { create } from 'zustand';
 import { createContext, useContext } from 'react';
-import { speakForPath } from '@/features/voice/phrases';
+import { speakForPath, phraseForPath } from '@/features/voice/phrases';
 import { useEspNodesStore, type EspNode } from '@/state/espNodesStore';
-import { startEspPoll, moduleNumber } from '@/features/servo/espPoll';
+import { startEspPoll, moduleNumber, laptopLog } from '@/features/servo/espPoll';
 
 export interface TtlServo {
   id: number;
@@ -113,15 +113,21 @@ export const ttlUrl = () => useEspTtlStore.getState().url.replace(/\/+$/, '');
  * hung fetch would wedge the whole page.
  */
 export async function ttlGet<T = any>(path: string, timeoutMs = 6000, base?: string): Promise<T> {
-  const res = await fetch(`${(base ?? ttlUrl()).replace(/\/+$/, '')}${path}`, {
-    cache: 'no-store',
-    signal: AbortSignal.timeout(timeoutMs),
-  });
-  const text = await res.text();
-  let json: any = null;
-  try { json = JSON.parse(text); } catch { /* some endpoints return plain text */ }
-  if (!res.ok) throw new Error(json?.error || text || `HTTP ${res.status}`);
-  return (json ?? (text as any)) as T;
+  const url = (base ?? ttlUrl()).replace(/\/+$/, '');
+  // Nischay 14 Nov: "the log must show what I clicked (manual home, send animation ...) and that it worked"
+  const words = phraseForPath(path), who = `mod${moduleOfUrl(url)}`;
+  try {
+    const res = await fetch(`${url}${path}`, { cache: 'no-store', signal: AbortSignal.timeout(timeoutMs) });
+    const text = await res.text();
+    let json: any = null;
+    try { json = JSON.parse(text); } catch { /* some endpoints return plain text */ }
+    if (!res.ok) throw new Error(json?.error || text || `HTTP ${res.status}`);
+    if (words) laptopLog(`${who}: ${words} - done`);
+    return (json ?? (text as any)) as T;
+  } catch (e: any) {
+    if (words) laptopLog(`${who}: ${words} - FAILED (${e?.name === 'TimeoutError' ? 'no answer' : e?.message || e})`);
+    throw e;
+  }
 }
 
 /** Same, but never throws — for fire-and-forget buttons that report their own status. */

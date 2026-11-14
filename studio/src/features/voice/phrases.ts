@@ -59,6 +59,18 @@ const RULES: Rule[] = [
   (p) => p.startsWith('/api/anim/load') ? { text: 'Animation uploaded to the module' } : null,
 ];
 
+/** The words for a request (null = a read or a slider move, not worth a log line). */
+export function phraseForPath(path: string): string | null {
+  const a = q(path);
+  for (const r of RULES) { const hit = r(path, a); if (hit) return hit.text; }
+  const p = path.split('?')[0];
+  if (p === '/api/lock') return a.get('locked') === '0' || a.get('on') === '0' ? 'Unlock' : 'Lock';
+  if (p === '/api/speedcap' && a.has('pct')) return `Max speed set to ${a.get('pct')} %`;
+  if (p === '/api/guard/clear') return 'Cleared the guard (blocks)';
+  if (p === '/api/hold') return 'Hold: every joint stops where it is';
+  return null;
+}
+
 /** Speak the confirmation for a request that just succeeded (no-op for unknown paths). */
 export function speakForPath(path: string) {
   const a = q(path);

@@ -71,6 +71,8 @@ class Dongle:
         self.port, self.on_frame, self.on_fail, self.on_note = port, on_frame, on_fail, on_note
         self.info, self.bad, self._wlock = '', 0, threading.Lock()
         self.said = []                         # the master's own notes ('L'), newest last
+        self.cam_frame, self.cam_at, self.cam_times = None, 0.0, []   # newest whole camera picture (JPEG), when, recent times
+        self._cam_id, self._cam_buf = -1, bytearray()
         self._info_event = threading.Event()
         self._run, self.dead = True, False     # dead: unplugged (the reader hit a USB error)
         self._thread = threading.Thread(target=self._reader, name='espnow-usb', daemon=True)
@@ -87,6 +89,16 @@ class Dongle:
     def here(self): self._write('P')
     def send(self, mac, frame): self._write('S', mac + frame)
     def channel(self, ch): self._write('C', bytes([ch]))
+    def radio_rate(self, lr):
+        """ESP-NOW speed on the master: 0 normal 1 Mbps, 1 Long Range 500 kbps, 2 Long Range 250 kbps (live, not saved)."""
+        self._write('W', bytes([max(0, min(2, int(lr)))]))
+    def flash(self, mode, bright):
+        """The master's flash LED: mode 0 off, 1 on, 2 blink; bright 0-100 %."""
+        self._write('X', bytes([max(0, min(2, int(mode))), max(0, min(100, int(bright)))]))
+    def camera(self, on):
+        """The master's camera on/off (12 Nov, Nischay: default off, it must not stress the board). Pictures arrive as 'J'."""
+        self._write('V', bytes([1 if on else 0]))
+        if not on: self.cam_frame, self.cam_times = None, []
     def stop_all(self, limp=False):
         """What the master's button does, from the laptop: every module stops and holds ('H'), or goes limp ('E')."""
         self._write('E' if limp else 'H')
@@ -117,7 +129,7 @@ class Dongle:
                 del buf[:at]
                 if len(buf) < 5: break
                 n = buf[3] | buf[4] << 8
-                if n > 7 + FRAME_MAX: self.bad += 1; del buf[:2]; continue
+                if n > (3 + 1024 if buf[2] == ord('J') else 7 + FRAME_MAX): self.bad += 1; del buf[:2]; continue   # 'J': camera piece
                 if len(buf) < 6 + n: break
                 kind, body, ok = chr(buf[2]), bytes(buf[5:5 + n]), (sum(buf[2:5 + n]) & 0xff) == buf[5 + n]
                 if not ok: self.bad += 1; del buf[:2]; continue
@@ -134,6 +146,16 @@ class Dongle:
             text = body.decode(errors='replace')
             self.said = (self.said + [f'{time.strftime("%H:%M:%S")} {text}'])[-20:]
             if self.on_note: self.on_note('master', text)
+        elif kind == 'J' and len(body) >= 3:   # camera picture piece: id, part, last + JPEG bytes
+            pid, part, last = body[0], body[1], body[2]
+            if part == 0: self._cam_id, self._cam_buf = pid, bytearray()
+            if pid != self._cam_id: return                      # a piece of a picture we missed the start of
+            self._cam_buf += body[3:]
+            if last:
+                now = time.time()
+                self.cam_frame, self.cam_at = bytes(self._cam_buf), now
+                self.cam_times = [t for t in self.cam_times if now - t < 2.0] + [now]
+                self._cam_id = -1
         # 'T' (the radio's own delivery report) is the master's business
 
 
@@ -286,12 +308,12 @@ class EspNowLink:
             except ValueError: up = None
             if up is not None:
                 if m.up is not None and up + 2000 < m.up:
-                    self._note(m.name or mac.hex(':'), f'restarted (power cut or reset?) after {m.up / 1000:.0f} s on; '
-                               'it starts with every servo limp and has forgotten its animation')
+                    self._note(m.name or mac.hex(':'), f'restarted after {m.up / 60000:.0f} min on (power cut or reset). '
+                               'Servos are limp until you turn torque on.')
                 m.up = up
             if m.ch: self.channel = m.ch
             if kv.get('dying'):                                  # its battery guard switched it off: gone
-                if m.seen: self._note(m.name or mac.hex(':'), f'switched itself off: battery empty ({kv.get("v", "?")} V)')
+                if m.seen: self._note(m.name or mac.hex(':'), f'SWITCHED OFF: battery empty ({kv.get("v", "?")} V)')
                 m.seen = 0
         elif kind == NOTE:
             m.seen = time.time()
@@ -534,6 +556,13 @@ class Gateway:
         self.main = _start(_handler(self), host, port, 'espnow-gateway')
         self.server_address = self.main.server_address
         for n in names: self._open(n)
+        # master.local (= 127.0.5.1, tools/espnow/install.ps1): the master + laptop + every module on one page, logs on disk
+        self.site, self.master_srv = None, None
+        try:
+            from .master_site import MasterSite, handler as site_handler
+            self.site = MasterSite(self)
+            self.master_srv = _start(site_handler(self.site), '127.0.5.1', module_port, 'espnow-master')
+        except Exception as e: self.errors['master'] = str(e)
         self._run = True
         threading.Thread(target=self._watch, name='espnow-gateway-modules', daemon=True).start()
 
@@ -600,7 +629,26 @@ class Gateway:
         try: return link.find(name)
         except GosError: return None
 
+    # ONE reading per module for everyone (Nischay 12 Nov 2026: "reuse the telemetry"): the Studio, the physics service, the
+    # master page, the Log tab and every open mod1.local / mod2.local tab used to ask the module separately - several full
+    # 4.6 KB statuses a second, a hot chip and a crowded radio. A read asked again within its TTL gets the same answer; a
+    # read already on its way is waited for instead of being sent twice.
+    READ_TTL = {'/api/telemetry': 1.0, '/api/health': 1.0, '/api/log': 5.0, '/api/config': 10.0, '/api/wifi': 5.0}
+
     def ask(self, name, path, target, body, method='GET', ctype=None):
+        ttl = self.READ_TTL.get(path) if method == 'GET' and not body else None
+        if not ttl: return self._ask(name, path, target, body, method, ctype)
+        cache = self.__dict__.setdefault('_read_cache', {}); locks = self.__dict__.setdefault('_read_locks', {})
+        key = (name, target)
+        with self.__dict__.setdefault('_read_guard', threading.Lock()): lk = locks.setdefault(key, threading.Lock())
+        with lk:                                              # a second asker waits for the first answer, then reuses it
+            hit = cache.get(key)
+            if hit and time.time() - hit[0] < ttl: return hit[1]
+            got = self._ask(name, path, target, body, method, ctype)
+            if got and got[0] == 200: cache[key] = (time.time(), got)
+            return got
+
+    def _ask(self, name, path, target, body, method='GET', ctype=None):
         """(http code, bytes, content type) for one request to module `name`.
         THE RADIO (the dongle) IS THE MAIN PATH (Nischay 12 Nov 2026: "why are you going back to the router? what if I go to a new
         place" - the dongle exists so nothing depends on a router, like a wireless mouse's). Wi-Fi is only the backup, used when a
@@ -622,6 +670,8 @@ class Gateway:
         ip = None if os.environ.get('GOS_BRIDGE_WIFI') == '0' else ((known.ip if known and known.ip != '-' else None) or self.wifi.get(name))
         small = path.startswith('/api/')                      # API replies are tiny; the page (42 KB) can take ~1 s on a busy board
         why = ''
+        if m and ip and name in self.__dict__.get('_radio_bad', {}) and path != '/api/ota':
+            radio_ok = False                                  # radio known weak: Wi-Fi only (no double request = less module heat)
         if radio_ok and ip and path != '/' and method == 'GET':
             # both paths there: ask the radio; no answer within HEDGE_S -> ask Wi-Fi as well and take whichever answers first
             # (12 Nov: mod1 at -90 dBm at the dongle - waiting out the radio's ~4 s give-up made every 2nd request time out)
@@ -682,7 +732,7 @@ class Gateway:
             return out
         except GosError as e:
             self._dongle_watchdog()
-            if name not in self._radio_bad and self.link: self.link._note(name, f'radio request failed ({str(e)[:80]}): Wi-Fi covers, probing the radio every {self.RADIO_PROBE_S:.0f} s')
+            if name not in self._radio_bad and self.link: self.link._note(name, 'no answer by radio - using Wi-Fi until the radio works again')
             self._radio_bad[name] = time.time() + 3600        # down until the probe says otherwise
             self._probe_radio(name)
             return None
@@ -706,9 +756,9 @@ class Gateway:
         self._dongle_reset_at = now
         try:
             port.dtr = False; port.rts = True; time.sleep(0.15); port.rts = False
-            link._note('dongle', f'radio stuck {now - ok_at:.0f} s while modules are heard: dongle restarted (reset line)')
+            link._note('dongle', f'master radio was stuck for {now - ok_at:.0f} s - restarted it')
         except Exception as e:
-            link._note('dongle', f'radio stuck, but the dongle reset failed: {e}')
+            link._note('dongle', f'master radio is stuck and could not be restarted: {e}')
 
     def _probe_radio(self, name):
         probing = self.__dict__.setdefault('_radio_probing', set())
@@ -725,7 +775,7 @@ class Gateway:
                         if code == 200:
                             self._radio_ok_at = time.time(); self._radio_fails = 0
                             self._radio_bad.pop(name, None); self.via[name] = 'radio'
-                            if self.link: self.link._note(name, 'radio answers again: back to the radio')
+                            if self.link: self.link._note(name, 'answers by radio again')
                     except GosError: self._dongle_watchdog()
             finally: probing.discard(name)
         threading.Thread(target=run, daemon=True).start()
@@ -811,7 +861,7 @@ class Gateway:
 
     def shutdown(self):
         self._run = False
-        for s_ in [self.main, *self.servers.values()]: s_.shutdown(); s_.server_close()
+        for s_ in [self.main, *self.servers.values(), *([self.master_srv] if getattr(self, 'master_srv', None) else [])]: s_.shutdown(); s_.server_close()
 
 
 def serve_gateway(link, port=8790, host='127.0.0.1', module_port=80, names=NAMES):
@@ -841,8 +891,8 @@ def run_bridge(port=None, http_port=8790, channel=None, parent_pid=0, say=print)
                     if not told: say(f'{e} Trying again every second; Wi-Fi works meanwhile.'); told = True
                     next_try = time.time() + 1
             now = {m.name for m in link.alive()} if link else set()
-            for n in sorted(now - seen): gw.log.add(n, f'heard over ESP-NOW on channel {link.channel}: {gw.address(n) or "?"} goes over the radio')
-            for n in sorted(seen - now): gw.log.add(n, f'not heard over ESP-NOW for {EspNowLink.STALE:.0f} s (switched off? out of range?): over Wi-Fi meanwhile')
+            for n in sorted(now - seen): gw.log.add(n, f'CONNECTED to the master (radio, channel {link.channel})')
+            for n in sorted(seen - now): gw.log.add(n, f'LOST the master for {EspNowLink.STALE:.0f} s (off or too far) - using Wi-Fi meanwhile')
             seen = now
             for e in gw.log.after(shown):                # the modules' notes, the master's own, the laptop's stops
                 say(f'{time.strftime("%H:%M:%S", time.localtime(e["t"]))} {e["source"]}: {e["text"]}'); shown = e['n']

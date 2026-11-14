@@ -53,6 +53,9 @@ export interface CameraBridge {
   getFitBox?: (...args: any[]) => any;
   getModelGroup?: (...args: any[]) => any;
   orientSelectionAxis?: (axis: 'x' | 'y' | 'z') => { ok: boolean; error?: string };
+  /** does this pose put any two parts inside each other? (ModelEditor, real part shapes) - extraPairs = body pairs joined by a
+   *  connection about to be made (they may touch). Returns the two part names, or null when free. */
+  poseCollides?: (doc: any, extraPairs?: [string, string][]) => [string, string] | null;
   loadScene?: (data: any, opts?: any) => { ok: boolean; error?: string } | void;
   exportModel?: (fmt: any) => { ok: boolean; error?: string } | void;
   undo?: () => void;

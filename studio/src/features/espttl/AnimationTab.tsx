@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import React, { useRef, useState } from 'react';
 import { useEspNodesStore } from '@/state/espNodesStore';
 import { callAllNodes, estopAllNodes } from '@/features/servo/servoLink';
-import { useEspTtlStore, currentPose, ttlTry, liveBoards, jointKey, splitKey } from '@/state/espTtlStore';
+import { currentPose, ttlTry, liveBoards, jointKey, splitKey } from '@/state/espTtlStore';
 import { useTimelineStore, type Frame } from './timelineStore';
 import { playTimeline, stopPlayback, gotoFrame } from './player';
 import { planTimeline, peakDegPerS, type FramePlan } from './motion';
@@ -20,7 +20,9 @@ import { useSavedStore, type SavedAnimation } from './savedStore';
 
 export default function AnimationTab() {
   useEspNodesStore(s => s.nodes);   // re-draw when ANY module's telemetry changes, not just the page's board
-  const online   = useEspTtlStore(s => s.online);
+  // 12 Nov (Nischay: "1 mod is online, that's enough"): this tab records / plays EVERY target module, so ONE online target
+  // is enough - it used to wait for the page's selected board (Module 1, offline) while Module 2 was online
+  const online   = liveBoards().length > 0;
   const t        = useTimelineStore();
   const [msg, setMsg]   = useState<string>('');
   const [sending, setSending] = useState(false);
@@ -54,7 +56,7 @@ export default function AnimationTab() {
 
   // ── play on every module, in step ───────────────────────────────────────────
   // Upload to all modules (each checks a frame count and checksum, so a truncated upload is refused), then ONE GO over
-  // the radio starts them together and they keep each other in step (player.ts / sender.ts / firmware groupsync.h).
+  // the laptop starts them all at one instant (player.ts / sender.ts startOnBoard).
   const send = async (from = 0) => {
     setSending(true);
     await playTimeline(from, say);
@@ -158,10 +160,10 @@ export default function AnimationTab() {
           </label>
         </div>
         <p className="ettl-hint">
-          <b>Play</b> uploads the sequence to every module and starts them all at the same instant (one GO over the
-          radio). While moving they keep each other in step: one that gets ahead slows down for the slowest, and no
-          module starts the next frame before all have finished this one. Once started, a poor Wi-Fi link cannot
-          stutter the motion; it only runs if every frame arrived intact (checked by count and checksum).
+          <b>Play</b> uploads the sequence to every module, then the laptop gives them all ONE start instant (each in
+          its own clock) - modules never talk to each other. If one does not answer or start, none moves; if one stops
+          part-way, the laptop stops the others. Once started, a poor Wi-Fi link cannot stutter the motion; it only
+          runs if every frame arrived intact (checked by count and checksum).
         </p>
         <p className="ettl-hint">
           <b>Time is the control; speed is only a maximum.</b> Speed is the fastest any joint
@@ -236,7 +238,11 @@ export default function AnimationTab() {
                  style={{ display: 'none' }}
                  onChange={e => { const f = e.target.files?.[0]; if (f) importFile(f); e.target.value = ''; }} />
           <Button variant="destructive" size="sm" onClick={() => {
-            if (t.frames.length && confirm(`Delete all ${t.frames.length} frames? Undo can bring them back.`)) t.clearAll();
+            // 13 Nov 2026: an 11-frame recording was lost - Undo only lives until the page reloads. Clear now first
+            // keeps a copy in Saved animations ("before clear ..."), which survives reloads; delete it there if unwanted.
+            if (!t.frames.length || !confirm(`Delete all ${t.frames.length} frames? A copy is kept in Saved animations.`)) return;
+            saved.save(t.exportJson(), `before clear ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`);
+            t.clearAll();
           }} disabled={!t.frames.length}>Clear</Button>
         </div>
 

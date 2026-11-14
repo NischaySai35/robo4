@@ -110,6 +110,45 @@ module.exports = function physicsPlugin() {
       server.middlewares.use('/__physics/ensure', (_req, res) => {
         ensure(log).then((ok) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ok })); });
       });
+      // MuJoCo on THIS computer (Nischay 12 Nov 2026): the MSRR tab's real-physics tests need Python 3.12 + these exact
+      // versions (data/ and memory: MuJoCo stays 3.12.0 with Isaac Sim 6.2's pins). Everything else in the Studio runs on its
+      // own in-browser physics (Jolt). check = what is installed; install = pip-installs the pinned set, then restarts the service.
+      const NEED = { mujoco: '3.12.0', numpy: '2.3.1', scipy: '1.17.0', mink: '1.4.0' };
+      const onWin = process.platform === 'win32';
+      const py = (args, ms) => new Promise((resolve) => {
+        const p = spawn(onWin ? 'py' : 'python3', onWin ? ['-3.12', ...args] : args, { windowsHide: true });
+        let out = ''; const t = setTimeout(() => p.kill(), ms);
+        p.stdout.on('data', (d) => { out += d; }); p.stderr.on('data', (d) => { out += d; });
+        p.on('error', (e) => { clearTimeout(t); resolve({ code: -1, out: String(e.message || e) }); });
+        p.on('close', (code) => { clearTimeout(t); resolve({ code, out }); });
+      });
+      const check = async () => {
+        const script = ['import json, importlib.metadata as m', 'v = {}',
+          `for k in ${JSON.stringify(Object.keys(NEED))}:`, '    try: v[k] = m.version(k)', '    except Exception: v[k] = None',
+          'print(json.dumps(v))'].join('\n');
+        const r = await py(['-c', script], 20000);
+        if (r.code !== 0) return { python: false, ok: false, need: NEED, error: 'Python 3.12 was not found on this computer', detail: r.out.slice(-400) };
+        let have = {}; try { have = JSON.parse(r.out.trim().split('\n').pop()); } catch { /* keep {} */ }
+        const wrong = Object.keys(NEED).filter((k) => have[k] !== NEED[k]);
+        return { python: true, ok: wrong.length === 0, have, need: NEED, wrong };
+      };
+      let installing = null;
+      server.middlewares.use('/__physics/check', (_req, res) => {
+        check().then((r) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ ...r, installing: !!installing })); });
+      });
+      server.middlewares.use('/__physics/install', (_req, res) => {
+        installing ??= (async () => {
+          const pkgs = Object.entries(NEED).map(([k, v]) => `${k}==${v}`);
+          log(`[physics] installing ${pkgs.join(' ')} ...`);
+          const r = await py(['-m', 'pip', 'install', '--disable-pip-version-check', ...pkgs], 15 * 60 * 1000);
+          try { fs.appendFileSync(path.join(DATA, 'logs', 'mujoco_install.log'), `\n==== ${new Date().toISOString()}\n${r.out}`); } catch { /* */ }
+          const after = await check();
+          if (after.ok) { if (child) kill(child.pid); await ensure(log); }          // restart the service on the new packages
+          log(`[physics] install ${after.ok ? 'done' : 'FAILED'}`);
+          return { ok: after.ok, check: after, tail: r.out.slice(-1500) };
+        })().finally(() => { installing = null; });
+        installing.then((r) => { res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify(r)); });
+      });
       server.httpServer?.on('close', stop);
       process.once('exit', stop); process.once('SIGINT', () => { stop(); process.exit(0); }); process.once('SIGTERM', () => { stop(); process.exit(0); });
     },

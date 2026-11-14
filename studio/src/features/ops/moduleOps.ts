@@ -112,3 +112,39 @@ export function homePose() {
   };
   scheduleFrame(tick);
 }
+
+
+/** Reset (Nischay 12 Nov 2026: "a reset button so it comes back to the initial position"): a clean start - every joint at 0,
+ *  every module flat in a row exactly as Add Module places them (the default module's own pose, one module width + margin
+ *  further along +X per module), locks between modules undone. One undoable step for the layout, one for the joints. */
+export function resetLayout(): { ok: boolean; error?: string } {
+  const { doc, dispatch } = useModelStore.getState();
+  const comps = Object.values(doc.components ?? {});
+  if (!comps.length) return { ok: false, error: 'No module to reset.' };
+  const { entities } = buildDefaultModuleEntities(doc);
+  const tpl = entities.filter((e: any) => e.kind === 'body') as any[];
+  if (!tpl.length) return { ok: false, error: 'No default module shape available.' };
+  const base = (n: string) => n.replace(/(\s+(copy|\d+))+$/i, '');           // 'EndA_LockModule copy 2' -> 'EndA_LockModule'
+  const byName = new Map(tpl.map((b) => [base(b.name), b]));
+  let minX = Infinity, maxX = -Infinity;
+  for (const b of tpl) { minX = Math.min(minX, b.transform.position[0]); maxX = Math.max(maxX, b.transform.position[0]); }
+  const spacing = Math.max(0.15, maxX - minX) + 0.25;
+  // the default shape comes pre-placed beside existing modules: use it RELATIVE to its own start; module 1 keeps its X start
+  const first = bodiesOfComponent(doc, comps[0].id);
+  const x0 = first.length ? Math.min(...first.map((b) => b.transform.position[0])) : 0;
+  const z0 = tpl.reduce((m, b) => m + b.transform.position[2], 0) / tpl.length;
+  const patches: [string, any][] = [];
+  comps.forEach((c, k) => {
+    for (const b of bodiesOfComponent(doc, c.id)) {
+      const t = byName.get(base(b.name)); if (!t) continue;
+      const p = t.transform.position;
+      patches.push([b.id, { transform: { ...b.transform, position: [x0 + (p[0] - minX) + spacing * k, p[1], p[2] - z0], quaternion: [...t.transform.quaternion] } }]);
+    }
+  });
+  const locks = Object.values(doc.joints).filter((j: any) => j.meta?.generatedFromConnector).map((j: any) => j.id);
+  dispatch(commands.detachManyAndSeparate(locks, patches));
+  const zero: Record<string, number> = {};
+  for (const j of Object.values(useModelStore.getState().doc.joints) as any[]) if (j.type !== 'fixed') zero[j.id] = 0;
+  dispatch(commands.setJointValues(zero));
+  return { ok: true };
+}

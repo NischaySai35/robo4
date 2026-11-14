@@ -276,7 +276,7 @@ export function bodiesConnected(doc: Document, aId: string, bId: string): boolea
 }
 
 
-export interface MateBend { jointValues: Record<string, number>; standoffValues: Record<string, number>; joint: Joint; residual: number; startGap: number; chainLen: number; chainNames: string[] }
+export interface MateBend { jointValues: Record<string, number>; standoffValues: Record<string, number>; joint: Joint; residual: number; startGap: number; chainLen: number; chainNames: string[]; blocked: boolean }
 
 /**
  * Mate two connectors that are ALREADY connected through the joint graph, by BENDING
@@ -296,6 +296,7 @@ export function computeMateBend(
   aRef: { bodyId: string; connectorId: string },
   bRef: { bodyId: string; connectorId: string },
   rigidRoot?: string | null,
+  collides?: (vals: Record<string, number>) => boolean,
 ): MateBend | null {
   // ORDER-INDEPENDENT & BOTH-SIDES-BEND: the joints that actually change the two
   // connectors' RELATIVE pose are exactly the ones on the graph path BETWEEN the two
@@ -376,31 +377,41 @@ export function computeMateBend(
     }) as Record<string, number>;
     return { v, res: Math.hypot(...mateError(v, SEAT_INSET).slice(0, 3)) };
   };
-  let best = seatFrom(values);
-  // A STRAIGHT chain is a dead start (12 Nov, two modules end to end -> ring: "137 cm gap, started 137 cm"): at 0 every
-  // bend's first-order effect on the end-to-end gap is zero, so LM sees no downhill and never moves. Retry from a few
-  // gently bent, deterministic starts (inside the joint limits) and keep the closest seat.
+  // Candidates: from the current pose, then from a few gently bent deterministic starts (a STRAIGHT chain is a dead start:
+  // 12 Nov "137 cm gap"). A candidate is ACCEPTED only if (12 Nov, Nischay: "impossible connection - parts inside parts, not
+  // even connected, why did DIK allow it, where are align -> dock -> lock"):
+  //   - the plugs really meet: position gap <= ACCEPT_GAP (was 3 cm), and
+  //   - nothing passes through anything: the seated pose, the stand-off (aligned, 20 mm back) and the path start -> stand-off
+  //     -> seated, checked with the drag's own collision code (opts.collides; the mated pair may touch).
+  const ACCEPT_GAP = 0.004;
+  const startVals = { ...values };
+  const lerp = (a: Record<string, number>, b: Record<string, number>, t: number) => {
+    const o: Record<string, number> = {}; for (const id of Object.keys(b)) o[id] = (a[id] ?? 0) + (b[id] - (a[id] ?? 0)) * t; return o;
+  };
+  const standoffOf = (v: Record<string, number>) => lmSolveGeneric(loopChain, v, (x) => mateError(x, STANDOFF), { iterations: 120, tol: 1e-4, maxStep: 0.3 }) as Record<string, number>;
+  const clean = (v: Record<string, number>, so: Record<string, number>) => !collides ||
+    ![so, v, lerp(startVals, so, 0.25), lerp(startVals, so, 0.5), lerp(startVals, so, 0.75), lerp(so, v, 0.5)].some((x) => collides(x));
+  type Cand = { v: Record<string, number>; res: number; so?: Record<string, number>; ok?: boolean };
+  const judge = (c: Cand) => { if (c.res <= ACCEPT_GAP) { c.so = standoffOf(c.v); c.ok = clean(c.v, c.so); } return c; };
+  let best: Cand = judge(seatFrom(values));
   let seed = 12345;
   const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
-  for (let k = 0; k < 6 && best.res > 0.003; k++) {
+  for (let k = 0; k < 12 && !best.ok; k++) {
     const start: Record<string, number> = {};
     loopChain.forEach((j: any, i: number) => {
       const lo = j.limit?.lower ?? -Math.PI, hi = j.limit?.upper ?? Math.PI;
-      const nudge = k === 0 ? 0.35 : k === 1 ? 0.35 * (i % 2 ? -1 : 1) : (rnd() * 2 - 1) * 0.6;   // same way, zig-zag, then random
-      start[j.id] = Math.min(hi, Math.max(lo, (values[j.id] ?? 0) + nudge));
+      const nudge = k === 0 ? 0.35 : k === 1 ? 0.35 * (i % 2 ? -1 : 1) : k === 2 ? -0.35 : (rnd() * 2 - 1) * 0.8;   // same way, zig-zag, other way, random
+      start[j.id] = Math.min(hi, Math.max(lo, (startVals[j.id] ?? 0) + nudge));
     });
-    const r = seatFrom(start);
-    if (r.res < best.res) best = r;
+    const r = judge(seatFrom(start));
+    if (r.ok || (!best.ok && r.res < best.res)) best = r;
   }
   for (const [id, v] of Object.entries(best.v)) values[id] = v as number;
   work = withJointValues(doc, values);
   const residual = Math.hypot(...mateError(values, SEAT_INSET).slice(0, 3)); // position gap only
-
-  // Standoff pose for the approach→insert animation: same alignment but the mover pulled
-  // STANDOFF back along the seat normal. Solved from the seated pose over the same loop chain.
-  const standoffValues = lmSolveGeneric(loopChain, values, (v) => mateError(v, STANDOFF), {
-    iterations: 120, tol: 1e-4, maxStep: 0.3,
-  });
+  const blocked = residual <= ACCEPT_GAP && !best.ok;                        // close enough, but only by passing through parts
+  // Stand-off pose for the align -> dock -> lock animation: aligned, the mover STANDOFF back along the seat normal.
+  const standoffValues = best.so ?? standoffOf(values);
 
   // Build the detachable FIXED loop joint from the ACTUAL converged poses — NOT a
   // re-perfected mate. This is what stops the "module breaks" glitch: graph-FK may route
@@ -432,7 +443,7 @@ export function computeMateBend(
     componentId: null,
     meta: { generatedFromConnector: true, connectorA: seatRef.connectorId, connectorB: moveRef.connectorId, detachable: true },
   });
-  return { jointValues: values, standoffValues, joint, residual, startGap, chainLen, chainNames: loopChain.map((j: any) => j.name ?? j.id) };
+  return { jointValues: values, standoffValues, joint, residual, startGap, chainLen, chainNames: loopChain.map((j: any) => j.name ?? j.id), blocked };
 }
 
 /**

@@ -2,8 +2,9 @@
  * player — every motion button of the timeline (play, play from here, go), on ALL modules, in step.
  *
  * Nothing is streamed from the laptop any more: a laptop cannot keep two boards in step over Wi-Fi (each request has
- * its own delay, and a napping radio adds up to a second). Every motion is uploaded to the boards first and started by
- * one GO over the radio; the boards keep each other in step (sender.ts, firmware groupsync.h).
+ * its own delay, and a napping radio adds up to a second). Every motion is uploaded to the boards first; the laptop
+ * then gives every board the same start instant in its own clock (sender.ts startOnBoard), and each plays alone.
+ * If one stops part-way, follow() stops all.
  *   play / play from here  the whole timeline, from that frame
  *   go                     a one-frame animation to that frame's pose, at a gentle speed
  * The highlighted frame follows what the first module reports.
@@ -17,11 +18,14 @@ function follow() {
   if (watch !== null) window.clearInterval(watch);
   const st = useTimelineStore.getState();
   st.setPlaying(true);
-  let misses = 0;
+  let misses = 0, busy = false;
   watch = window.setInterval(async () => {
-    const s = await boardStatus();
+    if (busy) return;                 // a slow answer: never pile up requests on the radio
+    busy = true;
+    const s = await boardStatus().finally(() => { busy = false; });
     if (!s) { if (++misses > 10) endFollow(); return; }
     misses = 0;
+    // 14 Nov 2026: one module stopping (guard, E-STOP on it) does NOT stop the others - each runs its own timetable
     if (!s.playing) { endFollow(); return; }
     useTimelineStore.getState().setPlayIdx(s.idx);
   }, 300);
@@ -47,7 +51,7 @@ async function run(frames: Frame[], from: number, say?: (msg: string) => void, w
   if (!up.ok) { say?.(`could not upload: ${up.error}`); return; }
   const go = await startOnBoard(from);
   if (!go.ok) { say?.(`uploaded but could not start: ${go.error}`); return; }
-  say?.(`${what} on ${up.modules} module${up.modules === 1 ? '' : 's'}${go.note ? ' — ' + go.note : ''}`);
+  say?.(`${what} on ${up.modules} module${up.modules === 1 ? '' : 's'}${[up.note, go.note].filter(Boolean).map(n => ' — ' + n).join('')}`);
   follow();
 }
 

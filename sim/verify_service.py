@@ -586,7 +586,9 @@ class H(BaseHTTPRequestHandler):
             return self._send(200, r)
         if self.path.startswith('/boards'):                        # the boards Sync talks to, for the Studio's top bar (real_sync.boards_now)
             import real_sync
-            return self._send(200, {'ok': True, 'boards': real_sync.boards_now()})
+            from urllib.parse import urlparse, parse_qs
+            q = parse_qs(urlparse(self.path).query); lst = lambda k: [h for h in (q.get(k, [''])[0]).split(',') if h]
+            return self._send(200, {'ok': True, 'boards': real_sync.boards_now(lst('hosts'), set(lst('fast')))})   # the Studio's list: the service is its ONE asker
         if self.path.startswith('/health'):
             return self._send(200, {'ok': True, 'mujoco': mujoco.__version__, 'calibration_mm': CAL['worst_mm'], 'sim': HERE, 'pid': os.getpid(), 'started': STARTED,
                                     'live_sessions': sum(1 for S in getattr(sys.modules.get('manual'), 'SESS', {}).values() if time.time() - getattr(S, 'seen', 0) < 20)})

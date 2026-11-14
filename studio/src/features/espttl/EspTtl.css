@@ -234,3 +234,14 @@
 /* one section per module (PerModule): its name and state above its own tables */
 .ettl-modhead { display: flex; align-items: center; gap: 6px; margin: 14px 0 6px; padding: 4px 8px;
   border-left: 3px solid var(--accent); background: var(--muted, transparent); font-size: 13px; }
+
+/* Log tab: the lines that matter (connect / disconnect / warnings) */
+.ettl-log-up { font-weight: 700; color: var(--ok, #3ecf7a); }
+.ettl-log-down { font-weight: 700; color: var(--warn); }
+.ettl-log-warn { font-weight: 700; color: var(--danger, #ff5c5c); }
+
+/* SpeedCap: every servo's top speed, in the top line (13 Nov) */
+.ettl-speedcap { gap: 6px; }
+.ettl-speedcap input { width: 52px; background: transparent; color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; font: inherit; text-align: right; }
+.ettl-speedcap input:focus { outline: none; border-color: var(--accent); }
+.ettl-speedcap-note { color: var(--warn); margin-left: 6px; }

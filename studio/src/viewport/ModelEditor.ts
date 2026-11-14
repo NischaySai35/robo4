@@ -28,7 +28,7 @@ import { useDockStore } from '@/state/dockStore';
 import { usePageStore } from '@/state/pageStore';
 import { useEditorStore } from '@/state/editorStore';
 import { useDragWarningStore } from '@/state/dragWarningStore';
-import { partBoxes, jointedPairs, touching, firstHit } from '@/viewport/dragCollision';
+import { partBoxes, jointedPairs, touching, firstHit, floorGap } from '@/viewport/dragCollision';
 import { useEditModeStore } from '@/state/editModeStore';
 import { useAnimationStore } from '@/state/animationStore';
 import { stopAllSpins, getActiveSpins } from '@/features/motor/spinEngine';
@@ -36,7 +36,7 @@ import { canJointSpin } from '@/features/motor/spinFreedom';
 import { DynamicSim } from '@/features/gravity/dynamicSim';
 import { useAnimSceneStore } from '@/state/animSceneStore';
 import { commands, command } from '@/core/commands/index';
-import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild, setAnimRootOverride } from '@/kinematics/modelFK';
+import { computeFK, buildChildJointMap, originForChildWorld, mat, movePivotKeepingChild, setAnimRootOverride, resolveRoot } from '@/kinematics/modelFK';
 import { chainJoints, solveModelIK } from '@/kinematics/modelIK';
 import { computeSnap, SnapIndicator } from '@/viewport/Snapper';
 import { PivotPickTool } from '@/viewport/PivotPickTool';
@@ -71,6 +71,21 @@ export class ModelEditor {
     this._mateAnim = null;
     mateBridge.play = (req: MateAnimRequest) => this._startMateAnim(req);
     viewport.orientSelectionAxis = (axis: 'x' | 'y' | 'z') => this._orientSelectionToAxis(axis);
+    // the SAME collision check as the drag (dragCollision.ts, real part shapes), for the connect / DIK code (12 Nov: a connect
+    // made an impossible ring - parts inside parts - because nothing checked)
+    viewport.poseCollides = (d: any, extraPairs: [string, string][] = []) => {
+      const boxes = partBoxes(d, (id: string) => this._meshHullPointsPhysics(id));
+      const joined = jointedPairs(d);
+      if (extraPairs.length) {                                   // the new connection counts as a joint (2 hops around it too)
+        const nb = (id: string) => Object.values(d.joints as any).filter((j: any) => !j.state?.disabled && (j.parentBodyId === id || j.childBodyId === id))
+          .map((j: any) => (j.parentBodyId === id ? j.childBodyId : j.parentBodyId));
+        for (const [a, b] of extraPairs) for (const x of [a, ...nb(a)]) for (const y of [b, ...nb(b)]) joined.add(x < y ? `${x}|${y}` : `${y}|${x}`);
+      }
+      const hit = firstHit(computeFK(d) as any, boxes, joined, new Set(), undefined);
+      if (!hit || hit.kind !== 'part') return null;
+      const nm = (id: string) => d.bodies[id]?.name ?? id;
+      return [nm(hit.a), nm(hit.b)];
+    };
 
     this.transform = new TransformControls(camera, domElement);
     this.transform.setSize(1.1);
@@ -1187,7 +1202,42 @@ export class ModelEditor {
     if (this._floor) this._floorBodies = nBodies;
   }
 
+  /** one frame of the smooth drag: each joint toward _ikGoal, at most IK_VMAX rad/s, speeding up / braking at most IK_AMAX,
+   *  braking early enough to stop ON the goal. When everything has arrived after the drag ended, the pose is committed. */
+  _tickIkSmooth() {
+    const goal = this._ikGoal; if (!goal) return;
+    const IK_VMAX = 3.5, IK_AMAX = 16;               // rad/s (200 deg/s), rad/s^2 (900 deg/s^2) - as the real Sync
+    const now = performance.now(), dt = Math.min(0.05, Math.max(0.001, (now - (this._ikT ?? now - 16)) / 1000)); this._ikT = now;
+    const vel: Record<string, number> = (this._ikVel ??= {});
+    const doc: any = useModelStore.getState().doc, next: Record<string, number> = {};
+    let moving = false;
+    for (const [id, target] of Object.entries(goal)) {
+      const j = doc.joints[id]; if (!j) continue;
+      const cur = j.state?.value ?? 0, e = target - cur;
+      let v = vel[id] ?? 0;
+      const room = Math.max(0, Math.abs(e) - 0.5 * Math.abs(v) * dt);
+      const vGoal = Math.abs(e) > 1e-4 ? Math.sign(e) * Math.min(IK_VMAX, Math.sqrt(2 * IK_AMAX * room), Math.abs(e) / dt) : 0;
+      v += Math.max(-IK_AMAX * dt, Math.min(IK_AMAX * dt, vGoal - v));
+      let step = v * dt;
+      if (Math.abs(e) <= 2e-4 && Math.abs(v) <= IK_AMAX * dt) { step = e; v = 0; }
+      else if (Math.abs(step) > Math.abs(e)) step = e;
+      vel[id] = v;
+      if (step !== 0) next[id] = cur + step;
+      if (v !== 0 || Math.abs(e - step) > 2e-4) moving = true;
+    }
+    if (Object.keys(next).length) useModelStore.getState().applyTransient((d: any) => {
+      let n = d;
+      for (const [id, val] of Object.entries(next)) { const jj = n.joints[id]; if (jj) n = { ...n, joints: { ...n.joints, [id]: { ...jj, state: { ...jj.state, value: val } } } }; }
+      return n;
+    });
+    if (!moving && !this._ikActive) {                // arrived after the drag ended: commit the whole drag as one undo step
+      this._ikGoal = null; this._ikVel = {};
+      if (this._ikCommitPending) { this._ikCommitPending = false; this._commitIkDrag(); }
+    }
+  }
+
   tick() {
+    this._tickIkSmooth();
     // Perform the actual model sync here — once per SimCanvas-driven frame — instead of
     // synchronously inside the useModelStore subscription (see that subscribe call's comment).
     // Coalesces multiple applyTransient() writes from other rAF loops (spin/physics/IK) within
@@ -1392,9 +1442,14 @@ export class ModelEditor {
     const hitId = this.bodyRenderer.pickBodyAt(this._ndc(e), this.camera);
     if (!hitId || !this._doc) return;
     const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
-    const rigidRoot = bodyMode === 'rigid' ? activeBodyId : null;
+    let rigidRoot = bodyMode === 'rigid' ? activeBodyId : null;
     if (hitId === rigidRoot) return; // can't IK-drag the grounded body itself
+    // 12 Nov (Nischay: "dragging the left module just orbits the screen, the right one bends"): a module NOT joined to the
+    // grounded one has no path to it, so the drag found no joints and the click fell through to orbiting. Such a module
+    // bends about its OWN first body instead (held where it is, like the grounded one).
+    if (rigidRoot && chainJoints(this._doc, hitId, rigidRoot).length === 0) rigidRoot = null;
     if (chainJoints(this._doc, hitId, rigidRoot).length === 0) return; // not articulated → let normal click handle it
+    this._ikRoot = rigidRoot;
     const w = this._fk?.get(hitId);
     const p = new THREE.Vector3(...(w?.position ?? [0, 0, 0]));
     // The body's FK position is doc-space (un-offset), but while gravity is off the whole
@@ -1407,6 +1462,7 @@ export class ModelEditor {
     this.camera.getWorldDirection(n);
     this._ikPlane.setFromNormalAndCoplanarPoint(n, p);
     this._ikTip = hitId;
+    if (this._ikCommitPending) { this._ikCommitPending = false; this._ikGoal = null; this._ikVel = {}; this._commitIkDrag(); }
     this._ikActive = true;
     this.controls.enabled = false;
     this._attachTo(null); // no gizmo while pulling
@@ -1423,7 +1479,7 @@ export class ModelEditor {
   }
 
   _startDragCollision() {
-    this._dragCol = null;
+    this._dragCol = null; this._dragLifted = 0;
     if (usePageStore.getState().page !== 'animation' || !this._doc) return;
     const doc = this._doc;
     const boxes = partBoxes(doc, (id: string) => this._meshHullPointsPhysics(id));
@@ -1454,20 +1510,17 @@ export class ModelEditor {
     // the floor — clamp it here, in the same visual space the floor mesh itself renders in,
     // so it stops exactly where it looks like it should stop.
     if (this._floorY !== undefined && usePageStore.getState().page === 'animation') {
-      if (target.y < this._floorY + 0.01) {
-        useDragWarningStore.getState().setMessage("Can't go further — hit the floor. Try dragging a different direction.");
-      }
       target.y = Math.max(target.y, this._floorY + 0.01);
     }
     // Convert back to DOC space (subtract the same visual float offset added when the plane
     // was positioned) before solving — the IK solver and the doc itself are un-offset;
     // _gravityY is a purely visual effect applied only to the render groups.
     target.y -= this._gravityY ?? 0;
-    const { bodyMode, activeBodyId } = useWorkspaceStore.getState();
-    const rigidRoot = bodyMode === 'rigid' ? activeBodyId : null;
+    const rigidRoot = this._ikRoot ?? null;   // chosen at drag start (_tryStartIK)
+    const holdBase = useWorkspaceStore.getState().bodyMode === 'rigid';
     // With a closed lock loop, plain tip-IK would freely pull a redundant lock apart (FK never
     // enforces loop-closing edges). Solve WITH loop closure so every lock stays shut as you drag.
-    const values = hasLockLoop(this._doc)
+    let values = hasLockLoop(this._doc)
       ? solveDragWithLoops(this._doc, this._ikTip, [target.x, target.y, target.z], rigidRoot)
       : solveModelIK(this._doc, this._ikTip, [target.x, target.y, target.z], {}, rigidRoot);
     // applyTransient, not dispatch: dispatch() pushes a full undoable command — doing that
@@ -1476,26 +1529,64 @@ export class ModelEditor {
     // symptom. applyTransient is the existing, cheap, no-history live-update path already used
     // for motor spin/physics/animation playback for this same reason — the final pose gets
     // committed as ONE real undoable dispatch at drag-end instead (see _endIK/_lastIKValues).
-    // collision: a step that would put a part into the floor or into another part is refused (the pose stays at the last free one)
+    // collision (12 Nov, Nischay: "no 'can't go into the floor' - it should slide on the floor"):
+    //   floor: the robot is LIFTED so its lowest part rests on the floor (and lowered back while it was lifted), the drag goes on;
+    //   parts: the step goes as far as there is room (halved until free), never a frozen drag.
+    let lift = 0;
     if (values && this._dragCol) {
-      const hit = firstHit(computeFK(withJointValues(this._doc, values)) as any, this._dragCol.boxes, this._dragCol.joined, this._dragCol.ignore, this._dragFloorY());
-      if (hit) {
-        const nm = (id: string) => (this._doc.bodies as any)[id]?.name ?? id;
-        useDragWarningStore.getState().setMessage(hit.kind === 'floor' ? `Can't go further: ${nm(hit.a)} would go into the floor.` : `Can't go further: ${nm(hit.a)} would hit ${nm(hit.b)}.`);
-        return;
+      const floorY = this._dragFloorY(), col = this._dragCol;
+      const rootId = resolveRoot(this._doc);
+      const lifted = (vals: Record<string, number>, dy: number) => {
+        const d = withJointValues(this._doc, vals) as any;
+        if (!dy || !rootId || !d.bodies[rootId]) return d;
+        const rb = d.bodies[rootId], p = rb.transform.position;
+        return { ...d, bodies: { ...d.bodies, [rootId]: { ...rb, transform: { ...rb.transform, position: [p[0], p[1] + dy, p[2]] } } } };
+      };
+      // 12 Nov (Nischay: "the grounded body moves up and down while I drag"): with a grounded body (rigid mode) NOTHING lifts the
+      // robot - the base stays exactly put and the floor is a wall like any part (the step goes as far as there is room).
+      const floorLift = (vals: Record<string, number>) => {
+        if (floorY === undefined || holdBase) return 0;
+        const gap = floorGap(computeFK(withJointValues(this._doc, vals)) as any, col.boxes, floorY);
+        if (gap < 0) return -gap;                                         // into the floor: up by that much
+        return -Math.min(gap, this._dragLifted ?? 0);                     // above it after a lift: back down, never below
+      };
+      const partHit = (vals: Record<string, number>, dy: number) =>
+        firstHit(computeFK(lifted(vals, dy)) as any, col.boxes, col.joined, col.ignore, holdBase ? floorY : undefined);
+      lift = floorLift(values);
+      if (partHit(values, lift)) {                                        // bump: as far as there is room
+        const from: Record<string, number> = {};
+        for (const id of Object.keys(values)) from[id] = (this._doc.joints as any)[id]?.state?.value ?? values[id];
+        let lo = 0, hi = 1;
+        for (let k = 0; k < 6; k++) {
+          const t = (lo + hi) / 2, mid: Record<string, number> = {};
+          for (const id of Object.keys(values)) mid[id] = from[id] + (values[id] - from[id]) * t;
+          if (partHit(mid, floorLift(mid))) hi = t; else lo = t;
+        }
+        if (lo < 0.02) {
+          const hit = partHit(values, lift), nm = (id: string) => (this._doc.bodies as any)[id]?.name ?? id;
+          if (hit && hit.kind === 'part') useDragWarningStore.getState().setMessage(`${nm(hit.a)} touches ${nm(hit.b)} - drag another way`);
+          return;
+        }
+        const part: Record<string, number> = {};
+        for (const id of Object.keys(values)) part[id] = from[id] + (values[id] - from[id]) * lo;
+        values = part; lift = floorLift(values);
+      }
+      if (lift) {
+        this._dragLifted = Math.max(0, (this._dragLifted ?? 0) + lift);
+        const dy = lift, rid = rootId;
+        useModelStore.getState().applyTransient((d: Document) => {
+          const rb: any = rid ? (d.bodies as any)[rid] : null; if (!rb) return d;
+          const p = rb.transform.position;
+          return { ...d, bodies: { ...d.bodies, [rid!]: { ...rb, transform: { ...rb.transform, position: [p[0], p[1] + dy, p[2]] } } } } as Document;
+        });
       }
     }
     if (values) {
+      // SMOOTH (12 Nov, Nischay: "it jerks - make the sim smooth, then the real robot is too; a delay behind the cursor is
+      // fine"): the drag only sets the GOAL; _tickIkSmooth moves every joint toward it each frame with a top speed and an
+      // acceleration limit (the same rule as the real robot's Sync, sim/real_sync.step_smooth). Sync sends this smooth pose.
       this._lastIKValues = values;
-      useModelStore.getState().applyTransient((d: Document) => {
-        let next = d;
-        for (const [id, v] of Object.entries(values)) {
-          const j: any = (next.joints as any)[id];
-          if (!j) continue;
-          next = { ...next, joints: { ...next.joints, [id]: { ...j, state: { ...j.state, value: v } } } };
-        }
-        return next;
-      });
+      this._ikGoal = { ...(this._ikGoal ?? {}), ...values };
     }
     // debugWorstJoint() was ALSO running a full document scan every pointermove purely for a
     // debug console warning — moved to a throttled check so it doesn't cost anything during
@@ -1508,6 +1599,13 @@ export class ModelEditor {
       if (worst.gapMM > 5) console.warn('[JOINTDBG] TORN', worst);
     }
   }
+
+  _ikRoot: string | null = null;
+  _ikGoal: Record<string, number> | null = null;
+  _ikVel: Record<string, number> = {};
+  _ikT: number | undefined;
+  _ikCommitPending = false;
+  _ikWasAnim = false;
 
   _endIK() {
     const wasAnimDrag = this._ikActive && this._animGravityOn;
@@ -1523,6 +1621,13 @@ export class ModelEditor {
     // LIVE doc at dispatch time — but applyTransient already mutated the live doc throughout
     // the drag, so by now it already equals the final values, which would make undo a no-op.
     // Build the command explicitly from the values captured before the drag began instead.
+    this._ikWasAnim = wasAnimDrag;
+    if (this._ikGoal) this._ikCommitPending = true;   // still gliding to the goal: commit once it has arrived (_tickIkSmooth)
+    else this._commitIkDrag();
+  }
+
+  /** the whole drag as ONE undoable step (start values -> final values) */
+  _commitIkDrag() {
     if (this._lastIKValues && this._ikStartValues) {
       const next = this._lastIKValues, prev = this._ikStartValues;
       useModelStore.getState().dispatch(command(
@@ -1542,7 +1647,7 @@ export class ModelEditor {
     // Physics was frozen (see _tickGravityTumble) while dragging under gravity — the
     // Jolt world never saw the new joint pose. Rebuild it from where the drag left the
     // model so it settles from there instead of snapping back to the pre-drag pose.
-    if (wasAnimDrag) this._runGravityTumble(true);
+    if (this._ikWasAnim) { this._ikWasAnim = false; this._runGravityTumble(true); }
   }
 
   // ── Animation-page IK drag ────────────────────────────────────────────────
@@ -1570,6 +1675,9 @@ export class ModelEditor {
     this.camera.getWorldDirection(n);
     this._ikPlane.setFromNormalAndCoplanarPoint(n, p);
     this._ikTip = hitId;
+    { const ws = useWorkspaceStore.getState(); const r = ws.bodyMode === 'rigid' ? ws.activeBodyId : null;
+      this._ikRoot = r && chainJoints(this._doc, hitId, r).length ? r : null; }   // same rule as _tryStartIK
+    if (this._ikCommitPending) { this._ikCommitPending = false; this._ikGoal = null; this._ikVel = {}; this._commitIkDrag(); }
     this._ikActive = true;
     this.controls.enabled = false;
     this._attachTo(null);

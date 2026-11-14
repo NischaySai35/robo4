@@ -17,7 +17,8 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { UNITS_PER_M } from '@/robotics/msrr/modulink';
 import { MODULINK_CUBE_SIZE } from '@/robotics/msrr/occupancy';
-import { restBodies, STUDIO_TO_MODEL_QUAT } from '@/robotics/msrr/restLayout';
+import { restBodies, restConnectors, STUDIO_TO_MODEL_QUAT } from '@/robotics/msrr/restLayout';
+import { endPaint, receiverLabels, splitByLabels, RECEIVER_PAINT, type Paint } from '@/viewport/renderers/modulePaint';
 
 /** cubes per metre of the real module */
 export const CUBES_PER_METRE = UNITS_PER_M / MODULINK_CUBE_SIZE;
@@ -66,9 +67,24 @@ function withImuBoard(spine: THREE.BufferGeometry): THREE.BufferGeometry {
   return mergeGeometries([spine, box]) ?? spine;
 }
 
+/** Each body's drawn pieces with their shared colour (modulePaint, the same rule as every other tab): the ends whole, the
+ *  spines cut into [spine, A-side receivers, B-side receivers]. paint null = the part's own MSRR colour. */
+let parts: Map<string, { geo: THREE.BufferGeometry; paint: Paint | null }[]> | null = null;
+export function moduleMeshParts(): Map<string, { geo: THREE.BufferGeometry; paint: Paint | null }[]> {
+  if (parts) return parts;
+  const geos = moduleMeshGeometries(), conns = restConnectors(); parts = new Map();
+  for (const b of restBodies()) {
+    const geo = geos.get(b.name); if (!geo) continue;
+    const labels = receiverLabels('msrr:' + b.name, () => new Uint8Array(base64ToArrayBuffer(b.stl)), 0.001, conns.get(b.name)?.connectors ?? []);
+    if (!labels) { parts.set(b.name, [{ geo, paint: endPaint(b.name) }]); continue; }
+    parts.set(b.name, splitByLabels(geo, labels).map((g, i) => ({ geo: g, paint: i ? RECEIVER_PAINT[i] : endPaint(b.name) })).filter((x) => x.geo.index?.count));
+  }
+  return parts;
+}
+
 /** Release the shared geometries (the viewport calls this on unmount). */
 export function disposeModuleMeshes() {
   if (!cache) return;
   for (const g of cache.values()) g.dispose();
-  cache = null;
+  cache = null; parts = null;
 }

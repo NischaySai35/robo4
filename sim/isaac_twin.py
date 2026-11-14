@@ -303,6 +303,9 @@ def status(c, label=''):
     r1 = {m_: (c.R.T @ quat_R(Q[c.mods[m_]['off'] + PARTS.index('Spine1_B1B2')]), quat_R(c.bpose(f'{m_}_Spine1_B1B2')[1])) for m_ in c.mids}
     c.__dict__.setdefault('r1_0', {m_: (a.copy(), b.copy()) for m_, (a, b) in r1.items()})
     for m_, (a, b) in r1.items(): out['moved_mm'][m_].update(isaac_deg=ang(a, c.r1_0[m_][0]), brain_deg=ang(b, c.r1_0[m_][1]))
+    # 12 Nov (roll mismatch): the joints the brain SENT vs what Isaac's servos REALLY reached (board degrees), only those >2 deg apart
+    out['lag_deg'] = {m_: {j: [round(b.sent[j], 1), round(b.read[j], 1), b.load.get(j, 0)] for j in b.sent if j in b.read and abs(b.sent[j] - b.read[j]) > 2.0}
+                      for m_, b in getattr(c, 'boards', {}).items()}
     if c.cfg['task'][0] == 'connect':
         A = c.A; ax, rad, z = dock_rel(c); ea = q_rot(Q[A['body']], A['z'])
         out.update(axial_mm=round(ax * 1000, 2), radial_mm=round(rad * 1000, 2), tilt_deg=round(math.degrees(math.acos(float(np.clip(-ea @ z, -1, 1)))), 2))
